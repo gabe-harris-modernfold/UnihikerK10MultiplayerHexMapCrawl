@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>WASTELAND CRAWL</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Top HUD -->
+<div id="hud">
+  <button class="hud-btn" id="menu-btn">&#x2630; MENU</button>
+  <span id="hud-title">&#9762; WASTELAND</span>
+  <div id="hud-status">
+    <span id="hud-conn-dot" class="conn-dot">●</span>
+    <span id="hud-mp" class="hud-stat">— MP</span>
+    <span id="hud-vis" class="hud-stat">—</span>
+  </div>
+  <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
+  <button class="hud-btn" id="char-btn">&#x1F5D9; DOSSIER</button>
+  <div id="hud-ll">
+    <span class="hud-ll-lbl">LL</span>
+    <div class="track-boxes" id="hud-ll-track"></div>
+    <span class="hud-ll-val" id="hud-ll-val">6</span>
+  </div>
+  <button class="hud-btn" id="action-hud-btn">&#x2694; ACTION</button>
+</div>
+
+<!-- Main -->
+<div id="main">
+  <!-- Hex canvas -->
+  <div id="canvas-wrap">
+    <canvas id="hexCanvas"></canvas>
+
+    <!-- Terrain card (upper-right of canvas) -->
+    <div id="terrain-card" title="Click for hex details">
+      <div id="tc-header">
+        <div id="tc-icon">&#x2620;</div>
+        <div id="tc-text">
+          <div id="tc-name">Unknown</div>
+          <div id="tc-sub">Scanning...</div>
+          <div id="tc-vis-badge"></div>
+        </div>
+        <div id="tc-arrow">&#x25B6;</div>
+      </div>
+    </div>
+
+    <!-- Expanded hex info panel -->
+    <div id="hex-info">
+      <span id="hex-close">&#x2715;</span>
+      <h2><span class="hi-icon" id="hi-icon">&#x2620;</span><span id="hi-title">HEX DATA</span></h2>
+      <div class="hi-row"><span class="hi-label">Coordinates</span><span class="hi-val" id="hi-coords">—</span></div>
+      <div class="hi-row"><span class="hi-label">Terrain</span><span class="hi-val" id="hi-terrain">—</span></div>
+      <div class="hi-row"><span class="hi-label">Movement</span><span class="hi-val" id="hi-movement">—</span></div>
+      <div class="hi-row"><span class="hi-label">Visibility</span><span class="hi-val" id="hi-visibility">—</span></div>
+      <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
+      <div class="hi-row"><span class="hi-label">Tags</span>
+        <div><div id="hi-tag-list"></div></div>
+      </div>
+      <div class="hi-row"><span class="hi-label">Resources</span>
+        <div><div id="hi-res-list"></div></div>
+      </div>
+      <div class="hi-desc" id="hi-desc">Move onto a hex to reveal its data.</div>
+    </div>
+
+    <!-- Push roll — floats at bottom of canvas, visible only when push is available -->
+    <button id="check-push-btn" class="push-roll-bar push-btn">&#x21BA; PUSH ROLL (+1 Fatigue)</button>
+  </div>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="side-panel">
+      <h3>Supplies</h3>
+      <div class="res-row"><div class="res-dot dot-water"></div><span class="res-val" id="inv0">0</span><span class="res-name">Water</span></div>
+      <div class="res-row"><div class="res-dot dot-food"></div><span class="res-val" id="inv1">0</span><span class="res-name">Food</span></div>
+      <div class="res-row"><div class="res-dot dot-fuel"></div><span class="res-val" id="inv2">0</span><span class="res-name">Fuel</span></div>
+      <div class="res-row"><div class="res-dot dot-med"></div><span class="res-val" id="inv3">0</span><span class="res-name">Medicine</span></div>
+      <div class="res-row"><div class="res-dot dot-scrap"></div><span class="res-val" id="inv4">0</span><span class="res-name">Scrap</span></div>
+    </div>
+    <div class="side-panel">
+      <h3>Score</h3>
+      <div id="score-wrap"><div id="my-score">0</div></div>
+      <div id="pos-info">Q:— R:—</div>
+    </div>
+    <div id="players-panel">
+      <h3>Survivors</h3>
+      <div id="player-list"></div>
+    </div>
+  </div>
+
+  <!-- Event log -->
+  <div id="log-panel"><div id="log-inner"></div></div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button class="dir-btn" data-dir="3">&#x2196;</button>
+  <button class="dir-btn" data-dir="2">&#x2191;</button>
+  <button class="dir-btn" data-dir="1">&#x2197;</button>
+  <div class="dir-btn empty" id="cd-center">
+    <svg viewBox="0 0 36 36" width="20" height="20">
+      <circle cx="18" cy="18" r="14" fill="none" stroke="#180C04" stroke-width="3.5"/>
+      <circle id="cd-arc" cx="18" cy="18" r="14" fill="none"
+              stroke="#6A3008" stroke-width="3.5"
+              stroke-dasharray="87.96" stroke-dashoffset="87.96"
+              stroke-linecap="round" transform="rotate(-90 18 18)"/>
+    </svg>
+  </div>
+  <button class="dir-btn" data-dir="4">&#x2199;</button>
+  <button class="dir-btn" data-dir="5">&#x2193;</button>
+  <button class="dir-btn" data-dir="0">&#x2198;</button>
+</div>
+
+<!-- Action panel modal -->
+<div id="action-panel">
+  <div id="action-box">
+    <span id="action-close">&#x2715;</span>
+    <h2>&#x2694; ACTIONS</h2>
+    <div id="action-status-bar"></div>
+    <div id="action-btn-list"><!-- populated by JS --></div>
+    <!-- WATER mp sub-control -->
+    <div id="action-water-ctrl" style="display:none">
+      <div class="check-row">
+        <span class="check-lbl">MP TO SPEND</span>
+        <div class="check-dn-ctrl">
+          <button id="action-water-m">&#x2212;</button>
+          <span id="action-water-v">1</span>
+          <button id="action-water-p">&#x2B;</button>
+        </div>
+      </div>
+      <button id="action-water-go" class="chk-action-btn">&#x2248; COLLECT WATER</button>
+    </div>
+    <!-- TREAT condition sub-control -->
+    <div id="action-treat-ctrl" style="display:none">
+      <div id="action-treat-list"><!-- condition buttons --></div>
+    </div>
+  </div>
+</div>
+
+<!-- Connect overlay -->
+<div id="connect-overlay">
+  <div id="connect-box">
+    <h2>WASTELAND</h2>
+    <p>Post-Apocalyptic Hex Crawl<br>
+       Scavenge water, food, fuel,<br>medicine &amp; scrap to survive.<br><br>
+       <span class="blink-dot"></span> Connecting to server...</p>
+  </div>
+</div>
+
+<!-- Character selection overlay (shown after connection, before game start) -->
+<div id="char-select-overlay">
+  <div id="char-select-content"></div>
+</div>
+
+<!-- Menu overlay -->
+<div id="menu-overlay">
+  <div id="menu-box">
+    <div id="menu-content"></div>
+  </div>
+</div>
+
+<!-- Toast stack -->
+<div id="toast-stack"></div>
+
+<!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
+<div id="char-overlay">
+  <div id="char-sheet">
+    <span id="char-close">&#x2715;</span>
+    <h2>&#x2620; SURVIVOR DOSSIER</h2>
+
+    <!-- Name input -->
+    <div class="cs-section">
+      <h3>Call Sign</h3>
+      <div class="cs-name-row">
+        <input id="cs-name-input" type="text" maxlength="11" placeholder="Enter call sign...">
+        <button id="cs-name-btn">CONFIRM</button>
+      </div>
+    </div>
+
+    <!-- Wayfarer / archetype + skills -->
+    <div class="cs-section">
+      <h3>Wayfarer</h3>
+      <div id="cs-arch-banner">
+        <span id="cs-arch-icon"></span><span id="cs-arch-name">—</span>
+      </div>
+      <div id="cs-skills-grid"><!-- populated by JS --></div>
+      <div class="stat-grid" style="margin-top:10px">
+        <div class="stat-box"><div class="stat-val" id="cs-steps">—</div><div class="stat-label">HEXES WALKED</div></div>
+        <div class="stat-box"><div class="stat-val" id="cs-vision">1</div><div class="stat-label">VISION RANGE</div></div>
+      </div>
+      <div class="stat-bar-wrap">
+        <div class="stat-bar-label"><span>STAMINA</span><span id="cs-stamina-val">100</span></div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="cs-stamina-bar"></div></div>
+      </div>
+    </div>
+
+    <!-- Survival Tracks (§4) -->
+    <div class="cs-section">
+      <h3>Survival Tracks</h3>
+      <!-- Life Level: 6 boxes -->
+      <div class="track-row">
+        <span class="track-label">LIFE LVL</span>
+        <div class="track-boxes" id="cs-ll-track"></div>
+        <span class="track-val" id="cs-ll-val">6</span>
+        <span class="track-suffix">&nbsp;MP: <span id="cs-mp-val">6</span></span>
+      </div>
+      <!-- Food track: thresholds at 4 and 2 -->
+      <div class="track-row">
+        <span class="track-label">FOOD</span>
+        <div class="track-boxes" id="cs-food-track"></div>
+        <span class="track-val" id="cs-food-val">6</span>
+        <span class="track-suffix">&nbsp;tokens: <span id="cs-food-tokens">0</span></span>
+      </div>
+      <!-- Water track: thresholds at 5, 3, 1 -->
+      <div class="track-row">
+        <span class="track-label">WATER</span>
+        <div class="track-boxes" id="cs-water-track"></div>
+        <span class="track-val" id="cs-water-val">6</span>
+        <span class="track-suffix">&nbsp;tokens: <span id="cs-water-tokens">0</span>&thinsp;<span class="contam-count" id="cs-contam-count"></span></span>
+      </div>
+      <!-- Radiation track: 10 boxes; thresholds at 4 (Rad-Sick) and 7 (Dusk check) -->
+      <div class="track-row">
+        <span class="track-label">RADS</span>
+        <div class="track-boxes rad-track" id="cs-rad-track"></div>
+        <span class="track-val" id="cs-rad-val">0</span>
+        <span class="track-suffix" id="cs-rad-status"></span>
+      </div>
+      <!-- §6.4 Exposure markers -->
+      <div class="track-row exposure-row" id="cs-exposure-row">
+        <span class="track-label">EXP</span>
+        <span class="exp-badge cold" id="cs-cold-badge" title="Cold Exposure">&#10052; <span id="cs-cold-val">0</span></span>
+        <span class="exp-badge heat" id="cs-heat-badge" title="Heat Exposure">&#9728; <span id="cs-heat-val">0</span></span>
+        <span class="track-suffix exp-effects" id="cs-exp-effects"></span>
+      </div>
+      <!-- Resolve tokens -->
+      <div class="track-row">
+        <span class="track-label">RESOLVE</span>
+        <div id="cs-resolve-tokens"></div>
+        <span class="track-val" id="cs-resolve-val">3</span>
+        <span class="track-suffix">/5</span>
+      </div>
+    </div>
+
+    <!-- Inventory -->
+    <div class="cs-section">
+      <h3>Inventory</h3>
+      <div class="inv-grid">
+        <div class="inv-box"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
+        <div class="inv-box"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
+        <div class="inv-box"><div class="dot dot-fuel"></div><div class="qty" id="cs-inv2">0</div><div class="lbl">Fuel</div></div>
+        <div class="inv-box"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
+        <div class="inv-box"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
+      </div>
+    </div>
+
+    <!-- Score -->
+    <div class="cs-section">
+      <div class="total-score">
+        <div class="big" id="cs-score">0</div>
+        <div class="lbl">SURVIVAL SCORE</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────── Script ────────────────────────────────── -->
+<script type="text/javascript" src="/van.js"></script>
+<script type="text/javascript" src="/van-ui.js"></script>
+<script type="text/javascript" src="/game-data.js"></script>
+<script type="text/javascript" src="/engine.js"></script>
+<script type="text/javascript" src="/ui.js"></script>
+</body>
+</html>

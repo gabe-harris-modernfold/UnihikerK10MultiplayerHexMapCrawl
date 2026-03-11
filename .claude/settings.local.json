@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Invoke-WebRequest -Uri ''https://cdn.jsdelivr.net/npm/vanjs-ui@0.11.14/dist/van-ui.nomodule.min.js'' -OutFile ''C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\data\\\\van-ui.js''\")",
+      "Bash(powershell -Command \"\\(Get-Item ''C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\data\\\\van-ui.js''\\).Length\")",
+      "Bash(python3 -c \":*)",
+      "Bash(node -e \":*)",
+      "Bash(del \"C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\game_logic.h\" \"C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\network.h\")",
+      "Bash(grep -n:*)"
+    ]
+  }
+}

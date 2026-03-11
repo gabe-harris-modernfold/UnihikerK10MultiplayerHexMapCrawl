@@ -1,0 +1,997 @@
+/*──────────────────────── Art direction ─────────────────────────
+  Gritty post-apocalyptic illustration.
+  Palette: ash grey · rust orange · dried-blood brown ·
+           sickly yellow-green · cold steel blue.
+  Texture: cracked leather · rusted metal · stained paper.
+  Type:    hand-stencilled military headers ·
+           weathered typewriter body.
+────────────────────────────────────────────────────────────────*/
+:root {
+  --bg:        #080604;
+  --bg-panel:  #0B0804;
+  --bg-card:   #100E08;
+  --bg-input:  #130A03;
+  --bg-deep:   #050402;
+  --bdr:       #221408;
+  --bdr-mid:   #3A2410;
+  --bdr-hi:    #5C3C16;
+  --txt:       #C8A878;
+  --txt-dim:   #907050;
+  --gold:      #C48C0A;    /* tarnished amber */
+  --gold-hi:   #E4B420;    /* bright accent */
+  --rust:      #6A3008;    /* rust orange (pressed state bg) */
+  --ash:       #988A78;    /* ash grey — section labels */
+  --blood:     #4A1208;    /* dried blood — danger border */
+  --stencil:   Impact, 'Arial Narrow', 'Arial Black', sans-serif;
+}
+
+/*──────────────────────────── Reset ────────────────────────────*/
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  background:var(--bg);color:var(--txt);
+  font-family:'Courier New',Courier,monospace;
+  display:flex;flex-direction:column;height:100dvh;overflow:hidden;
+  user-select:none;-webkit-user-select:none
+}
+
+/* Film-grain overlay — aged paper / stained texture */
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  opacity:0.04;
+  background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23g)'/></svg>");
+  background-size:200px 200px
+}
+
+/*──────────────────────────── Top HUD ──────────────────────────*/
+#hud{
+  display:flex;align-items:center;gap:8px;padding:3px 8px;flex-wrap:wrap;
+  background:var(--bg-card);
+  border-bottom:2px solid var(--bdr-mid);
+  min-height:36px;flex-shrink:0;
+  /* rusted-metal horizontal banding */
+  background-image:repeating-linear-gradient(
+    to bottom,
+    transparent 0px,transparent 1px,
+    rgba(0,0,0,0.20) 1px,rgba(0,0,0,0.20) 2px
+  )
+}
+#hud-title{
+  font-family:var(--stencil);
+  color:var(--gold);font-size:13px;letter-spacing:5px;white-space:nowrap;
+  text-shadow:0 0 14px rgba(196,140,10,0.45),0 1px 0 #000
+}
+#hud-status{
+  display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt);
+  white-space:nowrap;flex:1;letter-spacing:1px
+}
+.conn-dot{color:var(--gold-hi);font-size:10px;min-width:8px}
+.hud-stat{padding:0 4px;color:var(--txt-dim);letter-spacing:0.5px}
+#hud-res{display:none;gap:6px;align-items:center}
+.hr-item{display:flex;align-items:center;gap:3px}
+.hr-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.hr-val{font-size:12px;color:var(--gold-hi);min-width:14px;text-align:right}
+
+.hud-btn{
+  background:var(--bg-panel);border:1px solid var(--bdr-mid);
+  color:var(--gold);font-family:'Courier New',monospace;
+  font-size:12px;padding:3px 9px;cursor:pointer;
+  border-radius:2px;white-space:nowrap;letter-spacing:1px;text-transform:uppercase
+}
+.hud-btn:hover{border-color:var(--gold);color:var(--gold-hi)}
+.hud-btn:active{background:var(--rust);border-color:var(--gold);color:#E8D080}
+
+/* HUD LL mini-track ─────────────────────────────────────────── */
+#hud-ll{
+  display:flex;align-items:center;gap:4px;
+  padding:2px 6px;border:1px solid var(--bdr-mid);border-radius:2px;
+  background:var(--bg-panel);white-space:nowrap
+}
+.hud-ll-lbl{
+  font-size:9px;color:var(--txt-dim);letter-spacing:1px;
+  font-family:'Courier New',monospace;text-transform:uppercase
+}
+.hud-ll-val{
+  font-size:11px;color:var(--gold-hi);min-width:10px;
+  text-align:right;font-family:'Courier New',monospace
+}
+#hud-ll .track-boxes{gap:2px}
+#hud-ll .track-box{width:9px;height:11px;border-radius:1px}
+
+/*──────────────────────────── Main layout ──────────────────────*/
+#main{display:flex;flex:1;overflow:hidden;position:relative}
+#canvas-wrap{flex:1;position:relative;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+
+/*──────────────────────────── Sidebar ──────────────────────────*/
+#sidebar{
+  width:152px;min-width:152px;
+  background:var(--bg-panel);
+  border-left:1px solid var(--bdr-mid);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
+  /* stained-paper aging at top-right corner */
+  background-image:radial-gradient(
+    ellipse at 90% 0%, rgba(50,32,8,0.18) 0%, transparent 55%
+  )
+}
+.side-panel{padding:7px;border-bottom:1px dashed var(--bdr-mid)}
+.side-panel h3,#players-panel>h3{
+  font-family:var(--stencil);
+  font-size:12px;color:var(--ash);
+  letter-spacing:3px;margin-bottom:5px;text-transform:uppercase;
+  text-shadow:0 1px 0 #000
+}
+#players-panel>h3{margin-bottom:6px}
+.res-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;font-size:12px}
+.res-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.res-val{min-width:26px;text-align:right;color:var(--gold-hi)}
+.res-name{color:var(--txt-dim);font-size:12px}
+#my-score{
+  font-size:18px;color:var(--gold-hi);font-weight:bold;
+  text-shadow:0 0 10px rgba(228,180,32,0.35)
+}
+#pos-info{font-size:12px;color:var(--txt-dim);margin-top:1px;letter-spacing:1px}
+#players-panel{padding:7px;flex:1;overflow-y:auto}
+.player-row{display:flex;align-items:center;gap:4px;margin-bottom:4px;font-size:12px}
+.p-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.p-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.p-name.me{color:var(--gold-hi);font-weight:bold}
+.p-sc{color:var(--txt-dim);font-size:12px;white-space:nowrap}
+
+/*──────────────────────── Terrain Card ─────────────────────────*/
+#terrain-card{
+  position:absolute;top:8px;right:8px;width:196px;
+  background:var(--bg-card);border:1px solid var(--bdr-mid);
+  border-radius:2px;cursor:pointer;z-index:5;
+  transition:border-color 0.2s;
+  box-shadow:inset 0 0 0 1px rgba(92,60,22,0.2)
+}
+#terrain-card:hover{border-color:var(--gold)}
+#tc-header{display:flex;align-items:center;gap:6px;padding:6px 8px}
+#tc-icon{
+  width:28px;height:28px;border-radius:2px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:16px
+}
+#tc-text{flex:1;min-width:0}
+#tc-name{
+  font-size:12px;color:var(--gold);font-weight:bold;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0.5px
+}
+#tc-sub{font-size:12px;color:var(--txt-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tc-vis-badge{font-size:12px;letter-spacing:0.5px;margin-top:1px;display:none}
+#tc-arrow{margin-left:auto;font-size:12px;color:var(--bdr-hi);transition:transform 0.2s;flex-shrink:0}
+#terrain-card.expanded #tc-arrow{transform:rotate(90deg)}
+
+/*──────────────────────── Hex Info Popup ───────────────────────*/
+#hex-info{
+  position:absolute;top:68px;right:8px;width:196px;
+  background:var(--bg-card);border:1px solid var(--bdr-hi);
+  border-radius:2px;padding:12px;z-index:6;display:none;
+  max-height:calc(85dvh - 100px);overflow-y:auto;
+  box-shadow:0 4px 28px rgba(0,0,0,0.65)
+}
+#hex-info.open{display:block}
+
+/* ── Action panel modal overlay ──────────────────────────────── */
+#action-panel{
+  position:fixed;inset:0;
+  background:rgba(4,3,2,0.88);
+  display:none;align-items:center;justify-content:center;
+  z-index:18
+}
+#action-panel.open{display:flex}
+#action-box{
+  background:var(--bg-panel);border:1px solid var(--bdr-hi);
+  border-radius:2px;padding:16px 18px;
+  width:min(320px,92vw);max-height:90dvh;overflow-y:auto;
+  position:relative;
+  box-shadow:0 0 48px rgba(0,0,0,0.85),inset 0 0 0 1px rgba(92,60,22,0.2);
+  animation:action-in 0.15s ease-out
+}
+@keyframes action-in{
+  from{opacity:0;transform:scale(0.95) translateY(8px)}
+  to  {opacity:1;transform:scale(1)    translateY(0)  }
+}
+#action-box h2{
+  font-family:var(--stencil);font-size:13px;color:var(--gold);
+  letter-spacing:3px;margin-bottom:10px;
+  text-shadow:0 0 10px rgba(196,140,10,0.35)
+}
+#action-close{position:absolute;top:10px;right:12px;cursor:pointer;
+  color:var(--txt-dim);font-size:15px;line-height:1}
+#action-close:hover{color:var(--gold)}
+#action-status-bar{
+  display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.act-mp-badge{
+  font-size:11px;color:var(--gold);border:1px solid var(--bdr-hi);
+  padding:1px 6px;border-radius:2px;letter-spacing:1px}
+.act-used-badge{
+  font-size:11px;color:#6A2020;border:1px solid #4A1208;
+  padding:1px 6px;border-radius:2px;letter-spacing:0.5px}
+.act-avail-badge{
+  font-size:11px;color:#2A5C20;border:1px solid #1E4010;
+  padding:1px 6px;border-radius:2px;letter-spacing:0.5px}
+#action-btn-list{display:flex;flex-direction:column;gap:4px}
+.action-item-btn{
+  width:100%;background:transparent;
+  border:1px solid var(--bdr-hi);color:var(--txt);
+  font-family:'Courier New',monospace;font-size:11px;letter-spacing:0.5px;
+  padding:6px 8px;cursor:pointer;border-radius:2px;
+  display:flex;align-items:center;gap:6px;transition:border-color 0.15s,background 0.15s
+}
+.action-item-btn:hover:not(.action-disabled){
+  border-color:var(--gold);background:var(--rust)}
+.action-item-btn.action-disabled{
+  opacity:0.38;cursor:not-allowed;border-color:var(--bdr)}
+.act-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
+.act-label{flex:1;text-align:left;letter-spacing:1px}
+.act-cost{font-size:10px;color:var(--txt-dim);flex-shrink:0}
+.action-no-cond{font-size:12px;color:var(--txt-dim);padding:4px 0;font-style:italic}
+.action-settl-note{font-size:10px;color:#FFD700;letter-spacing:0.5px;padding:2px 0 4px;opacity:0.85}
+/* ACTION HUD button dims when action is used today */
+#action-hud-btn.action-btn-used{opacity:0.45}
+/* ── Shared action/treat button style ────────────────────────── */
+/* Also used by WATER sub-control, TREAT buttons, and the push bar */
+.check-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.check-lbl{font-size:12px;color:var(--txt-dim);letter-spacing:0.5px}
+.check-dn-ctrl{display:flex;align-items:center;gap:5px}
+.check-dn-ctrl button{
+  background:var(--bg-mid,#160D04);border:1px solid var(--bdr-mid);
+  color:var(--ash);width:22px;height:22px;font-size:16px;line-height:1;
+  cursor:pointer;padding:0;border-radius:2px
+}
+.check-dn-ctrl button:hover{border-color:var(--gold);color:var(--gold)}
+.chk-action-btn{
+  width:100%;margin-top:5px;background:transparent;
+  border:1px solid var(--gold);color:var(--gold);
+  font-family:'Courier New',monospace;font-size:12px;letter-spacing:1px;
+  padding:6px 4px;cursor:pointer;border-radius:2px;transition:background 0.15s
+}
+.chk-action-btn:hover{background:var(--rust)}
+.chk-action-btn.push-btn{border-color:var(--ash);color:var(--ash)}
+.chk-action-btn.push-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--rust)}
+#hex-info h2{
+  font-family:var(--stencil);
+  font-size:13px;color:var(--gold);letter-spacing:3px;margin-bottom:8px;
+  display:flex;align-items:center;gap:8px;
+  text-shadow:0 0 10px rgba(196,140,10,0.35)
+}
+#hex-info h2 span.hi-icon{font-size:20px}
+.hi-row{display:flex;gap:6px;margin-bottom:5px;font-size:12px;align-items:flex-start}
+.hi-label{color:var(--txt-dim);min-width:72px;flex-shrink:0;letter-spacing:0.5px}
+.hi-val{color:var(--txt);flex:1;word-break:break-word}
+.hi-desc{
+  font-size:12px;color:var(--txt-dim);line-height:1.6;margin-top:6px;
+  border-top:1px solid var(--bdr);padding-top:6px
+}
+#hi-tag-list{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+#hi-res-list{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.hi-badge{font-size:12px;padding:2px 6px;border-radius:10px;border:1px solid;color:#888;border-color:#888}
+#hex-close{position:absolute;top:6px;right:8px;cursor:pointer;font-size:14px;color:var(--bdr-hi)}
+#hex-close:hover{color:var(--gold)}
+
+/*──────────────────────── Character Sheet ──────────────────────*/
+#char-overlay{
+  position:fixed;inset:0;background:rgba(4,3,2,0.93);
+  display:none;align-items:center;justify-content:center;z-index:20
+}
+#char-overlay.open{display:flex}
+#char-sheet{
+  background:var(--bg-panel);border:1px solid var(--bdr-hi);
+  border-radius:2px;padding:20px 24px;
+  width:min(400px,94vw);max-height:90dvh;overflow-y:auto;position:relative;
+  box-shadow:0 0 48px rgba(0,0,0,0.85)
+}
+#char-sheet h2{
+  font-family:var(--stencil);
+  color:var(--gold);font-size:16px;letter-spacing:4px;
+  margin-bottom:16px;border-bottom:1px solid var(--bdr-mid);padding-bottom:8px;
+  text-shadow:0 0 14px rgba(196,140,10,0.35)
+}
+#char-close{position:absolute;top:12px;right:14px;cursor:pointer;font-size:18px;color:var(--bdr-hi)}
+#char-close:hover{color:var(--gold)}
+.cs-section{margin-bottom:14px}
+.cs-section h3{
+  font-family:var(--stencil);
+  font-size:12px;color:var(--ash);letter-spacing:3px;
+  margin-bottom:8px;text-transform:uppercase;text-shadow:0 1px 0 #000
+}
+.cs-name-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+#cs-name-input{
+  flex:1;background:var(--bg-input);border:1px solid var(--bdr-mid);
+  color:var(--gold-hi);padding:5px 8px;font-family:'Courier New',monospace;
+  font-size:14px;border-radius:2px;letter-spacing:1px
+}
+#cs-name-input:focus{outline:none;border-color:var(--gold)}
+#cs-name-btn{
+  background:var(--bg-card);border:1px solid var(--bdr-mid);color:var(--gold);
+  font-family:'Courier New',monospace;font-size:12px;padding:5px 12px;
+  cursor:pointer;border-radius:2px;white-space:nowrap;
+  letter-spacing:1px;text-transform:uppercase
+}
+#cs-name-btn:active{background:var(--rust);border-color:var(--gold)}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-box{
+  background:var(--bg-input);border:1px solid var(--bdr);
+  border-radius:2px;padding:8px;text-align:center
+}
+.stat-val{font-size:22px;color:var(--gold-hi);font-weight:bold;line-height:1}
+.stat-label{
+  font-family:var(--stencil);
+  font-size:12px;color:var(--txt-dim);letter-spacing:1.5px;margin-top:3px
+}
+#cs-arch-banner{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;margin-bottom:10px;
+  background:var(--bg-input);border:1px solid var(--bdr);border-radius:2px
+}
+#cs-arch-icon{font-size:20px;line-height:1}
+#cs-arch-name{
+  font-family:var(--stencil);font-size:16px;letter-spacing:3px;font-weight:bold
+}
+#cs-skills-grid{display:flex;flex-direction:column;gap:5px;margin-bottom:6px}
+.cs-skill-row{display:flex;align-items:center;gap:8px}
+.cs-skill-name{
+  font-family:var(--stencil);font-size:11px;letter-spacing:1.5px;
+  color:var(--ash);width:38px;flex-shrink:0
+}
+.cs-skill-dots{display:flex;gap:5px}
+.cs-skill-dot{
+  width:11px;height:11px;border-radius:50%;
+  border:1px solid var(--bdr-mid);background:var(--bg-card)
+}
+.cs-skill-dot.filled{background:var(--gold);border-color:var(--gold-hi);box-shadow:0 0 5px rgba(228,180,32,0.55)}
+.cs-skill-level{
+  font-family:var(--stencil);font-size:10px;letter-spacing:1px;
+  color:var(--txt-dim)
+}
+.stat-bar-wrap{margin-top:10px}
+.stat-bar-label{display:flex;justify-content:space-between;font-size:12px;color:var(--txt-dim);margin-bottom:3px}
+.stat-bar{height:6px;background:var(--bg-input);border-radius:2px;overflow:hidden;border:1px solid var(--bdr)}
+.stat-bar-fill{height:100%;border-radius:2px;transition:width 0.4s}
+.inv-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.inv-box{
+  background:var(--bg-input);border:1px solid var(--bdr);
+  border-radius:2px;padding:6px 4px;text-align:center
+}
+.inv-box .dot{width:12px;height:12px;border-radius:50%;margin:0 auto 3px}
+.inv-box .qty{font-size:14px;color:var(--gold-hi);font-weight:bold}
+.inv-box .lbl{
+  font-family:var(--stencil);
+  font-size:12px;color:var(--txt-dim);letter-spacing:0.5px;text-transform:uppercase
+}
+.total-score{
+  text-align:center;padding:10px;background:var(--bg-input);
+  border:1px solid var(--bdr);border-radius:2px
+}
+.total-score .big{
+  font-size:28px;color:var(--gold-hi);font-weight:bold;
+  text-shadow:0 0 12px rgba(228,180,32,0.35)
+}
+.total-score .lbl{
+  font-family:var(--stencil);
+  font-size:12px;color:var(--ash);letter-spacing:2px
+}
+
+/*──────────────────────────── Controls ─────────────────────────*/
+#controls{
+  display:flex;justify-content:center;align-items:center;
+  padding:5px;
+  background:var(--bg-card);
+  border-top:2px solid var(--bdr-mid);
+  gap:8px;flex-shrink:0;
+  background-image:repeating-linear-gradient(
+    to bottom,
+    transparent 0px,transparent 1px,
+    rgba(0,0,0,0.18) 1px,rgba(0,0,0,0.18) 2px
+  )
+}
+.dir-btn{
+  background:var(--bg-panel);border:1px solid var(--bdr-mid);
+  color:var(--gold);font-size:16px;border-radius:3px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;flex-shrink:0;
+  touch-action:manipulation;
+  box-shadow:0 2px 0 var(--bdr),inset 0 1px 0 rgba(255,255,255,0.04)
+}
+.dir-btn:active,.dir-btn.pressed{
+  background:var(--rust);border-color:var(--gold-hi);color:#E8D080;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,0.55)
+}
+.dir-btn.empty{
+  background:transparent;border:1px dashed var(--bdr);
+  pointer-events:none;color:var(--bdr)
+}
+
+/* Cooldown flash — brief blood-red pulse when move is rejected */
+@keyframes cd-flash{
+  0%  {background:var(--blood);border-color:#882020;color:#C06060}
+  100%{background:var(--bg-panel);border-color:var(--bdr-mid);color:var(--gold)}
+}
+.dir-btn.on-cooldown{animation:cd-flash 0.3s ease-out}
+
+/*──────────────────────────── Overlays ─────────────────────────*/
+#connect-overlay{
+  position:fixed;inset:0;background:rgba(4,3,2,0.93);
+  display:flex;align-items:center;justify-content:center;z-index:30;
+  transition:opacity 0.5s
+}
+#connect-box{
+  border:1px solid var(--bdr-hi);background:var(--bg-panel);
+  padding:28px 36px;text-align:center;max-width:300px;border-radius:2px;
+  box-shadow:0 0 48px rgba(0,0,0,0.85),inset 0 0 0 1px rgba(92,60,22,0.2)
+}
+#connect-box h2{
+  font-family:var(--stencil);
+  color:var(--gold);font-size:22px;letter-spacing:6px;margin-bottom:12px;
+  text-shadow:0 0 18px rgba(196,140,10,0.55)
+}
+#connect-box p{font-size:12px;color:var(--txt-dim);line-height:1.8;letter-spacing:0.5px}
+.blink-dot{
+  display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:var(--gold);animation:blink 1s infinite
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.1}}
+
+/*──────────────────────────── Toast stack ──────────────────────*/
+#toast-stack{
+  position:fixed;top:48px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:5px;align-items:center;
+  z-index:25;pointer-events:none
+}
+@keyframes toast-in{
+  from{opacity:0;transform:translateY(-8px) scale(0.94)}
+  to  {opacity:1;transform:translateY(0)    scale(1)   }
+}
+@keyframes toast-out{
+  from{opacity:1;transform:scale(1)   }
+  to  {opacity:0;transform:scale(0.93)}
+}
+.toast-item{
+  background:var(--bg-card);border:1px solid var(--bdr-hi);
+  color:var(--gold-hi);padding:5px 14px;font-size:12px;
+  border-radius:2px;white-space:nowrap;
+  letter-spacing:2px;text-transform:uppercase;
+  animation:toast-in 0.22s ease-out forwards
+}
+.toast-item.dying{animation:toast-out 0.3s ease-in forwards}
+
+/*──────────────────────────── Log panel ────────────────────────*/
+#log-panel{
+  width:136px;min-width:136px;
+  background:var(--bg-deep);
+  border-left:1px solid var(--bdr);
+  font-size:12px;color:var(--txt-dim);
+  overflow:hidden;flex-shrink:0
+}
+#log-inner{
+  padding:5px;display:flex;flex-direction:column;
+  justify-content:flex-end;height:100%;overflow:hidden
+}
+.log-line{margin-bottom:2px;line-height:1.4;word-break:break-word}
+.log-col       {color:#5A9228}  /* sickly yellow-green — resource collected */
+.log-rsp       {color:#2A5480}  /* cold steel blue — respawn */
+.log-mv        {color:#9A8868}  /* weathered brown — movement */
+.log-join      {color:#C4B840}  /* olive — player joined */
+.log-check-ok  {color:#88C040}  /* dim green — skill check success */
+.log-check-fail{color:#C84830}  /* dried blood — skill check fail */
+
+/*──────────────────────────── Menu System ──────────────────────*/
+#menu-overlay{
+  position:fixed;inset:0;background:rgba(4,3,2,0.96);
+  display:none;align-items:center;justify-content:center;z-index:22
+}
+#menu-overlay.open{display:flex}
+#menu-box{
+  background:var(--bg-panel);border:1px solid var(--bdr-hi);
+  border-radius:2px;width:min(500px,96vw);max-height:90dvh;
+  overflow-y:auto;position:relative;
+  box-shadow:0 0 60px rgba(0,0,0,0.9),inset 0 0 0 1px rgba(92,60,22,0.15)
+}
+#menu-content{padding:22px 26px}
+.menu-page{animation:menu-slide-in 0.17s ease-out}
+@keyframes menu-slide-in{
+  from{opacity:0;transform:translateX(12px)}
+  to  {opacity:1;transform:translateX(0)}
+}
+.menu-title{
+  font-family:var(--stencil);color:var(--gold);
+  font-size:18px;letter-spacing:5px;
+  margin-bottom:20px;border-bottom:1px solid var(--bdr-mid);padding-bottom:10px;
+  text-shadow:0 0 16px rgba(196,140,10,0.4)
+}
+.menu-sub-title{
+  font-family:var(--stencil);color:var(--gold);
+  font-size:14px;letter-spacing:4px;margin-bottom:16px
+}
+.menu-item-btn{
+  display:block;width:100%;
+  background:var(--bg-card);border:1px solid var(--bdr-mid);
+  color:var(--txt);font-family:'Courier New',monospace;
+  font-size:12px;padding:11px 16px;text-align:left;
+  cursor:pointer;border-radius:2px;margin-bottom:6px;
+  letter-spacing:2px;text-transform:uppercase;
+  transition:border-color 0.15s,color 0.15s,background 0.15s
+}
+.menu-item-btn:hover{border-color:var(--gold);color:var(--gold-hi)}
+.menu-item-btn:active{background:var(--rust)}
+.menu-resume-btn{
+  display:block;width:100%;
+  background:transparent;border:1px dashed var(--bdr-mid);
+  color:var(--txt-dim);font-family:'Courier New',monospace;
+  font-size:12px;padding:9px 16px;text-align:center;
+  cursor:pointer;border-radius:2px;margin-top:12px;
+  letter-spacing:2px;text-transform:uppercase;
+  transition:border-color 0.15s,color 0.15s
+}
+.menu-resume-btn:hover{border-color:var(--gold);color:var(--gold)}
+.menu-back{
+  background:transparent;border:none;
+  color:var(--txt-dim);font-family:'Courier New',monospace;
+  font-size:12px;padding:0;cursor:pointer;
+  letter-spacing:1.5px;text-transform:uppercase;
+  margin-bottom:14px;display:block
+}
+.menu-back:hover{color:var(--gold)}
+.menu-section{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--bdr)}
+.menu-section:last-child{border-bottom:none;margin-bottom:0}
+.menu-section-title{
+  font-family:var(--stencil);font-size:12px;color:var(--ash);
+  letter-spacing:3px;margin-bottom:8px;text-transform:uppercase
+}
+.ctrl-ref{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.key-grid{display:grid;grid-template-columns:repeat(3,28px);gap:3px;margin-bottom:6px}
+.key-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--bg-input);border:1px solid var(--bdr-hi);
+  color:var(--gold-hi);font-size:12px;border-radius:2px;
+  font-family:'Courier New',monospace;min-width:26px;height:22px;
+  box-shadow:0 2px 0 var(--bdr)
+}
+.key-dir-grid{
+  display:grid;grid-template-columns:repeat(3,28px);
+  gap:3px;font-size:12px;color:var(--txt-dim);text-align:center
+}
+.terrain-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:5px
+}
+.terrain-ref-card{
+  background:var(--bg-input);border:1px solid var(--bdr);
+  border-radius:2px;padding:6px 7px
+}
+.tr-head{display:flex;align-items:flex-start;gap:5px;margin-bottom:3px}
+.tr-icon{font-size:14px;line-height:1.1;flex-shrink:0}
+.tr-name{font-size:12px;color:var(--gold);font-weight:bold;letter-spacing:0.4px;line-height:1.25}
+.tr-stats{font-size:12px;color:var(--txt-dim);letter-spacing:0.3px}
+.tr-vis-hi {color:#55FFBB}
+.tr-vis-pen{color:#FF8855}
+.res-ref-list{display:flex;flex-direction:column;gap:5px}
+.res-ref-row{display:flex;align-items:center;gap:8px}
+.res-ref-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.res-ref-name{color:var(--gold);min-width:70px;font-size:12px}
+.res-ref-desc{color:var(--txt-dim);font-size:12px}
+.settings-row{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--bdr)}
+.settings-row:last-child{border-bottom:none;margin-bottom:0}
+.settings-label{
+  font-family:var(--stencil);font-size:12px;color:var(--ash);
+  letter-spacing:2px;text-transform:uppercase;margin-bottom:6px
+}
+.settings-name-row{display:flex;gap:8px;align-items:center}
+.settings-name-input{
+  flex:1;background:var(--bg-input);border:1px solid var(--bdr-mid);
+  color:var(--gold-hi);padding:5px 8px;font-family:'Courier New',monospace;
+  font-size:13px;border-radius:2px;letter-spacing:1px
+}
+.settings-name-input:focus{outline:none;border-color:var(--gold)}
+.settings-val{font-size:12px;color:var(--txt-dim);line-height:1.7}
+.about-logo{
+  font-family:var(--stencil);color:var(--gold);font-size:22px;
+  letter-spacing:6px;text-align:center;
+  text-shadow:0 0 20px rgba(196,140,10,0.5);margin-bottom:8px
+}
+.about-sub{color:var(--txt-dim);font-size:12px;text-align:center;line-height:1.8;letter-spacing:0.5px}
+.about-ver{color:var(--bdr-hi);font-size:12px;text-align:center;margin-top:10px;letter-spacing:1px}
+
+/*──────────── Bump animation (inventory / score gain) ──────────*/
+@keyframes bump{
+  0%  {transform:scale(1);   color:var(--gold-hi)}
+  28% {transform:scale(1.40);color:#FFE860}
+  65% {transform:scale(1.14);color:#FFD040}
+  100%{transform:scale(1);   color:var(--gold-hi)}
+}
+.bumped{animation:bump 0.42s ease-out}
+
+/*──────────── Floating score delta (+N) ────────────────────────*/
+@keyframes score-pop{
+  0%  {opacity:1;transform:translateY(0)}
+  55% {opacity:1;transform:translateY(-18px)}
+  100%{opacity:0;transform:translateY(-30px)}
+}
+.score-delta{
+  position:absolute;left:calc(100% + 6px);top:2px;
+  color:var(--gold-hi);font-size:13px;font-weight:bold;
+  white-space:nowrap;pointer-events:none;
+  text-shadow:0 0 8px rgba(228,180,32,0.6);
+  animation:score-pop 1.5s ease-out forwards
+}
+#score-wrap{position:relative;display:inline-block}
+
+/*──────────── Player list rank badge ───────────────────────────*/
+.p-rank{
+  font-family:var(--stencil);font-size:12px;
+  color:var(--txt-dim);min-width:16px;flex-shrink:0;letter-spacing:0.5px
+}
+.p-rank.gold{color:var(--gold)}
+
+/*──────────── Cooldown SVG ring ────────────────────────────────*/
+#cd-center{overflow:visible}
+#cd-center svg{display:block;overflow:visible}
+
+/*──────────────────────────── Responsive ───────────────────────*/
+/* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */
+.hr-lbl{display:none;font-size:12px;color:var(--txt-dim);letter-spacing:0.5px}
+#hud-score-wrap{display:none;align-items:center;gap:3px}
+#hud-score{font-size:12px;color:var(--gold-hi);white-space:nowrap;letter-spacing:1px}
+
+/* Squeeze HUD title at mid-range widths to prevent wrapping */
+@media(max-width:600px) and (min-width:481px){
+  #hud-title{letter-spacing:2px}
+}
+
+@media(max-width:480px){
+  #sidebar{display:none}#log-panel{display:none}
+  #hud-score-wrap{display:inline-flex}
+  .dir-btn{width:40px;height:40px;font-size:18px}
+  #terrain-card{width:min(170px,calc(100vw - 16px))}
+  #hex-info{width:min(170px,calc(100vw - 16px))}
+  #action-box{width:min(290px,88vw)}
+}
+@media(max-height:480px){
+  .dir-btn{width:30px;height:30px;font-size:13px}
+}
+
+/*──────────────────────── Survival Tracks (§4) ─────────────────*/
+.track-row{display:flex;align-items:center;gap:5px;margin:5px 0}
+.track-label{font-size:12px;letter-spacing:1px;color:var(--ash);width:44px;font-family:var(--stencil);flex-shrink:0}
+.track-boxes{display:flex;gap:2px;flex-shrink:0}
+.track-box{
+  width:13px;height:13px;border:1px solid #302A20;border-radius:1px;
+  background:var(--bg-deep);flex-shrink:0;position:relative
+}
+.track-box.filled{background:var(--gold);border-color:var(--gold-hi)}
+/* thresh: threshold is armed (not yet fired) — orange downward arrow warning */
+.track-box.thresh::after{
+  content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);
+  width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;
+  border-top:3px solid #FF6644
+}
+.track-box.thresh-filled::after{border-top-color:var(--gold-hi)}
+/* thresh-spent: threshold has fired — dimmed arrow showing past danger zone */
+.track-box.thresh-spent::after{
+  content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);
+  width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;
+  border-top:3px solid #5A3322;opacity:0.7
+}
+.track-box.thresh-spent-filled::after{
+  content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);
+  width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;
+  border-top:3px solid #7A5533;opacity:0.7
+}
+.track-val{
+  font-size:12px;font-family:'Courier New',monospace;color:var(--gold);
+  min-width:14px;text-align:right;flex-shrink:0
+}
+.track-suffix{font-size:12px;color:var(--txt-dim);letter-spacing:0.3px}
+.resolve-token{
+  display:inline-block;width:11px;height:11px;border-radius:50%;
+  border:1px solid #5C4010;margin:0 2px;background:var(--bg-deep);
+  vertical-align:middle
+}
+.resolve-token.filled{background:var(--gold);border-color:var(--gold-hi)}
+
+/* ── Radiation track ──────────────────────────────────────────── */
+/* Smaller boxes for 10-count R track */
+.rad-track .track-box{width:10px;height:13px}
+/* Colour zones */
+.rad-track .track-box.rad-filled        {background:#3A6622;border-color:#5A9933}  /* R1-3  green */
+.rad-track .track-box.rad-filled-yellow {background:#7A6010;border-color:#BBAA22}  /* R4-6  yellow */
+.rad-track .track-box.rad-filled-red    {background:#7A1A0A;border-color:#CC3311}  /* R7-10 red */
+/* Threshold arrows: identical style, no fired-mask logic needed for R track */
+.rad-track .track-box.thresh::after,
+.rad-track .track-box.thresh-filled::after{border-top-color:#BBAA22}
+/* Status suffix labels */
+.rad-status-sick    {color:#BBAA22 !important;letter-spacing:0.4px}
+.rad-status-critical{color:#CC3311 !important;letter-spacing:0.4px;animation:rad-pulse 1.2s ease-in-out infinite}
+@keyframes rad-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+
+/*──────────────────────── Focus visible ────────────────────────*/
+.hud-btn:focus-visible,
+.dir-btn:focus-visible,
+.menu-item-btn:focus-visible,
+.menu-resume-btn:focus-visible,
+.menu-back:focus-visible,
+#cs-name-btn:focus-visible{
+  outline:1px solid var(--gold);outline-offset:2px
+}
+
+/*──────────── Resource dot colours (shared: HUD / sidebar / inv / guide) ─*/
+.dot-water{background:#2A5C8A}
+.dot-food {background:#4A7828}
+.dot-fuel {background:#8C4418}
+.dot-med  {background:#7A1E1E}
+.dot-scrap{background:#5C5448}
+
+/*──────────── Stamina bar gradient states ───────────────────────*/
+.stat-bar-fill{background:linear-gradient(90deg,#44BB44,#88FF44)}
+.stat-bar-fill[data-level="mid"]{background:linear-gradient(90deg,#BB8800,#FFCC00)}
+.stat-bar-fill[data-level="low"]{background:linear-gradient(90deg,#BB2200,#FF5500)}
+
+/*──────────── Push-roll bar (floats at bottom of canvas) ───────*/
+/* Hidden until last check fails and fatigue allows a push */
+.push-roll-bar{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  z-index:7;display:none;
+  width:calc(100% - 32px);max-width:260px;
+  background:rgba(8,6,4,0.82);
+  border:1px solid var(--ash);color:var(--ash);
+  font-family:'Courier New',monospace;font-size:12px;letter-spacing:1.2px;
+  padding:7px 4px;cursor:pointer;border-radius:2px;
+  transition:border-color 0.15s,color 0.15s,background 0.15s;
+  backdrop-filter:blur(2px)
+}
+.push-roll-bar:hover{border-color:var(--gold);color:var(--gold);background:var(--rust)}
+#check-push-btn{display:none}
+#check-push-btn.push-visible{display:block}
+
+/*──────────── Server-full retry button ─────────────────────────*/
+.server-full-retry-btn{
+  margin-top:16px;background:var(--bg-card);
+  border:1px solid var(--bdr-mid);color:var(--gold);
+  font-family:'Courier New',monospace;font-size:12px;
+  padding:6px 18px;cursor:pointer;border-radius:2px;
+  letter-spacing:1px;display:block;width:100%
+}
+
+/*──────────── Push log fatigue suffix ──────────────────────────*/
+.log-fat-lbl{color:var(--txt-dim)}
+
+/*──────────── Hex info — no-resource placeholder ───────────────*/
+.res-none-label{color:#444}
+
+/*──────────── Terrain card vis-badge states ─────────────────────*/
+#tc-vis-badge.vis-high   {display:block;color:#55FFBB;letter-spacing:0.5px}
+#tc-vis-badge.vis-penalty{display:block;color:#FF8855;letter-spacing:0.5px}
+
+/*──────────── Hi-badge tag colours ─────────────────────────────*/
+.hi-badge.tag-HighVis   {color:#55FFBB;border-color:#55FFBB}
+.hi-badge.tag-VisPenalty{color:#FF8855;border-color:#FF8855}
+.hi-badge.tag-HighGround{color:#AAAAFF;border-color:#AAAAFF}
+.hi-badge.tag-Radiation {color:#BBFF44;border-color:#BBFF44}
+.hi-badge.tag-Forage    {color:#88AA44;border-color:#88AA44}
+.hi-badge.tag-Water     {color:#2288EE;border-color:#2288EE}
+.hi-badge.tag-Hazard    {color:#FF4444;border-color:#FF4444}
+.hi-badge.tag-Salvage   {color:#999999;border-color:#999999}
+.hi-badge.tag-Landmark  {color:#FFD700;border-color:#FFD700}
+.hi-badge.tag-Safe      {color:#44CC44;border-color:#44CC44}
+.hi-badge.tag-Trade     {color:#FFB844;border-color:#FFB844}
+.hi-badge.tag-Impassable{color:#FF2222;border-color:#FF2222}
+
+/*──────────── Hi-badge resource colours ────────────────────────*/
+.hi-badge.res-water{color:#2A5C8A;border-color:#2A5C8A}
+.hi-badge.res-food {color:#4A7828;border-color:#4A7828}
+.hi-badge.res-fuel {color:#8C4418;border-color:#8C4418}
+.hi-badge.res-med  {color:#7A1E1E;border-color:#7A1E1E}
+.hi-badge.res-scrap{color:#5C5448;border-color:#5C5448}
+
+/*──────────── Connect overlay hide sequence ────────────────────*/
+#connect-overlay.fading-out{opacity:0}
+#connect-overlay.hidden    {display:none}
+
+/*──────────── HUD status connection-state colour ────────────────*/
+#hud-status[data-conn="Connected"]      {color:var(--gold)}
+#hud-status[data-conn="Reconnecting..."]{color:#C06030}
+
+/*──────────── Key-badge invisible spacer ───────────────────────*/
+.key-badge-hidden{visibility:hidden}
+
+/*──────────── Terrain ref: vis-type / movement-cost labels ─────*/
+.vis-std {color:var(--txt-dim)}
+.mc-block{color:#FF6655}
+
+/* ── §6.4 Exposure markers ─────────────────────────────────────*/
+/* Row hidden by JS when both cx/hx are 0 */
+.exposure-row{align-items:center;flex-wrap:wrap;gap:4px}
+
+/* Base badge chip */
+.exp-badge{
+  display:inline-flex;align-items:center;gap:3px;
+  font-size:10px;letter-spacing:0.5px;
+  padding:1px 5px;border-radius:2px;
+  border:1px solid transparent;
+  color:var(--txt-dim);background:var(--bg-deep);
+  opacity:0.4;transition:opacity 0.2s,border-color 0.2s
+}
+/* Lit-up when marker count > 0 */
+.exp-badge.active{opacity:1}
+
+/* Cold — steel blue */
+.exp-badge.cold        {border-color:#283C52}
+.exp-badge.cold.active {color:#7AB4D4;border-color:#3A6080;background:#0A1820}
+
+/* Heat — rust amber */
+.exp-badge.heat        {border-color:#502810}
+.exp-badge.heat.active {color:#D48040;border-color:#7A4010;background:#1A0C04}
+
+/* Effects summary text (e.g. "❄End−1 Nav−1 +Fat/Dawn") */
+.exp-effects{
+  font-size:9px;color:var(--txt-dim);letter-spacing:0.3px;
+  flex:1 1 100%;padding-left:2px;line-height:1.3
+}
+
+/* ── §6.5 Contamination count in water track ───────────────────*/
+/* Empty textContent collapses this naturally; just style when text is present */
+.contam-count{
+  font-size:9px;color:#88CC44;letter-spacing:0.4px;
+  margin-left:3px
+}
+
+/*──────────── Menu how-to-play body text / section labels ──────*/
+.menu-text-body{color:var(--txt-dim);line-height:1.75}
+.menu-text-hint{color:var(--txt-dim);margin-top:6px}
+.ctrl-label    {color:var(--ash);letter-spacing:1px;margin-bottom:6px}
+
+/*──────────── Menu name-OK button layout override ──────────────*/
+#menu-name-ok{width:auto;margin:0 0 0 8px;padding:6px 16px;white-space:nowrap}
+
+/*──────────── WiFi connect button ──────────────────────────────*/
+#wifi-connect{margin-top:4px}
+
+/*──────────── About page header wrapper ────────────────────────*/
+.about-header{padding:16px 0 10px}
+
+/*──────────── About sub / ver consecutive-sibling spacing ──────*/
+.about-sub+.about-sub{margin-top:14px}
+.about-ver+.about-ver{margin-top:4px}
+
+/*──────────── Cooldown SVG arc active state ────────────────────*/
+#cd-arc.cd-active{stroke:var(--gold)}
+
+/*──────────── Player dot (colour set via CSS custom property) ──*/
+.p-dot{background:var(--pc,#666)}
+
+/*══════════ Character Selection Overlay ════════════════════════*/
+#char-select-overlay{
+  position:fixed;inset:0;
+  background:rgba(5,3,1,0.97);
+  display:flex;align-items:flex-start;justify-content:center;
+  z-index:900;overflow-y:auto;
+  opacity:0;pointer-events:none;
+  transition:opacity 0.35s
+}
+#char-select-overlay.open{opacity:1;pointer-events:all}
+
+.cs-page{
+  width:100%;max-width:900px;
+  padding:16px 14px 24px;
+}
+
+.cs-sel-title{
+  font-family:var(--stencil);
+  color:var(--gold);font-size:19px;letter-spacing:6px;
+  text-align:center;margin-bottom:5px;
+  text-shadow:0 0 20px rgba(196,140,10,0.5)
+}
+.cs-sel-sub{
+  font-size:11px;color:var(--txt-dim);
+  text-align:center;letter-spacing:1px;
+  margin-bottom:16px;line-height:1.6
+}
+
+/*── Archetype grid ──────────────────────────────────────────────*/
+.arch-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px
+}
+@media(max-width:660px){.arch-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:420px){.arch-grid{grid-template-columns:1fr}}
+
+/*── Archetype card ──────────────────────────────────────────────*/
+.arch-card{
+  background:var(--bg-card);
+  border:1px solid var(--bdr-mid);
+  border-radius:2px;
+  padding:10px;
+  display:flex;flex-direction:column;gap:7px;
+  transition:border-color 0.15s
+}
+.arch-card:not(.arch-taken):hover{
+  border-color:var(--arch-color,var(--gold))
+}
+.arch-taken{opacity:0.38}
+
+.arch-header{
+  display:flex;align-items:center;gap:8px
+}
+.arch-icon{
+  font-size:24px;line-height:1;flex-shrink:0;
+  color:var(--arch-color,var(--gold))
+}
+.arch-name-wrap{flex:1;min-width:0}
+.arch-name{
+  font-family:var(--stencil);
+  color:var(--arch-color,var(--gold));
+  font-size:14px;letter-spacing:2px;
+  display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.arch-inv-label{
+  font-size:10px;color:var(--txt-dim);letter-spacing:1px
+}
+
+/*── Skill grid (3×2) ───────────────────────────────────────────*/
+.arch-skills{
+  display:grid;grid-template-columns:1fr 1fr;
+  gap:3px 6px
+}
+.arch-skill-row{
+  display:flex;align-items:center;gap:4px
+}
+.arch-sk-name{
+  font-size:9px;color:var(--txt-dim);
+  letter-spacing:1px;min-width:26px;flex-shrink:0
+}
+.arch-sk-val{font-size:11px;letter-spacing:1px}
+.sk-lvl-0{color:#2A1C0C}
+.sk-lvl-1{color:var(--gold)}
+.sk-lvl-2{color:var(--gold-hi)}
+
+/*── Trait blurb ────────────────────────────────────────────────*/
+.arch-trait{
+  font-size:10px;line-height:1.55;
+  color:var(--txt-dim);
+  border-left:2px solid var(--bdr-mid);
+  padding-left:7px;flex:1
+}
+.arch-trait-label{
+  color:var(--gold);font-size:9px;letter-spacing:1px
+}
+
+/*── Flavor text ────────────────────────────────────────────────*/
+.arch-flavor{
+  font-size:10px;line-height:1.4;
+  color:var(--txt-dim);
+  font-style:italic;
+  opacity:0.8;
+  padding:4px 0
+}
+
+/*── Card footer / select button ────────────────────────────────*/
+.arch-card-footer{margin-top:auto}
+.arch-select-btn{
+  width:100%;
+  background:transparent;
+  border:1px solid var(--bdr-mid);
+  color:var(--arch-color,var(--gold));
+  font-family:'Courier New',monospace;
+  font-size:11px;letter-spacing:2px;
+  padding:5px 4px;cursor:pointer;
+  text-transform:uppercase;
+  transition:background 0.12s,border-color 0.12s
+}
+.arch-select-btn:not(:disabled):hover{
+  background:rgba(106,48,8,0.5);
+  border-color:var(--arch-color,var(--gold))
+}
+.arch-select-btn:not(:disabled):active{
+  background:var(--arch-color,var(--gold));color:#000
+}
+.arch-select-btn:disabled,.arch-btn-pending{
+  opacity:0.5;cursor:not-allowed
+}
+.arch-taken-stamp{
+  font-family:var(--stencil);
+  color:var(--blood);font-size:11px;letter-spacing:3px;
+  border:1px solid var(--blood);
+  padding:4px 8px;display:block;text-align:center;
+  opacity:0.75
+}
