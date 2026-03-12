@@ -263,9 +263,10 @@ document.addEventListener('keyup', e => {
 
 // Swipe on canvas
 let swipeStart = null;
-canvas.addEventListener('pointerdown',  e => { swipeStart = { x: e.clientX, y: e.clientY }; });
-canvas.addEventListener('pointercancel',() => { swipeStart = null; });
-canvas.addEventListener('pointerup',   e => {
+const _swipeEl = document.getElementById('hexCanvas');
+_swipeEl.addEventListener('pointerdown',  e => { swipeStart = { x: e.clientX, y: e.clientY }; });
+_swipeEl.addEventListener('pointercancel',() => { swipeStart = null; });
+_swipeEl.addEventListener('pointerup',   e => {
   if (!swipeStart) return;
   const dx = e.clientX - swipeStart.x, dy = e.clientY - swipeStart.y;
   if (Math.hypot(dx, dy) < 20) { swipeStart = null; return; }

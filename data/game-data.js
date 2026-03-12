@@ -67,6 +67,7 @@ const TERRAIN = [
     hazard:'Lethal radiation, unstable ground',
     desc:'A direct-strike detonation crater. The ground is fused glass and irradiated rubble. Radiation at the rim is immediately lethal. No one goes in. No one comes back.' }
 ];
+const NUM_TERRAIN = TERRAIN.length;
 
 // Tag badge class names (matches .hi-badge.tag-X in style.css)
 const TAG_CLASS = {

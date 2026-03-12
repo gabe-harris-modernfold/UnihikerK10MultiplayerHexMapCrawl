@@ -70,6 +70,7 @@
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
 #include "unihiker_k10.h"
+#include "usb_drive.h"
 
 static const char* AP_SSID = "WASTELAND";
 
@@ -1020,20 +1021,20 @@ static void gameLoopTask(void* param) {
 }
 
 // ── Boot splash diagnostic log ─────────────────────────────────────────────
-// Scrolling 6-line status area (y=196–316) updated live during setup().
-static char     _sLog[6][30];
-static uint32_t _sCol[6];
+// Scrolling 14-line log; each entry 22 px tall → fills y=4..290 of the 320 px screen.
+static char     _sLog[14][30];
+static uint32_t _sCol[14];
 static uint8_t  _sN = 0;
 static void splashAdd(const char* msg, uint32_t col = 0x806040) {
-  if (_sN == 6) {
-    for (int i = 0; i < 5; i++) { memcpy(_sLog[i], _sLog[i+1], 30); _sCol[i] = _sCol[i+1]; }
-    _sN = 5;
+  if (_sN == 14) {
+    for (int i = 0; i < 13; i++) { memcpy(_sLog[i], _sLog[i+1], 30); _sCol[i] = _sCol[i+1]; }
+    _sN = 13;
   }
   snprintf(_sLog[_sN], 30, "%s", msg);
   _sCol[_sN++] = col;
-  k10.canvas->canvasRectangle(0, 194, 240, 126, 0x000000, 0x000000, true);
+  k10.canvas->canvasRectangle(0, 0, 240, 320, 0x000000, 0x000000, true);
   for (uint8_t i = 0; i < _sN; i++)
-    k10.canvas->canvasText(_sLog[i], 4, 196 + i*19,
+    k10.canvas->canvasText(_sLog[i], 4, 4 + i*22,
                            _sCol[i], Canvas::eCNAndENFont16, 50, false);
   k10.canvas->updateCanvas();
 }
@@ -1053,16 +1054,8 @@ void setup() {
   k10.initScreen(2, 0);   // portrait 240×320, no camera
   k10.creatCanvas();
   k10.setScreenBackground(0x000000);
-  // Boot splash — portrait 240×320, pixel-coord API
-  k10.canvas->canvasSetLineWidth(2);
-  k10.canvas->canvasLine(16, 78, 224, 78, 0x804010);
-  k10.canvas->canvasText("WASTELAND", 44, 88, 0xC89030, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasLine(16, 120, 224, 120, 0x804010);
-  k10.canvas->canvasSetLineWidth(1);
-  k10.canvas->canvasText("SSID: WASTELAND",   30, 148, 0x906040, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("192.168.4.1",        75, 172, 0x60A040, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->updateCanvas();
   splashAdd("Display OK", 0x406030);
+  splashAdd("Hold [A] now = USB drive", 0x203060);
   Serial.printf("[SETUP] Map: %dx%d=%d cells | VISION_R:%d | MOVE_CD:%lums | RESPAWN:%ds\n",
     MAP_COLS, MAP_ROWS, MAP_COLS * MAP_ROWS,
     VISION_R, (unsigned long)MOVE_CD_MS, (int)RESPAWN_TICKS / 10);
@@ -1162,6 +1155,14 @@ void setup() {
     splashAdd("index.html OK", 0x60A040);
   }
 
+  // ── USB drive mode (hold Button A during SD mount splash) ───────────────────
+  if (k10.buttonA && k10.buttonA->isPressed()) {
+    splashAdd("USB DRIVE MODE!", 0x0070C0);
+    delay(200);  // debounce
+    enterUSBDriveMode(k10);
+    // never returns
+  }
+
   // Scan for hex image variants: /img/hex<Name>0.png, /img/hex<Name>1.png, ...
   Serial.print("[SETUP] Variants:");
   for (int t = 0; t < NUM_TERRAIN; t++) {
@@ -1192,34 +1193,11 @@ void setup() {
 
   ws.onEvent(onWsEvent); ws.enable(true); server.addHandler(&ws);
 
+  // Root — explicit handler so serveStatic never has to resolve a directory.
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/index.html")) req->send(SD, "/data/index.html", "text/html");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
+    req->send(SD, "/data/index.html", "text/html");
   });
-  server.on("/data/style.css", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/style.css")) req->send(SD, "/data/style.css", "text/css");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
-  server.on("/data/van.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/van.js")) req->send(SD, "/data/van.js", "text/javascript");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
-  server.on("/data/van-ui.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/van-ui.js")) req->send(SD, "/data/van-ui.js", "text/javascript");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
-  server.on("/data/game-data.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/game-data.js")) req->send(SD, "/data/game-data.js", "text/javascript");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
-  server.on("/data/engine.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/engine.js")) req->send(SD, "/data/engine.js", "text/javascript");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
-  server.on("/data/ui.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (SD.exists("/data/ui.js")) req->send(SD, "/data/ui.js", "text/javascript");
-    else req->send(503, "text/plain", "File missing on SD card.\nCopy data/ folder contents to SD card root.");
-  });
+  // Captive-portal redirects — before serveStatic so they take priority.
   auto toGame = [](AsyncWebServerRequest* req) { req->redirect("/"); };
   server.on("/generate_204",              HTTP_GET, toGame);
   server.on("/gen_204",                   HTTP_GET, toGame);
@@ -1228,10 +1206,11 @@ void setup() {
   server.on("/ncsi.txt",                  HTTP_GET, toGame);
   server.on("/connecttest.txt",           HTTP_GET, toGame);
   server.on("/fwlink",                    HTTP_GET, toGame);
-  server.serveStatic("/data/img/", SD, "/data/img/", "max-age=604800");  // hex images — cache 7 days
-  server.onNotFound([](AsyncWebServerRequest* req) { req->redirect("/"); });
-
-  server.begin();
+  // All other static files from SD:/data/ — no SD.exists() pre-check.
+  server.serveStatic("/", SD, "/data/", "max-age=0");
+  server.onNotFound([](AsyncWebServerRequest* req) {
+    req->send(404, "text/plain", "Not found");
+  });
   { char hb[30]; snprintf(hb, 30, "Heap: %ukB free", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd("HTTP+WS ready", 0x60A040);
     splashAdd(hb, 0x406030); }
