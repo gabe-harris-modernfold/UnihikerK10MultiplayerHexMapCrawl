@@ -125,14 +125,22 @@ function hideCharSelect() {
 const wsUrl = `ws://${location.host}/ws`;
 let socket;
 
+// Set to true once server confirms it has saved creds; prevents redundant auto-sends.
+let serverHasWifiCreds = false;
+
 function connect() {
   socket = new WebSocket(wsUrl);
   socket.onopen    = () => {
     setStatus('Connected');
-    // Auto-send saved WiFi credentials on every (re)connect so the ESP32
-    // can attempt to join the network without the user visiting Settings again.
-    const ssid = localStorage.getItem('wifi_ssid');
-    if (ssid) send({ t: 'wifi', ssid, pass: localStorage.getItem('wifi_pass') ?? '' });
+    serverHasWifiCreds = false;  // reset on each new connection
+    // Auto-send saved WiFi credentials if server doesn't already have them
+    // (server will send {t:'wifi',status:'saved'} if it does).
+    setTimeout(() => {
+      if (!serverHasWifiCreds) {
+        const ssid = localStorage.getItem('wifi_ssid');
+        if (ssid) send({ t: 'wifi', ssid, pass: localStorage.getItem('wifi_pass') ?? '' });
+      }
+    }, 300);  // brief delay to receive 'saved' message first if server has creds
   };
   socket.onclose   = () => { setStatus('Reconnecting...'); setTimeout(connect, 2000); };
   socket.onerror   = () => {};
@@ -226,11 +234,18 @@ function handleMsg(msg) {
       break;
 
     case 'wifi':
-      showToast(
-        msg.status === 'ok'   ? `\u25CF WiFi connected  ${msg.ip ?? ''}`.trim() :
-        msg.status === 'fail' ? '\u25CB WiFi failed \u2014 check credentials'   :
-                                `WiFi: ${msg.status ?? 'unknown'}`
-      );
+      if (msg.status === 'saved') {
+        // Server echoed its saved credentials — keep localStorage in sync.
+        serverHasWifiCreds = true;
+        if (msg.ssid) localStorage.setItem('wifi_ssid', msg.ssid);
+        if (msg.pass !== undefined) localStorage.setItem('wifi_pass', msg.pass);
+      } else {
+        showToast(
+          msg.status === 'ok'   ? `\u25CF WiFi connected  ${msg.ip ?? ''}`.trim() :
+          msg.status === 'fail' ? '\u25CB WiFi failed \u2014 check credentials'   :
+                                  `WiFi: ${msg.status ?? 'unknown'}`
+        );
+      }
       break;
   }
 }

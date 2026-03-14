@@ -66,6 +66,7 @@
  */
 
 #include <WiFi.h>
+#include <Preferences.h>
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
@@ -77,6 +78,10 @@ static const char* AP_SSID = "WASTELAND";
 // ── WiFi STA connection (background task) ──────────────────────
 struct WifiTaskCtx { char ssid[33]; char pass[65]; };
 static volatile bool wifiConnecting = false;  // guard against concurrent attempts
+// Last successfully-connected credentials (persisted in NVS "wifi" namespace).
+// Populated at boot from NVS; updated in network.hpp on each successful join.
+static char savedSsid[33] = {0};
+static char savedPass[65] = {0};
 
 // ── Constants ──────────────────────────────────────────────────
 static constexpr int      MAP_COLS      = 25;
@@ -383,6 +388,28 @@ static UNIHIKER_K10   k10;
 
 AsyncWebServer server(80);
 AsyncWebSocket  ws("/ws");
+
+// ── PSRAM web-file cache ────────────────────────────────────────────────────
+// All static assets are loaded from SD into PSRAM once at boot.
+// HTTP serving reads only from RAM — no SD bus contention, no intermittent 404s.
+struct WebFile { const char* url; const char* mime; const char* sdName;
+                 uint8_t* buf; size_t len; };
+static WebFile WEB_FILES[] = {
+  { "/",            "text/html",       "index.html",   nullptr, 0 },
+  { "/engine.js",   "text/javascript", "engine.js",    nullptr, 0 },
+  { "/game-data.js","text/javascript", "game-data.js", nullptr, 0 },
+  { "/style.css",   "text/css",        "style.css",    nullptr, 0 },
+  { "/ui.js",       "text/javascript", "ui.js",        nullptr, 0 },
+  { "/van-ui.js",   "text/javascript", "van-ui.js",    nullptr, 0 },
+  { "/van.js",      "text/javascript", "van.js",       nullptr, 0 },
+};
+static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
+
+// ── PSRAM image cache (hex tile PNGs, populated alongside web files at boot) ──
+struct ImgFile { char name[40]; uint8_t* buf; size_t len; };
+static const int MAX_IMG_CACHE = 64;
+static ImgFile   imgCache[MAX_IMG_CACHE];
+static int       imgCacheCount = 0;
 
 // ── Hex math helpers ───────────────────────────────────────────
 static inline int wrapQ(int q) { return ((q % MAP_COLS) + MAP_COLS) % MAP_COLS; }
@@ -1039,9 +1066,73 @@ static void splashAdd(const char* msg, uint32_t col = 0x806040) {
   k10.canvas->updateCanvas();
 }
 
+// ── Boot-time SD→PSRAM loader ─────────────────────────────────
+static void loadWebFilesToRAM() {
+  // Single-pass walk of /data. SD.open(fullPath) is unreliable on this config;
+  // SD.open("/data") + openNextFile() is the only method confirmed to work.
+  Serial.println("[WEB] Loading web assets into PSRAM...");
+  File dir = SD.open("/data");
+  if (!dir) { Serial.println("[WEB] ERROR: cannot open /data"); return; }
+  File f = dir.openNextFile();
+  while (f) {
+    String fname = String(f.name());
+    if (f.isDirectory() && fname.equalsIgnoreCase("img")) {
+      // Walk into the img subdirectory by calling openNextFile() on its handle.
+      File imgFile = f.openNextFile();
+      while (imgFile && imgCacheCount < MAX_IMG_CACHE) {
+        if (!imgFile.isDirectory()) {
+          size_t sz = imgFile.size();
+          uint8_t* buf = (uint8_t*)ps_malloc(sz);
+          if (buf) {
+            imgFile.read(buf, sz);
+            strncpy(imgCache[imgCacheCount].name, imgFile.name(), 39);
+            imgCache[imgCacheCount].name[39] = 0;
+            imgCache[imgCacheCount].buf = buf;
+            imgCache[imgCacheCount].len = sz;
+            imgCacheCount++;
+            Serial.printf("[WEB]   img/%-22s %u bytes -> PSRAM\n", imgFile.name(), (unsigned)sz);
+          } else {
+            Serial.printf("[WEB]   img/%s: ps_malloc(%u) FAILED\n", imgFile.name(), (unsigned)sz);
+          }
+        }
+        imgFile.close();
+        imgFile = f.openNextFile();
+      }
+    } else if (!f.isDirectory()) {
+      // Regular file — match against the web asset list.
+      for (int i = 0; i < WEB_FILE_COUNT; i++) {
+        if (fname.equalsIgnoreCase(WEB_FILES[i].sdName)) {
+          size_t sz = f.size();
+          uint8_t* buf = (uint8_t*)ps_malloc(sz);
+          if (buf) {
+            size_t got = f.read(buf, sz);
+            WEB_FILES[i].buf = buf;
+            WEB_FILES[i].len = got;
+            Serial.printf("[WEB]   %-16s %u bytes -> PSRAM\n", WEB_FILES[i].sdName, (unsigned)got);
+          } else {
+            Serial.printf("[WEB]   %-16s ps_malloc(%u) FAILED\n", WEB_FILES[i].sdName, (unsigned)sz);
+          }
+          break;
+        }
+      }
+    }
+    f.close();
+    f = dir.openNextFile();
+  }
+  dir.close();
+  for (int i = 0; i < WEB_FILE_COUNT; i++)
+    if (!WEB_FILES[i].buf)
+      Serial.printf("[WEB]   WARNING: %s not cached!\n", WEB_FILES[i].sdName);
+  Serial.printf("[WEB]   %d image(s) cached.\n", imgCacheCount);
+  Serial.printf("[WEB] Done. Free heap: %u bytes\n", (unsigned)ESP.getFreeHeap());
+}
+
 // ── Setup ──────────────────────────────────────────────────────
 void setup() {
-  Serial.begin(115200); delay(500);
+  Serial.begin(115200);
+  // USB-CDC: wait up to 3 s for the host serial monitor to connect.
+  { unsigned long t0 = millis(); while (!Serial && millis()-t0 < 3000) delay(10); }
+  delay(200);
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════╗");
   Serial.println("║   ESP32-S3  WASTELAND HEX CRAWL  v3.0       ║");
@@ -1154,6 +1245,9 @@ void setup() {
   } else {
     splashAdd("index.html OK", 0x60A040);
   }
+  loadWebFilesToRAM();
+  { char hb[36]; snprintf(hb, 36, "Web: %ukB in PSRAM", (unsigned)(ESP.getFreeHeap()/1024));
+    splashAdd(hb, 0x406030); }
 
   // ── USB drive mode (hold Button A during SD mount splash) ───────────────────
   if (k10.buttonA && k10.buttonA->isPressed()) {
@@ -1163,19 +1257,30 @@ void setup() {
     // never returns
   }
 
-  // Scan for hex image variants: /img/hex<Name>0.png, /img/hex<Name>1.png, ...
+  // Derive variant counts from imgCache (built at boot — no SD.exists() needed).
   Serial.print("[SETUP] Variants:");
-  for (int t = 0; t < NUM_TERRAIN; t++) {
-    uint8_t cnt = 0;
-    char    fname[48];
-    while (cnt < 255) {
-      snprintf(fname, sizeof(fname), "/data/img/hex%s%d.png", TERRAIN_IMG_NAME[t], cnt);
-      if (!SD.exists(fname)) break;
-      cnt++;
+  for (int i = 0; i < imgCacheCount; i++) {
+    String fname = String(imgCache[i].name);
+    for (int t = 0; t < NUM_TERRAIN; t++) {
+      String pfx = String("hex") + TERRAIN_IMG_NAME[t];
+      if (fname.startsWith(pfx) && fname.endsWith(".png")) {
+        String numStr = fname.substring(pfx.length(), fname.length() - 4);
+        if (numStr.length() > 0) {
+          bool dig = true;
+          for (int k = 0; k < (int)numStr.length(); k++)
+            if (!isDigit((unsigned char)numStr[k])) { dig = false; break; }
+          if (dig) {
+            int idx = numStr.toInt();
+            if (idx + 1 > (int)terrainVariantCount[t])
+              terrainVariantCount[t] = (uint8_t)min(idx + 1, 255);
+          }
+        }
+        break;
+      }
     }
-    terrainVariantCount[t] = cnt;
-    Serial.printf(" %s:%d", T_SHORT[t], cnt);
   }
+  for (int t = 0; t < NUM_TERRAIN; t++)
+    Serial.printf(" %s:%d", T_SHORT[t], terrainVariantCount[t]);
   Serial.println();
 
   splashAdd("Generating map...");
@@ -1185,19 +1290,56 @@ void setup() {
     splashAdd(mb, 0x60A040); }
 
   splashAdd("Starting WiFi AP...");
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID);
+  // Load any previously-saved STA credentials from NVS.
+  { Preferences prefs; prefs.begin("wifi", true);
+    prefs.getString("ssid", savedSsid, sizeof(savedSsid));
+    prefs.getString("pass", savedPass, sizeof(savedPass));
+    prefs.end(); }
+  if (savedSsid[0]) {
+    // AP+STA: start AP first so clients can connect even while we attempt STA join.
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID);
+    // Join synchronously here in setup() — before the web server starts — to avoid
+    // task-vs-setup race conditions that caused the boot connect to silently fail.
+    Serial.printf("[WIFI] Boot: attempting to join \"%s\"...\n", savedSsid);
+    splashAdd("Joining saved WiFi...", 0x4080C0);
+    WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
+    unsigned long wt0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wt0 < 10000) delay(250);
+    if (WiFi.status() == WL_CONNECTED) {
+      char wb2[44]; snprintf(wb2, sizeof(wb2), "STA: %s", WiFi.localIP().toString().c_str());
+      splashAdd(wb2, 0x4080C0);
+      Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+      WiFi.disconnect(false);
+      WiFi.mode(WIFI_AP);
+      WiFi.softAP(AP_SSID);
+      splashAdd("WiFi join failed — AP only", 0x802020);
+      Serial.println("[WIFI] Boot connect failed — AP only");
+    }
+  } else {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID);
+  }
   { char wb[30]; snprintf(wb, 30, "AP: %s", WiFi.softAPIP().toString().c_str());
     splashAdd(wb, 0x60A040); }
   Serial.printf("[SETUP] WiFi AP: \"%s\"  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
 
   ws.onEvent(onWsEvent); ws.enable(true); server.addHandler(&ws);
 
-  // Root — explicit handler so serveStatic never has to resolve a directory.
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-    req->send(SD, "/data/index.html", "text/html");
-  });
-  // Captive-portal redirects — before serveStatic so they take priority.
+  // Static web assets — served from PSRAM (loaded at boot, no SD access at runtime).
+  for (int i = 0; i < WEB_FILE_COUNT; i++) {
+    server.on(WEB_FILES[i].url, HTTP_GET, [i](AsyncWebServerRequest* req) {
+      if (WEB_FILES[i].buf) {
+        req->send(200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
+      } else {
+        req->send(503, "text/plain", "Web file not cached - check SD & reboot");
+      }
+    });
+  }
+  // Suppress favicon noise.
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
+  // Captive-portal redirects.
   auto toGame = [](AsyncWebServerRequest* req) { req->redirect("/"); };
   server.on("/generate_204",              HTTP_GET, toGame);
   server.on("/gen_204",                   HTTP_GET, toGame);
@@ -1206,11 +1348,25 @@ void setup() {
   server.on("/ncsi.txt",                  HTTP_GET, toGame);
   server.on("/connecttest.txt",           HTTP_GET, toGame);
   server.on("/fwlink",                    HTTP_GET, toGame);
-  // All other static files from SD:/data/ — no SD.exists() pre-check.
-  server.serveStatic("/", SD, "/data/", "max-age=0");
+  // All text assets (JS/CSS/HTML) are in PSRAM above.
+  // Only /img/*.png requests reach here; serve them from the imgCache in PSRAM.
   server.onNotFound([](AsyncWebServerRequest* req) {
-    req->send(404, "text/plain", "Not found");
+    String url = req->url();
+    if (url.startsWith("/img/")) {
+      String filename = url.substring(5);  // strip "/img/"
+      for (int i = 0; i < imgCacheCount; i++) {
+        if (filename.equalsIgnoreCase(imgCache[i].name)) {
+          AsyncWebServerResponse* resp = req->beginResponse(
+              200, "image/png", imgCache[i].buf, imgCache[i].len);
+          resp->addHeader("Cache-Control", "public, max-age=86400");
+          req->send(resp);
+          return;
+        }
+      }
+    }
+    req->send(404, "text/plain", "Not found: " + url);
   });
+  server.begin();
   { char hb[30]; snprintf(hb, 30, "Heap: %ukB free", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd("HTTP+WS ready", 0x60A040);
     splashAdd(hb, 0x406030); }

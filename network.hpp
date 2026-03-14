@@ -328,6 +328,15 @@ static void handleConnect(AsyncWebSocketClient* client) {
 
   Serial.printf("[LOBBY]   Client #%lu in character selection (%d connected, %d→%d in lobby)\n",
     (unsigned long)client->id(), connectedCount, lobbySize, lobbySize + 1);
+  // If we have saved WiFi credentials, echo them to this client so its
+  // localStorage (and the Settings inputs) stay in sync across devices/reboots.
+  if (savedSsid[0]) {
+    char credBuf[160];
+    int credLen = snprintf(credBuf, sizeof(credBuf),
+      "{\"t\":\"wifi\",\"status\":\"saved\",\"ssid\":\"%s\",\"pass\":\"%s\"}",
+      savedSsid, savedPass);
+    client->text(credBuf, (size_t)credLen);
+  }
   sendLobbyMsg(client);
 }
 
@@ -404,6 +413,13 @@ static void wifiConnectTask(void* param) {
       "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}", ip.c_str());
     Serial.printf("[WIFI]    Connected! STA IP: %s  AP IP: %s\n",
       ip.c_str(), WiFi.softAPIP().toString().c_str());
+    // Persist credentials so the ESP32 can auto-join on next boot.
+    strlcpy(savedSsid, ctx->ssid, sizeof(savedSsid));
+    strlcpy(savedPass, ctx->pass, sizeof(savedPass));
+    { Preferences prefs; prefs.begin("wifi", false);
+      prefs.putString("ssid", savedSsid);
+      prefs.putString("pass", savedPass);
+      prefs.end(); }
   } else {
     WiFi.disconnect(false);
     WiFi.mode(WIFI_AP);   // fall back to AP-only

@@ -877,12 +877,12 @@ canvas{display:block;width:100%;height:100%}
 
 .cs-sel-title{
   font-family:var(--stencil);
-  color:var(--gold);font-size:19px;letter-spacing:6px;
+  color:var(--gold);font-size:24px;letter-spacing:6px;
   text-align:center;margin-bottom:5px;
   text-shadow:0 0 20px rgba(196,140,10,0.5)
 }
 .cs-sel-sub{
-  font-size:11px;color:var(--txt-dim);
+  font-size:13px;color:var(--txt-dim);
   text-align:center;letter-spacing:1px;
   margin-bottom:16px;line-height:1.6
 }
@@ -914,18 +914,18 @@ canvas{display:block;width:100%;height:100%}
   display:flex;align-items:center;gap:8px
 }
 .arch-icon{
-  font-size:24px;line-height:1;flex-shrink:0;
+  font-size:30px;line-height:1;flex-shrink:0;
   color:var(--arch-color,var(--gold))
 }
 .arch-name-wrap{flex:1;min-width:0}
 .arch-name{
   font-family:var(--stencil);
   color:var(--arch-color,var(--gold));
-  font-size:14px;letter-spacing:2px;
+  font-size:17px;letter-spacing:2px;
   display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
 .arch-inv-label{
-  font-size:10px;color:var(--txt-dim);letter-spacing:1px
+  font-size:12px;color:var(--txt-dim);letter-spacing:1px
 }
 
 /*── Skill grid (3×2) ───────────────────────────────────────────*/
@@ -937,28 +937,28 @@ canvas{display:block;width:100%;height:100%}
   display:flex;align-items:center;gap:4px
 }
 .arch-sk-name{
-  font-size:9px;color:var(--txt-dim);
-  letter-spacing:1px;min-width:26px;flex-shrink:0
+  font-size:11px;color:var(--txt-dim);
+  letter-spacing:1px;min-width:30px;flex-shrink:0
 }
-.arch-sk-val{font-size:11px;letter-spacing:1px}
+.arch-sk-val{font-size:13px;letter-spacing:1px}
 .sk-lvl-0{color:#2A1C0C}
 .sk-lvl-1{color:var(--gold)}
 .sk-lvl-2{color:var(--gold-hi)}
 
 /*── Trait blurb ────────────────────────────────────────────────*/
 .arch-trait{
-  font-size:10px;line-height:1.55;
+  font-size:12px;line-height:1.55;
   color:var(--txt-dim);
   border-left:2px solid var(--bdr-mid);
   padding-left:7px;flex:1
 }
 .arch-trait-label{
-  color:var(--gold);font-size:9px;letter-spacing:1px
+  color:var(--gold);font-size:11px;letter-spacing:1px
 }
 
 /*── Flavor text ────────────────────────────────────────────────*/
 .arch-flavor{
-  font-size:10px;line-height:1.4;
+  font-size:12px;line-height:1.4;
   color:var(--txt-dim);
   font-style:italic;
   opacity:0.8;
@@ -973,8 +973,8 @@ canvas{display:block;width:100%;height:100%}
   border:1px solid var(--bdr-mid);
   color:var(--arch-color,var(--gold));
   font-family:'Courier New',monospace;
-  font-size:11px;letter-spacing:2px;
-  padding:5px 4px;cursor:pointer;
+  font-size:13px;letter-spacing:2px;
+  padding:7px 4px;cursor:pointer;
   text-transform:uppercase;
   transition:background 0.12s,border-color 0.12s
 }
@@ -990,8 +990,8 @@ canvas{display:block;width:100%;height:100%}
 }
 .arch-taken-stamp{
   font-family:var(--stencil);
-  color:var(--blood);font-size:11px;letter-spacing:3px;
+  color:var(--blood);font-size:13px;letter-spacing:3px;
   border:1px solid var(--blood);
-  padding:4px 8px;display:block;text-align:center;
+  padding:6px 8px;display:block;text-align:center;
   opacity:0.75
 }
