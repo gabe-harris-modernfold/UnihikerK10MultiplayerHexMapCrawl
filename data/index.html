@@ -25,6 +25,7 @@
     <span class="hud-ll-val" id="hud-ll-val">6</span>
   </div>
   <button class="hud-btn" id="action-hud-btn">&#x2694; ACTION</button>
+  <button class="hud-btn" id="rest-hud-btn">&#x25BC; REST</button>
 </div>
 
 <!-- Main -->
@@ -210,14 +211,12 @@
         <span class="track-label">FOOD</span>
         <div class="track-boxes" id="cs-food-track"></div>
         <span class="track-val" id="cs-food-val">6</span>
-        <span class="track-suffix">&nbsp;tokens: <span id="cs-food-tokens">0</span></span>
       </div>
       <!-- Water track: thresholds at 5, 3, 1 -->
       <div class="track-row">
         <span class="track-label">WATER</span>
         <div class="track-boxes" id="cs-water-track"></div>
         <span class="track-val" id="cs-water-val">6</span>
-        <span class="track-suffix">&nbsp;tokens: <span id="cs-water-tokens">0</span>&thinsp;<span class="contam-count" id="cs-contam-count"></span></span>
       </div>
       <!-- Radiation track: 10 boxes; thresholds at 4 (Rad-Sick) and 7 (Dusk check) -->
       <div class="track-row">
@@ -225,13 +224,6 @@
         <div class="track-boxes rad-track" id="cs-rad-track"></div>
         <span class="track-val" id="cs-rad-val">0</span>
         <span class="track-suffix" id="cs-rad-status"></span>
-      </div>
-      <!-- §6.4 Exposure markers -->
-      <div class="track-row exposure-row" id="cs-exposure-row">
-        <span class="track-label">EXP</span>
-        <span class="exp-badge cold" id="cs-cold-badge" title="Cold Exposure">&#10052; <span id="cs-cold-val">0</span></span>
-        <span class="exp-badge heat" id="cs-heat-badge" title="Heat Exposure">&#9728; <span id="cs-heat-val">0</span></span>
-        <span class="track-suffix exp-effects" id="cs-exp-effects"></span>
       </div>
       <!-- Resolve tokens -->
       <div class="track-row">

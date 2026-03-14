@@ -660,14 +660,12 @@ function initActionPanel() {
       { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: 3, desc: 'Construct shelter (Skill check)' },
       { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2, desc: 'Field medicine (Skill check)' },
       { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: 1, desc: 'Reveal terrain beyond vision' },
-      { id: ACT_REST,    icon: '\u25BC', label: 'REST',          mpCost: 0, desc: 'Recover fatigue; +1 Resolve if SV\u22653 (§7.3)' },
     ];
 
     actionDefs.forEach(def => {
       const available = actAvailable(def.id, terr);
       const hasMP     = mp >= def.mpCost;
-      const isRest    = def.id === ACT_REST;
-      const canAct    = available && hasMP && (isRest ? !uiResting.val : !used);
+      const canAct    = available && hasMP && !used;
 
       const btn = document.createElement('button');
       btn.className = 'action-item-btn' + (canAct ? '' : ' action-disabled');
@@ -676,11 +674,11 @@ function initActionPanel() {
         `<span class="act-label">${def.label}</span>` +
         `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
       btn.title = def.desc +
-        (isRest && uiResting.val ? ' — already resting' : used && !isRest ? ' — action used today' : !available ? ' — not available here' : !hasMP ? ' — insufficient MP' : '');
+        (used ? ' — action used today' : !available ? ' — not available here' : !hasMP ? ' — insufficient MP' : '');
 
       btn.addEventListener('click', () => {
         if (!canAct) {
-          showToast(isRest && uiResting.val ? '\u2297 Already resting' : used ? '\u2297 Action already used today' : !available ? '\u2297 Not available here' : '\u2297 Insufficient MP');
+          showToast(used ? '\u2297 Action already used today' : !available ? '\u2297 Not available here' : '\u2297 Insufficient MP');
           return;
         }
         if (def.id === ACT_WATER) {
@@ -712,9 +710,18 @@ function initActionPanel() {
   });
   document.getElementById('action-close').addEventListener('click', closeActionPanel);
 
+  document.getElementById('rest-hud-btn').addEventListener('click', () => {
+    if (uiResting.val) { showToast('\u2297 Already resting'); return; }
+    send({ t: 'act', a: ACT_REST });
+  });
+
   van.derive(() => {
     const btn = document.getElementById('action-hud-btn');
     if (btn) btn.classList.toggle('action-btn-used', uiActUsed.val);
+  });
+  van.derive(() => {
+    const btn = document.getElementById('rest-hud-btn');
+    if (btn) btn.classList.toggle('rest-btn-used', uiResting.val);
   });
 }
 
@@ -787,15 +794,20 @@ function initMenuSystem() {
       back('main'),
       mh2({ class: 'menu-sub-title' }, 'HOW TO PLAY'),
 
-      sec('Objective',
+      sec('The Mission',
         mp({ class: 'menu-text-body' },
-          'Scavenge the wasteland. Move onto hexes to reveal terrain and collect resources. ' +
-          'Your survival score rises with every haul. Up to 6 survivors share the map — ' +
-          'cooperate or race to the top of the board.'
+          'Six survivors share a 25×19 toroidal wasteland. The map wraps — walk far enough ' +
+          'in any direction and you come back around. Explore hexes to reveal terrain, collect ' +
+          'resources, and keep each other alive. A game day lasts 5 minutes. Survive as many ' +
+          'days as you can.'
         )
       ),
 
       sec('Movement',
+        mp({ class: 'menu-text-body' },
+          'Your Move Points (MP) equal your current Life Level, reduced by wounds and fatigue. ' +
+          'Each hex costs MP equal to its movement cost (shown below). You cannot move at 0 MP.'
+        ),
         md({ class: 'ctrl-ref' },
           md({},
             mp({ class: 'ctrl-label' }, 'KEYBOARD'),
@@ -818,9 +830,131 @@ function initMenuSystem() {
             mp({ class: 'ctrl-label' }, 'TOUCH'),
             mp({ class: 'menu-text-body' },
               'Swipe anywhere on the map canvas in the direction you want to move. ' +
-              'Or use the direction pad below the map. Hold a button to move continuously.'
+              'Or use the direction pad below the map.'
             )
           )
+        )
+      ),
+
+      sec('The Day Cycle',
+        mp({ class: 'menu-text-body' },
+          'At dawn each day your body demands resources. The server automatically consumes ' +
+          '1 Food token and 2 Water tokens from your inventory. If you don\'t have them, ' +
+          'your Food or Water track drops instead.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'Crossing downward thresholds costs Life Level: Food drops at 4 and 2; ' +
+          'Water drops at 5, 3, and 1. Recovery works in reverse — cross back up and you ' +
+          'gain the LL back.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'If every connected player hits REST before dawn, the day ends immediately ' +
+          'and dawn triggers early.'
+        )
+      ),
+
+      sec('Survival Tracks',
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'LIFE LEVEL'),
+            ms({ class: 'ht-track-val' }, '1 – 6'),
+            ms({ class: 'ht-track-desc' }, 'Core health. Drops from starvation, thirst, wounds, radiation. Reaches 0 = downed. Restored by REST in good conditions or treating a Grievous Wound.')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'FOOD'),
+            ms({ class: 'ht-track-val' }, '1 – 6'),
+            ms({ class: 'ht-track-desc' }, 'Hunger level. Drops each dawn without food tokens. Thresholds at 4 and 2 cost LL. Use FORAGE to gather food tokens.')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'WATER'),
+            ms({ class: 'ht-track-val' }, '1 – 6'),
+            ms({ class: 'ht-track-desc' }, 'Hydration level. Requires 2 water tokens at dawn. Thresholds at 5, 3, and 1 cost LL. Use COLLECT WATER on water-source terrain.')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'RADIATION'),
+            ms({ class: 'ht-track-val' }, '0 – 10'),
+            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 4 = RAD-SICK. R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn. Use TREAT (Radiation) to remove 2 R.')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'FATIGUE'),
+            ms({ class: 'ht-track-val' }, '0 – 8'),
+            ms({ class: 'ht-track-desc' }, 'Reduces effective MP each point above 4. Cleared by REST (−2 normally, −3 if another survivor shares your hex).')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({ class: 'ht-track-lbl' }, 'RESOLVE'),
+            ms({ class: 'ht-track-val' }, '0 – 5'),
+            ms({ class: 'ht-track-desc' }, 'Starts at 3. Spend to push a failed skill check once per check. Gain +1 by resting in good shelter (SV 3+, or SV 2+ with a built shelter on the hex).')
+          ),
+        )
+      ),
+
+      sec('Actions',
+        mp({ class: 'menu-text-body' },
+          'You get one action per day. Open the ⚔ ACTION menu to choose. ' +
+          'Actions cost MP and most require a skill check. Settlement terrain reduces all TREAT difficulty by 2.'
+        ),
+        md({ class: 'ht-act-list' },
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '⚗ FORAGE'),
+            ms({ class: 'ht-act-cost' }, '2 MP'),
+            ms({ class: 'ht-act-desc' }, 'Search for food on Forage-tagged terrain. Forage skill check — success yields food tokens.')
+          ),
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '≈ COLLECT WATER'),
+            ms({ class: 'ht-act-cost' }, '1–3 MP'),
+            ms({ class: 'ht-act-desc' }, 'Gather water on Water-tagged terrain. Spend 1–3 MP; each MP spent collects 1 water token.')
+          ),
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '⚲ SCAVENGE'),
+            ms({ class: 'ht-act-cost' }, '2 MP'),
+            ms({ class: 'ht-act-desc' }, 'Rifle through ruins on Salvage-tagged terrain. Scavenge check — partial success still finds scrap.')
+          ),
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
+            ms({ class: 'ht-act-cost' }, '3 MP'),
+            ms({ class: 'ht-act-desc' }, 'Construct a permanent shelter on your hex. Shelter check DN 8 — success marks the hex permanently. Improves rest quality for everyone who camps here. Failed attempt costs 2 MP only.')
+          ),
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '❤ TREAT'),
+            ms({ class: 'ht-act-cost' }, '2 MP'),
+            ms({ class: 'ht-act-desc' },
+              'Field medicine. Pick a condition to treat (Treat skill check):',
+              md({ class: 'ht-treat-list' },
+                ms({}, 'Minor Wound DN 7 — remove 1 minor wound'),
+                ms({}, 'Bleeding DN 7 — stop bleeding (fail = +1 fatigue)'),
+                ms({}, 'Fever DN 9 — clear fever'),
+                ms({}, 'Radiation DN 7 — remove 2 R'),
+                ms({}, 'Grievous Wound DN 10 — Settlement only; remove wound + restore 1 LL'),
+              )
+            )
+          ),
+          md({ class: 'ht-act-row' },
+            ms({ class: 'ht-act-name' }, '◎ SURVEY'),
+            ms({ class: 'ht-act-cost' }, '1 MP'),
+            ms({ class: 'ht-act-desc' }, 'Reveal the ring of hexes one step beyond your normal vision radius. One-time snapshot — surveyed hexes dim when you move away.')
+          ),
+        )
+      ),
+
+      sec('Rest',
+        mp({ class: 'menu-text-body' },
+          'The ▼ REST button is always available — it does not use your action slot. ' +
+          'Resting reduces Fatigue by 2 (or 3 if another survivor shares your hex). ' +
+          'If you are well-fed (Food ≥ 4), hydrated (Water ≥ 3), and not too tired (Fatigue < 4 after reduction), ' +
+          'you also recover 1 Life Level. Resting in good shelter (SV 3+, or SV 2 + built shelter) gains +1 Resolve. ' +
+          'Once you REST you wait for dawn — if all connected players have rested, dawn triggers immediately.'
+        )
+      ),
+
+      sec('Vision & Fog',
+        mp({ class: 'menu-text-body' },
+          'Your base vision radius is ' + VISION_R + ' hex. Terrain modifies this:'
+        ),
+        md({ class: 'ht-vis-list' },
+          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag hi' }, '+2 VHIGH'), ms({}, 'Ridge, Mountain — sweeping view from elevation.')),
+          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag hi' }, '+1 HIGH'),  ms({}, 'Glass Fields — flat reflective surface, open sightlines.')),
+          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag lo' }, 'BLIND'),    ms({}, 'Rust Forest — canopy blocks all vision. Range drops to 0.')),
+          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag lo' }, 'MASKED'),   ms({}, 'Broken Urban — vision range 1 and resource contents are hidden until you stand on the hex.')),
         )
       ),
 
@@ -843,24 +977,22 @@ function initMenuSystem() {
         )
       ),
 
-      sec('Resources',
-        md({ class: 'res-ref-list' },
-          ...RES_GUIDE.map(r =>
-            md({ class: 'res-ref-row' },
-              md({ class: `res-ref-dot ${r.cls}` }),
-              ms({ class: 'res-ref-name' }, r.name),
-              ms({ class: 'res-ref-desc' }, r.desc)
-            )
-          )
+      sec('Wounds & Conditions',
+        mp({ class: 'menu-text-body' },
+          'Wounds reduce skill checks. Minor Wounds penalise Endure; Major Wounds penalise all skills. ' +
+          'Grievous Wounds require a Settlement and a successful Treat to remove — and restore 1 LL when cleared.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'Bleeding adds fatigue if left untreated. Fever penalises Forage checks. ' +
+          'Both clear with a successful TREAT action.'
         )
       ),
 
-      sec('Vision & Fog',
+      sec('Skill Checks',
         mp({ class: 'menu-text-body' },
-          `Base vision radius: ${VISION_R} hexes. `,
-          'Open Scrub, Glass Fields and Ridge are HIGH VIS (+2 range). ',
-          'Rust Forest, Broken Urban and Flooded District impose a VIS PENALTY — ',
-          'terrain type is revealed but resource contents are hidden.'
+          'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
+          'Meeting or exceeding DN = success. Spend 1 Resolve to re-roll once (push). ' +
+          'Six skills: NAVIGATE · FORAGE · SCAVENGE · TREAT · SHELTER · ENDURE.'
         )
       ),
     );

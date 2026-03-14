@@ -5,6 +5,8 @@
 
 // broadcastCheck is defined in network.hpp (included after this file).
 static void broadcastCheck(int pid, uint8_t skill, CheckResult& r, bool pushed);
+// ledFlash is defined in Esp32HexMapCrawl.ino (Core 1 safe — sets LED + endMs timer).
+void ledFlash(uint8_t r, uint8_t g, uint8_t b);
 
 // ── §6.2 Radiation status sync ───────────────────────────────────────────────
 // Sync ST_RADSICK to current radiation level (R ≥ 4 = Rad-Sick).
@@ -31,11 +33,6 @@ static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, uint8_t bonu
   if (sb & ST_FEVERED)  cm -= 1;                           // Fevered:  −1 all
   if (G.players[pid].wounds[1] > 0)                cm -= 1; // Major wound: −1 all
   if (skill == SK_ENDURE && G.players[pid].wounds[0] > 0) cm -= 1; // Minor: −1 Endure only
-  // §6.4 Exposure marker penalties
-  const Player& ep = G.players[pid];
-  if (ep.coldExp >= 1 && skill == SK_ENDURE)   cm -= 1;  // Cold 1+: −1 Endure
-  if (ep.coldExp >= 2 && skill == SK_NAVIGATE) cm -= 1;  // Cold 2+: −1 Navigate
-  if (ep.heatExp >= 2 && skill == SK_FORAGE)   cm -= 1;  // Heat 2+: −1 Forage
   r.mods   = cm;
   r.total  = r.r1 + r.r2 + r.skillVal + r.mods;
   r.success = (r.total >= r.dn);
@@ -128,7 +125,7 @@ static void duskCheck() {
 
     if (ev.actOut == AO_FAIL) {
       p.wounds[1]++;                  // +1 Major Wound
-      if (p.ll > 0) p.ll--;
+      if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); }  // red = LL lost
       if (p.ll == 0) p.statusBits |= ST_DOWNED;
       ev.actLLD   = -1;
       ev.actNewLL = p.ll;
@@ -157,35 +154,6 @@ static void dawnUpkeep() {
     }
     p.radClean = true;  // reset for new day
 
-    // ── §6.4 Shelter: remove 1 exposure marker if SV ≥ 2 ────────────────────
-    {
-      uint8_t t = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
-      bool inShelter = (TERRAIN_SV[t] >= 2) || (G.map[p.r][p.q].shelter > 0);
-      if (inShelter && (p.coldExp > 0 || p.heatExp > 0)) {
-        // Auto-remove highest-impact type: Cold first (affects skills), then Heat
-        if      (p.coldExp > 0) p.coldExp--;
-        else if (p.heatExp > 0) p.heatExp--;
-        Serial.printf("[DAWN]    P%d \"%s\" shelter → exp removed: cold:%d heat:%d\n",
-          pid, p.name, p.coldExp, p.heatExp);
-      }
-    }
-
-    // ── §6.4 Exposure fatigue at 3+ markers ──────────────────────────────────
-    if ((p.coldExp >= 3 || p.heatExp >= 3) && p.fatigue < 8) {
-      p.fatigue++;
-      Serial.printf("[DAWN]    P%d \"%s\" exposure fatigue +1 → %d\n", pid, p.name, p.fatigue);
-    }
-
-    // ── §6.4 Heat 1+: consume 1 additional Water token (§6.4) ────────────────
-    if (p.heatExp >= 1 && p.inv[0] > 0) {
-      bool wasContam = (p.contWater > 0);
-      if (wasContam) p.contWater--;
-      p.inv[0]--;
-      if (wasContam && p.radiation < 10) { p.radiation++; updateRadStatus(p); }
-      Serial.printf("[DAWN]    P%d \"%s\" heat extra water consumed%s\n",
-        pid, p.name, wasContam ? " (CONTAMINATED +1R)" : "");
-    }
-
     // ── Food (§4.1): consume 1 token; F track +1; else F track -1 ─────────
     if (p.inv[1] > 0) {
       p.inv[1]--;
@@ -194,28 +162,15 @@ static void dawnUpkeep() {
       applyFStep(p, -1, llDelta);
     }
 
-    // ── Water (§4.2+§6.5): consume 2 tokens (contaminated first → +1 R each) ─
-    int have = (int)p.inv[0];
-    int need = 2;
-    int use  = min(have, need);
-    int miss = need - use;
-    // Count contaminated tokens being consumed this dawn
-    int contConsumed = min((int)p.contWater, use);
-    p.contWater = (uint8_t)((int)p.contWater - contConsumed);
-    // Clamp contWater to new inv total
-    p.inv[0] -= (uint8_t)use;
-    p.contWater = (uint8_t)min((int)p.contWater, (int)p.inv[0]);
-    for (int i = 0; i < use;  i++) {
-      applyWStep(p, +1, llDelta);
-      if (i < contConsumed && p.radiation < 10) {  // this token was contaminated
-        p.radiation++;
-        updateRadStatus(p);
-      }
+    // ── Water (§4.2): consume 2 tokens ───────────────────────────────────────
+    {
+      int have = (int)p.inv[0];
+      int use  = min(have, 2);
+      int miss = 2 - use;
+      p.inv[0] -= (uint8_t)use;
+      for (int i = 0; i < use;  i++) applyWStep(p, +1, llDelta);
+      for (int i = 0; i < miss; i++) applyWStep(p, -1, llDelta);
     }
-    if (contConsumed > 0)
-      Serial.printf("[DAWN]    P%d \"%s\" %d contaminated water → R→%d\n",
-        pid, p.name, contConsumed, p.radiation);
-    for (int i = 0; i < miss; i++) applyWStep(p, -1, llDelta);
 
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────
     // Losses were accumulated first in llDelta (both F and W steps above).
@@ -230,6 +185,7 @@ static void dawnUpkeep() {
       p.ll = (uint8_t)min((int)p.ll + llDelta, 6);
     }
     int8_t actualDelta = (int8_t)((int)p.ll - (int)prevLL); // true LL change (clamped)
+    if (actualDelta < 0) ledFlash(255, 0, 0);  // red = Life Level lost
 
     // ── Reset daily move budget and action flags ────────────────────────────
     p.movesLeft    = (int8_t)effectiveMP(pid);
@@ -237,11 +193,10 @@ static void dawnUpkeep() {
     p.encPenApplied = false;
     p.resting      = false;
 
-    Serial.printf("[DAWN]    P%d \"%s\" Day:%d | F:%d W:%d LL:%d%+d | R:%d CX:%d HX:%d | MP:%d | inv F:%d W:%d(c%d)\n",
+    Serial.printf("[DAWN]    P%d \"%s\" Day:%d | F:%d W:%d LL:%d%+d | R:%d | MP:%d | inv F:%d W:%d\n",
       pid, p.name, (int)G.dayCount,
       (int)p.food, (int)p.water, (int)p.ll, (int)actualDelta,
-      (int)p.radiation, (int)p.coldExp, (int)p.heatExp,
-      (int)p.movesLeft, p.inv[1], p.inv[0], p.contWater);
+      (int)p.radiation, (int)p.movesLeft, p.inv[1], p.inv[0]);
 
     // Enqueue event for broadcast (includes threshold bitmasks for client rendering)
     GameEvent ev = {};
@@ -257,9 +212,6 @@ static void dawnUpkeep() {
     ev.dawnWth     = p.wThreshBelow;
     ev.radR        = p.radiation;
     ev.dawnFat     = p.fatigue;
-    ev.dawnCx      = p.coldExp;
-    ev.dawnHx      = p.heatExp;
-    ev.dawnCw      = p.contWater;
     enqEvt(ev);
   }
 }
@@ -372,6 +324,7 @@ static void movePlayer(int pid, int dir) {
         p.radiation++;
         radGain = 1;
         updateRadStatus(p);
+        ledFlash(0, 255, 0);  // green = radiation gained
         Serial.printf("[RAD]     P%d \"%s\" +1 R (now %d) Endure DN6=%d FAIL\n",
           pid, p.name, p.radiation, cr.total);
       } else {
@@ -504,16 +457,10 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         uint8_t nt = G.map[wrapR(p.r + DR[d])][wrapQ(p.q + DQ[d])].terrain;
         if (nt == 6 || nt == 10) nearContam = true;
       }
-      if (nearContam) {
-        p.contWater = (uint8_t)min((int)p.contWater + spend, (int)p.inv[0]);
-      }
       ev.actWatD  = (int8_t)spend;
       ev.actOut   = AO_SUCCESS;
-      ev.radR     = p.contWater;   // re-use radR as contWater count for ACT_WATER result
-      Serial.printf("[WATER]   P%d \"%s\" @ %s | +%d water%s | inv water:%d(c%d) mp→%d\n",
-        pid, p.name, T_NAME[terr], spend,
-        nearContam ? " (CONTAMINATED)" : "",
-        p.inv[0], p.contWater, p.movesLeft);
+      Serial.printf("[WATER]   P%d \"%s\" @ %s | +%d water | inv water:%d mp→%d\n",
+        pid, p.name, T_NAME[terr], spend, p.inv[0], p.movesLeft);
       break;
     }
 

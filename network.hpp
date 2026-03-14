@@ -102,12 +102,11 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     // Wayfarer vitals
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
-      "\"arch\":%d,\"sb\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"au\":%d,"
-      "\"cx\":%d,\"hx\":%d,\"cw\":%d,",
+      "\"arch\":%d,\"sb\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"au\":%d,",
       p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
       p.archetype, p.statusBits, p.invSlots,
       (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.movesLeft,
-      p.actUsed ? 1 : 0, (int)p.coldExp, (int)p.heatExp, (int)p.contWater);
+      p.actUsed ? 1 : 0);
     // Skills array
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"sk\":[%d,%d,%d,%d,%d,%d],",
@@ -157,13 +156,13 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
-      "\"sb\":%d,\"mp\":%d,\"fth\":%d,\"wth\":%d,\"au\":%d,\"cx\":%d,\"hx\":%d,\"cw\":%d}",
+      "\"sb\":%d,\"mp\":%d,\"fth\":%d,\"wth\":%d,\"au\":%d}",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
       p.statusBits, (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
-      p.actUsed ? 1 : 0, (int)p.coldExp, (int)p.heatExp, (int)p.contWater);
+      p.actUsed ? 1 : 0);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d}}",
@@ -253,13 +252,12 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
-          "\"rad\":%d,\"fat\":%d,\"cx\":%d,\"hx\":%d,\"cw\":%d}",
+          "\"rad\":%d,\"fat\":%d}",
           ev.pid, (int)ev.dawnDay,
           (int)ev.dawnF, (int)ev.dawnW, (int)ev.dawnLL,
           (int)ev.dawnMP, (int)ev.dawnLLDelta,
           (int)ev.dawnFth, (int)ev.dawnWth,
-          (int)ev.radR, (int)ev.dawnFat,
-          (int)ev.dawnCx, (int)ev.dawnHx, (int)ev.dawnCw);
+          (int)ev.radR, (int)ev.dawnFat);
         ws.textAll(buf, len);
         break;
 
@@ -397,13 +395,25 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
 static void wifiConnectTask(void* param) {
   WifiTaskCtx* ctx = (WifiTaskCtx*)param;
 
-  Serial.printf("[WIFI]    Attempting to join \"%s\"...\n", ctx->ssid);
-  WiFi.mode(WIFI_AP_STA);                          // keep AP alive while STA connects
+  Serial.printf("[WIFI]    Task start — ssid:\"%s\" pass_len:%d current_mode:%d\n",
+    ctx->ssid, (int)strlen(ctx->pass), (int)WiFi.getMode());
+
+  // Only switch mode if not already in AP+STA — re-calling WiFi.mode() when
+  // already in WIFI_AP_STA can reset the WiFi stack and drop the softAP.
+  if (WiFi.getMode() != WIFI_MODE_APSTA) {
+    Serial.println("[WIFI]    Switching to WIFI_AP_STA");
+    WiFi.mode(WIFI_AP_STA);
+    vTaskDelay(pdMS_TO_TICKS(100));  // let mode switch settle
+  }
+
+  Serial.printf("[WIFI]    Calling WiFi.begin(\"%s\")...\n", ctx->ssid);
   WiFi.begin(ctx->ssid, ctx->pass[0] ? ctx->pass : nullptr);
 
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
-    vTaskDelay(pdMS_TO_TICKS(250));
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+    vTaskDelay(pdMS_TO_TICKS(500));
+    Serial.printf("[WIFI]    status=%d  elapsed=%lums\n",
+      (int)WiFi.status(), (unsigned long)(millis() - t0));
   }
 
   char buf[88]; int blen;
@@ -413,17 +423,18 @@ static void wifiConnectTask(void* param) {
       "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}", ip.c_str());
     Serial.printf("[WIFI]    Connected! STA IP: %s  AP IP: %s\n",
       ip.c_str(), WiFi.softAPIP().toString().c_str());
-    // Persist credentials so the ESP32 can auto-join on next boot.
+    // Cache in globals so handleConnect can echo creds to new clients.
+    // ESP32 already saved these to its own internal NVS when WiFi.begin(ssid,pass)
+    // was called above — no separate Preferences write needed.
     strlcpy(savedSsid, ctx->ssid, sizeof(savedSsid));
     strlcpy(savedPass, ctx->pass, sizeof(savedPass));
-    { Preferences prefs; prefs.begin("wifi", false);
-      prefs.putString("ssid", savedSsid);
-      prefs.putString("pass", savedPass);
-      prefs.end(); }
   } else {
     WiFi.disconnect(false);
     WiFi.mode(WIFI_AP);   // fall back to AP-only
     WiFi.softAP(AP_SSID); // re-assert AP (mode switch may reset it)
+    // Clear in-memory SSID so handleConnect won't send a 'saved' message that
+    // would suppress the client's auto-send retry (NVS copy is kept for next boot).
+    savedSsid[0] = '\0';
     blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"fail\"}");
     Serial.printf("[WIFI]    Failed (timeout) — back to AP mode  IP: %s\n",
       WiFi.softAPIP().toString().c_str());
@@ -500,7 +511,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.actUsed      = false;
         p.encPenApplied = false;
         p.radClean     = true;
-        p.coldExp      = 0; p.heatExp = 0; p.contWater = 0;
 
         p.stamina    = 100;
         uint32_t rnd = esp_random();
@@ -618,7 +628,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     if (pv) pv++;
     const char* pe = pv ? strchr(pv, '"') : nullptr;
 
-    if (wifiConnecting) {
+    if (wifiConnecting || bootWifiPending) {
       const char* busy = "{\"t\":\"wifi\",\"status\":\"busy\"}";
       client->text(busy, strlen(busy));
       return;

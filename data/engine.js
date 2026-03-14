@@ -103,8 +103,6 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
   au: false,
-  // §6.4 Exposure / §6.5 Contamination
-  cx: 0, hx: 0, cw: 0,
 }));
 
 // Shared game state (Threat Clock, Day, shared stores)
@@ -193,9 +191,6 @@ function handleMsg(msg) {
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
         if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
         if (pd.au  !== undefined) p.au  = !!pd.au;  // action used this day
-        if (pd.cx  !== undefined) p.cx  = pd.cx;    // cold exposure
-        if (pd.hx  !== undefined) p.hx  = pd.hx;    // heat exposure
-        if (pd.cw  !== undefined) p.cw  = pd.cw;    // contaminated water count
       });
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
@@ -348,9 +343,6 @@ function handleEvent(ev) {
         if (ev.wth !== undefined) players[ev.pid].wth = ev.wth;
         if (ev.rad !== undefined) players[ev.pid].rad = ev.rad;
         if (ev.fat !== undefined) players[ev.pid].fat = ev.fat;
-        if (ev.cx  !== undefined) players[ev.pid].cx  = ev.cx;
-        if (ev.hx  !== undefined) players[ev.pid].hx  = ev.hx;
-        if (ev.cw  !== undefined) players[ev.pid].cw  = ev.cw;
       }
       const who    = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const llTxt  = ev.dll < 0 ? ` \u25BC LL${ev.dll}` : ev.dll > 0 ? ` \u25B2 LL+${ev.dll}` : '';

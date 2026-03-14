@@ -66,7 +66,7 @@
  */
 
 #include <WiFi.h>
-#include <Preferences.h>
+#include <esp_wifi.h>
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
@@ -78,10 +78,14 @@ static const char* AP_SSID = "WASTELAND";
 // ── WiFi STA connection (background task) ──────────────────────
 struct WifiTaskCtx { char ssid[33]; char pass[65]; };
 static volatile bool wifiConnecting = false;  // guard against concurrent attempts
-// Last successfully-connected credentials (persisted in NVS "wifi" namespace).
-// Populated at boot from NVS; updated in network.hpp on each successful join.
+// SSID/pass of last successful STA join — populated from WiFi.SSID()/psk() on
+// connect; used by handleConnect to echo creds back to new clients.
 static char savedSsid[33] = {0};
 static char savedPass[65] = {0};
+// Boot-time async STA connect state (monitored in loop()).
+static bool     bootWifiPending = false;
+static uint32_t bootWifiStartMs = 0;
+static constexpr uint32_t BOOT_WIFI_TIMEOUT = 12000;
 
 // ── Constants ──────────────────────────────────────────────────
 static constexpr int      MAP_COLS      = 25;
@@ -117,7 +121,6 @@ static constexpr int SK_ENDURE   = 5;
 // ── Action system constants (§5 Turn/Action rules) ─────────────
 static constexpr uint8_t ACT_FORAGE  = 0;  // Any hex with Forage tag; cost 2 MP
 static constexpr uint8_t ACT_WATER   = 1;  // Any hex with Water tag;  cost 1-3 MP
-static constexpr uint8_t ACT_PURIFY  = 2;  // Any hex; cost 1 MP + item (future)
 static constexpr uint8_t ACT_SCAV    = 3;  // Salvage/Ruins hex;       cost 2 MP
 static constexpr uint8_t ACT_SHELTER = 4;  // Any hex;                 cost 3 MP
 static constexpr uint8_t ACT_TREAT   = 5;  // Any hex;                 cost 2 MP
@@ -300,11 +303,6 @@ struct Player {
   bool     encPenApplied; // encumbrance -1 MP penalty applied this day; cleared at dawn
   bool     resting;       // player rested this day; cleared at dawn; if all rest → day ends early
   bool     radClean;    // no rad hex entered this day; true → R−1 at next dawn (clean zone)
-  // ── §6.4 Exposure markers ─────────────────────────────────────
-  uint8_t  coldExp;     // cold exposure markers  (0–5+)
-  uint8_t  heatExp;     // heat exposure markers  (0–5+)
-  // ── §6.5 Contamination ────────────────────────────────────────
-  uint8_t  contWater;   // contaminated water tokens in inv (subset of inv[0])
 };
 
 enum EvtType : uint8_t {
@@ -329,9 +327,7 @@ struct GameEvent {
   int8_t   dawnMP, dawnLLDelta;
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;   // threshold bitmasks after upkeep
-  uint8_t  dawnFat;            // fatigue after dawn exposure effects
-  uint8_t  dawnCx, dawnHx;    // cold/heat exposure after shelter removal
-  uint8_t  dawnCw;             // contaminated water after dawn consumption
+  uint8_t  dawnFat;            // fatigue after dawn
   // EVT_ACTION payload:
   uint8_t  actType;     // ACT_*
   uint8_t  actOut;      // AO_*
@@ -385,6 +381,17 @@ static unsigned long  lastStatusMs  = 0;
 static unsigned long  lastScreenMs  = 0;
 static constexpr uint32_t SCREEN_MS  = 2000;  // screen refresh interval
 static UNIHIKER_K10   k10;
+
+// ── LED flash (game events → RGB LEDs) ─────────────────────────────────────
+static volatile uint8_t  g_ledR = 0, g_ledG = 0, g_ledB = 0;
+static volatile uint32_t g_ledEndMs = 0;
+
+// Called from Core 1 (game loop). Sets LED immediately; loop() turns it off.
+void ledFlash(uint8_t r, uint8_t g, uint8_t b) {
+  g_ledR = r; g_ledG = g; g_ledB = b;
+  g_ledEndMs = millis() + 300;
+  k10.rgb->write(-1, r, g, b);
+}
 
 AsyncWebServer server(80);
 AsyncWebSocket  ws("/ws");
@@ -928,12 +935,21 @@ static void drawStatusScreen() {
   snprintf(buf, sizeof(buf), "AP: %d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
   k10.canvas->canvasText(buf, 2, 282, 0x406030, Canvas::eCNAndENFont16, 50, false);
   bool staConn = (staIp[0] != 0);
+  uint32_t stColor;
   if (staConn) {
     snprintf(buf, sizeof(buf), "ST: %d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
+    stColor = 0x406030;
+  } else if (bootWifiPending) {
+    snprintf(buf, sizeof(buf), "ST: connecting...");
+    stColor = 0x4080C0;
+  } else if (savedSsid[0]) {
+    snprintf(buf, sizeof(buf), "ST: saved:\"%.16s\"", savedSsid);
+    stColor = 0x605030;
   } else {
-    snprintf(buf, sizeof(buf), "ST: --");
+    snprintf(buf, sizeof(buf), "ST: no creds");
+    stColor = 0x302820;
   }
-  k10.canvas->canvasText(buf, 2, 300, staConn ? 0x406030 : 0x302820, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasText(buf, 2, 300, stColor, Canvas::eCNAndENFont16, 50, false);
 
   k10.canvas->updateCanvas();
 }
@@ -1210,7 +1226,6 @@ void setup() {
     p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0; p.chkPushable = 0;
     p.fThreshBelow = 0; p.wThreshBelow = 0;
     p.actUsed = false; p.encPenApplied = false; p.radClean = true;
-    p.coldExp = 0; p.heatExp = 0; p.contWater = 0;
     p.movesLeft = (int8_t)effectiveMP(i);  // consistent with handleConnect
     snprintf(p.name, sizeof(p.name), "%s%d", ARCHETYPE_NAME[i], i);
   }
@@ -1289,37 +1304,25 @@ void setup() {
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
 
-  splashAdd("Starting WiFi AP...");
-  // Load any previously-saved STA credentials from NVS.
-  { Preferences prefs; prefs.begin("wifi", true);
-    prefs.getString("ssid", savedSsid, sizeof(savedSsid));
-    prefs.getString("pass", savedPass, sizeof(savedPass));
-    prefs.end(); }
-  if (savedSsid[0]) {
-    // AP+STA: start AP first so clients can connect even while we attempt STA join.
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(AP_SSID);
-    // Join synchronously here in setup() — before the web server starts — to avoid
-    // task-vs-setup race conditions that caused the boot connect to silently fail.
-    Serial.printf("[WIFI] Boot: attempting to join \"%s\"...\n", savedSsid);
-    splashAdd("Joining saved WiFi...", 0x4080C0);
-    WiFi.begin(savedSsid, savedPass[0] ? savedPass : nullptr);
-    unsigned long wt0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - wt0 < 10000) delay(250);
-    if (WiFi.status() == WL_CONNECTED) {
-      char wb2[44]; snprintf(wb2, sizeof(wb2), "STA: %s", WiFi.localIP().toString().c_str());
-      splashAdd(wb2, 0x4080C0);
-      Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
+  splashAdd("Starting WiFi...");
+  // ESP32 stores WiFi credentials internally whenever WiFi.begin(ssid,pass) is
+  // called. On boot, read that stored config via esp_wifi_get_config to decide
+  // whether to attempt a STA join. No Preferences/NVS code needed.
+  WiFi.mode(WIFI_AP_STA);   // AP+STA always; AP keeps running during STA join
+  WiFi.softAP(AP_SSID);
+  // Check for stored STA credentials in ESP32's internal WiFi config.
+  { wifi_config_t staCfg = {};
+    if (esp_wifi_get_config(WIFI_IF_STA, &staCfg) == ESP_OK && staCfg.sta.ssid[0]) {
+      strlcpy(savedSsid, (char*)staCfg.sta.ssid, sizeof(savedSsid));
+      // Note: password not copied here for safety; WiFi.begin() uses it internally
+      splashAdd("Joining saved WiFi...", 0x4080C0);
+      Serial.printf("[WIFI] Stored creds found for \"%s\" — connecting\n", savedSsid);
+      WiFi.begin();   // uses ESP32's stored credentials, no ssid/pass args needed
+      bootWifiPending = true;
+      bootWifiStartMs = millis();
     } else {
-      WiFi.disconnect(false);
-      WiFi.mode(WIFI_AP);
-      WiFi.softAP(AP_SSID);
-      splashAdd("WiFi join failed — AP only", 0x802020);
-      Serial.println("[WIFI] Boot connect failed — AP only");
+      Serial.println("[WIFI] No stored STA creds — AP only");
     }
-  } else {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID);
   }
   { char wb[30]; snprintf(wb, 30, "AP: %s", WiFi.softAPIP().toString().c_str());
     splashAdd(wb, 0x60A040); }
@@ -1381,9 +1384,39 @@ void loop() {
   ws.cleanupClients(MAX_PLAYERS);
   unsigned long now = millis();
 
+  // Monitor async boot-time STA connect.
+  if (bootWifiPending) {
+    wl_status_t wst = WiFi.status();
+    if (wst == WL_CONNECTED) {
+      bootWifiPending = false;
+      // Populate savedSsid/savedPass from WiFi library (now connected, SSID() works).
+      strlcpy(savedSsid, WiFi.SSID().c_str(), sizeof(savedSsid));
+      strlcpy(savedPass, WiFi.psk().c_str(),  sizeof(savedPass));
+      char msg[48]; snprintf(msg, sizeof(msg), "WiFi: %s", WiFi.localIP().toString().c_str());
+      splashAdd(msg, 0x40C080);
+      Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
+      char buf[88];
+      int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
+        WiFi.localIP().toString().c_str());
+      ws.textAll(buf, (size_t)blen);
+    } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
+               now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
+      bootWifiPending = false;
+      savedSsid[0] = '\0';  // clear so handleConnect doesn't suppress client retry
+      Serial.printf("[WIFI] Boot connect failed (status=%d)\n", (int)wst);
+      // Stay in AP_STA mode — AP is still running; STA just didn't connect.
+    }
+  }
+
   if (now - lastScreenMs >= SCREEN_MS) {
     lastScreenMs = now;
     drawStatusScreen();
+  }
+
+  // Turn off LED flash when duration expires
+  if (g_ledEndMs && now >= g_ledEndMs) {
+    k10.rgb->write(-1, 0, 0, 0);
+    g_ledEndMs = 0;
   }
 
   if (now - lastStatusMs >= STATUS_MS) {

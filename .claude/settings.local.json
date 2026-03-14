@@ -6,7 +6,10 @@
       "Bash(python3 -c \":*)",
       "Bash(node -e \":*)",
       "Bash(del \"C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\game_logic.h\" \"C:\\\\Users\\\\harrisg1\\\\OneDrive - dormakaba Group\\\\Documents\\\\Arduino\\\\Esp32HexMapCrawl\\\\network.h\")",
-      "Bash(grep -n:*)"
+      "Bash(grep -n:*)",
+      "Bash(grep -v \"//.*ACT_\")",
+      "Bash(xargs grep:*)",
+      "Bash(grep -v \"Serial\\\\|printf\\\\|//.*medicine\\\\|RES_NAMES\\\\|dot-med\\\\|res-med\")"
     ]
   }
 }
