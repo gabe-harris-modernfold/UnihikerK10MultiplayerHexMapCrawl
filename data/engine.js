@@ -29,6 +29,7 @@ const uiHeatExp     = van.state(0);
 // §5 Action tracking
 const uiActUsed     = van.state(false);
 const uiResting     = van.state(false);  // true after REST until dawn
+let maxMP = 6;  // set from dawnMP at EVT_DAWN; personal day-length for time-of-day clock
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
 function openMenu(page = 'main') { uiMenuPage.val = page; }
@@ -102,7 +103,7 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   // §4 Resource economy
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
-  au: false,
+  au: false, rest: false,
 }));
 
 // Shared game state (Threat Clock, Day, shared stores)
@@ -149,6 +150,39 @@ function send(obj) {
     socket.send(JSON.stringify(obj));
 }
 
+// ── Rest bubbles & auto-rest ─────────────────────────────────────
+function updateRestBubbles() {
+  const bar = document.getElementById('rest-bubbles');
+  if (!bar) return;
+  bar.innerHTML = '';
+  const connected = players.filter(p => p.on);
+  if (connected.length === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  for (const p of connected) {
+    const bubble = document.createElement('div');
+    bubble.className = 'rest-bubble' + (p.rest ? ' rest-bubble-on' : '');
+    bubble.style.setProperty('--pc', PLAYER_COLORS[p.id]);
+    const tag = (p.nm || `P${p.id}`).substring(0, 6).toUpperCase();
+    bubble.innerHTML = p.rest
+      ? `<span class="rb-zzz">Zzz</span><span class="rb-name">${tag}</span>`
+      : `<span class="rb-name">${tag}</span>`;
+    bar.appendChild(bubble);
+  }
+}
+
+function checkAutoRest() {
+  if (myId < 0 || !players[myId]?.on) return;
+  if (players[myId].rest) return;           // already resting
+  if (uiResting.val) return;
+  const others = players.filter(p => p.on && p.id !== myId);
+  if (others.length === 0) return;          // solo — don't auto-rest
+  if (others.every(p => p.rest)) {
+    // All other connected players are resting — auto-rest
+    showToast('\ud83d\ude34 Auto-rest — all others are down');
+    send({ t: 'act', a: ACT_REST });
+  }
+}
+
 // ── Message handler ──────────────────────────────────────────────
 function handleMsg(msg) {
   switch (msg.t) {
@@ -176,7 +210,9 @@ function handleMsg(msg) {
       if (msg.gs) Object.assign(gameState, msg.gs);
       hideConnectOverlay();
       updateSidebar();
+      if (myId >= 0 && players[myId]?.mp > 0 && maxMP <= 0) maxMP = players[myId].mp;
       updateTerrainCard();
+      updateRestBubbles();
       break;
 
     case 's':
@@ -296,10 +332,14 @@ function handleEvent(ev) {
     case 'join':
       players[ev.pid].on = true;
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
+      updateRestBubbles();
       break;
     case 'left':
       players[ev.pid].on = false;
+      players[ev.pid].rest = false;
       addLog(`<span class="log-mv">&#x25C4; Survivor ${ev.pid} gone dark</span>`);
+      updateRestBubbles();
+      checkAutoRest();
       break;
     case 'nm':
       players[ev.pid].nm = ev.nm;
@@ -337,8 +377,14 @@ function handleEvent(ev) {
         players[ev.pid].water = ev.w;
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
+        if (ev.pid === myId) maxMP = ev.mp;  // lock in this day's MP budget for clock
         players[ev.pid].au    = false;  // new day: action slot restored
-        if (ev.pid === myId) uiResting.val = false;  // clear resting at dawn
+        players[ev.pid].rest = false;
+        if (ev.pid === myId) {
+          if (uiResting.val && ev.dll < 0) showShelterWarning();
+          uiResting.val = false;  // clear resting at dawn
+        }
+        updateRestBubbles();
         if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
         if (ev.wth !== undefined) players[ev.pid].wth = ev.wth;
         if (ev.rad !== undefined) players[ev.pid].rad = ev.rad;
@@ -395,13 +441,26 @@ function handleEvent(ev) {
       addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
       // Special toasts for REST and SHELTER
       if (ev.a === ACT_REST && ev.out === AO_SUCCESS) {
+        players[ev.pid].rest = true;
         if (ev.pid === myId) uiResting.val = true;
+        updateRestBubbles();
+        checkAutoRest();
         const msg = ev.pid === myId ? 'Resting — waiting for dawn' : `${escHtml(who)} is resting`;
         showToast(`\ud83d\ude34 ${msg}`);
         if (ev.pid !== myId) addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
       } else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) {
-        const msg = ev.pid === myId ? 'Shelter built!' : `${escHtml(who)} built a shelter`;
-        showToast(`\ud83c\udf78 ${msg}`);
+        const shelterName = ev.cnd === 2 ? 'improved shelter 🏠' : 'lean-to ⛺';
+        const msg = ev.pid === myId ? `Built a ${shelterName}!` : `${escHtml(who)} built a ${shelterName}`;
+        showToast(`🔨 ${msg}`);
+        // Update local gameMap immediately so the shelter icon renders without waiting for next move
+        const sp = players[ev.pid];
+        if (sp && gameMap[sp.r]?.[sp.q] !== undefined) {
+          gameMap[sp.r][sp.q].shelter = ev.cnd;
+        }
+      // Track scrap delta for all actions (SCAV gives +1, SHELTER spends -1/-2)
+      if (ev.sd !== undefined && ev.sd !== 0) {
+        players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
+      }
       } else if (ev.pid === myId) {
         const toastMsg =
           ev.out === AO_BLOCKED  ? `\u2297 ${actNm}: not available` :
@@ -456,13 +515,13 @@ function handleEvent(ev) {
 // ── Map decode ──────────────────────────────────────────────────
 // New encoding: 2 bytes per cell (4 hex chars)
 //   terrainByte = 0x00-0x0A (terrain index) or 0xFF (fog)
-//   dataByte    = (footprints[0-5])|(shelter<<6)
+//   dataByte    = (footprints[0-5])|(shelter<<6)  shelter: 0=none, 1=lean-to, 2=improved
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   return {
     terrain:    terrainByte,
     footprints: dataByte & 0x3F,  // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 1,
+    shelter:    (dataByte >> 6) & 3, // bits 6-7: 0=none, 1=lean-to, 2=improved
     variant:    variantByte
   };
 }
@@ -553,7 +612,7 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
 }
 
 // ── Draw character/player icon ────────────────────────────────────
-function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe) {
+function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
   const scale  = hexSz * 0.44;
   const headR  = scale * 0.40;
   const headCY = cy - scale * 0.32;
@@ -623,6 +682,46 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe) {
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, headCY + 0.5);
   ctx.restore();
+
+  // Call sign above icon
+  if (nm) {
+    const tag      = nm.substring(0, 8).toUpperCase();
+    const nameSz   = Math.max(8, Math.round(hexSz * 0.21));
+    const arrowSz  = Math.max(10, scale * 0.62);
+    // Position: above the ▼ arrow for self, above head for others
+    const topY     = isMe ? headCY - headR - arrowSz - 6 : headCY - headR - 4;
+    ctx.save();
+    ctx.font        = `${nameSz}px 'Courier New', monospace`;
+    ctx.textAlign   = 'center';
+    ctx.textBaseline = 'bottom';
+    const tw = ctx.measureText(tag).width;
+    // Dark pill backdrop
+    const padX = 3, padY = 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.beginPath();
+    ctx.roundRect(cx - tw / 2 - padX, topY - nameSz - padY, tw + padX * 2, nameSz + padY * 2, 2);
+    ctx.fill();
+    // Text in player colour, slightly dimmed for others
+    ctx.fillStyle = isMe ? color : color + 'CC';
+    ctx.letterSpacing = '1px';
+    ctx.fillText(tag, cx, topY);
+    ctx.restore();
+  }
+}
+
+// ── Time-of-day clock ────────────────────────────────────────────
+const TIME_PHASES = [
+  { name:'FIRST LIGHT', icon:'☀',      r:255, g:180, b:100, a:0.10 },
+  { name:'HIGH WATCH',  icon:'☀',      r:255, g:220, b:150, a:0.05 },
+  { name:'NOON BURN',   icon:'☀',      r:255, g:240, b:200, a:0.02 },
+  { name:'LOW SUN',     icon:'🌇',r:255, g:160, b: 60, a:0.18 },
+  { name:'DUST HOUR',   icon:'🌆',r:210, g: 90, b: 20, a:0.38 },
+  { name:'DARK WATCH',  icon:'🌑',r: 15, g:  8, b: 40, a:0.72 },
+];
+function getTimePhase() {
+  if (myId < 0 || maxMP <= 0) return TIME_PHASES[0];
+  const f = 1 - (uiMP.val / maxMP);
+  return TIME_PHASES[f < 0.17 ? 0 : f < 0.34 ? 1 : f < 0.51 ? 2 : f < 0.68 ? 3 : f < 0.84 ? 4 : 5];
 }
 
 // ── Render ──────────────────────────────────────────────────────
@@ -762,14 +861,14 @@ function render() {
         }
       }
 
-      // Shelter indicator
+      // Shelter indicator: 1=lean-to (⛺), 2=improved (🏠)
       if (cell.shelter) {
         ctx.save();
-        ctx.fillStyle   = '#D4A574';
-        ctx.font        = `${Math.max(12, Math.round(HEX_SZ * 0.5))}px monospace`;
-        ctx.textAlign   = 'right';
+        ctx.fillStyle    = cell.shelter === 2 ? '#7EC8E3' : '#D4A574';
+        ctx.font         = `${Math.max(12, Math.round(HEX_SZ * 0.5))}px monospace`;
+        ctx.textAlign    = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText('🏕', cx + HEX_SZ * 0.35, cy - HEX_SZ * 0.35);
+        ctx.fillText(cell.shelter === 2 ? '🏠' : '⛺', cx + HEX_SZ * 0.35, cy - HEX_SZ * 0.35);
         ctx.restore();
       }
     }
@@ -797,7 +896,17 @@ function render() {
     if (pcx < -HEX_SZ * 2 || pcx > canvas.width  + HEX_SZ * 2) continue;
     if (pcy < -HEX_SZ * 2 || pcy > canvas.height + HEX_SZ * 2) continue;
 
-    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId);
+    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId, players[i].nm);
+  }
+
+  // ── Time-of-day tint overlay ──────────────────────────────────
+  {
+    const phase = getTimePhase();
+    ctx.save();
+    ctx.globalAlpha = phase.a;
+    ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
   }
 
   requestAnimationFrame(render);

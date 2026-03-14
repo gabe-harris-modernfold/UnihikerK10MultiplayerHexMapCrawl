@@ -9,7 +9,24 @@
       "Bash(grep -n:*)",
       "Bash(grep -v \"//.*ACT_\")",
       "Bash(xargs grep:*)",
-      "Bash(grep -v \"Serial\\\\|printf\\\\|//.*medicine\\\\|RES_NAMES\\\\|dot-med\\\\|res-med\")"
+      "Bash(grep -v \"Serial\\\\|printf\\\\|//.*medicine\\\\|RES_NAMES\\\\|dot-med\\\\|res-med\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\); const txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/engine.js'',''utf8''\\); const lines=txt.split\\(''\\\\n''\\); console.log\\(lines[695]+''\\\\n''+lines[696]+''\\\\n''+lines[697]+''\\\\n''+lines[698]+''\\\\n''+lines[699]\\);\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_engine.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_html.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_css.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui.js\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\),txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/engine.js'',''utf8''\\),lines=txt.split\\(''\\\\n''\\); const checks=[''let maxMP'',''TIME_PHASES'',''getTimePhase'',''if \\(ev.pid === myId\\) maxMP'',''phase-dark'',''Time-of-day tint'']; checks.forEach\\(s=>{ const i=lines.findIndex\\(l=>l.includes\\(s\\)\\); console.log\\(i>=0?''OK line ''+\\(i+1\\)+'': ''+lines[i].trim\\(\\):''MISSING: ''+s\\); }\\);\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\); [''index.html'',''ui.js'',''style.css''].forEach\\(f=>{ const txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/''+f,''utf8''\\); console.log\\(f+'':''\\); if\\(txt.includes\\(''hud-clock''\\)\\) console.log\\(''  OK: hud-clock found''\\); else console.log\\(''  MISSING: hud-clock''\\); if\\(txt.includes\\(''updateClock''\\)||f===''index.html''||f===''style.css''\\) console.log\\(''  OK: updateClock/phase-dark/clock-style found''\\); }\\);\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\),txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/engine.js'',''utf8''\\),lines=txt.split\\(''\\\\n''\\); for\\(let i=888;i<902;i++\\) console.log\\(\\(i+1\\)+'': ''+lines[i]\\);\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_rest.js\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\),txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/game_logic.hpp'',''utf8''\\),lines=txt.split\\(''\\\\n''\\); const checks=[''uint8_t hexShelt'',''int fatRed = 2;'',''if \\(hexShelt == 1\\)'',''else if \\(hexShelt == 2\\)'',''bool llOk'',''bool fatOk'',''hexShelt == 2 && p.fatigue < 6'',''sv >= 1 && hexShelt == 2'']; checks.forEach\\(s=>{const i=lines.findIndex\\(l=>l.includes\\(s\\)\\);console.log\\(i>=0?''OK ''+\\(i+1\\)+'': ''+lines[i].trim\\(\\):''MISSING: ''+s\\);}\\);\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_shelter_vis.js\")",
+      "Bash(node -e \"const fs=require\\(''fs''\\),txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/engine.js'',''utf8''\\),lines=txt.split\\(''\\\\n''\\); const i=lines.findIndex\\(l=>l.includes\\(''gameMap[sp.r]''\\)\\); console.log\\(''Line ''+\\(i+1\\)+'':'',lines[i-1].trim\\(\\)\\); console.log\\(''Line ''+\\(i+2\\)+'':'',lines[i].trim\\(\\)\\); console.log\\(''Line ''+\\(i+3\\)+'':'',lines[i+1].trim\\(\\)\\);\")",
+      "Bash(awk 'NR>=450 && NR<=510' \"C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/game_logic.hpp\")",
+      "Bash(grep '\\\\\\\\')",
+      "Bash(awk 'NR>=450 && NR<=520' \"C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/game_logic.hpp\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_shelter_fix.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui_scrap.js\")"
     ]
   }
 }

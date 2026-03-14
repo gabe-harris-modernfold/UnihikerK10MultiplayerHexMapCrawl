@@ -66,6 +66,9 @@ body::after{
 }
 .conn-dot{color:var(--gold-hi);font-size:10px;min-width:8px}
 .hud-stat{padding:0 4px;color:var(--txt-dim);letter-spacing:0.5px}
+.hud-clock{padding:0 5px;font-size:11px;font-family:var(--stencil);color:var(--gold);letter-spacing:1px;white-space:nowrap;transition:color 0.6s ease}
+.hud-clock.phase-dark{color:#6070A0}
+@media(max-width:440px){.hud-clock{display:none}}
 #hud-res{display:none;gap:6px;align-items:center}
 .hr-item{display:flex;align-items:center;gap:3px}
 .hr-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
@@ -96,6 +99,46 @@ body::after{
 }
 #hud-ll .track-boxes{gap:2px}
 #hud-ll .track-box{width:9px;height:11px;border-radius:1px}
+#hud-ll .track-box.filled{background:#7A2A2A;border-color:#A84040}
+#hud-ll .hud-ll-val{color:#A84040}
+
+/* ── Rest status bubbles ────────────────────────────────────── */
+#rest-bubbles{
+  display:flex;flex-wrap:wrap;gap:5px;
+  padding:4px 10px;
+  background:rgba(4,3,2,0.82);border-bottom:1px solid var(--bdr);
+  justify-content:center;align-items:center;flex-shrink:0
+}
+.rest-bubble{
+  display:flex;flex-direction:column;align-items:center;gap:1px;
+  padding:3px 7px;border-radius:3px;
+  border:1px solid rgba(255,255,255,0.10);
+  background:rgba(255,255,255,0.04);
+  transition:background 0.3s,border-color 0.3s;
+  min-width:36px
+}
+.rest-bubble-on{
+  border-color:var(--pc);
+  background:color-mix(in srgb,var(--pc) 12%,transparent);
+  animation:rb-breathe 2.4s ease-in-out infinite
+}
+@keyframes rb-breathe{
+  0%,100%{opacity:0.75} 50%{opacity:1}
+}
+.rb-zzz{
+  font-size:9px;color:var(--pc);letter-spacing:1px;
+  font-family:'Courier New',monospace;
+  animation:rb-float 1.8s ease-in-out infinite
+}
+@keyframes rb-float{
+  0%,100%{transform:translateY(0)} 50%{transform:translateY(-2px)}
+}
+.rb-name{
+  font-size:8px;letter-spacing:1.5px;text-transform:uppercase;
+  font-family:'Courier New',monospace;
+  color:var(--pc);opacity:0.7;white-space:nowrap
+}
+.rest-bubble-on .rb-name{opacity:1}
 
 /*──────────────────────────── Main layout ──────────────────────*/
 #main{display:flex;flex:1;overflow:hidden;position:relative}
@@ -181,8 +224,8 @@ canvas{display:block;width:100%;height:100%}
 #action-panel.open{display:flex}
 #action-box{
   background:var(--bg-panel);border:1px solid var(--bdr-hi);
-  border-radius:2px;padding:16px 18px;
-  width:min(320px,92vw);max-height:90dvh;overflow-y:auto;
+  border-radius:2px;padding:20px 22px;
+  width:min(370px,94vw);max-height:90dvh;overflow-y:auto;
   position:relative;
   box-shadow:0 0 48px rgba(0,0,0,0.85),inset 0 0 0 1px rgba(92,60,22,0.2);
   animation:action-in 0.15s ease-out
@@ -192,45 +235,61 @@ canvas{display:block;width:100%;height:100%}
   to  {opacity:1;transform:scale(1)    translateY(0)  }
 }
 #action-box h2{
-  font-family:var(--stencil);font-size:13px;color:var(--gold);
-  letter-spacing:3px;margin-bottom:10px;
+  font-family:var(--stencil);font-size:15px;color:var(--gold);
+  letter-spacing:3px;margin-bottom:12px;
   text-shadow:0 0 10px rgba(196,140,10,0.35)
 }
-#action-close{position:absolute;top:10px;right:12px;cursor:pointer;
-  color:var(--txt-dim);font-size:15px;line-height:1}
+#action-close{position:absolute;top:12px;right:14px;cursor:pointer;
+  color:var(--txt-dim);font-size:17px;line-height:1}
 #action-close:hover{color:var(--gold)}
 #action-status-bar{
-  display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
 .act-mp-badge{
-  font-size:11px;color:var(--gold);border:1px solid var(--bdr-hi);
-  padding:1px 6px;border-radius:2px;letter-spacing:1px}
+  font-size:13px;color:var(--gold);border:1px solid var(--bdr-hi);
+  padding:2px 8px;border-radius:2px;letter-spacing:1px}
 .act-used-badge{
-  font-size:11px;color:#6A2020;border:1px solid #4A1208;
-  padding:1px 6px;border-radius:2px;letter-spacing:0.5px}
+  font-size:13px;color:#6A2020;border:1px solid #4A1208;
+  padding:2px 8px;border-radius:2px;letter-spacing:0.5px}
 .act-avail-badge{
-  font-size:11px;color:#2A5C20;border:1px solid #1E4010;
-  padding:1px 6px;border-radius:2px;letter-spacing:0.5px}
-#action-btn-list{display:flex;flex-direction:column;gap:4px}
+  font-size:13px;color:#2A5C20;border:1px solid #1E4010;
+  padding:2px 8px;border-radius:2px;letter-spacing:0.5px}
+#action-btn-list{display:flex;flex-direction:column;gap:5px}
 .action-item-btn{
   width:100%;background:transparent;
   border:1px solid var(--bdr-hi);color:var(--txt);
-  font-family:'Courier New',monospace;font-size:11px;letter-spacing:0.5px;
-  padding:6px 8px;cursor:pointer;border-radius:2px;
-  display:flex;align-items:center;gap:6px;transition:border-color 0.15s,background 0.15s
+  font-family:'Courier New',monospace;font-size:13px;letter-spacing:0.5px;
+  padding:8px 10px;cursor:pointer;border-radius:2px;
+  display:flex;align-items:center;gap:8px;transition:border-color 0.15s,background 0.15s
 }
 .action-item-btn:hover:not(.action-disabled){
   border-color:var(--gold);background:var(--rust)}
 .action-item-btn.action-disabled{
   opacity:0.38;cursor:not-allowed;border-color:var(--bdr)}
-.act-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
+.act-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0}
 .act-label{flex:1;text-align:left;letter-spacing:1px}
-.act-cost{font-size:10px;color:var(--txt-dim);flex-shrink:0}
-.action-no-cond{font-size:12px;color:var(--txt-dim);padding:4px 0;font-style:italic}
-.action-settl-note{font-size:10px;color:#FFD700;letter-spacing:0.5px;padding:2px 0 4px;opacity:0.85}
+.act-cost{font-size:12px;color:var(--txt-dim);flex-shrink:0}
+.action-no-cond{font-size:13px;color:var(--txt-dim);padding:4px 0;font-style:italic}
+.action-settl-note{font-size:12px;color:#FFD700;letter-spacing:0.5px;padding:2px 0 4px;opacity:0.85}
 /* ACTION HUD button dims when action is used today */
 #action-hud-btn.action-btn-used{opacity:0.45}
-/* REST HUD button dims when already resting */
-#rest-hud-btn.rest-btn-used{opacity:0.45}
+
+/* ── REST HUD button — always larger and more prominent ─────── */
+#rest-hud-btn{
+  font-size:14px;padding:5px 16px;
+  border-color:var(--gold);color:var(--gold-hi);
+  letter-spacing:2px;font-weight:bold
+}
+#rest-hud-btn:hover{background:var(--rust);border-color:#E8D080;color:#E8D080}
+#rest-hud-btn.rest-btn-used{opacity:0.38;border-color:var(--bdr-mid);color:var(--txt-dim)}
+/* Pulse when exhausted (MP=0) and not yet resting */
+#rest-hud-btn.rest-exhausted{
+  border-color:#FFA020;color:#FFA020;
+  animation:rest-pulse 1.1s ease-in-out infinite
+}
+@keyframes rest-pulse{
+  0%,100%{box-shadow:0 0 0px rgba(255,140,0,0);border-color:#FFA020}
+  50%    {box-shadow:0 0 10px rgba(255,140,0,0.55);border-color:#FFD060}
+}
 /* ── Shared action/treat button style ────────────────────────── */
 /* Also used by WATER sub-control, TREAT buttons, and the push bar */
 .check-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
@@ -457,6 +516,32 @@ canvas{display:block;width:100%;height:100%}
 }
 .toast-item.dying{animation:toast-out 0.3s ease-in forwards}
 
+/* ── Flavor banner (shelter warning etc.) ───────────────────── */
+#flavor-banner{
+  position:fixed;bottom:0;left:0;right:0;
+  background:rgba(80,10,5,0.97);border-top:2px solid #8B1A1A;
+  color:#FF6060;font-family:var(--stencil);
+  font-size:14px;letter-spacing:3px;text-transform:uppercase;
+  text-align:center;padding:12px 16px 14px;
+  z-index:30;display:none;cursor:pointer;
+  text-shadow:0 0 12px rgba(255,60,60,0.55);
+  box-shadow:0 -4px 32px rgba(120,0,0,0.6)
+}
+#flavor-banner.visible{display:block;animation:banner-in 0.35s ease-out}
+#flavor-banner.dying{animation:banner-out 0.4s ease-in forwards}
+@keyframes banner-in{
+  from{opacity:0;transform:translateY(100%)}
+  to  {opacity:1;transform:translateY(0)}
+}
+@keyframes banner-out{
+  from{opacity:1;transform:translateY(0)}
+  to  {opacity:0;transform:translateY(100%)}
+}
+#flavor-banner .banner-sub{
+  display:block;font-family:'Courier New',monospace;
+  font-size:10px;letter-spacing:1.5px;color:#AA4040;margin-top:4px
+}
+
 /*──────────────────────────── Log panel ────────────────────────*/
 #log-panel{
   width:136px;min-width:136px;
@@ -646,7 +731,7 @@ canvas{display:block;width:100%;height:100%}
   .dir-btn{width:40px;height:40px;font-size:18px}
   #terrain-card{width:min(170px,calc(100vw - 16px))}
   #hex-info{width:min(170px,calc(100vw - 16px))}
-  #action-box{width:min(290px,88vw)}
+  #action-box{width:min(340px,90vw)}
 }
 @media(max-height:480px){
   .dir-btn{width:30px;height:30px;font-size:13px}

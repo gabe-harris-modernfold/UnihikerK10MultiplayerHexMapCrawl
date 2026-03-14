@@ -275,13 +275,13 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
           "\"mp\":%d,\"ll\":%d,\"fat\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
-          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"resd\":%d}",
+          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"resd\":%d,\"sd\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
           (int)ev.actNewMP, (int)ev.actNewLL, (int)ev.actNewFat,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
           (int)ev.actDn, (int)ev.actTot,
           (int)ev.radD, (int)ev.radR,
-          (int)ev.actCnd, (int)ev.actResD);
+          (int)ev.actCnd, (int)ev.actResD, (int)ev.actScrapD);
         ws.textAll(buf, len);
         break;
 

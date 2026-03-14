@@ -303,15 +303,13 @@ static void movePlayer(int pid, int dir) {
   // Compute vision params at new position for the debug line
   int8_t  visLvl  = (destTerrain < NUM_TERRAIN) ? TERRAIN_VIS[destTerrain] : 0;
   int     effVisR = (visLvl <= -3) ? 0 : (visLvl == -2) ? 1 : (visLvl == -1) ? 2 : (visLvl == 0) ? VISION_R : (visLvl == 1) ? VISION_R + 1 : VISION_R + 2;
-  bool    maskRes = (visLvl == -2);  // only PENALTY masks resources; BLIND/LOW see own hex clearly
-
   // Deduct movement cost from daily MP budget
   p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
 
   Serial.printf("[MOVE]    P%d \"%s\" (%2d,%2d)→(%2d,%2d) %s [%s] visR:%d%s cd:%lums mp:%d\n",
     pid, p.name, oldQ, oldR, p.q, p.r,
     T_NAME[destTerrain], VIS_LABEL[visLvl + 3],
-    effVisR, maskRes ? " mask" : "     ",
+    effVisR, (visLvl == -2) ? " mask" : "     ",
     (unsigned long)cd, (int)p.movesLeft);
 
   // ── Radiation entry check (§6.2): Rad-tagged terrain → Endure DN6 or +1 R ──
@@ -451,12 +449,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.actUsed   = true;
       p.movesLeft = (int8_t)max(0, (int)p.movesLeft - spend);
       p.inv[0]    = (uint8_t)min((int)p.inv[0] + spend, 99);
-      // §6.5: water is contaminated if collected adjacent to Glass Fields(6) or Nuke Crater(10)
-      bool nearContam = false;
-      for (int d = 0; d < 6 && !nearContam; d++) {
-        uint8_t nt = G.map[wrapR(p.r + DR[d])][wrapQ(p.q + DQ[d])].terrain;
-        if (nt == 6 || nt == 10) nearContam = true;
-      }
+      // TODO §6.5: contaminated water — pending token system
       ev.actWatD  = (int8_t)spend;
       ev.actOut   = AO_SUCCESS;
       Serial.printf("[WATER]   P%d \"%s\" @ %s | +%d water | inv water:%d mp→%d\n",
@@ -480,12 +473,14 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       broadcastCheck(pid, SK_SCAVENGE, cr, false);
       if (cr.total >= (int)dn) {
         // Success: award 1 Scrap (placeholder for proper Scavenge deck)
-        p.inv[4]  = (uint8_t)min((int)p.inv[4] + 1, 99);
-        ev.actOut = AO_SUCCESS;
+        p.inv[4]      = (uint8_t)min((int)p.inv[4] + 1, 99);
+        ev.actScrapD  = 1;
+        ev.actOut     = AO_SUCCESS;
       } else if (cr.total >= (int)dn - 1) {
         // Partial: item + Encounter (Encounter not yet implemented)
-        p.inv[4]  = (uint8_t)min((int)p.inv[4] + 1, 99);
-        ev.actOut = AO_PARTIAL;
+        p.inv[4]      = (uint8_t)min((int)p.inv[4] + 1, 99);
+        ev.actScrapD  = 1;
+        ev.actOut     = AO_PARTIAL;
       } else {
         ev.actOut = AO_FAIL;
       }
@@ -498,25 +493,25 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
 
     // ──────────────────────────────────────────────────────────────
     case ACT_SHELTER: {
-      if (p.actUsed || p.movesLeft < 2) break;  // Min 2 MP (failed attempt cost)
-      uint8_t dn  = 8;  // DN 6 with Tarp, DN 4 with Kit (items not tracked yet)
-      CheckResult cr = resolveCheck(pid, SK_SHELTER, dn, 0);
-      ev.actDn = dn; ev.actTot = (int8_t)cr.total;
-      broadcastCheck(pid, SK_SHELTER, cr, false);
-      if (cr.success) {
-        p.actUsed   = true;
-        p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 3);
-        G.map[p.r][p.q].shelter = 1;
-        ev.actOut = AO_SUCCESS;
-        Serial.printf("[SHELTER] ✓ %s (P%d) built a permanent shelter @ (%d,%d) | DN%d tot:%d\n",
-          p.name, pid, p.q, p.r, dn, cr.total);
-      } else {
-        // Failed: only cost 2 MP, don't broadcast failure, action remains available
-        p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 2);
-        Serial.printf("[SHELTER] ✗ %s (P%d) failed to build shelter @ (%d,%d) | DN%d tot:%d (-2 MP, action available)\n",
-          p.name, pid, p.q, p.r, dn, cr.total);
-        return;  // don't enqueue event on failure
+      // Requires at least 1 scrap and 1 MP
+      if (p.inv[4] == 0) {
+        Serial.printf("[SHELTER] ✗ %s (P%d) no scrap\n", p.name, pid);
+        break;  // sends AO_BLOCKED to client so UI can respond
       }
+      // Auto-select type: 2+ scrap = improved (2 MP), 1 scrap = lean-to (1 MP)
+      uint8_t shelterType = (p.inv[4] >= 2) ? 2 : 1;
+      uint8_t mpCost      = shelterType;  // basic=1 MP, improved=2 MP
+      if (p.actUsed || p.movesLeft < (int8_t)mpCost) break;
+      p.actUsed    = true;
+      p.movesLeft  = (int8_t)max(0, (int)p.movesLeft - mpCost);
+      p.inv[4]     = (uint8_t)max(0, (int)p.inv[4] - shelterType);
+      G.map[p.r][p.q].shelter = shelterType;
+      ev.actOut    = AO_SUCCESS;
+      ev.actCnd    = shelterType;           // 1=lean-to, 2=improved (reuses cnd field)
+      ev.actScrapD = -(int8_t)shelterType;  // scrap spent: -1 lean-to, -2 improved
+      Serial.printf("[SHELTER] ✓ %s (P%d) built %s shelter @ (%d,%d) | -%d MP | scrap→%d\n",
+        p.name, pid, shelterType == 2 ? "improved" : "lean-to",
+        p.q, p.r, mpCost, (int)p.inv[4]);
       break;
     }
 
@@ -533,10 +528,14 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         case TC_MINOR:   if (p.wounds[0] > 0)              { dn = 7;  canTreat = true; } break;
         case TC_BLEED:   if (p.statusBits & ST_BLEEDING)   { dn = 7;  canTreat = true; } break;
         case TC_FEVER:   if (p.statusBits & ST_FEVERED)    { dn = 9;  canTreat = true; } break;
-        case TC_MAJOR:   break;  // requires Med Kit — item tracking pending
+        case TC_MAJOR:   break;  // TODO: requires Med Kit — blocked until item tracking
         case TC_RAD:     if (p.radiation > 0)              { dn = 7;  canTreat = true; } break;
-        // Grievous Wound: Settlement-only; DN 10 base → 8 after Settlement bonus (§7.3A)
+        // Grievous Wound: Settlement-only; DN 10 base → 8 with Settlement bonus (§7.3A)
+        // TODO: requires Adv Med Kit — blocked until item tracking
         case TC_GRIEVOUS:if (p.wounds[2] > 0 && inSettl)  { dn = 10; canTreat = true; } break;
+        default:
+          Serial.printf("[TREAT]   P%d invalid condTgt=%d — ignored\n", pid, (int)condTgt);
+          return;
       }
       if (!canTreat) break;
       // Apply Settlement bonus after determining base DN
@@ -566,6 +565,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
             }
             break;
           }
+          default: break;  // unreachable — caught in condition switch above
         }
         ev.actOut = AO_SUCCESS;
       } else {
@@ -601,34 +601,42 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       if (p.resting) break;  // already resting; prevent duplicate REST commands
       p.actUsed = true;
       p.resting = true;  // mark as resting; if all players rest, day ends early
+      uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=lean-to, 2=improved
       // Camp bonus: any other player in the same hex
       int campCount = 0;
       for (int k = 0; k < MAX_PLAYERS; k++)
         if (k != pid && G.players[k].connected &&
             G.players[k].q == p.q && G.players[k].r == p.r) campCount++;
-      int fatRed   = (campCount >= 1) ? 3 : 2;
+      // Fatigue reduction: base 2 | +1 camp | +1 lean-to | +2 improved shelter
+      int fatRed = 2;
+      if (campCount >= 1)  fatRed += 1;
+      if (hexShelt == 1)   fatRed += 1;
+      else if (hexShelt == 2) fatRed += 2;
       uint8_t prevFat = p.fatigue;
       p.fatigue    = (uint8_t)max(0, (int)p.fatigue - fatRed);
-      // LL restore if Food≥4 AND Water≥3 AND Fatigue<4 after reduction
-      if (p.food >= 4 && p.water >= 3 && p.fatigue < 4 && p.ll < 6) {
+      // LL restore: Food≥4 AND Water≥3 AND fatigue low enough
+      // Improved shelter relaxes the fatigue threshold (fat<6 instead of fat<4)
+      bool llOk  = (p.food >= 4 && p.water >= 3);
+      bool fatOk = (p.fatigue < 4) || (hexShelt == 2 && p.fatigue < 6);
+      if (llOk && fatOk && p.ll < 6) {
         p.ll++;
         ev.actLLD = 1;
       }
-      // Resolve gain from Camp (§7.3): SV≥3 OR (SV≥2 + built shelter on this hex)
+      // Resolve gain (§7.3): SV≥3 | SV≥2+any shelter | SV≥1+improved shelter
       {
         uint8_t rHexT = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
         uint8_t sv    = TERRAIN_SV[rHexT];
-        bool goodShelter = (sv >= 3) || (sv >= 2 && G.map[p.r][p.q].shelter > 0);
+        bool goodShelter = (sv >= 3) || (sv >= 2 && hexShelt > 0) || (sv >= 1 && hexShelt == 2);
         if (goodShelter && p.resolve < 5) {
           p.resolve++;
           ev.actResD = 1;
-          Serial.printf("[REST]    P%d \"%s\" +1 Resolve (good shelter SV%d) → %d\n",
-            pid, p.name, sv, p.resolve);
+          Serial.printf("[REST]    P%d \"%s\" +1 Resolve (SV%d shelt:%d) → %d\n",
+            pid, p.name, sv, hexShelt, p.resolve);
         }
       }
       ev.actOut = AO_SUCCESS;
-      Serial.printf("[REST]    P%d \"%s\" fat %d→%d%s | F:%d W:%d LL:%d%s res:%d (waiting for dawn)\n",
-        pid, p.name, prevFat, p.fatigue, campCount >= 1 ? " (camp)" : "",
+      Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d (waiting for dawn)\n",
+        pid, p.name, prevFat, p.fatigue, fatRed, hexShelt, campCount,
         p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve);
       break;
     }

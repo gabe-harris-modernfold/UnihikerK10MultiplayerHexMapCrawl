@@ -94,6 +94,16 @@ function updateSidebar() {
     .map(({ p, i }) => ({ i, nm: p.nm || `P${i}`, sc: p.sc, color: PLAYER_COLORS[i], isMe: i === myId }))
     .sort((a, b) => b.sc - a.sc)
     .map((entry, rank) => ({ ...entry, rank: rank + 1 }));
+  updateClock();
+}
+
+// ── Narrative time-of-day clock ──────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('hud-clock');
+  if (!el) return;
+  const phase = getTimePhase();
+  el.textContent = phase.icon + ' ' + phase.name;
+  el.classList.toggle('phase-dark', phase.name === 'DARK WATCH');
 }
 
 // ── Character Sheet ─────────────────────────────────────────────
@@ -185,6 +195,37 @@ function showToast(msg) {
   toastStack.appendChild(el);
   setTimeout(() => el.classList.add('dying'),  1800);
   setTimeout(() => el.remove(),                2100);
+}
+
+// ── Flavor banner ─────────────────────────────────────────────────
+const SHELTER_WARNINGS = [
+  ['THE WASTES TOOK THEIR TOLL', 'build shelter before nightfall'],
+  ['EXPOSURE WEAKENS YOU', 'find cover or build a camp'],
+  ['YOU WOKE BLEEDING COLD', 'seek shelter before the next dusk'],
+  ['THE OPEN GROUND IS KILLING YOU', 'construct a lean-to — use your scrap'],
+  ['ANOTHER HARD NIGHT IN THE RUINS', 'a shelter here could save your life'],
+];
+let bannerTimer = null;
+function showBanner(main, sub) {
+  const el = document.getElementById('flavor-banner');
+  if (!el) return;
+  el.innerHTML = main + (sub ? `<span class="banner-sub">${sub}</span>` : '');
+  el.classList.remove('dying');
+  el.classList.add('visible');
+  if (bannerTimer) clearTimeout(bannerTimer);
+  el.onclick = () => dismissBanner();
+  bannerTimer = setTimeout(dismissBanner, 6000);
+}
+function dismissBanner() {
+  const el = document.getElementById('flavor-banner');
+  if (!el) return;
+  el.classList.add('dying');
+  setTimeout(() => { el.classList.remove('visible', 'dying'); }, 420);
+  if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+}
+function showShelterWarning() {
+  const [main, sub] = SHELTER_WARNINGS[Math.floor(Math.random() * SHELTER_WARNINGS.length)];
+  showBanner(main, sub);
 }
 
 // ── Overlays ──────────────────────────────────────────────────────
@@ -657,15 +698,25 @@ function initActionPanel() {
       { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2, desc: 'Search for food (Skill check)' },
       { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1, desc: 'Gather water tokens (1-3 MP)' },
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2, desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: 3, desc: 'Construct shelter (Skill check)' },
+      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: 1, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2, desc: 'Field medicine (Skill check)' },
       { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: 1, desc: 'Reveal terrain beyond vision' },
     ];
 
     actionDefs.forEach(def => {
-      const available = actAvailable(def.id, terr);
-      const hasMP     = mp >= def.mpCost;
-      const canAct    = available && hasMP && !used;
+      const available  = actAvailable(def.id, terr);
+      const hasMP      = mp >= def.mpCost;
+      const needsScrap = def.id === ACT_SHELTER;
+      const hasScrap   = !needsScrap || scrap > 0;
+      const canAct     = available && hasMP && !used && hasScrap;
+
+      // Dynamic desc: BUILD SHELTER shows what will actually be built
+      let desc = def.desc;
+      if (def.id === ACT_SHELTER) {
+        desc = scrap === 0 ? 'Needs scrap — none in pack'
+             : scrap === 1 ? '1 scrap → lean-to ⛺ (1 MP)'
+             :               scrap + ' scrap → improved shelter 🏠 (2 MP)';
+      }
 
       const btn = document.createElement('button');
       btn.className = 'action-item-btn' + (canAct ? '' : ' action-disabled');
@@ -673,8 +724,11 @@ function initActionPanel() {
         `<span class="act-icon">${def.icon}</span>` +
         `<span class="act-label">${def.label}</span>` +
         `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
-      btn.title = def.desc +
-        (used ? ' — action used today' : !available ? ' — not available here' : !hasMP ? ' — insufficient MP' : '');
+      btn.title = desc +
+        (used      ? ' — action used today'       :
+        !available ? ' — not available here'      :
+        !hasMP     ? ' — insufficient MP'         :
+        !hasScrap  ? ' — need scrap (have ' + scrap + ')' : '');
 
       btn.addEventListener('click', () => {
         if (!canAct) {
@@ -721,7 +775,10 @@ function initActionPanel() {
   });
   van.derive(() => {
     const btn = document.getElementById('rest-hud-btn');
-    if (btn) btn.classList.toggle('rest-btn-used', uiResting.val);
+    if (!btn) return;
+    btn.classList.toggle('rest-btn-used', uiResting.val);
+    // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
+    btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
 }
 
@@ -911,8 +968,8 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
-            ms({ class: 'ht-act-cost' }, '3 MP'),
-            ms({ class: 'ht-act-desc' }, 'Construct a permanent shelter on your hex. Shelter check DN 8 — success marks the hex permanently. Improves rest quality for everyone who camps here. Failed attempt costs 2 MP only.')
+            ms({ class: 'ht-act-cost' }, '1–2 MP'),
+            ms({ class: 'ht-act-desc' }, 'Requires scrap — no skill roll. 1 scrap builds a lean-to ⛺ (1 MP); 2+ scrap automatically builds an improved shelter 🏠 (2 MP). Improves rest quality for everyone who camps here.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '❤ TREAT'),

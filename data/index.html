@@ -15,6 +15,7 @@
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot">●</span>
     <span id="hud-mp" class="hud-stat">— MP</span>
+    <span id="hud-clock" class="hud-clock"></span>
     <span id="hud-vis" class="hud-stat">—</span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
@@ -27,6 +28,9 @@
   <button class="hud-btn" id="action-hud-btn">&#x2694; ACTION</button>
   <button class="hud-btn" id="rest-hud-btn">&#x25BC; REST</button>
 </div>
+
+<!-- Rest status bubbles -->
+<div id="rest-bubbles" style="display:none"></div>
 
 <!-- Main -->
 <div id="main">
@@ -163,6 +167,8 @@
 
 <!-- Toast stack -->
 <div id="toast-stack"></div>
+<!-- Flavor banner (shelter warning etc.) -->
+<div id="flavor-banner"></div>
 
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
 <div id="char-overlay">

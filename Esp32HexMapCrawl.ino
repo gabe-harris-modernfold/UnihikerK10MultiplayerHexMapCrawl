@@ -242,7 +242,7 @@ struct HexCell {
   uint8_t resource;
   uint8_t amount;
   uint8_t respawnTimer;
-  uint8_t shelter;      // 1 = permanent shelter built at this hex
+  uint8_t shelter;      // 0=none, 1=lean-to (1 scrap), 2=improved (2 scrap)
   uint8_t footprints;   // bitmask: players who have visited (bit 0-5 for P0-P5)
   uint8_t variant;     // image variant index assigned at map gen
 };
@@ -338,6 +338,7 @@ struct GameEvent {
   int8_t   actWatD;     // water token delta (inv[0])
   int8_t   actLLD;      // LL delta
   int8_t   actResD;     // Resolve delta (REST in good shelter, §7.3)
+  int8_t   actScrapD;   // scrap delta: +1 gained (SCAV), -1/-2 spent (SHELTER)
   uint8_t  actCnd;      // TREAT condition target (TC_*, 0 for non-Treat actions)
   uint8_t  actDn;       // check DN (0 = no check)
   int8_t   actTot;      // check total signed (0 = no check)
