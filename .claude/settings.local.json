@@ -34,7 +34,8 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_terrain_tags2.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_terrain_tags3.js\")",
       "Bash(node -e \"const fs=require\\(''fs''\\),txt=fs.readFileSync\\(''C:/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/data/game-data.js'',''utf8''\\),lines=txt.split\\(''\\\\n''\\);lines.forEach\\(\\(l,i\\)=>{if\\(l.includes\\(''tags:''\\)||l.includes\\(''TAG_CLASS''\\)||l.includes\\(''hi-badge''\\)\\)console.log\\(''L''+\\(i+1\\)+'': ''+l.trim\\(\\)\\);}\\);\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_leanto.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_leanto.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_dossier_symmetry.js\")"
     ]
   }
 }

@@ -350,7 +350,8 @@ canvas{display:block;width:100%;height:100%}
 }
 #char-close{position:absolute;top:12px;right:14px;cursor:pointer;font-size:18px;color:var(--bdr-hi)}
 #char-close:hover{color:var(--gold)}
-.cs-section{margin-bottom:14px}
+.cs-section{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--bdr)}
+.cs-section:last-child{border-bottom:none;margin-bottom:0}
 .cs-section h3{
   font-family:var(--stencil);
   font-size:12px;color:var(--ash);letter-spacing:3px;
@@ -739,7 +740,7 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────────── Survival Tracks (§4) ─────────────────*/
 .track-row{display:flex;align-items:center;gap:5px;margin:5px 0}
-.track-label{font-size:12px;letter-spacing:1px;color:var(--ash);width:44px;font-family:var(--stencil);flex-shrink:0}
+.track-label{font-size:12px;letter-spacing:1px;color:var(--ash);width:64px;font-family:var(--stencil);flex-shrink:0;text-align:left}
 .track-boxes{display:flex;gap:2px;flex-shrink:0}
 .track-box{
   width:13px;height:13px;border:1px solid #302A20;border-radius:1px;
@@ -790,6 +791,17 @@ canvas{display:block;width:100%;height:100%}
 .rad-status-sick    {color:#BBAA22 !important;letter-spacing:0.4px}
 .rad-status-critical{color:#CC3311 !important;letter-spacing:0.4px;animation:rad-pulse 1.2s ease-in-out infinite}
 @keyframes rad-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+/* ── Wounds & Conditions row ──────────────────────────────────── */
+.wounds-grid{display:flex;gap:6px;align-items:center;flex:1}
+.wound-badge{
+  font-family:var(--stencil);font-size:10px;letter-spacing:1px;
+  padding:2px 6px;border-radius:2px;border:1px solid var(--bdr-mid);
+  background:var(--bg-input);color:var(--txt-dim);white-space:nowrap
+}
+.wound-badge.minor  {color:#CC9944;border-color:#8A6622}
+.wound-badge.major  {color:#CC4422;border-color:#8A2A10}
+.wound-badge.grievous{color:#DD2211;border-color:#991108;animation:rad-pulse 1.6s infinite}
+.wound-cond{font-size:10px;color:var(--ash);letter-spacing:0.5px;font-family:var(--stencil)}
 
 /*──────────────────────── Focus visible ────────────────────────*/
 .hud-btn:focus-visible,

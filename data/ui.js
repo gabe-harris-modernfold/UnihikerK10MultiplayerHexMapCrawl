@@ -146,6 +146,28 @@ function openCharSheet() {
     });
   }
 
+  // Wounds & Conditions
+  const wd0 = document.getElementById('cs-wd0');
+  const wd1 = document.getElementById('cs-wd1');
+  const wd2 = document.getElementById('cs-wd2');
+  const wdCond = document.getElementById('cs-conditions');
+  if (wd0) {
+    const minor   = me.wd?.[0] || 0;
+    const major   = me.wd?.[1] || 0;
+    const grievous= me.wd?.[2] || 0;
+    wd0.textContent = minor   > 0 ? `${minor}×MIN`  : '—';
+    wd0.className   = 'wound-badge' + (minor   > 0 ? ' minor'   : '');
+    wd1.textContent = major   > 0 ? `${major}×MAJ`  : '—';
+    wd1.className   = 'wound-badge' + (major   > 0 ? ' major'   : '');
+    wd2.textContent = grievous> 0 ? `${grievous}×GRV`: '—';
+    wd2.className   = 'wound-badge' + (grievous> 0 ? ' grievous': '');
+    const conds = [];
+    if (me.sb & 0x04) conds.push('BLEED');
+    if (me.sb & 0x08) conds.push('FEVER');
+    wdCond.textContent = conds.join(' ');
+    wdCond.style.color = conds.length ? '#CC4422' : '';
+  }
+
   document.getElementById('char-overlay').classList.add('open');
 }
 
