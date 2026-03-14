@@ -70,17 +70,19 @@ Each hex contains:
 Every **5 minutes (in-game day)**, players must manage:
 - **Food (F):** Consumed daily; players lose resolve (LL) if depleted
 - **Water (W):** Consumed daily; players lose resolve if depleted
-- **Resolve (LL):** Physical/mental stamina; 10 total → 0 causes incapacitation
-- **Wounds:** Reduce available resolve; accumulated from hazards or failures
+- **Resolve (LL):** Physical/mental stamina; max 6 → 0 causes incapacitation
+- **Wounds:** Reduce available movement points; accumulated from hazards or failures
 
-**Action Economy:** Each player gets **3 action points (MP)** per day. Actions cost MP:
-- **FORAGE** (1 MP): Gather food from terrain
-- **COLLECT WATER** (1 MP): Gather water (variable amount via stepper)
-- **SCAVENGE** (1 MP): Search hex for random valuable artifacts
-- **BUILD SHELTER** (2 MP): Create permanent shelter on current hex (restored on rest)
-- **TREAT** (1 MP): Heal wounds or recover from radiation
-- **SURVEY** (1 MP): Scan surrounding hexes for terrain & resources
-- **REST** (1 MP): Restore resolve; if all players rest, day ends immediately
+**Movement Points (MP):** Derived from `max(2, LL - wounds - encumbrance)`. Even at worst condition, players retain minimum 2 MP to stay mobile.
+
+**Action Economy:** Each player gets **1 action per day** (once used, no more actions that day). Available actions:
+- **FORAGE** (2 MP, check needed): Gather food from terrain (+1 to +2 food, +3 pts)
+- **COLLECT WATER** (1 MP, no check): Gather water by choice (1–3 tokens, +1–3 pts per token)
+- **SCAVENGE** (2 MP, check needed): Search ruins for artifacts (+5 pts success, +2 partial)
+- **BUILD SHELTER** (1–2 MP, no check): Create permanent shelter on hex (1–2 MP depending on scrap count; +4–8 pts; each hex surveys once per player)
+- **TREAT** (2 MP, check needed): Heal wounds or reduce radiation (+3 pts on success)
+- **SURVEY** (1 MP Scout-free): Scan hexes one ring beyond vision (+2 pts first survey per hex, +0 repeats; each hex per player capped at 1 survey)
+- **REST** (0 MP, no action slot): Restore fatigue and resolve; if all players rest, day ends immediately
 
 #### Radiation System
 - **Rad-Tagged Terrains:** Ash Dunes and Glass Fields emit radiation
@@ -93,6 +95,8 @@ Every **5 minutes (in-game day)**, players must manage:
 - **Visibility Range (VR):** Depends on terrain; ranges from 0 hexes (BLIND terrain) to 2+ hexes (high ground)
 - **Client-Side Caching:** Each player maintains a local visibility cache; server syncs only changed cells
 - **Shared View:** All players see the same revealed hexes (collaborative mapping)
+- **Exploration Bonus:** First player to visit a hex earns +1 score (reward for discovery)
+- **SURVEY Mechanic:** Peek at hexes beyond normal vision; each hex can be surveyed once per player for +2 pts
 
 #### Multi-Player Synchronization
 - **WebSocket Protocol:** JSON messages broadcast position, actions, and game state changes
@@ -111,8 +115,13 @@ Every **5 minutes (in-game day)**, players must manage:
 3. **Connect Players:**
    - On phone/laptop, connect to WiFi network `WASTELAND`
    - Open browser and navigate to `http://192.168.4.1/`
-   - Enter your survivor name and click **ENTER WASTELAND**
-4. **K10 Display:** Shows a status dashboard with all connected players, their stats, and game time
+   - Enter your survivor name and choose your archetype (Guide, Quartermaster, Medic, Mule, Scout, or Endurer)
+   - Click **ENTER WASTELAND**
+4. **Starting Resources:**
+   - **All survivors:** 1 food token, 2 water tokens
+   - **Mule archetype only:** 2 food, 2 water, 1 medicine, 1 scrap (higher carrying capacity to reflect quartermaster role)
+   - These limited starting resources create pressure to forage/collect immediately
+5. **K10 Display:** Shows a status dashboard with all connected players, their stats, and game time
 
 ### Playing a Turn
 
@@ -124,20 +133,21 @@ Each **day cycle (5 minutes)** plays out as follows:
 - Radiation naturally decays if player rested in non-rad zones
 
 #### Action Phase
-Each player secretly chooses one action (in parallel):
-1. **FORAGE:** Gather food from current terrain type
-2. **COLLECT WATER:** Gather water (select amount with stepper)
-3. **SCAVENGE:** Roll for random artifacts (ammo, medicine, tools)
-4. **BUILD SHELTER:** Spend 2 MP to create a permanent shelter (visible as 🏕 emoji)
-5. **TREAT:** Heal wounds or reduce radiation (costs medicine/resolve)
-6. **SURVEY:** Peek at hexes one ring beyond visibility
-7. **REST:** Restore 2 resolve; if all players rest, day ends immediately
+Each player may take **one action** (or skip) from:
+1. **FORAGE** (2 MP): Roll Forage skill; success gives +1–2 food, +3 pts
+2. **COLLECT WATER** (1 MP): No roll; choose how much to gather (1–3 tokens, +1–3 pts)
+3. **SCAVENGE** (2 MP): Roll Scavenge; success gives scrap/tools, +5 pts
+4. **BUILD SHELTER** (1–2 MP): No roll; spend scrap to build shelter (visible as 🏕 or 🏠), +4–8 pts
+5. **TREAT** (2 MP): Roll Treat; success heals wounds/radiation, +3 pts
+6. **SURVEY** (1 MP, free for Scout): Reveal hexes at range; +2 pts on first survey per hex
+7. **REST** (0 MP, always available): Restore fatigue; if all players rest, day ends early
 
 #### Movement Phase
-After taking an action, use remaining movement points (MP) to navigate:
-- **Standard hex:** 1 hex costs 1 MP
-- **Difficult terrain:** Costs extra MP (penalty terrain)
-- **Encumbered:** Carrying heavy items costs extra MP
+After taking an action (or choosing none), use remaining movement points (MP) to navigate:
+- **Standard hex:** 1 MP per hex
+- **First visit bonus:** +1 score when entering a new hex (automatic)
+- **Difficult terrain:** Costs extra MP (1–2 depending on terrain)
+- **Encumbered:** Carrying over max items costs 1 extra MP (applied once per day)
 - **Wounded/Sick:** Wounds and radiation reduce available MP
 
 #### Resource Consumption
@@ -156,15 +166,25 @@ At **dusk**, food and water are consumed:
 - **All MP and action flags reset**
 - **Radiation sickness check:** At R ≥ 4, player flagged as RAD-SICK (affects morale on K10 display)
 
-### Winning Conditions
+### Scoring & Winning Conditions
 
-**WASTELAND CRAWL** is a **sandbox survival game** with no fixed end state. Goals are emergent:
+**WASTELAND CRAWL** is a **sandbox survival game** with emergent scoring. Your party's **score** is earned through:
 
+- **Exploration:** +1 pt per new hex discovered (first visit only)
+- **Foraging:** +1–3 pts depending on roll quality
+- **Scavenging:** +2–5 pts depending on success
+- **Shelter Building:** +4 pts (basic shelter), +8 pts (improved shelter)
+- **Treatment:** +3 pts per successful condition healed
+- **Survey Reconnaissance:** +2 pts per hex surveyed (first survey only; repeats yield no points)
+- **Water Collection:** +1 pt per water token collected
+
+**Goals are emergent:**
 - **Survival:** Keep all party members above 0 resolve
-- **Exploration:** Map the entire hex grid
-- **Scavenging:** Collect rare artifacts and powerful items
-- **Building:** Establish shelters across the map for future parties
-- **Cooperation:** Coordinate movement and action choices for maximum efficiency
+- **Exploration:** Map the entire hex grid for maximum discovery bonuses
+- **Scavenging:** Collect rare artifacts and build a well-stocked depot
+- **Building:** Establish shelter network across the map as checkpoints
+- **Cooperation:** Coordinate movement and resource sharing for maximum efficiency
+- **High Score:** Maximize total party score through exploration + successful actions
 
 ### Losing Conditions
 

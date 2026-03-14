@@ -911,8 +911,10 @@ function initMenuSystem() {
 
       sec('Movement',
         mp({ class: 'menu-text-body' },
-          'Your Move Points (MP) equal your current Life Level, reduced by wounds and fatigue. ' +
-          'Each hex costs MP equal to its movement cost (shown below). You cannot move at 0 MP.'
+          'Your Move Points (MP) = max(2, Life Level − major wounds − encumbrance). ' +
+          'Even at worst condition, you retain minimum 2 MP to stay mobile. ' +
+          'Each hex costs MP equal to its terrain cost (1–2 MP). ' +
+          'First visit to any hex grants +1 exploration point automatically.'
         ),
         md({ class: 'ctrl-ref' },
           md({},
@@ -997,34 +999,34 @@ function initMenuSystem() {
       sec('Actions',
         mp({ class: 'menu-text-body' },
           'You get one action per day. Open the ⚔ ACTION menu to choose. ' +
-          'Actions cost MP and most require a skill check. Settlement terrain reduces all TREAT difficulty by 2.'
+          'Actions cost MP and most require a skill check. Every action awards points (see Scoring). Settlement terrain reduces all TREAT difficulty by 2.'
         ),
         md({ class: 'ht-act-list' },
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⚗ FORAGE'),
             ms({ class: 'ht-act-cost' }, '2 MP'),
-            ms({ class: 'ht-act-desc' }, 'Search for food on Forage-tagged terrain. Forage skill check — success yields food tokens.')
+            ms({ class: 'ht-act-desc' }, 'Search for food on Forage terrain. Forage check — success +1–2 food (+3 pts), partial +1 food (+1 pt).')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '≈ COLLECT WATER'),
             ms({ class: 'ht-act-cost' }, '1–3 MP'),
-            ms({ class: 'ht-act-desc' }, 'Gather water on Water-tagged terrain. Spend 1–3 MP; each MP spent collects 1 water token.')
+            ms({ class: 'ht-act-desc' }, 'Gather water on Water terrain. Spend 1–3 MP; each token collected = +1 pt.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⚲ SCAVENGE'),
             ms({ class: 'ht-act-cost' }, '2 MP'),
-            ms({ class: 'ht-act-desc' }, 'Rifle through ruins on Salvage-tagged terrain. Scavenge check — partial success still finds scrap.')
+            ms({ class: 'ht-act-desc' }, 'Rifle through Salvage terrain. Scavenge check — success +5 pts, partial +2 pts.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
             ms({ class: 'ht-act-cost' }, '1–2 MP'),
-            ms({ class: 'ht-act-desc' }, 'Requires scrap — no skill roll. 1 scrap builds a shelter ⛺ (1 MP); 2+ scrap automatically builds an improved shelter 🏠 (2 MP). Improves rest quality for everyone who camps here.')
+            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 MP, +4 pts); 2+ scrap = improved shelter 🏠 (2 MP, +8 pts). Boosts rest quality for all campers.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '❤ TREAT'),
             ms({ class: 'ht-act-cost' }, '2 MP'),
             ms({ class: 'ht-act-desc' },
-              'Field medicine. Pick a condition to treat (Treat skill check):',
+              'Field medicine. Pick a condition to treat (Treat check, +3 pts on success):',
               md({ class: 'ht-treat-list' },
                 ms({}, 'Minor Wound DN 7 — remove 1 minor wound'),
                 ms({}, 'Bleeding DN 7 — stop bleeding (fail = +1 fatigue)'),
@@ -1037,7 +1039,7 @@ function initMenuSystem() {
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '◎ SURVEY'),
             ms({ class: 'ht-act-cost' }, '1 MP'),
-            ms({ class: 'ht-act-desc' }, 'Reveal the ring of hexes one step beyond your normal vision radius. One-time snapshot — surveyed hexes dim when you move away.')
+            ms({ class: 'ht-act-desc' }, 'Reveal the ring of hexes one ring beyond your vision. Scout: free. Each hex can only be surveyed once per player (+2 pts first time, +0 repeats). Surveyed hexes dim when you move.')
           ),
         )
       ),
@@ -1117,8 +1119,30 @@ function initMenuSystem() {
 
       sec('Scoring',
         mp({ class: 'menu-text-body' },
-          'Points are earned when discovering resources in new hexes. Each hex yields points once the first time you or your team reveals its loot. ' +
-          'Different terrain types and resource quality grant variable points — risk exploration to maximize your score.'
+          'Every action awards points. Score is earned through:'
+        ),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            ms({}, 'Exploration'), ms({}, '+1 pt per new hex')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'FORAGE'), ms({}, '+3 pts success, +1 partial')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'WATER'), ms({}, '+1 pt per token')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'SCAVENGE'), ms({}, '+5 pts success, +2 partial')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'SHELTER'), ms({}, '+4 pts basic, +8 pts improved')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'TREAT'), ms({}, '+3 pts success')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'SURVEY'), ms({}, '+2 pts first per hex, +0 repeats')
+          ),
         )
       ),
 
