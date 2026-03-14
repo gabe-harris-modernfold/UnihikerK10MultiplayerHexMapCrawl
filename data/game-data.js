@@ -13,9 +13,9 @@ const LERP        = 0.26;
 const TERRAIN = [
   { name:'Open Scrub',      mc:1,   sv:0, vis: 1, icon:'🌾',
     fill:'#2E2210', stroke:'#504030',   /* cracked-earth tan */
-    tags:['HighVis'],
+    tags:['Open Horizon','Forage','Hunting Ground'],
     hazard:'Radiation drift',
-    desc:'Wind-scoured flats of pale scrub and cracked earth. Any resource may surface here. The open horizon grants exceptional sight lines — a survivor can see for kilometres.' },
+    desc:'Wind-scoured flats of pale scrub and cracked earth. Small game — birds, feral rabbits, scavenger rodents — move through the open ground. A successful hunt yields 2 food. The open horizon grants long sight lines, but the animals can see you coming.' },
   { name:'Ash Dunes',       mc:2,   sv:0, vis: 0, icon:'🏜',
     fill:'#201E16', stroke:'#3C3A2C',   /* desaturated ash grey */
     tags:['Radiation'],
@@ -23,47 +23,47 @@ const TERRAIN = [
     desc:'Rolling dunes of grey volcanic ash laced with fallout. Fuel caches and scrap lie buried beneath the drifts. Prolonged exposure without a mask is hazardous.' },
   { name:'Rust Forest',     mc:2,   sv:1, vis:-1, icon:'🌲',
     fill:'#1A2808', stroke:'#344A18',   /* dark rust-tinged green */
-    tags:['Forage','VisPenalty'],
+    tags:['Forage','Wild Game','Blind Ground'],
     hazard:'Toxic spore clouds',
-    desc:'Skeletal trees coated in rust-red fungus. The dense canopy blocks all sight lines. Foragers find food and scrap among the root networks, but visibility drops to near zero.' },
+    desc:'Skeletal trees coated in rust-red fungus. The dense canopy blocks all sight lines. A full Forage success here yields 2 food — the root networks are rich with edible fungi. Partial success still yields 1. Visibility drops to near zero.' },
   { name:'Marsh',           mc:3,   sv:0, vis: 0, icon:'🌿',
     fill:'#081A10', stroke:'#183428',   /* very dark brackish green */
-    tags:['Water','Hazard'],
+    tags:['Water','Treacherous'],
     hazard:'Quicksand, infection',
     desc:'Brackish wetlands and salt flats. Water is abundant beneath the surface but heavily contaminated. Treacherous footing slows movement to a crawl. Avoid after dark.' },
   { name:'Broken Urban',    mc:2,   sv:1, vis:-1, icon:'🏚',
     fill:'#1A1814', stroke:'#34302A',   /* cold concrete grey */
-    tags:['Salvage','VisPenalty'],
+    tags:['Salvage','Blind Ground'],
     hazard:'Structural collapse',
     desc:'Collapsed hab-blocks and fractured infrastructure. Salvage and medicine lie in the rubble. Every crumbled wall cuts line-of-sight. Watch for floor voids and gas pockets.' },
   { name:'Flooded District',mc:3,   sv:1, vis:-1, icon:'🌊',
     fill:'#08121E', stroke:'#142030',   /* cold steel blue-grey */
-    tags:['Water','Hazard','VisPenalty'],
+    tags:['Water','Treacherous','Blind Ground'],
     hazard:'Submerged debris, current',
     desc:'Former city streets drowned under murky floodwater. Water is plentiful here, but stay clear of craters and glass fields or it will be tainted. Visibility drops to zero beneath the surface. Every step is blind.' },
   { name:'Glass Fields',    mc:3,   sv:0, vis: 1, icon:'✨',
     fill:'#121A22', stroke:'#243444',   /* iridescent cold blue */
-    tags:['Salvage','HighVis','Radiation'],
+    tags:['Salvage','Open Horizon','Radiation'],
     hazard:'Cutting edges, radiation',
     desc:'Fused earth and melted debris from a detonation event. The flat reflective surface gives an unobstructed view for kilometres. Scrap can be carefully extracted from the glass.' },
   { name:'Ridge',           mc:2,   sv:1, vis: 1, icon:'⛰',
     fill:'#1E1A12', stroke:'#3C3424',   /* warm slag-stone */
-    tags:['HighGround','HighVis'],
+    tags:['Vantage','Open Horizon'],
     hazard:'Exposure, rockfall',
     desc:'Elevated ridgelines of compressed slag-stone. A superior vantage point — the surrounding terrain is visible in detail. Exposed to wind, lightning, and distant sight lines.' },
   { name:'Mountain',        mc:4,   sv:2, vis: 0, icon:'🗻',
     fill:'#14141C', stroke:'#28283A',   /* cold dark mineral */
-    tags:['HighGround','Landmark'],
+    tags:['Vantage','Waypoint'],
     hazard:'Altitude, rockslide',
     desc:'Towering slag-mountains and pre-war excavation sites. Heavy going, but caves and overhangs offer excellent shelter. Medicine and scrap can be found deep in the tunnels.' },
   { name:'Settlement',      mc:1,   sv:3, vis: 0, icon:'🏕',
     fill:'#1A1206', stroke:'#382814',   /* warm amber glow */
-    tags:['Safe','Trade'],
+    tags:['Haven','Barter'],
     hazard:'None',
     desc:'A fortified survivor camp with trading posts and basic shelter. All resource types can be found or traded here. The only true safe zone on the wasteland.' },
   { name:'Nuke Crater',     mc:255, sv:0, vis: 0, icon:'☢',
     fill:'#0A0E04', stroke:'#1A2008',   /* scorched void, green-black */
-    tags:['Impassable','Radiation'],
+    tags:['Dead Zone','Radiation'],
     hazard:'Lethal radiation, unstable ground',
     desc:'A direct-strike detonation crater. The ground is fused glass and irradiated rubble. Radiation at the rim is immediately lethal. No one goes in. No one comes back.' }
 ];
@@ -71,18 +71,20 @@ const NUM_TERRAIN = TERRAIN.length;
 
 // Tag badge class names (matches .hi-badge.tag-X in style.css)
 const TAG_CLASS = {
-  'HighVis':    'hi-badge tag-HighVis',
-  'VisPenalty': 'hi-badge tag-VisPenalty',
-  'HighGround': 'hi-badge tag-HighGround',
-  'Radiation':  'hi-badge tag-Radiation',
-  'Forage':     'hi-badge tag-Forage',
-  'Water':      'hi-badge tag-Water',
-  'Hazard':     'hi-badge tag-Hazard',
-  'Salvage':    'hi-badge tag-Salvage',
-  'Landmark':   'hi-badge tag-Landmark',
-  'Safe':       'hi-badge tag-Safe',
-  'Trade':      'hi-badge tag-Trade',
-  'Impassable': 'hi-badge tag-Impassable',
+  'Open Horizon':  'hi-badge tag-HighVis',
+  'Blind Ground':  'hi-badge tag-VisPenalty',
+  'Vantage':       'hi-badge tag-HighGround',
+  'Radiation':     'hi-badge tag-Radiation',
+  'Forage':          'hi-badge tag-Forage',
+  'Wild Game':       'hi-badge tag-Forage',
+  'Hunting Ground':  'hi-badge tag-Forage',
+  'Water':         'hi-badge tag-Water',
+  'Treacherous':   'hi-badge tag-Hazard',
+  'Salvage':       'hi-badge tag-Salvage',
+  'Waypoint':      'hi-badge tag-Landmark',
+  'Haven':         'hi-badge tag-Safe',
+  'Barter':        'hi-badge tag-Trade',
+  'Dead Zone':     'hi-badge tag-Impassable',
 };
 
 const RES_COLOR = ['','#2A5C8A','#4A7828','#8C4418','#7A1E1E','#5C5448'];
@@ -153,17 +155,17 @@ const ARCHETYPES = [
     trait: 'May treat Major Wounds in the field at DN\u00a09. Each successful Treat\u00a0+1\u00a0Fatigue restored.',
     skills: [0, 0, 1, 2, 0, 2],
     invSlots: 8,
-    desc: 'Field surgeon. Can stabilise serious wounds without a settlement, and each treatment restores extra stamina to the patient.',
+    desc: 'Field surgeon. Can stabilise serious wounds without a settlement, and each successful treatment reduces the patient\'s Fatigue by 1.',
     flavor: 'Patches survivors back together. What remains is... functional.'
   },
   {
     name: 'MULE',
     icon: '\u26BF',   // ⚿ key
     color: '#AAAAFF',
-    trait: '12\u00a0inventory slots. May transfer items to allies in the same hex as a free action once per turn.',
+    trait: '12\u00a0inventory slots \u2014 hauls twice the standard load.',
     skills: [0, 1, 2, 0, 1, 1],
     invSlots: 12,
-    desc: 'Pack carrier. Hauls twice the standard load and can redistribute supplies to teammates without spending MP.',
+    desc: 'Pack carrier. Hauls twice the standard load.',
     flavor: 'Carries everything. Even the weight of everyone\u2019s poor decisions.'
   },
   {

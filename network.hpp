@@ -285,6 +285,36 @@ static void drainEvents() {
         ws.textAll(buf, len);
         break;
 
+      case EVT_DOWNED: {
+        // 1. Send targeted "downed" message to the player's client
+        AsyncWebSocketClient* cl = ws.getClient(ev.evWsId);
+        if (cl) {
+          len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", (int)ev.pid);
+          cl->text(buf, len);
+        }
+        // 2. Broadcast EVT_LEFT so all clients remove the player icon
+        len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", (int)ev.pid);
+        ws.textAll(buf, len);
+        // 3. Reset slot so it's available for re-pick; move client back to lobby
+        if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+          Player& p = G.players[ev.pid];
+          p.connected  = false;
+          p.wsClientId = 0;
+          G.connectedCount--;
+          xSemaphoreGive(G.mutex);
+        }
+        taskENTER_CRITICAL(&evtMux);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+          if (!lobbyIds[i]) { lobbyIds[i] = ev.evWsId; break; }
+        }
+        taskEXIT_CRITICAL(&evtMux);
+        // 4. Tell all lobby clients (including the downed player) archetypes now available
+        broadcastLobbyUpdate();
+        Serial.printf("[DOWNED]  Slot %d reset — client %lu returned to lobby\n",
+          (int)ev.pid, (unsigned long)ev.evWsId);
+        break;
+      }
+
       case EVT_NAME: break;   // broadcast is handled inline in handleMessage ("nm" event)
     }
   }

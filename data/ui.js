@@ -76,9 +76,8 @@ function updateSidebar() {
   for (let i = 0; i < 5; i++) uiInv[i].val = me.inv[i];
   uiScore.val   = me.sc;
   uiPos.val     = `Q:${me.q}  R:${me.r}`;
-  uiSteps.val   = me.sp   ?? 0;
-  uiStamina.val = me.st   ?? 100;
-  uiVision.val  = myVisionR;
+  uiSteps.val  = me.sp ?? 0;
+  uiVision.val = myVisionR;
   uiLL.val      = me.ll   ?? 6;
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
@@ -188,13 +187,31 @@ function escHtml(s) {
 
 // ── Toast stack ───────────────────────────────────────────────────
 const toastStack = document.getElementById('toast-stack');
-function showToast(msg) {
+const TOAST_MAX   = 3;      // max toasts visible simultaneously
+const TOAST_LIFE  = 1800;   // ms before fade starts
+const TOAST_FADE  = 300;    // ms fade-out duration
+let   toastQueue  = [];     // pending messages
+let   toastActive = 0;      // currently visible count
+
+function _nextToast() {
+  if (toastActive >= TOAST_MAX || toastQueue.length === 0) return;
+  const msg = toastQueue.shift();
+  toastActive++;
   const el = document.createElement('div');
   el.className   = 'toast-item';
   el.textContent = msg;
   toastStack.appendChild(el);
-  setTimeout(() => el.classList.add('dying'),  1800);
-  setTimeout(() => el.remove(),                2100);
+  setTimeout(() => el.classList.add('dying'), TOAST_LIFE);
+  setTimeout(() => {
+    el.remove();
+    toastActive--;
+    _nextToast();          // show next queued toast when a slot opens
+  }, TOAST_LIFE + TOAST_FADE);
+}
+
+function showToast(msg) {
+  toastQueue.push(msg);
+  _nextToast();
 }
 
 // ── Flavor banner ─────────────────────────────────────────────────
@@ -202,7 +219,7 @@ const SHELTER_WARNINGS = [
   ['THE WASTES TOOK THEIR TOLL', 'build shelter before nightfall'],
   ['EXPOSURE WEAKENS YOU', 'find cover or build a camp'],
   ['YOU WOKE BLEEDING COLD', 'seek shelter before the next dusk'],
-  ['THE OPEN GROUND IS KILLING YOU', 'construct a lean-to — use your scrap'],
+  ['THE OPEN GROUND IS KILLING YOU', 'construct a shelter — use your scrap'],
   ['ANOTHER HARD NIGHT IN THE RUINS', 'a shelter here could save your life'],
 ];
 let bannerTimer = null;
@@ -418,19 +435,9 @@ function initHudBindings() {
 function initCharSheetBindings() {
   // Live stat elements
   const stepsEl   = document.getElementById('cs-steps');
-  const stamValEl = document.getElementById('cs-stamina-val');
-  const stamBarEl = document.getElementById('cs-stamina-bar');
   const visionEl  = document.getElementById('cs-vision');
 
-  if (stepsEl)   { stepsEl.textContent   = ''; van.add(stepsEl,   () => String(uiSteps.val));   }
-  if (stamValEl) { stamValEl.textContent = ''; van.add(stamValEl, () => String(uiStamina.val)); }
-  if (stamBarEl) {
-    van.derive(() => {
-      const pct = uiStamina.val;
-      stamBarEl.style.width   = pct + '%';
-      stamBarEl.dataset.level = pct > 60 ? 'high' : pct > 25 ? 'mid' : 'low';
-    });
-  }
+  if (stepsEl)  { stepsEl.textContent  = ''; van.add(stepsEl,  () => String(uiSteps.val));  }
   if (visionEl) { visionEl.textContent = ''; van.add(visionEl, () => String(uiVision.val)); }
 
   // Track box renderer — builds/updates N child divs inside containerId.
@@ -682,8 +689,9 @@ function initActionPanel() {
     const me   = players[myId];
     const cell = gameMap[me.r]?.[me.q];
     const terr = cell?.terrain ?? null;
-    const mp   = me.mp ?? 0;
-    const used = me.au ?? false;
+    const mp      = me.mp ?? 0;
+    const used    = me.au ?? false;
+    const isScout = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
 
     actionStatusBar.innerHTML =
       `<span class="act-mp-badge">MP: ${mp}</span>` +
@@ -700,21 +708,22 @@ function initActionPanel() {
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2, desc: 'Search for items (Skill check)' },
       { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: 1, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2, desc: 'Field medicine (Skill check)' },
-      { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: 1, desc: 'Reveal terrain beyond vision' },
+      { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: isScout ? 0 : 1, desc: isScout ? 'Reveal terrain beyond vision — free for Scout' : 'Reveal terrain beyond vision (1 MP)' },
     ];
 
     actionDefs.forEach(def => {
-      const available  = actAvailable(def.id, terr);
-      const hasMP      = mp >= def.mpCost;
-      const needsScrap = def.id === ACT_SHELTER;
-      const hasScrap   = !needsScrap || scrap > 0;
-      const canAct     = available && hasMP && !used && hasScrap;
+      const available   = actAvailable(def.id, terr);
+      const hasMP       = mp >= def.mpCost;
+      const needsScrap  = def.id === ACT_SHELTER;
+      const hasScrap    = !needsScrap || scrap > 0;
+      const actionUsed  = (def.id === ACT_SURVEY && isScout) ? false : used;  // Scout ignores actUsed for Survey
+      const canAct      = available && hasMP && !actionUsed && hasScrap;
 
       // Dynamic desc: BUILD SHELTER shows what will actually be built
       let desc = def.desc;
       if (def.id === ACT_SHELTER) {
         desc = scrap === 0 ? 'Needs scrap — none in pack'
-             : scrap === 1 ? '1 scrap → lean-to ⛺ (1 MP)'
+             : scrap === 1 ? '1 scrap → shelter ⛺ (1 MP)'
              :               scrap + ' scrap → improved shelter 🏠 (2 MP)';
       }
 
@@ -725,14 +734,14 @@ function initActionPanel() {
         `<span class="act-label">${def.label}</span>` +
         `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
       btn.title = desc +
-        (used      ? ' — action used today'       :
-        !available ? ' — not available here'      :
-        !hasMP     ? ' — insufficient MP'         :
-        !hasScrap  ? ' — need scrap (have ' + scrap + ')' : '');
+        (actionUsed  ? ' — action used today'              :
+        !available   ? ' — not available here'             :
+        !hasMP       ? ' — insufficient MP'                :
+        !hasScrap    ? ' — need scrap (have ' + scrap + ')' : '');
 
       btn.addEventListener('click', () => {
         if (!canAct) {
-          showToast(used ? '\u2297 Action already used today' : !available ? '\u2297 Not available here' : '\u2297 Insufficient MP');
+          showToast(actionUsed ? '\u2297 Action already used today' : !available ? '\u2297 Not available here' : !hasMP ? '\u2297 Insufficient MP' : '\u2297 Need scrap to build');
           return;
         }
         if (def.id === ACT_WATER) {
@@ -969,7 +978,7 @@ function initMenuSystem() {
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
             ms({ class: 'ht-act-cost' }, '1–2 MP'),
-            ms({ class: 'ht-act-desc' }, 'Requires scrap — no skill roll. 1 scrap builds a lean-to ⛺ (1 MP); 2+ scrap automatically builds an improved shelter 🏠 (2 MP). Improves rest quality for everyone who camps here.')
+            ms({ class: 'ht-act-desc' }, 'Requires scrap — no skill roll. 1 scrap builds a shelter ⛺ (1 MP); 2+ scrap automatically builds an improved shelter 🏠 (2 MP). Improves rest quality for everyone who camps here.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '❤ TREAT'),
@@ -1034,6 +1043,19 @@ function initMenuSystem() {
         )
       ),
 
+      sec('Fatigue',
+        mp({ class: 'menu-text-body' },
+          'Fatigue builds when foraging fails or partially succeeds, and when a Bleed treatment fails. It caps at 8. ' +
+          'There is no automatic recovery — only REST clears it.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'REST recovery depends on where you sleep: ' +
+          'open ground −2 · shelter −3 · improved shelter −4. ' +
+          'You can only restore a Life Level while resting if fatigue drops below 4 (or below 6 in an improved shelter). ' +
+          'Exhausted survivors should build shelter before resting.'
+        )
+      ),
+
       sec('Wounds & Conditions',
         mp({ class: 'menu-text-body' },
           'Wounds reduce skill checks. Minor Wounds penalise Endure; Major Wounds penalise all skills. ' +
@@ -1050,6 +1072,13 @@ function initMenuSystem() {
           'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
           'Meeting or exceeding DN = success. Spend 1 Resolve to re-roll once (push). ' +
           'Six skills: NAVIGATE · FORAGE · SCAVENGE · TREAT · SHELTER · ENDURE.'
+        )
+      ),
+
+      sec('Scoring',
+        mp({ class: 'menu-text-body' },
+          'Points are earned when discovering resources in new hexes. Each hex yields points once the first time you or your team reveals its loot. ' +
+          'Different terrain types and resource quality grant variable points — risk exploration to maximize your score.'
         )
       ),
     );

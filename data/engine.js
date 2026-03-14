@@ -9,7 +9,6 @@ const uiPos         = van.state('Q:—  R:—');
 const uiPlayers     = van.state([]);
 // Char sheet live stats
 const uiSteps       = van.state(0);
-const uiStamina     = van.state(100);
 const uiVision      = van.state(VISION_R);
 // Terrain card reactive cell
 const uiCurrentCell = van.state(null);
@@ -126,6 +125,7 @@ let socket;
 
 // Set to true once server confirms it has saved creds; prevents redundant auto-sends.
 let serverHasWifiCreds = false;
+let pendingLobbyRedirect = false;  // true while downed-death pause is running
 
 function connect() {
   socket = new WebSocket(wsUrl);
@@ -195,7 +195,7 @@ function handleMsg(msg) {
     case 'lobby':
       lobbyAvail.val    = msg.avail || [];
       uiPickPending.val = false;
-      showCharSelect();
+      if (!pendingLobbyRedirect) showCharSelect();  // suppressed during downed-death pause
       break;
 
     case 'sync':
@@ -334,6 +334,19 @@ function handleEvent(ev) {
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
       updateRestBubbles();
       break;
+    case 'downed': {
+      // Server has reset our slot — show death message then redirect to char selection
+      myId = -1;
+      pendingLobbyRedirect = true;
+      addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
+      showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
+      setTimeout(() => {
+        pendingLobbyRedirect = false;
+        showCharSelect();
+      }, 3500);
+      break;
+    }
+
     case 'left':
       players[ev.pid].on = false;
       players[ev.pid].rest = false;
@@ -449,8 +462,8 @@ function handleEvent(ev) {
         showToast(`\ud83d\ude34 ${msg}`);
         if (ev.pid !== myId) addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
       } else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) {
-        const shelterName = ev.cnd === 2 ? 'improved shelter 🏠' : 'lean-to ⛺';
-        const msg = ev.pid === myId ? `Built a ${shelterName}!` : `${escHtml(who)} built a ${shelterName}`;
+        const shelterName = ev.cnd === 2 ? 'an improved shelter 🏠' : 'a shelter ⛺';
+        const msg = ev.pid === myId ? `Built ${shelterName}!` : `${escHtml(who)} built ${shelterName}`;
         showToast(`🔨 ${msg}`);
         // Update local gameMap immediately so the shelter icon renders without waiting for next move
         const sp = players[ev.pid];
@@ -515,13 +528,13 @@ function handleEvent(ev) {
 // ── Map decode ──────────────────────────────────────────────────
 // New encoding: 2 bytes per cell (4 hex chars)
 //   terrainByte = 0x00-0x0A (terrain index) or 0xFF (fog)
-//   dataByte    = (footprints[0-5])|(shelter<<6)  shelter: 0=none, 1=lean-to, 2=improved
+//   dataByte    = (footprints[0-5])|(shelter<<6)  shelter: 0=none, 1=shelter, 2=improved shelter
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   return {
     terrain:    terrainByte,
     footprints: dataByte & 0x3F,  // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 3, // bits 6-7: 0=none, 1=lean-to, 2=improved
+    shelter:    (dataByte >> 6) & 3, // bits 6-7: 0=none, 1=shelter, 2=improved shelter
     variant:    variantByte
   };
 }
@@ -861,7 +874,7 @@ function render() {
         }
       }
 
-      // Shelter indicator: 1=lean-to (⛺), 2=improved (🏠)
+      // Shelter indicator: 1=shelter (⛺), 2=improved shelter (🏠)
       if (cell.shelter) {
         ctx.save();
         ctx.fillStyle    = cell.shelter === 2 ? '#7EC8E3' : '#D4A574';

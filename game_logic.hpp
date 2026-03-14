@@ -126,7 +126,12 @@ static void duskCheck() {
     if (ev.actOut == AO_FAIL) {
       p.wounds[1]++;                  // +1 Major Wound
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); }  // red = LL lost
-      if (p.ll == 0) p.statusBits |= ST_DOWNED;
+      if (p.ll == 0) {
+        p.statusBits |= ST_DOWNED;
+        GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+        enqEvt(devt);
+        Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dusk wound) — slot queued for reset\n", pid, p.name);
+      }
       ev.actLLD   = -1;
       ev.actNewLL = p.ll;
     } else {
@@ -179,7 +184,13 @@ static void dawnUpkeep() {
     if (llDelta < 0) {
       for (int i = 0; i < -llDelta; i++) {
         if (p.ll > 0) p.ll--;
-        if (p.ll == 0) { p.statusBits |= ST_DOWNED; break; }
+        if (p.ll == 0) {
+          p.statusBits |= ST_DOWNED;
+          GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+          enqEvt(devt);
+          Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dawn upkeep) — slot queued for reset\n", pid, p.name);
+          break;
+        }
       }
     } else if (llDelta > 0) {
       p.ll = (uint8_t)min((int)p.ll + llDelta, 6);
@@ -265,6 +276,7 @@ static void collectResource(int pid, int q, int r) {
 static void movePlayer(int pid, int dir) {
   if (dir < 0 || dir > 5) return;
   Player& p  = G.players[pid];
+  if (p.statusBits & ST_DOWNED) return;  // downed — waiting for slot reset
   if (p.resting) {
     Serial.printf("[BLOCKED] P%d \"%s\" resting — waiting for other survivors to finish\n", pid, p.name);
     return;
@@ -404,6 +416,8 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
   uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   if (terr >= NUM_TERRAIN) terr = 0;
 
+  if (p.statusBits & ST_DOWNED) return;  // downed — no actions until respawn
+
   GameEvent ev = {};
   ev.type    = EVT_ACTION;
   ev.pid     = (uint8_t)pid;
@@ -423,8 +437,9 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
       broadcastCheck(pid, SK_FORAGE, cr, false);
       if (cr.total >= (int)dn) {
-        p.inv[1]     = (uint8_t)min((int)p.inv[1] + 1, 99);
-        ev.actFoodD  = 1;
+        uint8_t yield = (terr == 0 || terr == 2) ? 2 : 1;  // Open Scrub (hunt) + Rust Forest → 2 food on full success
+        p.inv[1]     = (uint8_t)min((int)p.inv[1] + yield, 99);
+        ev.actFoodD  = (int8_t)yield;
         ev.actOut    = AO_SUCCESS;
       } else if (cr.total >= (int)dn - 1) {
         p.inv[1]     = (uint8_t)min((int)p.inv[1] + 1, 99);
@@ -433,6 +448,10 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         ev.actOut    = AO_PARTIAL;
       } else {
         if (p.fatigue < 8) p.fatigue++;
+        if (terr == 2 && p.wounds[0] < 5) {  // Rust Forest fail → Minor wound (toxic spores / thorns)
+          p.wounds[0]++;
+          Serial.printf("[WOUND]   P%d \"%s\" Minor wound from Rust Forest (wounds[0]=%d)\n", pid, p.name, p.wounds[0]);
+        }
         ev.actOut    = AO_FAIL;
       }
       Serial.printf("[FORAGE]  P%d \"%s\" @ %s | DN%d tot:%d → %s | inv food:%d fat:%d\n",
@@ -482,6 +501,10 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         ev.actScrapD  = 1;
         ev.actOut     = AO_PARTIAL;
       } else {
+        if (terr == 6 && !(p.statusBits & ST_BLEEDING)) {  // Glass Fields fail → Bleeding (cutting edges)
+          p.statusBits |= ST_BLEEDING;
+          Serial.printf("[WOUND]   P%d \"%s\" Bleeding from Glass Fields shards\n", pid, p.name);
+        }
         ev.actOut = AO_FAIL;
       }
       Serial.printf("[SCAV]    P%d \"%s\" @ %s | DN%d tot:%d → %s | scrap:%d\n",
@@ -498,7 +521,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         Serial.printf("[SHELTER] ✗ %s (P%d) no scrap\n", p.name, pid);
         break;  // sends AO_BLOCKED to client so UI can respond
       }
-      // Auto-select type: 2+ scrap = improved (2 MP), 1 scrap = lean-to (1 MP)
+      // Auto-select type: 2+ scrap = improved shelter (2 MP), 1 scrap = basic shelter (1 MP)
       uint8_t shelterType = (p.inv[4] >= 2) ? 2 : 1;
       uint8_t mpCost      = shelterType;  // basic=1 MP, improved=2 MP
       if (p.actUsed || p.movesLeft < (int8_t)mpCost) break;
@@ -507,10 +530,10 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.inv[4]     = (uint8_t)max(0, (int)p.inv[4] - shelterType);
       G.map[p.r][p.q].shelter = shelterType;
       ev.actOut    = AO_SUCCESS;
-      ev.actCnd    = shelterType;           // 1=lean-to, 2=improved (reuses cnd field)
-      ev.actScrapD = -(int8_t)shelterType;  // scrap spent: -1 lean-to, -2 improved
+      ev.actCnd    = shelterType;           // 1=shelter, 2=improved shelter (reuses cnd field)
+      ev.actScrapD = -(int8_t)shelterType;  // scrap spent: -1 shelter, -2 improved shelter
       Serial.printf("[SHELTER] ✓ %s (P%d) built %s shelter @ (%d,%d) | -%d MP | scrap→%d\n",
-        p.name, pid, shelterType == 2 ? "improved" : "lean-to",
+        p.name, pid, shelterType == 2 ? "improved shelter" : "shelter",
         p.q, p.r, mpCost, (int)p.inv[4]);
       break;
     }
@@ -581,9 +604,13 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
 
     // ──────────────────────────────────────────────────────────────
     case ACT_SURVEY: {
-      if (p.actUsed || p.movesLeft < 1) break;
-      p.actUsed   = true;
-      p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 1);
+      bool isScout = (p.archetype == 4);  // Scout: Survey costs 0 MP and doesn't use action slot
+      if (p.actUsed && !isScout) break;   // non-Scout blocked if action already used
+      if (!isScout && p.movesLeft < 1) break;
+      if (!isScout) {
+        p.actUsed   = true;
+        p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 1);
+      }
       ev.actOut   = AO_SUCCESS;
       // Build ring of hexes at distance visR+1 and return to caller for direct send
       if (survBuf && survLen) {
@@ -601,13 +628,18 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       if (p.resting) break;  // already resting; prevent duplicate REST commands
       p.actUsed = true;
       p.resting = true;  // mark as resting; if all players rest, day ends early
-      uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=lean-to, 2=improved
+      uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=shelter, 2=improved shelter
+      // Marsh exposure: resting without shelter risks infection → Fever
+      if (terr == 3 && hexShelt == 0 && !(p.statusBits & ST_FEVERED)) {
+        p.statusBits |= ST_FEVERED;
+        Serial.printf("[WOUND]   P%d \"%s\" Fever from sleeping in Marsh (no shelter)\n", pid, p.name);
+      }
       // Camp bonus: any other player in the same hex
       int campCount = 0;
       for (int k = 0; k < MAX_PLAYERS; k++)
         if (k != pid && G.players[k].connected &&
             G.players[k].q == p.q && G.players[k].r == p.r) campCount++;
-      // Fatigue reduction: base 2 | +1 camp | +1 lean-to | +2 improved shelter
+      // Fatigue reduction: base 2 | +1 camp | +1 shelter | +2 improved shelter
       int fatRed = 2;
       if (campCount >= 1)  fatRed += 1;
       if (hexShelt == 1)   fatRed += 1;

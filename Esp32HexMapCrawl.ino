@@ -142,7 +142,7 @@ static constexpr uint8_t TC_RAD     = 4;  // requires Anti-Rad
 static constexpr uint8_t TC_GRIEVOUS= 5;  // Grievous Wound — Settlement only; Adv Med Kit req (§7.3A)
 
 // Forage DN per terrain (0 = not available); mirrors SK_DN[1][] in client
-static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 0,0,6,8,0,0,0,0,0,0,0 };
+static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0 };  // [0]=Open Scrub hunt DN7, [2]=Rust Forest DN6, [3]=Marsh DN8
 // Salvage DN per terrain (0 = not available)
 static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,0,8,0,0,0,0 };
 // Hex has Water tag (Marsh, Flooded Ruins)
@@ -242,7 +242,7 @@ struct HexCell {
   uint8_t resource;
   uint8_t amount;
   uint8_t respawnTimer;
-  uint8_t shelter;      // 0=none, 1=lean-to (1 scrap), 2=improved (2 scrap)
+  uint8_t shelter;      // 0=none, 1=shelter (1 scrap), 2=improved shelter (2 scrap)
   uint8_t footprints;   // bitmask: players who have visited (bit 0-5 for P0-P5)
   uint8_t variant;     // image variant index assigned at map gen
 };
@@ -314,7 +314,8 @@ enum EvtType : uint8_t {
   EVT_NAME    = 6,
   EVT_DAWN    = 7,
   EVT_ACTION  = 8, // action result broadcast
-  EVT_DUSK    = 9  // end-of-day radiation Endure check (§6.2)
+  EVT_DUSK    = 9, // end-of-day radiation Endure check (§6.2)
+  EVT_DOWNED  = 10 // player LL reached 0 — reset slot, return to char select
 };
 
 struct GameEvent {
@@ -340,6 +341,7 @@ struct GameEvent {
   int8_t   actResD;     // Resolve delta (REST in good shelter, §7.3)
   int8_t   actScrapD;   // scrap delta: +1 gained (SCAV), -1/-2 spent (SHELTER)
   uint8_t  actCnd;      // TREAT condition target (TC_*, 0 for non-Treat actions)
+  uint32_t evWsId;      // WS client ID for targeted sends (EVT_DOWNED)
   uint8_t  actDn;       // check DN (0 = no check)
   int8_t   actTot;      // check total signed (0 = no check)
   // Radiation payload (EVT_MOVE rad gain, EVT_DUSK, EVT_DAWN clean reduction):
