@@ -706,6 +706,7 @@ function initActionPanel() {
   }
 
   function closeActionPanel() {
+    actionPanel.setAttribute('aria-hidden', 'true');
     actionPanel.classList.remove('open');
     actionBtnList.style.display = '';
     document.getElementById('action-water-ctrl').style.display = 'none';
@@ -775,6 +776,7 @@ function initActionPanel() {
 
       const btn = document.createElement('button');
       btn.id        = 'action-btn-' + def.id;   // stable ID for AI agents
+      btn.setAttribute('role', 'listitem');
       btn.className = 'action-item-btn' + (canAct ? '' : ' action-disabled');
       btn.setAttribute('aria-label', def.label + (blockReason ? ' — ' + blockReason : ''));
       btn.innerHTML =
@@ -810,6 +812,7 @@ function initActionPanel() {
 
     actionBtnList.style.display = '';
     actionPanel.classList.add('open');
+    actionPanel.setAttribute('aria-hidden', 'false');
   }
 
   actionPanel.addEventListener('click', e => { if (e.target === actionPanel) closeActionPanel(); });
@@ -1129,17 +1132,11 @@ function initMenuSystem() {
 
       sec('AI Agents',
         mp({ class: 'menu-text-body' },
-          'This game exposes a full server-state API endpoint for use by AI agents and automation tools.'
+          'This game exposes machine-readable HTTP endpoints and accessible DOM elements to assist AI agents and automation tools.'
         ),
+
+        mp({ class: 'menu-text-body' }, mb({}, 'GET /state'), ' — Full server game state. Returns JSON with:'),
         md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Endpoint'),
-            mp({ class: 'ht-track-desc' }, 'GET http://192.168.4.1/state')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Format'),
-            mp({ class: 'ht-track-desc' }, 'JSON — no authentication required')
-          ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Global'),
             mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, sharedFood, sharedWater, evtQueue')
@@ -1150,12 +1147,72 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, position (q/r), survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds, skills, inventory (quick totals + full grid), turn state (mp/actUsed/resting), score/steps')
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkPushable, score/steps. conn:false = empty slot.')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'statusBits'),
+            mp({ class: 'ht-track-desc' }, 'Bitmask: bit0=Wounded, bit1=RadSick, bit2=Bleeding, bit3=Fevered, bit4=Downed, bit5=Stable, bit6=Panicked')
           )
         ),
-        mp({ class: 'menu-text-body' },
-          'Poll this endpoint to observe the full game state. Player slots not yet assigned will show conn:false. ' +
-          'statusBits is a bitmask: bit0=Wounded, bit1=RadSick, bit2=Bleeding, bit3=Fevered, bit4=Downed.'
+
+        mp({ class: 'menu-text-body' }, mb({}, 'GET /view?pid=N'), ' — Visible hex cells for player N. Returns:'),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Header'),
+            mp({ class: 'ht-track-desc' }, 'pid, name, q, r, visR (vision radius)')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'cells[]'),
+            mp({ class: 'ht-track-desc' }, 'Each hex: q, r, dq (col offset from player), dr (row offset), terrain index, terrainName, shelter (0/1/2), resource index, resourceName, amount, footprints bitmask')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Direction'),
+            mp({ class: 'ht-track-desc' }, 'Use dq/dr to find neighbours without hex math. dq:0,dr:-1 = North. dq:+1,dr:0 = NE. dq:-1,dr:+1 = SW.')
+          )
+        ),
+
+        mp({ class: 'menu-text-body' }, mb({}, 'Accessible DOM IDs'), ' — readable without screenshots:'),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, '#game-narrator'),
+            mp({ class: 'ht-track-desc' }, 'aria-live region. textContent updates after every move ("Moved to Broken Urban at q:5,r:3. MP:3.") and every action ("Scavenge \u2014 Success. MP:1. +5pts.").')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, '#tc-name'),
+            mp({ class: 'ht-track-desc' }, 'Current hex terrain name. Updated on every move.')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, '#hud-mp'),
+            mp({ class: 'ht-track-desc' }, 'Movement points remaining. e.g. "3 MP"')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, '#inv0\u2013#inv4'),
+            mp({ class: 'ht-track-desc' }, 'Inventory counts: water / food / fuel / medicine / scrap')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, '#action-btn-1 to -7'),
+            mp({ class: 'ht-track-desc' }, '1=Forage 2=Water 3=Scavenge 4=Shelter 5=Treat 6=Survey 7=Rest. Has aria-label. .action-disabled class when blocked.')
+          )
+        ),
+
+        mp({ class: 'menu-text-body' }, mb({}, 'WebSocket'), ' — ws://192.168.4.1/ws'),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Join'),
+            mp({ class: 'ht-track-desc' }, '{"t":"join","name":"BOT","arch":0}  arch: 0=Guide 1=Quartermaster 2=Medic 3=Mule 4=Scout 5=Endurer')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Move'),
+            mp({ class: 'ht-track-desc' }, '{"t":"mv","d":N}  dirs 0\u20135 = NW / N / NE / SW / SE / S')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Action'),
+            mp({ class: 'ht-track-desc' }, '{"t":"act","a":N}  a: 1=Forage 2=Water 3=Scavenge 4=Shelter 5=Treat 6=Survey 7=Rest')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Tip'),
+            mp({ class: 'ht-track-desc' }, 'Poll GET /view after each move for spatial context. Poll GET /state for full party status between turns.')
+          )
         )
       ),
     );

@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WASTELAND</title>
+<title>WASTELAND CRAWL</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<div id="game-narrator" aria-live="polite" aria-atomic="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden"></div>
 
 <!-- Top HUD -->
 <div id="hud">
@@ -118,12 +119,12 @@
 </div>
 
 <!-- Action panel modal -->
-<div id="action-panel">
+<div id="action-panel" role="dialog" aria-modal="true" aria-labelledby="action-panel-title" aria-hidden="true">
   <div id="action-box">
     <span id="action-close">&#x2715;</span>
-    <h2>&#x2694; ACTIONS</h2>
+    <h2 id="action-panel-title">&#x2694; ACTIONS</h2>
     <div id="action-status-bar"></div>
-    <div id="action-btn-list"><!-- populated by JS --></div>
+    <div id="action-btn-list" role="list" aria-label="available actions"><!-- populated by JS --></div>
     <!-- WATER mp sub-control -->
     <div id="action-water-ctrl" style="display:none">
       <div class="check-row">

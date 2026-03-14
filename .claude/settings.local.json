@@ -41,7 +41,16 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_title.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_state_players.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ai_help.js\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_agent_ux.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_agent_ux.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_font.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_score.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_a11y.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_style.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui_agents.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_engine2.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui2.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ino2.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_network.js\")"
     ]
   }
 }

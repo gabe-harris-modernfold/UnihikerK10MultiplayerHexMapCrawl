@@ -33,6 +33,10 @@ let maxMP = 6;  // set from dawnMP at EVT_DAWN; personal day-length for time-of-
 const uiMenuPage    = van.state(null);
 function openMenu(page = 'main') { uiMenuPage.val = page; }
 function closeMenu()             { uiMenuPage.val = null; }
+function narrateState(msg) {
+  const el = document.getElementById('game-narrator');
+  if (el) el.textContent = msg;
+}
 // Lobby / character selection
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
 const uiPickPending = van.state(false); // true while waiting for server pick response
@@ -329,6 +333,15 @@ function handleEvent(ev) {
           addLog(`<span class="log-check-fail">\u2622 Entered rad zone +${ev.radd}R → R:${pm.rad}</span>`);
         }
       }
+      // Narrate position for accessibility / AI agents
+      if (ev.pid === myId) {
+        const TNAME = ['Open Scrub','Ash Dunes','Rust Forest','Marsh','Broken Urban',
+                       'Flooded Ruins','Glass Fields','Rolling Hills','Mountain','Settlement','Nuke Crater'];
+        const cell = gameMap[ev.r]?.[ev.q];
+        const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
+        const shelterNote = cell?.shelter ? ' Shelter present.' : '';
+        narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}`);
+      }
       break;
     }
     case 'join':
@@ -450,7 +463,8 @@ function handleEvent(ev) {
       if (ev.wd)   detail += ` +${ev.wd}Water`;
       if (ev.lld)  detail += ` ${ev.lld > 0 ? '+' : ''}${ev.lld}LL`;
       if (ev.radd) detail += ` ${ev.radd > 0 ? '+' : ''}${ev.radd}R`;
-      if (ev.resd) detail += ` +${ev.resd}Resolve`;
+      if (ev.resd)   detail += ` +${ev.resd}Resolve`;
+  if (ev.scoreD) detail += ` \u271F${ev.scoreD}pts`;
       if (ev.a === ACT_TREAT && ev.out === AO_SUCCESS && ev.cnd === TC_GRIEVOUS)
         detail += ' \u2605Grievous healed';
       addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
@@ -483,6 +497,13 @@ function handleEvent(ev) {
           ev.out === AO_PARTIAL  ? `\u25D1 ${actNm}: partial success` :
                                    `\u25CB ${actNm}: failed`;
         showToast(toastMsg);
+      }
+      // Narrate action result for accessibility / AI agents
+      if (ev.pid === myId) {
+        const actNames = ['','Forage','Water','Scavenge','Shelter','Treat','Survey','Rest'];
+        const outNames = ['','Success','Partial','Failed'];
+        const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
+        narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
       }
       updateSidebar();
       break;

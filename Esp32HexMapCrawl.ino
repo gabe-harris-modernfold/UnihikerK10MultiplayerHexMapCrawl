@@ -340,6 +340,7 @@ struct GameEvent {
   int8_t   actLLD;      // LL delta
   int8_t   actResD;     // Resolve delta (REST in good shelter, §7.3)
   int8_t   actScrapD;   // scrap delta: +1 gained (SCAV), -1/-2 spent (SHELTER)
+  int16_t  actScoreD;   // score delta awarded for this action
   uint8_t  actCnd;      // TREAT condition target (TC_*, 0 for non-Treat actions)
   uint32_t evWsId;      // WS client ID for targeted sends (EVT_DOWNED)
   uint8_t  actDn;       // check DN (0 = no check)
@@ -1472,6 +1473,77 @@ void setup() {
       }
       j += "]";
       j += "}";  // close root object
+      xSemaphoreGive(G.mutex);
+    } else {
+      j = "{\"error\":\"mutex timeout\"}";
+    }
+    AsyncWebServerResponse* resp = req->beginResponse(200, "application/json", j);
+    resp->addHeader("Access-Control-Allow-Origin", "*");
+    resp->addHeader("Cache-Control", "no-cache");
+    req->send(resp);
+  });
+
+
+  // ── /view — visible cells for a player (AI agent / accessibility endpoint) ──
+  server.on("/view", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!req->hasParam("pid")) {
+      req->send(400, "application/json", "{\"error\":\"missing pid\"}");
+      return;
+    }
+    int pid = req->getParam("pid")->value().toInt();
+    if (pid < 0 || pid >= MAX_PLAYERS) {
+      req->send(400, "application/json", "{\"error\":\"invalid pid\"}");
+      return;
+    }
+    static const char* TNAME_FULL[NUM_TERRAIN] = {
+      "Open Scrub","Ash Dunes","Rust Forest","Marsh","Broken Urban",
+      "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater"
+    };
+    static const char* RES_NAME[6] = {"none","water","food","fuel","medicine","scrap"};
+    String j;
+    j.reserve(4096);
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+      const Player& p = G.players[pid];
+      if (!p.connected) {
+        xSemaphoreGive(G.mutex);
+        req->send(400, "application/json", "{\"error\":\"player not connected\"}");
+        return;
+      }
+      int visR; bool mr;
+      playerVisParams(pid, &visR, &mr);
+      j += "{\"pid\":"; j += pid;
+      j += ",\"name\":\""; j += p.name; j += "\"";
+      j += ",\"q\":"; j += p.q;
+      j += ",\"r\":"; j += p.r;
+      j += ",\"visR\":"; j += visR;
+      j += ",\"cells\":[";
+      bool first = true;
+      for (int dr = -visR; dr <= visR; dr++) {
+        for (int dq = -visR; dq <= visR; dq++) {
+          int s = -(dq + dr);
+          if (abs(dq) + abs(dr) + abs(s) > 2 * visR) continue;
+          int cq = wrapQ(p.q + dq);
+          int cr = wrapR(p.r + dr);
+          const HexCell& cell = G.map[cr][cq];
+          uint8_t tt = cell.terrain < NUM_TERRAIN ? cell.terrain : 0;
+          uint8_t res = cell.resource < 6 ? cell.resource : 0;
+          if (!first) j += ",";
+          first = false;
+          j += "{\"q\":"; j += cq;
+          j += ",\"r\":"; j += cr;
+          j += ",\"dq\":"; j += dq;
+          j += ",\"dr\":"; j += dr;
+          j += ",\"terrain\":"; j += tt;
+          j += ",\"terrainName\":\""; j += TNAME_FULL[tt]; j += "\"";
+          j += ",\"shelter\":"; j += cell.shelter;
+          j += ",\"resource\":"; j += res;
+          j += ",\"resourceName\":\""; j += RES_NAME[res]; j += "\"";
+          j += ",\"amount\":"; j += cell.amount;
+          j += ",\"footprints\":"; j += cell.footprints;
+          j += "}";
+        }
+      }
+      j += "]}";
       xSemaphoreGive(G.mutex);
     } else {
       j = "{\"error\":\"mutex timeout\"}";

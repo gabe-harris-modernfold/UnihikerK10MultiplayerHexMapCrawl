@@ -440,11 +440,13 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         uint8_t yield = (terr == 0 || terr == 2) ? 2 : 1;  // Open Scrub (hunt) + Rust Forest → 2 food on full success
         p.inv[1]     = (uint8_t)min((int)p.inv[1] + yield, 99);
         ev.actFoodD  = (int8_t)yield;
+        ev.actScoreD = 3; p.score = (uint16_t)min((int)p.score + 3, 65535);
         ev.actOut    = AO_SUCCESS;
       } else if (cr.total >= (int)dn - 1) {
         p.inv[1]     = (uint8_t)min((int)p.inv[1] + 1, 99);
         ev.actFoodD  = 1;
         if (p.fatigue < 8) p.fatigue++;
+        ev.actScoreD = 1; p.score = (uint16_t)min((int)p.score + 1, 65535);
         ev.actOut    = AO_PARTIAL;
       } else {
         if (p.fatigue < 8) p.fatigue++;
@@ -469,8 +471,9 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.movesLeft = (int8_t)max(0, (int)p.movesLeft - spend);
       p.inv[0]    = (uint8_t)min((int)p.inv[0] + spend, 99);
       // TODO §6.5: contaminated water — pending token system
-      ev.actWatD  = (int8_t)spend;
-      ev.actOut   = AO_SUCCESS;
+      ev.actWatD   = (int8_t)spend;
+      ev.actScoreD = (int16_t)spend; p.score = (uint16_t)min((int)p.score + spend, 65535);
+      ev.actOut    = AO_SUCCESS;
       Serial.printf("[WATER]   P%d \"%s\" @ %s | +%d water | inv water:%d mp→%d\n",
         pid, p.name, T_NAME[terr], spend, p.inv[0], p.movesLeft);
       break;
@@ -494,11 +497,13 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         // Success: award 1 Scrap (placeholder for proper Scavenge deck)
         p.inv[4]      = (uint8_t)min((int)p.inv[4] + 1, 99);
         ev.actScrapD  = 1;
+        ev.actScoreD  = 5; p.score = (uint16_t)min((int)p.score + 5, 65535);
         ev.actOut     = AO_SUCCESS;
       } else if (cr.total >= (int)dn - 1) {
         // Partial: item + Encounter (Encounter not yet implemented)
         p.inv[4]      = (uint8_t)min((int)p.inv[4] + 1, 99);
         ev.actScrapD  = 1;
+        ev.actScoreD  = 2; p.score = (uint16_t)min((int)p.score + 2, 65535);
         ev.actOut     = AO_PARTIAL;
       } else {
         if (terr == 6 && !(p.statusBits & ST_BLEEDING)) {  // Glass Fields fail → Bleeding (cutting edges)
@@ -529,6 +534,8 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.movesLeft  = (int8_t)max(0, (int)p.movesLeft - mpCost);
       p.inv[4]     = (uint8_t)max(0, (int)p.inv[4] - shelterType);
       G.map[p.r][p.q].shelter = shelterType;
+      { int16_t pts = (shelterType == 2) ? 8 : 4;
+        ev.actScoreD = pts; p.score = (uint16_t)min((int)p.score + pts, 65535); }
       ev.actOut    = AO_SUCCESS;
       ev.actCnd    = shelterType;           // 1=shelter, 2=improved shelter (reuses cnd field)
       ev.actScrapD = -(int8_t)shelterType;  // scrap spent: -1 shelter, -2 improved shelter
@@ -590,6 +597,8 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
           }
           default: break;  // unreachable — caught in condition switch above
         }
+        { int16_t pts = (condTgt == TC_GRIEVOUS) ? 10 : (condTgt == TC_MAJOR) ? 6 : 3;
+          ev.actScoreD = pts; p.score = (uint16_t)min((int)p.score + pts, 65535); }
         ev.actOut = AO_SUCCESS;
       } else {
         if (condTgt == TC_BLEED && p.fatigue < 8) p.fatigue++;  // bleed fail → fatigue
@@ -611,7 +620,8 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
         p.actUsed   = true;
         p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 1);
       }
-      ev.actOut   = AO_SUCCESS;
+      ev.actScoreD = 2; p.score = (uint16_t)min((int)p.score + 2, 65535);
+      ev.actOut    = AO_SUCCESS;
       // Build ring of hexes at distance visR+1 and return to caller for direct send
       if (survBuf && survLen) {
         int visR; bool mr;
