@@ -340,8 +340,12 @@ canvas{display:block;width:100%;height:100%}
   background:var(--bg-panel);border:1px solid var(--bdr-hi);
   border-radius:2px;padding:20px 24px;
   width:min(400px,94vw);max-height:90dvh;overflow-y:auto;position:relative;
-  box-shadow:0 0 48px rgba(0,0,0,0.85)
+  box-shadow:0 0 48px rgba(0,0,0,0.85);
+  scrollbar-width:thin;scrollbar-color:var(--bdr-mid) transparent
 }
+#char-sheet::-webkit-scrollbar{width:4px}
+#char-sheet::-webkit-scrollbar-track{background:transparent}
+#char-sheet::-webkit-scrollbar-thumb{background:var(--bdr-mid);border-radius:2px}
 #char-sheet h2{
   font-family:var(--stencil);
   color:var(--gold);font-size:16px;letter-spacing:4px;
@@ -391,7 +395,7 @@ canvas{display:block;width:100%;height:100%}
   font-family:var(--stencil);font-size:16px;letter-spacing:3px;font-weight:bold
 }
 #cs-skills-grid{display:flex;flex-direction:column;gap:5px;margin-bottom:6px}
-.cs-skill-row{display:flex;align-items:center;gap:8px}
+.cs-skill-row{display:flex;align-items:center;gap:8px;width:100%}
 .cs-skill-name{
   font-family:var(--stencil);font-size:11px;letter-spacing:1.5px;
   color:var(--ash);width:38px;flex-shrink:0
@@ -404,7 +408,7 @@ canvas{display:block;width:100%;height:100%}
 .cs-skill-dot.filled{background:var(--gold);border-color:var(--gold-hi);box-shadow:0 0 5px rgba(228,180,32,0.55)}
 .cs-skill-level{
   font-family:var(--stencil);font-size:10px;letter-spacing:1px;
-  color:var(--txt-dim)
+  color:var(--txt-dim);flex:1;text-align:right
 }
 .stat-bar-wrap{margin-top:10px}
 .stat-bar-label{display:flex;justify-content:space-between;font-size:12px;color:var(--txt-dim);margin-bottom:3px}
@@ -739,12 +743,12 @@ canvas{display:block;width:100%;height:100%}
 }
 
 /*──────────────────────── Survival Tracks (§4) ─────────────────*/
-.track-row{display:flex;align-items:center;gap:5px;margin:5px 0}
+.track-row{display:flex;align-items:center;gap:6px;margin:5px 0;width:100%}
 .track-label{font-size:12px;letter-spacing:1px;color:var(--ash);width:64px;font-family:var(--stencil);flex-shrink:0;text-align:left}
-.track-boxes{display:flex;gap:2px;flex-shrink:0}
+.track-boxes{display:flex;gap:2px;flex:1}
 .track-box{
-  width:13px;height:13px;border:1px solid #302A20;border-radius:1px;
-  background:var(--bg-deep);flex-shrink:0;position:relative
+  flex:1;max-width:28px;min-width:10px;height:13px;border:1px solid #302A20;border-radius:1px;
+  background:var(--bg-deep);position:relative
 }
 .track-box.filled{background:var(--gold);border-color:var(--gold-hi)}
 /* thresh: threshold is armed (not yet fired) — orange downward arrow warning */
@@ -779,7 +783,7 @@ canvas{display:block;width:100%;height:100%}
 
 /* ── Radiation track ──────────────────────────────────────────── */
 /* Smaller boxes for 10-count R track */
-.rad-track .track-box{width:10px;height:13px}
+.rad-track .track-box{max-width:18px;height:13px}
 /* Colour zones */
 .rad-track .track-box.rad-filled        {background:#3A6622;border-color:#5A9933}  /* R1-3  green */
 .rad-track .track-box.rad-filled-yellow {background:#7A6010;border-color:#BBAA22}  /* R4-6  yellow */
@@ -951,12 +955,13 @@ canvas{display:block;width:100%;height:100%}
   position:fixed;inset:0;
   background:rgba(5,3,1,0.97);
   display:flex;align-items:flex-start;justify-content:center;
-  z-index:900;overflow-y:auto;
+  z-index:900;overflow:hidden;
   opacity:0;pointer-events:none;
   transition:opacity 0.35s
 }
 #char-select-overlay.open{opacity:1;pointer-events:all}
 
+#char-select-content{overflow-y:auto;max-height:100dvh;width:100%}
 .cs-page{
   width:100%;max-width:900px;
   padding:16px 14px 24px;
@@ -1081,4 +1086,15 @@ canvas{display:block;width:100%;height:100%}
   border:1px solid var(--blood);
   padding:6px 8px;display:block;text-align:center;
   opacity:0.75
+}
+
+/* ── Action panel: inline unavailability reason ──────────────── */
+.act-unavail-reason{
+  font-size:9px;letter-spacing:0.5px;color:var(--ash);
+  display:block;margin-top:2px;font-family:var(--stencil)
+}
+/* ── Action panel: terrain context badge ─────────────────────── */
+.act-terrain-ctx{
+  font-size:9px;letter-spacing:1px;color:var(--gold);
+  font-family:var(--stencil);margin-left:8px;opacity:0.7
 }

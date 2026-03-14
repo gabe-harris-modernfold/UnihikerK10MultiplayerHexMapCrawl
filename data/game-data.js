@@ -107,11 +107,11 @@ const ACT_NAMES = ['FORAGE','COLLECT WATER','','SCAVENGE',
                    'BUILD SHELTER','TREAT','SURVEY','REST'];
 const ACT_MP    = [2, 1, 1, 2, 3, 2, 1, 0];  // default MP cost per action
 // Which terrain indices allow each action (matches server terrain arrays)
-// Forage: Rust Forest(2), Marsh(3)
+// Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8
 // Water:  Marsh(3), Flooded(5)
-// Scavenge: Broken Urban(4), Glass Fields(6)
+// Scavenge: Broken Urban(4) DN6, Glass Fields(6) DN8
 // Others: any terrain
-const TERRAIN_FORAGE_DN  = [0,0,6,8,0,0,0,0,0,0,0];
+const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0];
 const TERRAIN_SALVAGE_DN = [0,0,0,0,6,0,8,0,0,0,0];
 const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0];
 function actAvailable(actId, terrainIdx) {

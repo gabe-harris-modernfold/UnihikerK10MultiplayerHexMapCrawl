@@ -117,6 +117,8 @@ function showCharSelect() {
 }
 function hideCharSelect() {
   document.getElementById('char-select-overlay').classList.remove('open');
+  // Return keyboard focus to the game canvas immediately
+  setTimeout(() => document.getElementById('canvas-wrap')?.focus({ preventScroll: true }), 50);
 }
 
 // ── WebSocket ────────────────────────────────────────────────────

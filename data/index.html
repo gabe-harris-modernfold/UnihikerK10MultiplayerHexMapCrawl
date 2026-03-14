@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WASTELAND CRAWL</title>
+<title>WASTELAND</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <!-- Top HUD -->
 <div id="hud">
-  <button class="hud-btn" id="menu-btn">&#x2630; MENU</button>
+  <button class="hud-btn" id="menu-btn" aria-label="open menu">&#x2630; MENU</button>
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot">●</span>
@@ -19,14 +19,14 @@
     <span id="hud-vis" class="hud-stat">—</span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
-  <button class="hud-btn" id="char-btn">&#x1F5D9; DOSSIER</button>
+  <button class="hud-btn" id="char-btn" aria-label="open dossier">&#x1F5D9; DOSSIER</button>
   <div id="hud-ll">
     <span class="hud-ll-lbl">LL</span>
     <div class="track-boxes" id="hud-ll-track"></div>
     <span class="hud-ll-val" id="hud-ll-val">6</span>
   </div>
-  <button class="hud-btn" id="action-hud-btn">&#x2694; ACTION</button>
-  <button class="hud-btn" id="rest-hud-btn">&#x25BC; REST</button>
+  <button class="hud-btn" id="action-hud-btn" aria-label="open action menu">&#x2694; ACTION</button>
+  <button class="hud-btn" id="rest-hud-btn" aria-label="rest and recover">&#x25BC; REST</button>
 </div>
 
 <!-- Rest status bubbles -->
@@ -35,7 +35,7 @@
 <!-- Main -->
 <div id="main">
   <!-- Hex canvas -->
-  <div id="canvas-wrap">
+  <div id="canvas-wrap" tabindex="0" aria-label="game map">
     <canvas id="hexCanvas"></canvas>
 
     <!-- Terrain card (upper-right of canvas) -->
@@ -100,9 +100,9 @@
 
 <!-- Controls -->
 <div id="controls">
-  <button class="dir-btn" data-dir="3">&#x2196;</button>
-  <button class="dir-btn" data-dir="2">&#x2191;</button>
-  <button class="dir-btn" data-dir="1">&#x2197;</button>
+  <button class="dir-btn" data-dir="3" id="dir-btn-3" aria-label="move northwest">&#x2196;</button>
+  <button class="dir-btn" data-dir="2" id="dir-btn-2" aria-label="move north">&#x2191;</button>
+  <button class="dir-btn" data-dir="1" id="dir-btn-1" aria-label="move northeast">&#x2197;</button>
   <div class="dir-btn empty" id="cd-center">
     <svg viewBox="0 0 36 36" width="20" height="20">
       <circle cx="18" cy="18" r="14" fill="none" stroke="#180C04" stroke-width="3.5"/>
@@ -112,9 +112,9 @@
               stroke-linecap="round" transform="rotate(-90 18 18)"/>
     </svg>
   </div>
-  <button class="dir-btn" data-dir="4">&#x2199;</button>
-  <button class="dir-btn" data-dir="5">&#x2193;</button>
-  <button class="dir-btn" data-dir="0">&#x2198;</button>
+  <button class="dir-btn" data-dir="4" id="dir-btn-4" aria-label="move southwest">&#x2199;</button>
+  <button class="dir-btn" data-dir="5" id="dir-btn-5" aria-label="move south">&#x2193;</button>
+  <button class="dir-btn" data-dir="0" id="dir-btn-0" aria-label="move southeast">&#x2198;</button>
 </div>
 
 <!-- Action panel modal -->

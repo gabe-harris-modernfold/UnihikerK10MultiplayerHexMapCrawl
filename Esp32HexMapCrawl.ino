@@ -1354,6 +1354,134 @@ void setup() {
   server.on("/ncsi.txt",                  HTTP_GET, toGame);
   server.on("/connecttest.txt",           HTTP_GET, toGame);
   server.on("/fwlink",                    HTTP_GET, toGame);
+  // ── /state — full game-state JSON endpoint (server-side view) ────
+  server.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
+    String j;
+    j.reserve(6144);
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+
+      // ── Global fields ──────────────────────────────────────────────
+      j += "{\"day\":";         j += G.dayCount;
+      j += ",\"dayTick\":";     j += G.dayTick;
+      j += ",\"tickId\":";      j += G.tickId;
+      j += ",\"tc\":";          j += G.threatClock;
+      j += ",\"crisis\":";      j += G.crisisState  ? "true" : "false";
+      j += ",\"connected\":";   j += G.connectedCount;
+      j += ",\"sharedFood\":";  j += G.sharedFood;
+      j += ",\"sharedWater\":"; j += G.sharedWater;
+      j += ",\"evtQueue\":";    j += pendingCount;   // approximate; guarded by evtMux not mutex
+
+      // ── Map summary ────────────────────────────────────────────────
+      int shelters = 0, impShelters = 0;
+      int resCnt[6] = {0,0,0,0,0,0};
+      int terrCnt[NUM_TERRAIN] = {};
+      for (int row = 0; row < MAP_ROWS; row++) {
+        for (int col = 0; col < MAP_COLS; col++) {
+          const HexCell& c = G.map[row][col];
+          if (c.shelter == 1) shelters++;
+          else if (c.shelter == 2) impShelters++;
+          if (c.resource > 0 && c.resource < 6) resCnt[c.resource] += c.amount;
+          if (c.terrain < NUM_TERRAIN) terrCnt[c.terrain]++;
+        }
+      }
+      j += ",\"map\":{\"cells\":"; j += (MAP_ROWS * MAP_COLS);
+      j += ",\"shelters\":";    j += shelters;
+      j += ",\"impShelters\":"; j += impShelters;
+      j += ",\"res\":{\"water\":";  j += resCnt[1];
+      j += ",\"food\":";  j += resCnt[2];
+      j += ",\"fuel\":";  j += resCnt[3];
+      j += ",\"med\":";   j += resCnt[4];
+      j += ",\"scrap\":"; j += resCnt[5];
+      j += "},\"terrain\":[";
+      for (int t = 0; t < NUM_TERRAIN; t++) {
+        if (t) j += ",";
+        j += "{\"id\":"; j += t;
+        j += ",\"name\":\""; j += T_SHORT[t]; j += "\"";
+        j += ",\"count\":"; j += terrCnt[t];
+        j += "}";
+      }
+      j += "]}";
+
+      // ── Players ────────────────────────────────────────────────────
+      j += ",\"players\":[";
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        const Player& p = G.players[i];
+        if (i) j += ",";
+        j += "{";
+        // Identity
+        j += "\"pid\":";          j += i;
+        j += ",\"conn\":";        j += p.connected ? "true" : "false";
+        j += ",\"wsClientId\":";  j += p.wsClientId;
+        j += ",\"connectMs\":";   j += p.connectMs;
+        j += ",\"lastMoveMs\":";  j += p.lastMoveMs;
+        j += ",\"name\":\"";     j += p.name; j += "\"";
+        j += ",\"arch\":";        j += p.archetype;
+        j += ",\"archName\":\""; j += (p.archetype < NUM_ARCHETYPES ? ARCHETYPE_NAME[p.archetype] : "?"); j += "\"";
+        j += ",\"invSlots\":";    j += p.invSlots;
+        // Position
+        j += ",\"q\":";           j += p.q;
+        j += ",\"r\":";           j += p.r;
+        // Survival tracks
+        j += ",\"ll\":";          j += p.ll;
+        j += ",\"food\":";        j += p.food;
+        j += ",\"water\":";       j += p.water;
+        j += ",\"fatigue\":";     j += p.fatigue;
+        j += ",\"rad\":";         j += p.radiation;
+        j += ",\"resolve\":";     j += p.resolve;
+        // Status & turn state
+        j += ",\"sb\":";          j += p.statusBits;
+        j += ",\"mp\":";          j += p.movesLeft;
+        j += ",\"actUsed\":";     j += p.actUsed       ? "true" : "false";
+        j += ",\"encPenApplied\":"; j += p.encPenApplied ? "true" : "false";
+        j += ",\"resting\":";     j += p.resting       ? "true" : "false";
+        j += ",\"radClean\":";    j += p.radClean      ? "true" : "false";
+        j += ",\"fThreshBelow\":"; j += p.fThreshBelow;
+        j += ",\"wThreshBelow\":"; j += p.wThreshBelow;
+        // Wounds [minor, major, grievous]
+        j += ",\"wounds\":[";
+        j += p.wounds[0]; j += ","; j += p.wounds[1]; j += ","; j += p.wounds[2];
+        j += "]";
+        // Skills [Navigate,Forage,Scavenge,Treat,Shelter,Endure]
+        j += ",\"skills\":[";
+        for (int s = 0; s < NUM_SKILLS; s++) { if (s) j += ","; j += p.skills[s]; }
+        j += "]";
+        // Inventory quick-totals [water,food,fuel,med,scrap]
+        j += ",\"inv\":[";
+        for (int s = 0; s < 5; s++) { if (s) j += ","; j += p.inv[s]; }
+        j += "]";
+        // Full inventory grid
+        j += ",\"invType\":[";
+        for (int s = 0; s < INV_SLOTS_MAX; s++) { if (s) j += ","; j += p.invType[s]; }
+        j += "]";
+        j += ",\"invQty\":[";
+        for (int s = 0; s < INV_SLOTS_MAX; s++) { if (s) j += ","; j += p.invQty[s]; }
+        j += "]";
+        // Skill check / push state
+        j += ",\"chkSk\":";       j += p.chkSk;
+        j += ",\"chkDn\":";       j += p.chkDn;
+        j += ",\"chkBonus\":";    j += p.chkBonus;
+        j += ",\"chkPushable\":"; j += p.chkPushable;
+        // Legacy stats
+        j += ",\"stamina\":";     j += p.stamina;
+        j += ",\"perception\":";  j += p.perception;
+        j += ",\"strength\":";    j += p.strength;
+        // Score / steps
+        j += ",\"score\":";       j += p.score;
+        j += ",\"steps\":";       j += p.steps;
+        j += "}";
+      }
+      j += "]";
+      j += "}";  // close root object
+      xSemaphoreGive(G.mutex);
+    } else {
+      j = "{\"error\":\"mutex timeout\"}";
+    }
+    AsyncWebServerResponse* resp = req->beginResponse(200, "application/json", j);
+    resp->addHeader("Access-Control-Allow-Origin", "*");
+    resp->addHeader("Cache-Control", "no-cache");
+    req->send(resp);
+  });
+
   // All text assets (JS/CSS/HTML) are in PSRAM above.
   // Only /img/*.png requests reach here; serve them from the imgCache in PSRAM.
   server.onNotFound([](AsyncWebServerRequest* req) {

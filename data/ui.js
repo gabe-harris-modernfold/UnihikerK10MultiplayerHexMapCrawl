@@ -322,6 +322,8 @@ const keyMap = {
 const heldKeys = new Map();
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
+  // Prevent scroll keys from scrolling any overlay or page
+  if (['Space','PageUp','PageDown','Home','End'].includes(e.code)) { e.preventDefault(); return; }
   if (e.key === 'Escape') {
     if (uiMenuPage.val) { closeMenu(); return; }
     document.getElementById('char-overlay').classList.remove('open');
@@ -329,6 +331,8 @@ document.addEventListener('keydown', e => {
     document.getElementById('terrain-card').classList.remove('expanded');
     return;
   }
+  // Block movement while character selection screen is showing
+  if (document.getElementById('char-select-overlay')?.classList.contains('open')) return;
   const dir = keyMap[e.code];
   if (dir === undefined) return;
   e.preventDefault();
@@ -336,6 +340,8 @@ document.addEventListener('keydown', e => {
     move(parseInt(dir));
     heldKeys.set(e.code, setInterval(() => move(parseInt(dir)), 200));
   }
+  // Keep keyboard focus on the game canvas so subsequent keys land here
+  document.getElementById('canvas-wrap')?.focus({ preventScroll: true });
 });
 document.addEventListener('keyup', e => {
   if (heldKeys.has(e.code)) { clearInterval(heldKeys.get(e.code)); heldKeys.delete(e.code); }
@@ -711,14 +717,22 @@ function initActionPanel() {
     const me   = players[myId];
     const cell = gameMap[me.r]?.[me.q];
     const terr = cell?.terrain ?? null;
-    const mp      = me.mp ?? 0;
-    const used    = me.au ?? false;
+    const mp      = me.mp  ?? 0;
+    const used    = me.au  ?? false;
+    const scrap   = me.inv?.[4] ?? 0;
     const isScout = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
 
+    // Terrain context for action panel header
+    const terrName   = (terr != null && terr <= 10) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    const forageHere = terr != null && TERRAIN_FORAGE_DN[terr] > 0;
+    const scavHere   = terr != null && TERRAIN_SALVAGE_DN[terr] > 0;
+    const waterHere  = terr != null && TERRAIN_HAS_WATER[terr] > 0;
+    const terrTags   = [forageHere && 'Forage', scavHere && 'Salvage', waterHere && 'Water'].filter(Boolean).join(' · ');
     actionStatusBar.innerHTML =
       `<span class="act-mp-badge">MP: ${mp}</span>` +
       (used ? '<span class="act-used-badge">\u2297 ACTION USED</span>'
-            : '<span class="act-avail-badge">\u25CF ACTION READY</span>');
+            : '<span class="act-avail-badge">\u25CF ACTION READY</span>') +
+      `<span class="act-terrain-ctx">${terrName}${terrTags ? ' · ' + terrTags : ''}</span>`;
 
     document.getElementById('action-water-ctrl').style.display = 'none';
     document.getElementById('action-treat-ctrl').style.display = 'none';
@@ -749,17 +763,26 @@ function initActionPanel() {
              :               scrap + ' scrap → improved shelter 🏠 (2 MP)';
       }
 
+      // Compute the inline block reason shown under the button label
+      const blockReason = actionUsed  ? 'Action already used today'
+                        : !available  ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
+                                       : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh · Flooded Ruins)'
+                                       : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
+                                       : 'Not available here')
+                        : !hasMP      ? `Needs ${def.mpCost} MP (have ${mp})`
+                        : !hasScrap   ? `Needs scrap (have ${scrap})`
+                        : '';
+
       const btn = document.createElement('button');
+      btn.id        = 'action-btn-' + def.id;   // stable ID for AI agents
       btn.className = 'action-item-btn' + (canAct ? '' : ' action-disabled');
+      btn.setAttribute('aria-label', def.label + (blockReason ? ' — ' + blockReason : ''));
       btn.innerHTML =
         `<span class="act-icon">${def.icon}</span>` +
         `<span class="act-label">${def.label}</span>` +
-        `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
-      btn.title = desc +
-        (actionUsed  ? ' — action used today'              :
-        !available   ? ' — not available here'             :
-        !hasMP       ? ' — insufficient MP'                :
-        !hasScrap    ? ' — need scrap (have ' + scrap + ')' : '');
+        `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>` +
+        (blockReason ? `<span class="act-unavail-reason">${blockReason}</span>` : '');
+      btn.title = desc;
 
       btn.addEventListener('click', () => {
         if (!canAct) {
@@ -1101,6 +1124,38 @@ function initMenuSystem() {
         mp({ class: 'menu-text-body' },
           'Points are earned when discovering resources in new hexes. Each hex yields points once the first time you or your team reveals its loot. ' +
           'Different terrain types and resource quality grant variable points — risk exploration to maximize your score.'
+        )
+      ),
+
+      sec('AI Agents',
+        mp({ class: 'menu-text-body' },
+          'This game exposes a full server-state API endpoint for use by AI agents and automation tools.'
+        ),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Endpoint'),
+            mp({ class: 'ht-track-desc' }, 'GET http://192.168.4.1/state')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Format'),
+            mp({ class: 'ht-track-desc' }, 'JSON — no authentication required')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Global'),
+            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, sharedFood, sharedWater, evtQueue')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Map'),
+            mp({ class: 'ht-track-desc' }, 'Shelter counts, resource totals per type, cell count per terrain (11 types)')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Players'),
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, position (q/r), survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds, skills, inventory (quick totals + full grid), turn state (mp/actUsed/resting), score/steps')
+          )
+        ),
+        mp({ class: 'menu-text-body' },
+          'Poll this endpoint to observe the full game state. Player slots not yet assigned will show conn:false. ' +
+          'statusBits is a bitmask: bit0=Wounded, bit1=RadSick, bit2=Bleeding, bit3=Fevered, bit4=Downed.'
         )
       ),
     );

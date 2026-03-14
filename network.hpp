@@ -287,10 +287,11 @@ static void drainEvents() {
 
       case EVT_DOWNED: {
         // 1. Send targeted "downed" message to the player's client
-        AsyncWebSocketClient* cl = ws.getClient(ev.evWsId);
-        if (cl) {
+        {
           len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", (int)ev.pid);
-          cl->text(buf, len);
+          for (AsyncWebSocketClient& cl : ws.getClients()) {
+            if (cl.id() == ev.evWsId) { cl.text(buf, len); break; }
+          }
         }
         // 2. Broadcast EVT_LEFT so all clients remove the player icon
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", (int)ev.pid);
