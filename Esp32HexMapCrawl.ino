@@ -287,11 +287,10 @@ struct Player {
   uint8_t  perception;  // 1–5
   uint8_t  strength;    // 1–5
 
-  // ── Skill check / Push state ────────────────────────────────
+  // ── Skill check state ────────────────────────────────────────
   uint8_t  chkSk;       // skill index of last check (SK_* constant)
   uint8_t  chkDn;       // DN of last check
-  uint8_t  chkBonus;    // item bonus applied to last check (for Push reuse)
-  uint8_t  chkPushable; // 1 = last check failed and fatigue < 6 → Push eligible
+  uint8_t  chkBonus;    // item bonus applied to last check
 
   // ── Dawn / resource-economy tracking (§4) ───────────────────
   uint8_t  fThreshBelow;  // bitmask: bit0=F crossed below 4, bit1=F crossed below 2
@@ -315,7 +314,8 @@ enum EvtType : uint8_t {
   EVT_DAWN    = 7,
   EVT_ACTION  = 8, // action result broadcast
   EVT_DUSK    = 9, // end-of-day radiation Endure check (§6.2)
-  EVT_DOWNED  = 10 // player LL reached 0 — reset slot, return to char select
+  EVT_DOWNED  = 10, // player LL reached 0 — reset slot, return to char select
+  EVT_REGEN   = 11  // map regenerated — scatter all players, full resync
 };
 
 struct GameEvent {
@@ -329,6 +329,7 @@ struct GameEvent {
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;   // threshold bitmasks after upkeep
   uint8_t  dawnFat;            // fatigue after dawn
+  int8_t   dawnExpD;           // LL lost specifically to exposure (no shelter, low SV terrain)
   // EVT_ACTION payload:
   uint8_t  actType;     // ACT_*
   uint8_t  actOut;      // AO_*
@@ -378,6 +379,40 @@ struct GameState {
 static constexpr int  EVT_QUEUE_SIZE = 64;
 
 static GameState      G;
+
+// ── SD Save / Load constants + structs ────────────────────────────────────────
+static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
+static constexpr uint8_t  SAVE_VERSION = 1;
+static const char         SAVE_DIR[]   = "/save";
+static const char         SAVE_MAP_F[] = "/save/map.bin";
+static const char         SAVE_PLY_F[] = "/save/players.bin";
+
+struct __attribute__((packed)) SaveHeader {
+  uint32_t magic;
+  uint8_t  version;
+  uint16_t dayCount;
+  uint8_t  threatClock;
+  uint8_t  sharedFood;
+  uint8_t  sharedWater;
+  uint8_t  pad;
+};
+
+struct __attribute__((packed)) SavePlayer {
+  char     name[12];
+  uint8_t  archetype;
+  uint8_t  skills[6];
+  int16_t  q, r;
+  uint8_t  ll, food, water, fatigue, radiation, resolve;
+  uint8_t  inv[5];
+  uint8_t  invType[12];
+  uint8_t  invQty[12];
+  uint8_t  invSlots;
+  uint8_t  wounds[3];
+  uint8_t  statusBits;
+  uint16_t score;
+  uint16_t steps;
+  uint8_t  used;
+};
 static GameEvent      pendingEvents[EVT_QUEUE_SIZE];
 static int            pendingCount  = 0;
 static portMUX_TYPE   evtMux        = portMUX_INITIALIZER_UNLOCKED; // guards pendingEvents/pendingCount
@@ -1227,7 +1262,7 @@ void setup() {
     memset(p.wounds,  0, sizeof(p.wounds));
     memset(p.invType, 0, sizeof(p.invType));
     memset(p.invQty,  0, sizeof(p.invQty));
-    p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0; p.chkPushable = 0;
+    p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0;
     p.fThreshBelow = 0; p.wThreshBelow = 0;
     p.actUsed = false; p.encPenApplied = false; p.radClean = true;
     p.movesLeft = (int8_t)effectiveMP(i);  // consistent with handleConnect
@@ -1303,8 +1338,11 @@ void setup() {
   Serial.println();
 
   splashAdd("Generating map...");
-  Serial.println("[SETUP] Generating map...");
-  generateMap();  // logs [MAP] stats
+  Serial.println("[SETUP] Loading or generating map...");
+  if (!tryLoadSave()) {
+    generateMap();  // logs [MAP] stats
+    Serial.println("[SAVE] No save found - fresh map generated");
+  }
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
 
@@ -1457,11 +1495,10 @@ void setup() {
         j += ",\"invQty\":[";
         for (int s = 0; s < INV_SLOTS_MAX; s++) { if (s) j += ","; j += p.invQty[s]; }
         j += "]";
-        // Skill check / push state
+        // Skill check state
         j += ",\"chkSk\":";       j += p.chkSk;
         j += ",\"chkDn\":";       j += p.chkDn;
         j += ",\"chkBonus\":";    j += p.chkBonus;
-        j += ",\"chkPushable\":"; j += p.chkPushable;
         // Legacy stats
         j += ",\"stamina\":";     j += p.stamina;
         j += ",\"perception\":";  j += p.perception;

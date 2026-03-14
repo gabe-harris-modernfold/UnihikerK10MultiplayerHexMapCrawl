@@ -646,14 +646,6 @@ function initMapBindings() {
 }
 
 function initActionPanel() {
-  // Push roll button
-  document.getElementById('check-push-btn').addEventListener('click', () => {
-    if (myId < 0) return;
-    send({ t: 'push' });
-    document.getElementById('check-push-btn').classList.remove('push-visible');
-    uiPushAvail.val = false;
-  });
-
   const actionPanel     = document.getElementById('action-panel');
   const actionBtnList   = document.getElementById('action-btn-list');
   const actionStatusBar = document.getElementById('action-status-bar');
@@ -997,7 +989,7 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             ms({ class: 'ht-track-lbl' }, 'RESOLVE'),
             ms({ class: 'ht-track-val' }, '0 – 5'),
-            ms({ class: 'ht-track-desc' }, 'Starts at 3. Spend to push a failed skill check once per check. Gain +1 by resting in good shelter (SV 3+, or SV 2+ with a built shelter on the hex).')
+            ms({ class: 'ht-track-desc' }, 'Starts at 3. Gain +1 by resting in good shelter (SV 3+, or SV 2+ with a built shelter on the hex).')
           ),
         )
       ),
@@ -1118,7 +1110,7 @@ function initMenuSystem() {
       sec('Skill Checks',
         mp({ class: 'menu-text-body' },
           'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
-          'Meeting or exceeding DN = success. Spend 1 Resolve to re-roll once (push). ' +
+          'Meeting or exceeding DN = success. ' +
           'Six skills: NAVIGATE · FORAGE · SCAVENGE · TREAT · SHELTER · ENDURE.'
         )
       ),
@@ -1132,8 +1124,9 @@ function initMenuSystem() {
 
       sec('AI Agents',
         mp({ class: 'menu-text-body' },
-          'This game exposes machine-readable HTTP endpoints and accessible DOM elements to assist AI agents and automation tools.'
+          'This game exposes machine-readable HTTP endpoints, a JS state object, and accessible DOM elements to assist AI agents and automation tools.'
         ),
+        mp({ class: 'menu-text-body' }, mb({}, '\u26A0 Session tip'), ' — Navigating away from the game page disconnects your WebSocket session. Open /state or /view in a separate browser window or tab to avoid losing your connection.'),
 
         mp({ class: 'menu-text-body' }, mb({}, 'GET /state'), ' — Full server game state. Returns JSON with:'),
         md({ class: 'ht-track-list' },
@@ -1147,7 +1140,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkPushable, score/steps. conn:false = empty slot.')
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'statusBits'),
@@ -1168,6 +1161,22 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Direction'),
             mp({ class: 'ht-track-desc' }, 'Use dq/dr to find neighbours without hex math. dq:0,dr:-1 = North. dq:+1,dr:0 = NE. dq:-1,dr:+1 = SW.')
+          )
+        ),
+
+        mp({ class: 'menu-text-body' }, mb({}, 'window.__gameState'), ' — in-page JS object, updated after every WS message. Read without navigating away:'),
+        md({ class: 'ht-track-list' },
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'How to read'),
+            mp({ class: 'ht-track-desc' }, 'javascript_tool: return JSON.stringify(window.__gameState)')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Fields'),
+            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/mp/actUsed), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
+          ),
+          md({ class: 'ht-track-row' },
+            md({ class: 'ht-track-label' }, 'Advantage'),
+            mp({ class: 'ht-track-desc' }, 'No navigation required — WS session stays alive. Best choice for in-browser agents.')
           )
         ),
 
@@ -1211,7 +1220,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Tip'),
-            mp({ class: 'ht-track-desc' }, 'Poll GET /view after each move for spatial context. Poll GET /state for full party status between turns.')
+            mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.4.1/view?pid=0 for player zero, /view?pid=1 for player one, etc.')
           )
         )
       ),
@@ -1288,6 +1297,24 @@ function initMenuSystem() {
           }
         }, '\u25B6 CONNECT TO NETWORK')
       ),
+      md({ class: 'settings-section-divider' }),
+      md({ class: 'settings-row settings-danger-row' },
+        mp({ class: 'settings-label settings-danger-label' }, '⚠ WORLD'),
+        mp({ class: 'settings-val settings-danger-desc' },
+          'Regenerate the wasteland. Survivors scattered. All progress lost.'
+        )
+      ),
+      mb({
+        id: 'menu-regen-btn',
+        class: 'menu-regen-btn',
+        onclick: () => {
+          if (confirm('Regenerate the wasteland?\nAll survivors will be scattered and progress will be lost.')) {
+            send({ t: 'regen' });
+            uiMenuPage.val = null;
+            document.getElementById('menu-overlay')?.classList.remove('open');
+          }
+        }
+      }, '☠ REGENERATE WORLD')
     );
 
     if (page === 'about') return wrap(

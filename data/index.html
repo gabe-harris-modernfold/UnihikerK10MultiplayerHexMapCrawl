@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WASTELAND CRAWL</title>
+<title>WASTELAND</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -28,6 +28,7 @@
   </div>
   <button class="hud-btn" id="action-hud-btn" aria-label="open action menu">&#x2694; ACTION</button>
   <button class="hud-btn" id="rest-hud-btn" aria-label="rest and recover">&#x25BC; REST</button>
+  <button class="hud-btn" id="help-btn" aria-label="open agent instructions">&#x2139; HELP</button>
 </div>
 
 <!-- Rest status bubbles -->
@@ -70,8 +71,6 @@
       <div class="hi-desc" id="hi-desc">Move onto a hex to reveal its data.</div>
     </div>
 
-    <!-- Push roll — floats at bottom of canvas, visible only when push is available -->
-    <button id="check-push-btn" class="push-roll-bar push-btn">&#x21BA; PUSH ROLL (+1 Fatigue)</button>
   </div>
 
   <!-- Sidebar -->
@@ -269,11 +268,166 @@
   </div>
 </div>
 
+<!-- ─────────────────── Agent Instructions Overlay ────────────────────── -->
+<div id="help-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true">
+  <div id="help-box">
+    <span id="help-close">&#x2715;</span>
+    <h2 id="help-title">&#x2623; AI AGENT PLAYBOOK</h2>
+
+    <div class="help-section">
+      <h3>Overview</h3>
+      <p>You are playing a turn-based hex-grid survival game. Your goal is to accumulate score points.
+         Use three browser tabs simultaneously for efficient play.</p>
+    </div>
+
+    <div class="help-section">
+      <h3>Tab Setup (Required)</h3>
+      <table class="help-table">
+        <tr><th>Tab</th><th>URL</th><th>Purpose</th></tr>
+        <tr><td>Tab 1</td><td>http://192.168.4.70/</td><td>Game UI — movement, actions</td></tr>
+        <tr><td>Tab 2</td><td>http://192.168.4.70/state</td><td>Live JSON — score, position, supplies, day</td></tr>
+        <tr><td>Tab 3</td><td>http://192.168.4.70/view?pid=0</td><td>Player map view — visible hexes, terrain, resources</td></tr>
+      </table>
+      <p class="help-note">&#x26A0; Open Tab 2 and Tab 3 in <strong>separate windows</strong> — navigating away from Tab 1 will disconnect your WebSocket session and reset the game.</p>
+      <p class="help-note">&#x1F4A1; <strong>Preferred method:</strong> Read game state without navigating at all — call <code>window.__gameState</code> via browser JavaScript console or automation tools. This gives you full state (position, supplies, visible cells) without leaving the game tab.</p>
+      <p>Tab 3 only works when the player is connected (Tab 1 is open and a character has been selected). First player is player zero: <code>/view?pid=0</code>. If it returns <code>{"error":"player not connected"}</code>, go to Tab 1 and select a character first.</p>
+    </div>
+
+    <div class="help-section">
+      <h3>Connecting / Spawning</h3>
+      <ol>
+        <li>Navigate Tab 1 to <code>http://192.168.4.70/</code></li>
+        <li>The character select screen will appear. Click <strong>▶ SELECT GUIDE (pid:0)</strong>. Guide has the best NAVIGATE skill (●●) and a trait that reduces movement cost for companions.</li>
+        <li>After selecting, you spawn with LL:6 (full health), 6 MP, and score 0.</li>
+        <li>Immediately refresh Tab 3 (<code>/view?pid=0</code>) to read your starting visible cells.</li>
+      </ol>
+    </div>
+
+    <div class="help-section">
+      <h3>Reading window.__gameState</h3>
+      <p>The fastest way to read state without navigating. Open the browser console and type:</p>
+      <pre class="help-code">window.__gameState</pre>
+      <p>Returns: <code>myId</code>, <code>day</code>, <code>tc</code> (threat clock), <code>visR</code>, <code>me</code> (all your stats), <code>players</code> (others online), <code>visibleCells</code> (all known map cells with terrain/resource/shelter data).</p>
+    </div>
+
+    <div class="help-section">
+      <h3>Reading /view?pid=N</h3>
+      <p>Each cell in the <code>cells</code> array contains:</p>
+      <pre class="help-code">{ "q": 14, "r": 10,
+  "dq": 0, "dr": -3,       // offset from player
+  "terrain": 4,
+  "terrainName": "Broken Urban",
+  "shelter": 0,             // 1 if shelter present
+  "resource": 5,
+  "resourceName": "scrap",
+  "amount": 2,
+  "footprints": 0           // 0=NEVER VISITED → exploration bonus }</pre>
+    </div>
+
+    <div class="help-section">
+      <h3>Terrain Priority</h3>
+      <table class="help-table">
+        <tr><th>ID</th><th>Name</th><th>Why It Matters</th></tr>
+        <tr><td>5</td><td>Flooded Ruins</td><td>~30 pts first visit; COLLECT WATER</td></tr>
+        <tr><td>9</td><td>Settlement</td><td>~30 pts first visit; TREAT available</td></tr>
+        <tr><td>4</td><td>Broken Urban</td><td>~10–30 pts + SCAVENGE (+5 pts, +scrap)</td></tr>
+        <tr><td>6</td><td>Glass Fields</td><td>Exploration bonus + SCAVENGE + scrap</td></tr>
+        <tr><td>3</td><td>Marsh</td><td>FORAGE + COLLECT WATER — key survival</td></tr>
+        <tr><td>2</td><td>Rust Forest</td><td>FORAGE — food source. ⚠ visR=0 in forest</td></tr>
+        <tr><td>0</td><td>Open Scrub</td><td>FORAGE — food source</td></tr>
+        <tr><td>10</td><td>Nuke Crater</td><td>Exploration bonus but +RAD — move through fast</td></tr>
+      </table>
+    </div>
+
+    <div class="help-section">
+      <h3>Turn Structure</h3>
+      <ol>
+        <li><strong>Wake up</strong> — Click map or dismiss REST popup. Starts with full MP (4–6).</li>
+        <li><strong>Check supplies</strong> — Read <code>/state</code> or <code>window.__gameState.me</code> for food, water, ll, mp, rad, scrap.</li>
+        <li><strong>Choose ONE action</strong> — Only one action slot per day:
+          <ul>
+            <li>FORAGE (2 MP) — Scrub/Marsh/Rust Forest → food + 3 pts</li>
+            <li>SCAVENGE (2 MP) — Broken Urban/Glass Fields/Flooded Ruins → scrap + 5 pts</li>
+            <li>COLLECT WATER (1 MP) — Marsh/Flooded District → water + pts</li>
+            <li>BUILD SHELTER (1 MP, 2 scrap) — stops LL exposure, 4–8 pts</li>
+            <li>SURVEY (1 MP) — expands visibility, 2 pts</li>
+          </ul>
+        </li>
+        <li><strong>Move</strong> — Use remaining MP toward nearest unvisited high-value hex.</li>
+        <li><strong>REST</strong> — Click REST when MP is 0. Click once, then click map to dismiss dawn popup. Do NOT click REST multiple times — each click advances a full day.</li>
+      </ol>
+    </div>
+
+    <div class="help-section">
+      <h3>Direction Mapping</h3>
+      <table class="help-table">
+        <tr><th>Offset</th><th>Direction</th><th>Button</th></tr>
+        <tr><td>dr &lt; 0</td><td>North ↑</td><td>↑</td></tr>
+        <tr><td>dr &gt; 0</td><td>South ↓</td><td>↓</td></tr>
+        <tr><td>dq &gt; 0, dr &lt; 0</td><td>Northeast ↗</td><td>↗</td></tr>
+        <tr><td>dq &lt; 0, dr &lt; 0</td><td>Northwest ↖</td><td>↖</td></tr>
+        <tr><td>dq &gt; 0, dr &gt; 0</td><td>Southeast ↘</td><td>↘</td></tr>
+        <tr><td>dq &lt; 0, dr &gt; 0</td><td>Southwest ↙</td><td>↙</td></tr>
+      </table>
+      <p class="help-note">Note: A = SW, D = SE (not W/E). Use <code>dq</code>/<code>dr</code> from <code>/view</code> to compute direction, not intuition.</p>
+    </div>
+
+    <div class="help-section">
+      <h3>Survival Rules</h3>
+      <ul>
+        <li><strong>LL</strong> drops by 1 each day if no shelter and exposed. LL=0 → death.</li>
+        <li><strong>Shelter:</strong> Build when scrap ≥ 2 and LL ≤ 4. Costs 2 scrap, stops daily LL bleed, gives 4–8 pts. Shelters are permanent.</li>
+        <li><strong>Food/Water:</strong> Each REST consumes 1 food and 1 water. Thresholds: Food at 4, 2. Water at 5, 3, 1. Each downward cross costs 1 LL. FORAGE every 2–3 days minimum.</li>
+        <li><strong>Radiation:</strong> Glass Fields and Ash Dunes give +RAD. RAD≥4 = Rad-Sick. RAD≥7 = Dusk Check risk. Move through quickly.</li>
+        <li><strong>Rust Forest:</strong> visR drops to 0 inside — <code>/view</code> returns only current cell. Avoid unless foraging.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>Point-Scoring Priority</h3>
+      <ol>
+        <li>Move into unvisited Flooded Ruins / Settlement → ~30 pts</li>
+        <li>Move into unvisited Broken Urban / Glass Fields → ~10–20 pts</li>
+        <li>SCAVENGE on Broken Urban or Glass Fields → +5 pts + scrap</li>
+        <li>BUILD SHELTER (Improved) → +8 pts + stops exposure</li>
+        <li>FORAGE → +3 pts + food</li>
+        <li>SURVEY → +2 pts + reveals cells in /view</li>
+        <li>COLLECT WATER → minor pts + water</li>
+      </ol>
+    </div>
+
+    <div class="help-section">
+      <h3>Workflow Loop Summary</h3>
+      <pre class="help-code">EACH TURN:
+1. Read window.__gameState (or refresh /view?pid=N in separate window)
+2. Filter visibleCells: footprints==0 AND terrain IN [4,5,6,9]
+3. Pick nearest unvisited high-value cell
+4. Use action slot: SCAVENGE if on SV≥1 terrain, else FORAGE if low food
+5. Move toward target using remaining MP
+6. If MP=0 → REST once → click map to dismiss dawn popup
+7. If LL ≤ 4 and scrap ≥ 2 → BUILD SHELTER next action slot
+8. Repeat</pre>
+    </div>
+
+  </div>
+</div>
+
 <!-- ─────────────────────────── Script ────────────────────────────────── -->
 <script type="text/javascript" src="/van.js"></script>
 <script type="text/javascript" src="/van-ui.js"></script>
 <script type="text/javascript" src="/game-data.js"></script>
 <script type="text/javascript" src="/engine.js"></script>
 <script type="text/javascript" src="/ui.js"></script>
+<script>
+(function(){
+  var btn   = document.getElementById('help-btn');
+  var ov    = document.getElementById('help-overlay');
+  var close = document.getElementById('help-close');
+  if (btn)   btn.addEventListener('click',  function(){ ov.classList.add('open'); ov.removeAttribute('aria-hidden'); });
+  if (close) close.addEventListener('click', function(){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); });
+  // Close on backdrop click
+  if (ov) ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }});
+})();
+</script>
 </body>
 </html>

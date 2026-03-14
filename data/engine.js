@@ -40,8 +40,6 @@ function narrateState(msg) {
 // Lobby / character selection
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
 const uiPickPending = van.state(false); // true while waiting for server pick response
-// Skill check panel
-const uiPushAvail   = van.state(false);  // last check failed → Push eligible
 
 // ── Move cooldown tracking (client-side estimate) ─────────────────
 let lastMoveSent   = 0;   // Date.now() of last move sent
@@ -111,6 +109,40 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
 
 // Shared game state (Threat Clock, Day, shared stores)
 let gameState = { tc: 0, dc: 0, sf: 30, sw: 30 };
+
+// ── Agent state snapshot ─────────────────────────────────────────
+// Updated after every WS message. Read via: window.__gameState
+function buildAgentState() {
+  const me = myId >= 0 ? players[myId] : null;
+  const visibleCells = [];
+  if (me) {
+    for (let r = 0; r < MAP_ROWS; r++) {
+      for (let q = 0; q < MAP_COLS; q++) {
+        const c = gameMap[r][q];
+        if (c) visibleCells.push({ q, r, terrain: c.terrain, resource: c.resource, amount: c.amount, shelter: c.shelter });
+      }
+    }
+  }
+  window.__gameState = {
+    myId,
+    day:     gameState.dc,
+    tc:      gameState.tc,
+    visR:    myVisionR,
+    me: me ? {
+      q: me.q, r: me.r,
+      ll: me.ll, food: me.food, water: me.water,
+      rad: me.rad, resolve: me.res, fat: me.fat,
+      mp: me.mp, actUsed: me.au, resting: me.rest,
+      inv: { water: me.inv[0], food: me.inv[1], fuel: me.inv[2], med: me.inv[3], scrap: me.inv[4] },
+      wounds: me.wd, statusBits: me.sb,
+      score: me.sc, name: me.nm,
+    } : null,
+    players: players.filter(p => p.on && p.id !== myId).map(p => ({
+      id: p.id, name: p.nm, q: p.q, r: p.r, ll: p.ll, mp: p.mp,
+    })),
+    visibleCells,
+  };
+}
 
 // ── Character selection overlay helpers ──────────────────────────
 function showCharSelect() {
@@ -285,6 +317,7 @@ function handleMsg(msg) {
       }
       break;
   }
+  buildAgentState();
 }
 
 function handleEvent(ev) {
@@ -349,6 +382,10 @@ function handleEvent(ev) {
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
       updateRestBubbles();
       break;
+    case 'regen':
+      showToast('☠ Wasteland reborn. Survivors scattered.');
+      addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, wayfarer.</span>');
+      break;
     case 'downed': {
       // Server has reset our slot — show death message then redirect to char selection
       myId = -1;
@@ -373,31 +410,18 @@ function handleEvent(ev) {
       players[ev.pid].nm = ev.nm;
       if (ev.pid !== myId) updateSidebar();
       break;
-    case 'chk':
-    case 'push': {
-      const isPush = ev.k === 'push';
+    case 'chk': {
       const who    = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const skNm   = SK_NAMES[ev.sk] ?? `SK${ev.sk}`;
       const modTxt = ev.mod !== 0 ? (ev.mod > 0 ? `+${ev.mod}` : `${ev.mod}`) : '';
       const icon   = ev.suc ? '\u25CF' : '\u25CB';
       const cls    = ev.suc ? 'log-check-ok' : 'log-check-fail';
-      const pfx    = isPush ? '\u21BA ' : '';
-      const sfx    = isPush ? ' <span class="log-fat-lbl">(+Fat)</span>' : '';
-      addLog(`<span class="${cls}">${icon} ${escHtml(who)} ${pfx}${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt}=${ev.tot} vs DN${ev.dn}${sfx}</span>`);
+      addLog(`<span class="${cls}">${icon} ${escHtml(who)} ${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt}=${ev.tot} vs DN${ev.dn}</span>`);
       if (ev.pid === myId) {
-        const canPush = !ev.suc && !isPush && (players[myId]?.fat ?? 0) < 6;
-        uiPushAvail.val = canPush;
-        document.getElementById('check-push-btn').classList.toggle('push-visible', canPush);
-        showToast(`${pfx}${skNm}: ${ev.suc ? 'SUCCESS' : 'FAIL'}${canPush ? ' — push?' : ''}`);
+        showToast(`${skNm}: ${ev.suc ? 'SUCCESS' : 'FAIL'}`);
       }
       break;
     }
-    case 'nopush':
-      if (ev.pid === myId) {
-        uiPushAvail.val = false;
-        showToast('Cannot push — fatigue full or no failed check');
-      }
-      break;
     case 'dawn': {
       // Update local player state from dawn event (all players, not just self)
       if (ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
@@ -405,11 +429,11 @@ function handleEvent(ev) {
         players[ev.pid].water = ev.w;
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
-        if (ev.pid === myId) maxMP = ev.mp;  // lock in this day's MP budget for clock
+        if (ev.pid === myId) { maxMP = ev.mp; nightFade = 0.72; }  // lock MP; start night fade
         players[ev.pid].au    = false;  // new day: action slot restored
         players[ev.pid].rest = false;
         if (ev.pid === myId) {
-          if (uiResting.val && ev.dll < 0) showShelterWarning();
+          if (uiResting.val && ev.expd < 0) showShelterWarning();
           uiResting.val = false;  // clear resting at dawn
         }
         updateRestBubbles();
@@ -756,9 +780,21 @@ const TIME_PHASES = [
 ];
 function getTimePhase() {
   if (myId < 0 || maxMP <= 0) return TIME_PHASES[0];
-  const f = 1 - (uiMP.val / maxMP);
-  return TIME_PHASES[f < 0.17 ? 0 : f < 0.34 ? 1 : f < 0.51 ? 2 : f < 0.68 ? 3 : f < 0.84 ? 4 : 5];
+  const f = Math.max(0, Math.min(1, 1 - uiMP.val / maxMP));
+  const scaled = f * (TIME_PHASES.length - 1);
+  const i = Math.floor(scaled);
+  const t = scaled - i;
+  const p0 = TIME_PHASES[Math.min(i, TIME_PHASES.length - 1)];
+  const p1 = TIME_PHASES[Math.min(i + 1, TIME_PHASES.length - 1)];
+  return {
+    icon: p0.icon, name: p0.name,
+    r: Math.round(p0.r + t * (p1.r - p0.r)),
+    g: Math.round(p0.g + t * (p1.g - p0.g)),
+    b: Math.round(p0.b + t * (p1.b - p0.b)),
+    a: p0.a + t * (p1.a - p0.a)
+  };
 }
+var nightFade = 0;  // extra night overlay that fades out after dawn
 
 // ── Render ──────────────────────────────────────────────────────
 function render() {
@@ -943,6 +979,16 @@ function render() {
     ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
+  }
+
+  // ── Night linger fade (dawn transition) ──────────────────────
+  if (nightFade > 0) {
+    ctx.save();
+    ctx.globalAlpha = nightFade;
+    ctx.fillStyle = 'rgb(15,8,40)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    nightFade = Math.max(0, nightFade - 0.004); // ~3 s at 60fps
   }
 
   requestAnimationFrame(render);

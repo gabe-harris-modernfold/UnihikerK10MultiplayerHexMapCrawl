@@ -4,7 +4,9 @@
 // Include order: game_logic.hpp first, then network.hpp, then ino tail functions.
 
 // broadcastCheck is defined in network.hpp (included after this file).
-static void broadcastCheck(int pid, uint8_t skill, CheckResult& r, bool pushed);
+static void broadcastCheck(int pid, uint8_t skill, CheckResult& r);
+// saveGame() is defined in network.hpp (included after this file).
+void saveGame();
 // ledFlash is defined in Esp32HexMapCrawl.ino (Core 1 safe — sets LED + endMs timer).
 void ledFlash(uint8_t r, uint8_t g, uint8_t b);
 
@@ -177,8 +179,22 @@ static void dawnUpkeep() {
       for (int i = 0; i < miss; i++) applyWStep(p, -1, llDelta);
     }
 
+    // ── Exposure (§7.3): no built shelter + terrain SV < 2 → LL−1 ──────────
+    int8_t expDelta = 0;
+    {
+      uint8_t terr   = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
+      uint8_t sv     = TERRAIN_SV[terr];
+      uint8_t shelt  = G.map[p.r][p.q].shelter;
+      bool    covered = (shelt > 0) || (sv >= 2);
+      if (!covered) {
+        llDelta--;
+        expDelta = -1;
+        Serial.printf("[DAWN]    P%d \"%s\" exposed (SV%d shelt:%d) −1 LL\n", pid, p.name, sv, shelt);
+      }
+    }
+
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────
-    // Losses were accumulated first in llDelta (both F and W steps above).
+    // Losses were accumulated first in llDelta (food, water, and exposure above).
     // Apply each step individually so we stop at 0 immediately.
     uint8_t prevLL = p.ll;  // snapshot before changes to compute actual delta
     if (llDelta < 0) {
@@ -223,6 +239,7 @@ static void dawnUpkeep() {
     ev.dawnWth     = p.wThreshBelow;
     ev.radR        = p.radiation;
     ev.dawnFat     = p.fatigue;
+    ev.dawnExpD    = expDelta;
     enqEvt(ev);
   }
 }
@@ -372,9 +389,11 @@ static void tickGame() {
     }
   }
 
+  bool dawnOccurred = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
     G.dayTick = 0;
     G.dayCount++;
+    dawnOccurred = true;
     Serial.printf("[DUSK]    ──── Dusk (end of Day %d) ────\n", (int)G.dayCount - 1);
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
     Serial.printf("[DAWN]    ──── Day %d begins ────\n", (int)G.dayCount);
@@ -405,6 +424,7 @@ static void tickGame() {
     }
   }
   xSemaphoreGive(G.mutex);
+  if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
 }
 
 // ── §5 Action handler ─────────────────────────────────────────────────────────

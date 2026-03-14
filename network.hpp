@@ -8,13 +8,11 @@
 static uint32_t lobbyIds[MAX_PLAYERS] = {0};
 
 // ── Skill check broadcast ─────────────────────────────────────────────────────
-// ev.k = "chk" for normal roll, "push" for a pushed roll.
-static void broadcastCheck(int pid, uint8_t skill, CheckResult& r, bool pushed) {
+static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
   char buf[128]; int len;
   len = snprintf(buf, sizeof(buf),
-    "{\"t\":\"ev\",\"k\":\"%s\",\"pid\":%d,\"sk\":%d,\"dn\":%d,"
+    "{\"t\":\"ev\",\"k\":\"chk\",\"pid\":%d,\"sk\":%d,\"dn\":%d,"
     "\"r1\":%d,\"r2\":%d,\"sv\":%d,\"mod\":%d,\"tot\":%d,\"suc\":%d}",
-    pushed ? "push" : "chk",
     pid, (int)skill, r.dn,
     r.r1, r.r2, r.skillVal, r.mods, r.total, r.success ? 1 : 0);
   ws.textAll(buf, (size_t)len);
@@ -171,6 +169,89 @@ static void broadcastState() {
   ws.textAll(buf, (size_t)pos);
 }
 
+// ── SD Save / Load ───────────────────────────────────────────────────────────
+void saveGame() {
+  if (SD.cardType() != CARD_NONE && xSemaphoreTake(G.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (!SD.exists(SAVE_DIR)) SD.mkdir(SAVE_DIR);
+    // Map file
+    File f = SD.open(SAVE_MAP_F, FILE_WRITE);
+    if (f) {
+      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount,
+                         G.threatClock, G.sharedFood, G.sharedWater, 0 };
+      f.write((uint8_t*)&hdr, sizeof(hdr));
+      f.write((uint8_t*)G.map, sizeof(G.map));
+      f.close();
+    }
+    // Players file
+    File p = SD.open(SAVE_PLY_F, FILE_WRITE);
+    if (p) {
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        Player& pl = G.players[i];
+        SavePlayer sp = {};
+        memcpy(sp.name, pl.name, 12);
+        sp.archetype = pl.archetype;
+        memcpy(sp.skills, pl.skills, 6);
+        sp.q = pl.q; sp.r = pl.r;
+        sp.ll = pl.ll; sp.food = pl.food; sp.water = pl.water;
+        sp.fatigue = pl.fatigue; sp.radiation = pl.radiation; sp.resolve = pl.resolve;
+        memcpy(sp.inv, pl.inv, 5);
+        memcpy(sp.invType, pl.invType, 12);
+        memcpy(sp.invQty, pl.invQty, 12);
+        sp.invSlots = pl.invSlots;
+        memcpy(sp.wounds, pl.wounds, 3);
+        sp.statusBits = pl.statusBits & (uint8_t)~ST_DOWNED;
+        sp.score = pl.score; sp.steps = pl.steps;
+        sp.used = (pl.name[0] != '\0') ? 1 : 0;
+        p.write((uint8_t*)&sp, sizeof(sp));
+      }
+      p.close();
+    }
+    xSemaphoreGive(G.mutex);
+    Serial.printf("[SAVE] Day %d saved to SD\n", (int)G.dayCount);
+  }
+}
+
+bool tryLoadSave() {
+  if (!SD.exists(SAVE_MAP_F)) return false;
+  File f = SD.open(SAVE_MAP_F, FILE_READ);
+  if (!f) return false;
+  SaveHeader hdr;
+  if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) { f.close(); return false; }
+  if (hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) { f.close(); return false; }
+  if (f.read((uint8_t*)G.map, sizeof(G.map)) != sizeof(G.map)) { f.close(); return false; }
+  f.close();
+  G.dayCount    = hdr.dayCount;
+  G.threatClock = hdr.threatClock;
+  G.sharedFood  = hdr.sharedFood;
+  G.sharedWater = hdr.sharedWater;
+  File p = SD.open(SAVE_PLY_F, FILE_READ);
+  if (p) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+      SavePlayer sp;
+      if (p.read((uint8_t*)&sp, sizeof(sp)) != sizeof(sp)) break;
+      if (!sp.used) continue;
+      Player& pl = G.players[i];
+      memcpy(pl.name, sp.name, 12);
+      pl.archetype = sp.archetype;
+      memcpy(pl.skills, sp.skills, 6);
+      pl.q = sp.q; pl.r = sp.r;
+      pl.ll = sp.ll; pl.food = sp.food; pl.water = sp.water;
+      pl.fatigue = sp.fatigue; pl.radiation = sp.radiation; pl.resolve = sp.resolve;
+      memcpy(pl.inv, sp.inv, 5);
+      memcpy(pl.invType, sp.invType, 12);
+      memcpy(pl.invQty, sp.invQty, 12);
+      pl.invSlots = sp.invSlots;
+      memcpy(pl.wounds, sp.wounds, 3);
+      pl.statusBits = sp.statusBits;
+      pl.score = sp.score; pl.steps = sp.steps;
+      pl.connected = false; pl.wsClientId = 0;
+    }
+    p.close();
+  }
+  Serial.printf("[SAVE] Loaded Day %d from SD\n", (int)G.dayCount);
+  return true;
+}
+
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
   int16_t  pq[MAX_PLAYERS], pr[MAX_PLAYERS];
@@ -252,12 +333,12 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
-          "\"rad\":%d,\"fat\":%d}",
+          "\"rad\":%d,\"fat\":%d,\"expd\":%d}",
           ev.pid, (int)ev.dawnDay,
           (int)ev.dawnF, (int)ev.dawnW, (int)ev.dawnLL,
           (int)ev.dawnMP, (int)ev.dawnLLDelta,
           (int)ev.dawnFth, (int)ev.dawnWth,
-          (int)ev.radR, (int)ev.dawnFat);
+          (int)ev.radR, (int)ev.dawnFat, (int)ev.dawnExpD);
         ws.textAll(buf, len);
         break;
 
@@ -313,6 +394,18 @@ static void drainEvents() {
         broadcastLobbyUpdate();
         Serial.printf("[DOWNED]  Slot %d reset — client %lu returned to lobby\n",
           (int)ev.pid, (unsigned long)ev.evWsId);
+        break;
+      }
+
+      case EVT_REGEN: {
+        // Regen requested — generateMap() already called on Core 1 before enqueue
+        // Broadcast regen event then send full syncs to all connected clients
+        len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
+        ws.textAll(buf, len);
+        for (AsyncWebSocketClient& cl : ws.getClients()) {
+          int slot = findSlot(cl.id());
+          if (slot >= 0) sendSync(&cl, slot);
+        }
         break;
       }
 
@@ -419,6 +512,8 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
 
   // Notify lobby clients that this archetype slot is now free
   broadcastLobbyUpdate();
+  // Persist game state so progress survives reconnects
+  saveGame();
 }
 
 // ── WiFi STA join task (Core 0) ───────────────────────────────────────────────
@@ -536,7 +631,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         memset(p.wounds,  0, sizeof(p.wounds));
         memset(p.invType, 0, sizeof(p.invType));
         memset(p.invQty,  0, sizeof(p.invQty));
-        p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0; p.chkPushable = 0;
+        p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0;
         p.fThreshBelow = 0; p.wThreshBelow = 0;
         p.movesLeft    = (int8_t)effectiveMP(arch);
         p.actUsed      = false;
@@ -710,51 +805,42 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.chkSk      = (uint8_t)sk;
         p.chkDn      = (uint8_t)dn;
         p.chkBonus   = (uint8_t)bonus;
-        p.chkPushable = (!res.success && p.fatigue < 6) ? 1 : 0;
       }
       xSemaphoreGive(G.mutex);
     }
     if (slot >= 0) {
-      Serial.printf("[CHECK]   P%d %s DN%d | %d+%d sk:%d mod:%d = %d | %s%s\n",
+      Serial.printf("[CHECK]   P%d %s DN%d | %d+%d sk:%d mod:%d = %d | %s\n",
         slot, SKILL_NAME[sk], dn,
         res.r1, res.r2, res.skillVal, res.mods, res.total,
-        res.success ? "SUCCESS" : "FAIL",
-        (!res.success) ? " (push eligible)" : "");
-      broadcastCheck(slot, (uint8_t)sk, res, false);
+        res.success ? "SUCCESS" : "FAIL");
+      broadcastCheck(slot, (uint8_t)sk, res);
     }
 
-  } else if (strncmp(tv, "push", (size_t)(te - tv)) == 0) {
-    // Push the roll: {"t":"push"}
-    CheckResult res  = {};
-    int     slot     = -1;
-    bool    pushed   = false;
-    uint8_t pushSk   = 0;
-
-    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      slot = findSlot(client->id());
-      if (slot >= 0) {
-        Player& p = G.players[slot];
-        if (p.chkPushable && p.fatigue < 6) {
-          p.fatigue++;
-          pushSk        = p.chkSk;
-          res           = resolveCheck(slot, p.chkSk, p.chkDn, p.chkBonus);
-          p.chkPushable = 0;
-          pushed        = true;
+  } else if (strncmp(tv, "regen", (size_t)(te - tv)) == 0) {
+    // Regen: {"t":"regen"} — regenerate map, scatter all players
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      SD.remove(SAVE_MAP_F);
+      SD.remove(SAVE_PLY_F);
+      generateMap();
+      G.dayCount = 1; G.dayTick = 0; G.threatClock = 0;
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        Player& pl = G.players[i];
+        if (!pl.connected) continue;
+        // Scatter to random open scrub hex
+        for (int tries = 0; tries < 200; tries++) {
+          int nq = esp_random() % MAP_COLS;
+          int nr = esp_random() % MAP_ROWS;
+          if (G.map[nr][nq].terrain == 0) { pl.q = (int16_t)nq; pl.r = (int16_t)nr; break; }
         }
+        pl.ll = 6; pl.food = 4; pl.water = 4;
+        pl.fatigue = 0; pl.radiation = 0; pl.resolve = 3;
+        pl.actUsed = false; pl.resting = false;
+        pl.movesLeft = (int8_t)effectiveMP(i);
       }
       xSemaphoreGive(G.mutex);
     }
-    if (slot >= 0 && pushed) {
-      Serial.printf("[PUSH]    P%d %s DN%d | %d+%d sk:%d mod:%d = %d | %s (+1 Fatigue)\n",
-        slot, SKILL_NAME[pushSk], res.dn,
-        res.r1, res.r2, res.skillVal, res.mods, res.total,
-        res.success ? "SUCCESS" : "FAIL");
-      broadcastCheck(slot, pushSk, res, true);
-    } else if (slot >= 0) {
-      char np[52]; int npl = snprintf(np, sizeof(np),
-        "{\"t\":\"ev\",\"k\":\"nopush\",\"pid\":%d}", slot);
-      client->text(np, npl);
-    }
+    { GameEvent ev = {}; ev.type = EVT_REGEN; enqEvt(ev); }
+    Serial.println("[REGEN]   Map regenerated — all players scattered");
 
   } else if (strncmp(tv, "act", (size_t)(te - tv)) == 0) {
     // Action: {"t":"act","a":N[,"mp":N,"cnd":N]}

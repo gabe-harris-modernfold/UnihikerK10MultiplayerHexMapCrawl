@@ -50,7 +50,18 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_engine2.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui2.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ino2.js\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_network.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_network.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_engine_daynight.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_gamelogic_save.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ino_save.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_network_save.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_ui_regen.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_css_regen.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_network_sdfix.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_gamelogic_savemutex.js\")",
+      "Read(//c/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/**)",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_help.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_help_css.js\")"
     ]
   }
 }
