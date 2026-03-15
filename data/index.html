@@ -15,18 +15,23 @@
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot">●</span>
-    <span id="hud-mp" class="hud-stat">— MP</span>
     <span id="hud-clock" class="hud-clock"></span>
     <span id="hud-vis" class="hud-stat">—</span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
   <button class="hud-btn" id="char-btn" aria-label="open dossier">&#x1F5D9; DOSSIER</button>
   <div id="hud-ll">
-    <span class="hud-ll-lbl">LL</span>
-    <div class="track-boxes" id="hud-ll-track"></div>
-    <span class="hud-ll-val" id="hud-ll-val">7</span>
+    <div class="hud-ll-row">
+      <span class="hud-ll-lbl">LL</span>
+      <div class="track-boxes" id="hud-ll-track"></div>
+      <span class="hud-ll-val" id="hud-ll-val">7</span>
+    </div>
+    <div class="hud-ll-row">
+      <span class="hud-ll-lbl">MP</span>
+      <div class="track-boxes" id="hud-mp-track"></div>
+    </div>
   </div>
-  <button class="hud-btn" id="action-hud-btn" aria-label="open action menu">&#x2694; ACTION</button>
+  <button class="hud-btn" id="action-hud-btn" aria-label="open action menu">&#x261E; ACTION</button>
   <button class="hud-btn" id="rest-hud-btn" aria-label="rest and recover">&#x25BC; REST</button>
   <button class="hud-btn" id="help-btn" aria-label="open agent instructions">&#x2139; HELP</button>
 </div>
@@ -121,7 +126,7 @@
 <div id="action-panel" role="dialog" aria-modal="true" aria-labelledby="action-panel-title" aria-hidden="true">
   <div id="action-box">
     <span id="action-close">&#x2715;</span>
-    <h2 id="action-panel-title">&#x2694; ACTIONS</h2>
+    <h2 id="action-panel-title"><span class="act-title-line">&#x261E; ACTIONS</span><span class="act-title-sub" id="act-panel-terrain-sub"></span></h2>
     <div id="action-status-bar"></div>
     <div id="action-btn-list" role="list" aria-label="available actions"><!-- populated by JS --></div>
     <!-- WATER mp sub-control -->
@@ -205,34 +210,28 @@
       <div class="track-row">
         <span class="track-label">LIFE LVL</span>
         <div class="track-boxes" id="cs-ll-track"></div>
-        <span class="track-val" id="cs-ll-val">7</span>
-        <span class="track-suffix">&nbsp;MP: <span id="cs-mp-val">6</span></span>
+        <span class="track-suffix" id="cs-mp-label"></span>
       </div>
       <!-- Food track: thresholds at 4 and 2 -->
       <div class="track-row">
         <span class="track-label">FOOD</span>
         <div class="track-boxes" id="cs-food-track"></div>
-        <span class="track-val" id="cs-food-val">6</span>
       </div>
       <!-- Water track: thresholds at 5, 3, 1 -->
       <div class="track-row">
         <span class="track-label">WATER</span>
         <div class="track-boxes" id="cs-water-track"></div>
-        <span class="track-val" id="cs-water-val">6</span>
       </div>
       <!-- Radiation track: 10 boxes; thresholds at 4 (Rad-Sick) and 7 (Dusk check) -->
       <div class="track-row">
         <span class="track-label">RADS</span>
         <div class="track-boxes rad-track" id="cs-rad-track"></div>
-        <span class="track-val" id="cs-rad-val">0</span>
         <span class="track-suffix" id="cs-rad-status"></span>
       </div>
       <!-- Resolve tokens -->
       <div class="track-row">
         <span class="track-label">RESOLVE</span>
         <div id="cs-resolve-tokens"></div>
-        <span class="track-val" id="cs-resolve-val">3</span>
-        <span class="track-suffix">/5</span>
       </div>
       <!-- Wounds & Conditions -->
       <div class="track-row wounds-row">

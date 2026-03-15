@@ -92,7 +92,7 @@ static constexpr int      MAP_COLS      = 25;
 static constexpr int      MAP_ROWS      = 19;
 static constexpr int      MAX_PLAYERS   = 6;    // one per Wayfarer archetype
 static constexpr int      VISION_R      = 3;    // base hex vision radius
-static constexpr int      NUM_TERRAIN   = 11;
+static constexpr int      NUM_TERRAIN   = 12;
 static constexpr uint32_t TICK_MS       = 100;  // 10 ticks/sec
 static constexpr uint8_t  RESPAWN_TICKS = 200;  // 20 s resource respawn
 static constexpr uint32_t MOVE_CD_MS    = 220;  // base move cooldown (ms)
@@ -142,16 +142,16 @@ static constexpr uint8_t TC_RAD     = 4;  // requires Anti-Rad
 static constexpr uint8_t TC_GRIEVOUS= 5;  // Grievous Wound — Settlement only; Adv Med Kit req (§7.3A)
 
 // Forage DN per terrain (0 = not available); mirrors SK_DN[1][] in client
-static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0 };  // [0]=Open Scrub hunt DN7, [2]=Rust Forest DN6, [3]=Marsh DN8
+static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 0 };  // [0]=Open Scrub DN7, [2]=Rust Forest DN6, [3]=Marsh DN8; River impassable
 // Salvage DN per terrain (0 = not available)
-static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,0,8,0,0,0,0 };
+static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,0,8,0,0,0,0, 0 };
 // Hex has Water tag (Marsh, Flooded Ruins)
-static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0 };
+static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 0 };
 // Ruins: Scavenge here advances the Threat Clock
-static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0 };
+static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
 // Rad-tagged terrain: entering triggers Endure roll vs +1 R (§6.2)
-static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0 };
-//                                                         0 1 2 3 4 5 6 7 8 9 10
+static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 0 };
+//                                                         0 1 2 3 4 5 6 7 8 9 10 11
 //                                                         AshDunes(1), GlassFields(6)
 
 // Status condition bitmask positions
@@ -165,12 +165,13 @@ static constexpr uint8_t ST_PANICKED = (1 << 6);
 
 // Movement Cost per terrain (255 = impassable)
 // Resource: 0=None 1=Water 2=Food 3=Fuel 4=Medicine 5=Scrap
-static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255 };
+static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255 };
+//                                                  0  1  2  3  4  5  6  7  8  9  10   11=RiverChannel(impassable)
 
 // Visibility level: +2=VHIGH (radius 5), +1=HIGH (radius 4), 0=STD (radius 3),
 //                   -1=LOW (radius 2), -2=PENALTY (radius 1, resources masked), -3=BLIND (radius 0)
-static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0 };
-//                                                 0  1   2  3   4  5  6  7  8   9  10
+static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0, -3 };
+//                                                 0  1   2  3   4  5  6  7  8   9  10  11
 //  Rust Forest(2)=-3: dense canopy, zero visibility beyond standing hex
 //  Flooded Ruins(5)=0: cleared ruins, standard visibility (murky but navigable)
 //  Broken Urban(4)=-2: rubble and ruin, radius 1 only (resources masked)
@@ -179,8 +180,8 @@ static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -
 
 // Shelter Value (§7.3): natural protection of terrain (0–3)
 // 0=no cover, 1=some cover, 2=good shelter, 3=full cover
-static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0 };
-//                                                  0  1   2  3   4   5  6  7  8  9  10
+static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0 };
+//                                                  0  1   2  3   4   5  6  7  8  9  10  11
 //  Flooded Ruins(5) = 2: standing buildings provide good shelter (§7.3)
 
 // ── Debug label tables ─────────────────────────────────────────
@@ -188,16 +189,16 @@ static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 
 static const char* T_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes ", "RustForst", "Marsh    ",
   "BrknUrban", "FloodRuin", "GlassFlds", "RolngHill",
-  "Mountain ", "Settlment", "NukeCratr"
+  "Mountain ", "Settlment", "NukeCratr", "RiverChnl"
 };
 static const char* T_SHORT[NUM_TERRAIN] = {
-  "Scrub","Dunes","Forst","Marsh","Urban","Ruins","Glass","Hills","Mtn  ","Settl","Nukr "
+  "Scrub","Dunes","Forst","Marsh","Urban","Ruins","Glass","Hills","Mtn  ","Settl","Nukr ","River"
 };
 // vis level label (index = TERRAIN_VIS[t]+3 → 0..5 for range -3..+2)
 static const char* TERRAIN_IMG_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes", "RustForest", "Marsh",
   "BrokenUrban", "FloodedDistrict", "GlassFields",
-  "Ridge", "Mountain", "Settlement", "NukeCrater"
+  "Ridge", "Mountain", "Settlement", "NukeCrater", "RiverChannel"
 };
 static const char* VIS_LABEL[6] = { "BLIND", "PENLT", "LOW  ", "STD  ", "HIGH ", "VHIGH" };
 static const char* RES_NAME[6]  = { "None","Water","Food ","Fuel ","Med  ","Scrap" };
@@ -556,14 +557,16 @@ static uint8_t pickVariant(uint8_t n, uint32_t rnd) {
   return 0;
 }
 
-static const uint8_t T_BASE[NUM_TERRAIN]  = { 41, 15, 12,  8,  5,  5,  0,  7,  4,  1,  2 };
+static const uint8_t T_BASE[NUM_TERRAIN]  = { 33, 15, 20,  8,  5,  5,  0,  7,  4,  1,  2,  0 };
+//                                              0   1   2   3   4   5   6   7   8   9  10  11=River (path-placed only)
+//  Forest raised 12→20 (+8), Open Scrub reduced 41→33 (−8) to keep sum=100.
 
 // Clump % per terrain — how strongly each type pulls adjacent cells to match it.
 // 0 = purely random, 100 = maximum neighbourhood pull.
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
   35,  // 0 Open Scrub   — light background scatter
   65,  // 1 Ash Dunes    — dune belts
-  70,  // 2 Rust Forest  — forest patches
+  50,  // 2 Rust Forest  — lower blob pull; linear belts seeded in Phase 1.5
   70,  // 3 Marsh        — marshes spread
   60,  // 4 Broken Urban — ruined district clusters
   75,  // 5 Flooded Ruins — ruined district spreads wide
@@ -572,6 +575,7 @@ static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
   80,  // 8 Mountain     — mountain ranges
   15,  // 9 Settlement   — rare, isolated
   85,  // 10 Nuke Crater — crater scars cluster
+  95,  // 11 River Channel — once a river starts it strongly continues
 };
 
 static constexpr uint8_t SMOOTH_PASSES = 3;
@@ -595,6 +599,35 @@ static void generateMap() {
       cell.resource     = 0;
       cell.amount       = 0;
       cell.respawnTimer = 0;
+      cell.shelter      = 0;
+      cell.footprints   = 0;
+    }
+  }
+
+  // ── Phase 1.5: Forest Belt Pre-seeding ──────────────────────────
+  // Plant linear "belt" seeds before clump smoothing.  Phase 2 then expands
+  // these seeds into organically-edged linear formations.
+  // Axes (opposite direction pairs):
+  //   ax=0: SE(0) ↔ NW(3)   ax=1: NE(1) ↔ SW(4)   ax=2: N(2) ↔ S(5)
+  {
+    static const uint8_t AXIS_A[3] = { 0, 1, 2 };
+    static const uint8_t AXIS_B[3] = { 3, 4, 5 };
+    int numBelts = 8 + (int)(esp_random() % 5);  // 8–12 belts
+    for (int b = 0; b < numBelts; b++) {
+      int bRow    = (int)(esp_random() % MAP_ROWS);
+      int bCol    = (int)(esp_random() % MAP_COLS);
+      int ax      = (int)(esp_random() % 3);
+      int halfLen = 3 + (int)(esp_random() % 7); // 3–9 steps each way → 6–18 hex belt
+      for (int side = 0; side < 2; side++) {
+        int dir = (side == 0) ? AXIS_A[ax] : AXIS_B[ax];
+        int cr = bRow, cc = bCol;
+        for (int step = 0; step <= halfLen; step++) {
+          uint8_t t = G.map[cr][cc].terrain;
+          if (t != 8 && t != 10) G.map[cr][cc].terrain = 2; // → Rust Forest
+          cr = wrapR(cr + DR[dir]);
+          cc = wrapQ(cc + DQ[dir]);
+        }
+      }
     }
   }
 
@@ -714,12 +747,85 @@ static void generateMap() {
     for (int c = 0; c < MAP_COLS; c++)
       G.map[r][c].terrain = scratch[r][c];
 
+  // ── Phase 2.7: River Channel placement ───────────────────────────
+  // Carve 1-2 winding rivers from top edge to bottom edge.
+  // Rivers prefer south but wander SE/SW. Does not overwrite Mountain(8) or Nuke Crater(10).
+  {
+    const uint8_t T_RIVER = 11;
+    // Weighted direction choice: 0:SE 1:NE 2:N 3:NW 4:SW 5:S
+    const uint8_t DIR_W[6] = { 20, 0, 0, 0, 20, 60 }; // SE=20, S=60, SW=20
+
+    int numRivers = 1 + (int)(esp_random() % 2); // 1 or 2 rivers
+    for (int ri = 0; ri < numRivers; ri++) {
+      int rq = (int)(esp_random() % MAP_COLS);
+      int rr = 0;
+      int steps = 0;
+      const int MAX_STEPS = MAP_ROWS * 3;
+      while (steps < MAX_STEPS) {
+        // Place river at (rr, rq) unless Mountain or Nuke Crater
+        uint8_t t = G.map[rr][rq].terrain;
+        if (t != 8 && t != 10) {
+          G.map[rr][rq].terrain = T_RIVER;
+          // 35% chance: widen river by converting one random adjacent hex
+          if ((esp_random() % 100) < 35) {
+            int wd = (int)(esp_random() % 6);
+            int wr = wrapR(rr + DR[wd]);
+            int wq2 = wrapQ(rq + DQ[wd]);
+            uint8_t wt = G.map[wr][wq2].terrain;
+            if (wt != 8 && wt != 10) G.map[wr][wq2].terrain = T_RIVER;
+          }
+        }
+        // Pick next direction by weighted random
+        uint32_t total = 0;
+        for (int d = 0; d < 6; d++) total += DIR_W[d];
+        uint32_t pick = esp_random() % total;
+        uint32_t cum  = 0;
+        int dir = 5; // default south
+        for (int d = 0; d < 6; d++) {
+          cum += DIR_W[d];
+          if (pick < cum) { dir = d; break; }
+        }
+        rq = wrapQ(rq + DQ[dir]);
+        rr = wrapR(rr + DR[dir]);
+        steps++;
+        // Stop once we've traversed the full map height heading generally south
+        if (steps >= MAP_ROWS && (dir == 5 || dir == 0 || dir == 4)) break;
+      }
+    }
+  }
+
+  // ── Phase 2.8: Riverine Forest Fringe ───────────────────────────
+  // After rivers are carved, convert hexes adjacent to rivers into Rust Forest
+  // at 50 % — natural tree-lines along both banks.
+  // Never overwrites Mountain(8), Nuke Crater(10), Settlement(9), or River(11).
+  {
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        scratch[r][c] = G.map[r][c].terrain;
+
+    for (int r = 0; r < MAP_ROWS; r++) {
+      for (int c = 0; c < MAP_COLS; c++) {
+        if (G.map[r][c].terrain != 11) continue;  // only river hexes seed this
+        for (int d = 0; d < 6; d++) {
+          int nr = wrapR(r + DR[d]);
+          int nc = wrapQ(c + DQ[d]);
+          uint8_t t = G.map[nr][nc].terrain;
+          if (t == 8 || t == 9 || t == 10 || t == 11) continue;
+          if ((esp_random() % 100) < 50) scratch[nr][nc] = 2;  // → Rust Forest
+        }
+      }
+    }
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        G.map[r][c].terrain = scratch[r][c];
+  }
+
   // ── Phase 3: resource placement ───────────────────────────────
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int c = 0; c < MAP_COLS; c++) {
       HexCell& cell = G.map[r][c];
       uint8_t  t    = cell.terrain;
-      if (t == 10) continue;  // Nuke Crater: impassable, no resources
+      if (t == 10 || t == 11) continue;  // Nuke Crater / River Channel: impassable, no resources
 
       uint32_t rnd = esp_random();
       uint8_t  r2  = (rnd >>  8) & 0xFF;
@@ -1549,7 +1655,7 @@ void setup() {
     }
     static const char* TNAME_FULL[NUM_TERRAIN] = {
       "Open Scrub","Ash Dunes","Rust Forest","Marsh","Broken Urban",
-      "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater"
+      "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater","River Channel"
     };
     static const char* RES_NAME[6] = {"none","water","food","fuel","medicine","scrap"};
     String j;

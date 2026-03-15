@@ -67,7 +67,7 @@ const surveyedCells = new Set(); // 'q_r' keys
 const TERRAIN_IMG_NAMES = [
   'OpenScrub', 'AshDunes', 'RustForest', 'Marsh',
   'BrokenUrban', 'FloodedDistrict', 'GlassFields',
-  'Ridge', 'Mountain', 'Settlement', 'NukeCrater'
+  'Ridge', 'Mountain', 'Settlement', 'NukeCrater', 'RiverChannel'
 ];
 const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
 
@@ -146,6 +146,8 @@ function buildAgentState() {
 
 // ── Character selection overlay helpers ──────────────────────────
 function showCharSelect() {
+  // Guard: never show char-select while a live survivor exists
+  if (myId >= 0 && players[myId]?.on) return;
   // Hide the connecting overlay (behind char-select anyway, but clean it up)
   const co = document.getElementById('connect-overlay');
   if (co) { co.classList.add('fading-out'); setTimeout(() => { co.classList.remove('fading-out'); co.classList.add('hidden'); }, 400); }
@@ -227,6 +229,7 @@ function handleMsg(msg) {
     case 'asgn':
       myId = msg.id;
       uiPickPending.val = false;
+      uiResting.val = false;  // clear any stale resting state from the previous survivor
       hideCharSelect();
       break;
 
@@ -242,6 +245,7 @@ function handleMsg(msg) {
       parseMapFog(msg.map);
       msg.p.forEach(p => {
         Object.assign(players[p.id], p);
+        players[p.id].rest = !!p.rt;  // map rt → rest (mirrors 's' handler)
         if (p.on) { renderPos[p.id].q = p.q; renderPos[p.id].r = p.r; }
       });
       if (msg.vc) loadTerrainVariants(msg.vc);
@@ -384,7 +388,7 @@ function handleEvent(ev) {
       // Narrate position for accessibility / AI agents
       if (ev.pid === myId) {
         const TNAME = ['Open Scrub','Ash Dunes','Rust Forest','Marsh','Broken Urban',
-                       'Flooded Ruins','Glass Fields','Rolling Hills','Mountain','Settlement','Nuke Crater'];
+                       'Flooded Ruins','Glass Fields','Rolling Hills','Mountain','Settlement','Nuke Crater','River Channel'];
         const cell = gameMap[ev.r]?.[ev.q];
         const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
         const shelterNote = cell?.shelter ? ' Shelter present.' : '';
@@ -434,7 +438,9 @@ function handleEvent(ev) {
       const cls    = ev.suc ? 'log-check-ok' : 'log-check-fail';
       addLog(`<span class="${cls}">${icon} ${escHtml(who)} ${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt}=${ev.tot} vs DN${ev.dn}</span>`);
       if (ev.pid === myId) {
-        showToast(`${skNm}: ${ev.suc ? 'SUCCESS' : 'FAIL'}`);
+        // Show the roll result only — action outcome (incl. PARTIAL) arrives in the 'act' event
+        const modTxt2 = ev.mod !== 0 ? (ev.mod > 0 ? `+${ev.mod}` : `${ev.mod}`) : '';
+        showToast(`${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt2}=${ev.tot} vs DN${ev.dn}`);
       }
       break;
     }
@@ -505,8 +511,15 @@ function handleEvent(ev) {
       if (ev.radd) detail += ` ${ev.radd > 0 ? '+' : ''}${ev.radd}R`;
       if (ev.resd)   detail += ` +${ev.resd}Resolve`;
   if (ev.scoreD) detail += ` \u271F${ev.scoreD}pts`;
-      if (ev.a === ACT_TREAT && ev.out === AO_SUCCESS && ev.cnd === TC_GRIEVOUS)
-        detail += ' \u2605Grievous healed';
+      if (ev.a === ACT_TREAT) {
+        const TREAT_COND_NAMES = ['Minor wound','Bleeding','Fever','Major wound','Radiation','Grievous wound'];
+        const cndTxt = TREAT_COND_NAMES[ev.cnd] ?? `Cond${ev.cnd}`;
+        if (ev.out === AO_SUCCESS) {
+          detail += ev.cnd === TC_GRIEVOUS ? ' \u2605Grievous healed' : ` \u2014 ${cndTxt} treated`;
+        } else if (ev.out === AO_FAIL) {
+          detail += ` \u2014 ${cndTxt} treatment failed`;
+        }
+      }
       addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
       // Special toasts for REST and SHELTER
       if (ev.a === ACT_REST && ev.out === AO_SUCCESS) {
@@ -905,7 +918,45 @@ function render() {
 
       // Terrain icon (no resource indicator) — only when no image
       if (!tImg || !tImg.loaded) {
-        drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
+        if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
+      }
+
+      // ── River bank lines (terrain 11) ────────────────────────────
+      // Fallback dynamic rendering when no tile image is loaded.
+      // Draws a muddy bank line inset from each edge bordering non-river terrain.
+      if (cell.terrain === 11 && (!tImg || !tImg.loaded)) {
+        // Direction offsets: 0:SE 1:NE 2:N 3:NW 4:SW 5:S (matches server DQ/DR)
+        const RIV_DQ = [1, 1, 0, -1, -1, 0];
+        const RIV_DR = [0, -1, -1,  0,  1, 1];
+        // Direction d → edge vertex index: ei = (d + 5) % 6
+        // Edge ei connects vertex ei to vertex (ei+1)%6 at angles PI/3*ei and PI/3*(ei+1)
+        ctx.save();
+        ctx.strokeStyle = '#4A5030';  // muddy khaki bank
+        ctx.lineWidth   = 2.5;
+        ctx.lineCap     = 'round';
+        for (let d = 0; d < 6; d++) {
+          const nq  = (mapQ + RIV_DQ[d] + MAP_COLS) % MAP_COLS;
+          const nr  = (mapR + RIV_DR[d] + MAP_ROWS) % MAP_ROWS;
+          const nbr = gameMap[nr]?.[nq];
+          if (nbr && nbr.terrain === 11) continue;  // river–river edge: no bank line
+          const ei  = (d + 5) % 6;
+          const a1  = Math.PI / 3 * ei;
+          const a2  = Math.PI / 3 * ((ei + 1) % 6);
+          const vx1 = cx + (HEX_SZ - 1) * Math.cos(a1);
+          const vy1 = cy + (HEX_SZ - 1) * Math.sin(a1);
+          const vx2 = cx + (HEX_SZ - 1) * Math.cos(a2);
+          const vy2 = cy + (HEX_SZ - 1) * Math.sin(a2);
+          // Inward normal — nudge line toward hex center
+          const mx  = (vx1 + vx2) / 2, my = (vy1 + vy2) / 2;
+          const nd  = Math.sqrt((cx - mx) ** 2 + (cy - my) ** 2);
+          const nx  = (cx - mx) / nd,  ny = (cy - my) / nd;
+          const off = 3;
+          ctx.beginPath();
+          ctx.moveTo(vx1 + nx * off, vy1 + ny * off);
+          ctx.lineTo(vx2 + nx * off, vy2 + ny * off);
+          ctx.stroke();
+        }
+        ctx.restore();
       }
 
       // Reset alpha — footprints/shelter always render at full opacity.

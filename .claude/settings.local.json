@@ -67,7 +67,12 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_broadcastcheck.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_rest_bugs.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_resting.js\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_ll7.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_ll7.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_panel.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_panel2.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_shelter_rest.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_typography.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\check_typo.js\")"
     ]
   }
 }

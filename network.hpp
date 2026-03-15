@@ -615,6 +615,9 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.q = (int16_t)(esp_random() % MAP_COLS);
           p.r = (int16_t)(esp_random() % MAP_ROWS);
           attempts++;
+          uint8_t st = G.map[p.r][p.q].terrain;
+          // Prefer passable, non-rad terrain; fall back to any passable hex after 50 attempts
+          if (TERRAIN_MC[st] != 255 && !TERRAIN_IS_RAD[st]) break;
         } while (TERRAIN_MC[G.map[p.r][p.q].terrain] == 255 && attempts < 50);
         p.lastMoveMs = 0;
         p.score = 0; p.steps = 0;
@@ -655,6 +658,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.movesLeft    = (int8_t)effectiveMP(arch);
         p.actUsed      = false;
         p.encPenApplied = false;
+        p.resting      = false;  // defensive: clear any stale resting flag from previous session
         p.radClean     = true;
 
         p.stamina    = 100;

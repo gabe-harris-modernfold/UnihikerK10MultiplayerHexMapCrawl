@@ -379,12 +379,7 @@ function initHudBindings() {
     });
   }
 
-  // Movement points
-  const mpEl = document.getElementById('hud-mp');
-  if (mpEl) {
-    mpEl.textContent = '';
-    van.add(mpEl, () => `${uiMP.val} MP`);
-  }
+  // Movement points — rendered as track boxes in #hud-mp-track (see #hud-ll)
 
   // Visibility for current hex
   const visEl = document.getElementById('hud-vis');
@@ -494,10 +489,8 @@ function initCharSheetBindings() {
   // LL track (dossier)
   van.derive(() => {
     renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
-    const llVal = document.getElementById('cs-ll-val');
-    const mpVal = document.getElementById('cs-mp-val');
-    if (llVal) llVal.textContent = String(uiLL.val);
-    if (mpVal) mpVal.textContent = String(uiMP.val);
+    const mpLabel = document.getElementById('cs-mp-label');
+    if (mpLabel) mpLabel.textContent = `MP: ${uiMP.val}`;
   });
 
   // LL mini-track (HUD)
@@ -507,15 +500,16 @@ function initCharSheetBindings() {
     if (v) v.textContent = String(uiLL.val);
   });
 
+  // MP mini-track (HUD) — 6-box bar next to LL
+  van.derive(() => {
+    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, 6);
+  });
+
   // Food track (thresholds at boxes 4, 2)
   van.derive(() => {
     const fth = (myId >= 0 ? players[myId] : null)?.fth ?? 0;
     renderTrackBoxes('cs-food-track', uiFood.val,
       [{ box: 4, bit: 1 }, { box: 2, bit: 2 }], fth);
-    const fVal = document.getElementById('cs-food-val');
-    const fTok = document.getElementById('cs-food-tokens');
-    if (fVal) fVal.textContent = String(uiFood.val);
-    if (fTok) fTok.textContent = String(uiInv[1].val);
   });
 
   // Water track (thresholds at boxes 5, 3, 1)
@@ -523,11 +517,7 @@ function initCharSheetBindings() {
     const wth = (myId >= 0 ? players[myId] : null)?.wth ?? 0;
     renderTrackBoxes('cs-water-track', uiWater.val,
       [{ box: 5, bit: 1 }, { box: 3, bit: 2 }, { box: 1, bit: 4 }], wth);
-    const wVal = document.getElementById('cs-water-val');
-    const wTok = document.getElementById('cs-water-tokens');
     const cCnt = document.getElementById('cs-contam-count');
-    if (wVal) wVal.textContent = String(uiWater.val);
-    if (wTok) wTok.textContent = String(uiInv[0].val);
     if (cCnt) {
       const cw = (myId >= 0 ? players[myId] : null)?.cw ?? 0;
       cCnt.textContent = cw > 0 ? `\u2623${cw}` : '';
@@ -545,8 +535,6 @@ function initCharSheetBindings() {
       dot.className = 'resolve-token' + (i <= uiResolve.val ? ' filled' : '');
       el.appendChild(dot);
     }
-    const rVal = document.getElementById('cs-resolve-val');
-    if (rVal) rVal.textContent = String(uiResolve.val);
   });
 
   // Radiation track (10 boxes; colour zones: 1-3 green, 4-6 yellow, 7-10 red)
@@ -568,9 +556,7 @@ function initCharSheetBindings() {
         }
       }
     }
-    const rVal  = document.getElementById('cs-rad-val');
     const rStat = document.getElementById('cs-rad-status');
-    if (rVal)  rVal.textContent = String(rad);
     if (rStat) {
       rStat.textContent = rad >= 7 ? '\u00a0\u2622 DUSK CHECK'
                         : rad >= 4 ? '\u00a0RAD-SICK'
@@ -701,6 +687,8 @@ function initActionPanel() {
     actionPanel.setAttribute('aria-hidden', 'true');
     actionPanel.classList.remove('open');
     actionBtnList.style.display = '';
+    const _terrSub = document.getElementById('act-panel-terrain-sub');
+    if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
     document.getElementById('action-water-ctrl').style.display = 'none';
     document.getElementById('action-treat-ctrl').style.display = 'none';
   }
@@ -805,10 +793,12 @@ function initActionPanel() {
       btn.setAttribute('aria-label', def.label + (blockReason ? ' — ' + blockReason : ''));
       btn.innerHTML =
         `<span class="act-icon">${def.icon}</span>` +
-        `<span class="act-label">${def.label}</span>` +
-        `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>` +
-        (blockReason ? `<span class="act-unavail-reason">${blockReason}</span>` : '');
-      btn.title = desc;
+        `<span class="act-body">` +
+          `<span class="act-label">${def.label}</span>` +
+          `<span class="act-desc">${desc}</span>` +
+          (blockReason ? `<span class="act-unavail-reason">${blockReason}</span>` : '') +
+        `</span>` +
+        `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
 
       btn.addEventListener('click', () => {
         if (!canAct) {
@@ -873,7 +863,7 @@ function initPlayerList() {
           vspan({ class: `p-rank${rank === 1 ? ' gold' : ''}` }, `#${rank}`),
           vdiv({ class: 'p-dot', style: `--pc:${color}` }),
           vspan({ class: `p-name${isMe ? ' me' : ''}` }, nm),
-          vspan({ class: 'p-sc' }, String(sc))
+          vspan({ class: 'p-sc', title: 'Score' }, `\u2605${sc}`)
         )
       );
     return wrap;
@@ -1030,7 +1020,7 @@ function initMenuSystem() {
 
       sec('Actions',
         mp({ class: 'menu-text-body' },
-          'You get one action per day. Open the ⚔ ACTION menu to choose. ' +
+          'You get one action per day. Open the ☞ ACTION menu to choose. ' +
           'Actions cost MP and most require a skill check. Every action awards points (see Scoring). Settlement terrain reduces all TREAT difficulty by 2.'
         ),
         md({ class: 'ht-act-list' },
@@ -1431,6 +1421,10 @@ function initCharSelect() {
                 disabled: pending || undefined,
                 onclick: () => {
                   if (pending || taken) return;
+                  // If a survivor is already active, require confirmation before abandoning them
+                  if (myId >= 0 && players[myId]?.on) {
+                    if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
+                  }
                   uiPickPending.val = true;
                   send({ t: 'pick', arch: i });
                 }

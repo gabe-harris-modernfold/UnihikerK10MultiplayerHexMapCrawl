@@ -65,7 +65,12 @@ const TERRAIN = [
     fill:'#0A0E04', stroke:'#1A2008',   /* scorched void, green-black */
     tags:['Dead Zone','Radiation'],
     hazard:'Lethal radiation, unstable ground',
-    desc:'A direct-strike detonation crater. The ground is fused glass and irradiated rubble. Radiation at the rim is immediately lethal. No one goes in. No one comes back.' }
+    desc:'A direct-strike detonation crater. The ground is fused glass and irradiated rubble. Radiation at the rim is immediately lethal. No one goes in. No one comes back.' },
+  { name:'River Channel',   mc:255, sv:0, vis:-3, icon:'〰',
+    fill:'#0B1E0F', stroke:'#162B18',   /* brackish murky green — wasteland water */
+    tags:['Impassable'],
+    hazard:'Impassable current',
+    desc:'A fast-moving river cutting through the wasteland. The current is too dangerous to cross. Navigate around it or find a ford. Water is visible but unreachable from the banks.' }
 ];
 const NUM_TERRAIN = TERRAIN.length;
 
@@ -111,11 +116,11 @@ const ACT_MP    = [2, 1, 1, 2, 3, 2, 1, 0];  // default MP cost per action
 // Water:  Marsh(3), Flooded(5)
 // Scavenge: Broken Urban(4) DN6, Glass Fields(6) DN8
 // Others: any terrain
-const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0];
-const TERRAIN_SALVAGE_DN = [0,0,0,0,6,0,8,0,0,0,0];
-const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0];
+const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 0];
+const TERRAIN_SALVAGE_DN = [0,0,0,0,6,0,8,0,0,0,0, 0];
+const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 0];
 function actAvailable(actId, terrainIdx) {
-  if (terrainIdx == null || terrainIdx > 10) return false;
+  if (terrainIdx == null || terrainIdx > 11) return false;
   switch (actId) {
     case ACT_FORAGE:  return TERRAIN_FORAGE_DN[terrainIdx]  > 0;
     case ACT_WATER:   return TERRAIN_HAS_WATER[terrainIdx]  > 0;
@@ -195,17 +200,17 @@ const SK_SHORT = ['Nav', 'For', 'Scav', 'Trt', 'Shel', 'End'];
 
 // ── Skill check constants (mirrors server SK_* / SKILL_NAME) ─────
 const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','TREAT','SHELTER','ENDURE'];
-// Suggested DN per skill index, indexed by terrain type 0-10
-// terrain:        0   1   2   3   4   5   6   7   8   9  99
+// Suggested DN per skill index, indexed by terrain type 0-11
+// terrain:        0   1   2   3   4   5   6   7   8   9  10  11  99
 const SK_DN = [
-  [ 5,  5,  7,  7,  7,  7,  5,  5,  7,  5, 99], // 0 Navigate
-  [ 7,  9,  6,  8,  8,  8,  8,  8,  8,  8, 99], // 1 Forage
-  [ 8,  8,  8,  8,  6,  8,  8,  8,  8,  8, 99], // 2 Scavenge
-  [ 9,  9,  9,  9,  9,  9,  9,  9,  9,  9, 99], // 3 Treat (field default; items lower it)
-  [ 8,  8,  8,  8,  8,  8,  8,  8,  8,  8, 99], // 4 Shelter (field default)
-  [ 7,  7,  7,  7,  7,  7,  7,  7,  9,  7, 99], // 5 Endure (Mountain = severe)
+  [ 5,  5,  7,  7,  7,  7,  5,  5,  7,  5, 99,  6, 99], // 0 Navigate
+  [ 7,  9,  6,  8,  8,  8,  8,  8,  8,  8, 99, 99, 99], // 1 Forage (River impassable)
+  [ 8,  8,  8,  8,  6,  8,  8,  8,  8,  8, 99, 99, 99], // 2 Scavenge
+  [ 9,  9,  9,  9,  9,  9,  9,  9,  9,  9, 99,  9, 99], // 3 Treat
+  [ 8,  8,  8,  8,  8,  8,  8,  8,  8,  8, 99, 99, 99], // 4 Shelter
+  [ 7,  7,  7,  7,  7,  7,  7,  7,  9,  7, 99,  7, 99], // 5 Endure
 ];
 function suggestDN(skill, terrain) {
-  if (terrain == null || terrain > 10) return 7;
+  if (terrain == null || terrain > 11) return 7;
   return SK_DN[skill]?.[terrain] ?? 7;
 }

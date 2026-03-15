@@ -161,16 +161,24 @@ static void dawnUpkeep() {
     }
     p.radClean = true;  // reset for new day
 
+    // ── Settlement rest: no food or water consumed (§settlement rule) ────────
+    bool inSettlement = (G.map[p.r][p.q].terrain == 9);
+    if (inSettlement) {
+      Serial.printf("[DAWN]    P%d \"%s\" in Settlement — food/water upkeep skipped\n", pid, p.name);
+    }
+
     // ── Food (§4.1): consume 1 token; F track +1; else F track -1 ─────────
-    if (p.inv[1] > 0) {
-      p.inv[1]--;
-      applyFStep(p, +1, llDelta);
-    } else {
-      applyFStep(p, -1, llDelta);
+    if (!inSettlement) {
+      if (p.inv[1] > 0) {
+        p.inv[1]--;
+        applyFStep(p, +1, llDelta);
+      } else {
+        applyFStep(p, -1, llDelta);
+      }
     }
 
     // ── Water (§4.2): consume 2 tokens ───────────────────────────────────────
-    {
+    if (!inSettlement) {
       int have = (int)p.inv[0];
       int use  = min(have, 2);
       int miss = 2 - use;
@@ -191,6 +199,13 @@ static void dawnUpkeep() {
         expDelta = -1;
         Serial.printf("[DAWN]    P%d \"%s\" exposed (SV%d shelt:%d) −1 LL\n", pid, p.name, sv, shelt);
       }
+    }
+
+    // ── Shelter protection: resting in shelter suppresses all LL losses ────
+    if (p.resting && G.map[p.r][p.q].shelter > 0 && llDelta < 0) {
+      Serial.printf("[DAWN]    P%d \"%s\" shelter protection — %d LL loss(es) suppressed\n", pid, p.name, -llDelta);
+      llDelta  = 0;
+      expDelta = 0;
     }
 
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────
