@@ -544,13 +544,15 @@ static uint8_t terrainSpawnRes(uint8_t t, uint32_t rnd) {
 // ── Image variant counts (filled from SD (SPI) scan before generateMap) ──
 static uint8_t terrainVariantCount[NUM_TERRAIN] = {};  // 0 = no variants found
 
-// Rank-linear weighted pick: variant 0 has weight n, variant n-1 has weight 1.
+// Rank-quadratic weighted pick: variant 0 has weight (n)^2, variant n-1 has weight 1.
+// With n=8: v0=31%, v1=24%, v2=18%, v3=12%, v4=8%, v5=4%, v6=1%, v7=0.5%
 static uint8_t pickVariant(uint8_t n, uint32_t rnd) {
   if (n <= 1) return 0;
-  uint32_t total = (uint32_t)n * (n + 1) / 2;
+  uint32_t total = 0;
+  for (uint8_t i = 0; i < n; i++) { uint32_t w = (uint32_t)(n - i) * (n - i); total += w; }
   uint32_t r = rnd % total;
   for (uint8_t i = 0; i < n; i++) {
-    uint32_t w = n - i;
+    uint32_t w = (uint32_t)(n - i) * (n - i);
     if (r < w) return i;
     r -= w;
   }
