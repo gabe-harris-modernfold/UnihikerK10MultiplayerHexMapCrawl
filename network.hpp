@@ -100,11 +100,11 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     // Wayfarer vitals
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
-      "\"arch\":%d,\"sb\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"au\":%d,",
+      "\"arch\":%d,\"sb\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"au\":%d,\"rt\":%d,",
       p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
       p.archetype, p.statusBits, p.invSlots,
       (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.movesLeft,
-      p.actUsed ? 1 : 0);
+      p.actUsed ? 1 : 0, p.resting ? 1 : 0);
     // Skills array
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"sk\":[%d,%d,%d,%d,%d,%d],",
@@ -201,6 +201,7 @@ void saveGame() {
         memcpy(sp.wounds, pl.wounds, 3);
         sp.statusBits = pl.statusBits & (uint8_t)~ST_DOWNED;
         sp.score = pl.score; sp.steps = pl.steps;
+        memcpy(sp.surveyedMap, pl.surveyedMap, sizeof(sp.surveyedMap));
         sp.used = (pl.name[0] != '\0') ? 1 : 0;
         p.write((uint8_t*)&sp, sizeof(sp));
       }
@@ -244,6 +245,7 @@ bool tryLoadSave() {
       memcpy(pl.wounds, sp.wounds, 3);
       pl.statusBits = sp.statusBits;
       pl.score = sp.score; pl.steps = sp.steps;
+      memcpy(pl.surveyedMap, sp.surveyedMap, sizeof(sp.surveyedMap));
       pl.connected = false; pl.wsClientId = 0;
     }
     p.close();
@@ -312,8 +314,8 @@ static void drainEvents() {
 
       case EVT_MOVE:
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"radd\":%d,\"rad\":%d}",
-          ev.pid, ev.q, ev.r, (int)ev.radD, (int)ev.radR);
+          "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"radd\":%d,\"rad\":%d,\"exploD\":%d,\"mp\":%d}",
+          ev.pid, ev.q, ev.r, (int)ev.radD, (int)ev.radR, (int)ev.exploD, (int)ev.moveMP);
         ws.textAll(buf, len);
         break;
 
@@ -382,6 +384,7 @@ static void drainEvents() {
           Player& p = G.players[ev.pid];
           p.connected  = false;
           p.wsClientId = 0;
+          p.resting    = false;  // clear stale resting flag on disconnect
           G.connectedCount--;
           xSemaphoreGive(G.mutex);
         }
@@ -497,6 +500,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       fatigue = p.fatigue; rad     = p.radiation; sb = p.statusBits;
       p.connected  = false;
       p.wsClientId = 0;
+      p.resting    = false;  // clear stale resting flag on disconnect
       G.connectedCount--;
       { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev); }
     }

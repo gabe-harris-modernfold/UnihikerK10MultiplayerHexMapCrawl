@@ -61,7 +61,12 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_gamelogic_savemutex.js\")",
       "Read(//c/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/**)",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_help.js\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_help_css.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_help_css.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_fixes.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\verify_fixes.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_broadcastcheck.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_rest_bugs.js\")",
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\fix_resting.js\")"
     ]
   }
 }

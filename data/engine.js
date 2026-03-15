@@ -249,6 +249,7 @@ function handleMsg(msg) {
       hideConnectOverlay();
       updateSidebar();
       if (myId >= 0 && players[myId]?.mp > 0 && maxMP <= 0) maxMP = players[myId].mp;
+      if (myId >= 0) displayMP = players[myId].mp ?? 6;
       updateTerrainCard();
       updateRestBubbles();
       break;
@@ -265,10 +266,15 @@ function handleMsg(msg) {
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
         if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
         if (pd.au  !== undefined) p.au  = !!pd.au;  // action used this day
+        if (pd.rt  !== undefined) {
+          p.rest = !!pd.rt;
+          if (i === myId) uiResting.val = !!pd.rt;
+        }
       });
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
       updateTerrainCard();
+      updateRestBubbles();
       break;
 
     case 'vis':
@@ -346,6 +352,10 @@ function handleEvent(ev) {
       break;
     case 'mv': {
       const pm = players[ev.pid];
+      if (ev.mp !== undefined) {
+        pm.mp = ev.mp;
+        if (ev.pid === myId) updateSidebar();
+      }
       pm.q = ev.q; pm.r = ev.r;
       // Surveyed cells are relative to a fixed vantage point — clear on any move.
       if (ev.pid === myId) surveyedCells.clear();
@@ -366,6 +376,10 @@ function handleEvent(ev) {
           addLog(`<span class="log-check-fail">\u2622 Entered rad zone +${ev.radd}R → R:${pm.rad}</span>`);
         }
       }
+      // Exploration bonus: log first-visit score
+      if (ev.exploD && ev.exploD > 0 && ev.pid === myId) {
+        addLog(`<span class="log-mv">\u2605 New hex \u2014 +${ev.exploD} exploration pt</span>`);
+      }
       // Narrate position for accessibility / AI agents
       if (ev.pid === myId) {
         const TNAME = ['Open Scrub','Ash Dunes','Rust Forest','Marsh','Broken Urban',
@@ -373,7 +387,8 @@ function handleEvent(ev) {
         const cell = gameMap[ev.r]?.[ev.q];
         const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
         const shelterNote = cell?.shelter ? ' Shelter present.' : '';
-        narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}`);
+        const exploNote   = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
+        narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}${exploNote}`);
       }
       break;
     }
@@ -429,7 +444,7 @@ function handleEvent(ev) {
         players[ev.pid].water = ev.w;
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
-        if (ev.pid === myId) { maxMP = ev.mp; nightFade = 0.72; }  // lock MP; start night fade
+        if (ev.pid === myId) { maxMP = ev.mp; displayMP = ev.mp; nightFade = 0.72; }  // lock MP; snap displayMP; start night fade
         players[ev.pid].au    = false;  // new day: action slot restored
         players[ev.pid].rest = false;
         if (ev.pid === myId) {
@@ -500,7 +515,7 @@ function handleEvent(ev) {
         checkAutoRest();
         const msg = ev.pid === myId ? 'Resting — waiting for dawn' : `${escHtml(who)} is resting`;
         showToast(`\ud83d\ude34 ${msg}`);
-        if (ev.pid !== myId) addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
+        addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
       } else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) {
         const shelterName = ev.cnd === 2 ? 'an improved shelter 🏠' : 'a shelter ⛺';
         const msg = ev.pid === myId ? `Built ${shelterName}!` : `${escHtml(who)} built ${shelterName}`;
@@ -778,9 +793,10 @@ const TIME_PHASES = [
   { name:'DUST HOUR',   icon:'🌆',r:210, g: 90, b: 20, a:0.38 },
   { name:'DARK WATCH',  icon:'🌑',r: 15, g:  8, b: 40, a:0.72 },
 ];
-function getTimePhase() {
+function getTimePhase(mpVal) {
+  const _mp = (mpVal !== undefined) ? mpVal : uiMP.val;
   if (myId < 0 || maxMP <= 0) return TIME_PHASES[0];
-  const f = Math.max(0, Math.min(1, 1 - uiMP.val / maxMP));
+  const f = Math.max(0, Math.min(1, 1 - _mp / maxMP));
   const scaled = f * (TIME_PHASES.length - 1);
   const i = Math.floor(scaled);
   const t = scaled - i;
@@ -795,6 +811,7 @@ function getTimePhase() {
   };
 }
 var nightFade = 0;  // extra night overlay that fades out after dawn
+var displayMP = 6;    // smoothly lerped toward uiMP.val each frame
 
 // ── Render ──────────────────────────────────────────────────────
 function render() {
@@ -973,7 +990,11 @@ function render() {
 
   // ── Time-of-day tint overlay ──────────────────────────────────
   {
-    const phase = getTimePhase();
+    // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting
+    const mpTarget = uiResting.val ? 0 : uiMP.val;
+    const lerpRate = uiResting.val ? 0.003 : 0.08;
+    displayMP += (mpTarget - displayMP) * lerpRate;
+    const phase = getTimePhase(displayMP);
     ctx.save();
     ctx.globalAlpha = phase.a;
     ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;

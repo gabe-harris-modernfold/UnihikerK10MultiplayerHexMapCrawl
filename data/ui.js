@@ -709,11 +709,36 @@ function initActionPanel() {
     if (myId < 0) return;
     const me   = players[myId];
     const cell = gameMap[me.r]?.[me.q];
-    const terr = cell?.terrain ?? null;
-    const mp      = me.mp  ?? 0;
-    const used    = me.au  ?? false;
-    const scrap   = me.inv?.[4] ?? 0;
-    const isScout = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
+    const terr        = cell?.terrain ?? null;
+    const mp          = me.mp  ?? 0;
+    const used        = me.au  ?? false;
+    const scrap       = me.inv?.[4] ?? 0;
+    const shelterLevel = cell?.shelter ?? 0;
+    const isScout     = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
+
+    // Fix: suppress action menu entirely at MP:0 — only REST makes sense
+    if (mp === 0) {
+      actionBtnList.innerHTML =
+        '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
+      actionStatusBar.innerHTML =
+        `<span class="act-mp-badge act-mp-zero">MP: 0</span>` +
+        '<span class="act-used-badge">\u2297 NO MOVEMENT POINTS</span>';
+      actionPanel.classList.add('open');
+      actionPanel.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    // Fix: suppress action menu when resting — show resting banner instead
+    if (uiResting.val) {
+      actionBtnList.innerHTML =
+        '<div class="act-exhausted-msg">\ud83d\ude34 RESTING \u2014 waiting for dawn</div>';
+      actionStatusBar.innerHTML =
+        `<span class="act-mp-badge">MP: ${mp}</span>` +
+        '<span class="act-used-badge">\u2297 RESTING</span>';
+      actionPanel.classList.add('open');
+      actionPanel.setAttribute('aria-hidden', 'false');
+      return;
+    }
 
     // Terrain context for action panel header
     const terrName   = (terr != null && terr <= 10) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
@@ -730,40 +755,47 @@ function initActionPanel() {
     document.getElementById('action-water-ctrl').style.display = 'none';
     document.getElementById('action-treat-ctrl').style.display = 'none';
 
+    // Fix: compute actual shelter MP cost dynamically (1 scrap=1MP, 2+scrap=2MP)
+    const shelterMpCost = scrap >= 2 ? 2 : 1;
+
     actionBtnList.innerHTML = '';
     const actionDefs = [
-      { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2, desc: 'Search for food (Skill check)' },
-      { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1, desc: 'Gather water tokens (1-3 MP)' },
-      { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2, desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: 1, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
-      { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2, desc: 'Field medicine (Skill check)' },
+      { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
+      { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
+      { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
+      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2,             desc: 'Field medicine (Skill check)' },
       { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: isScout ? 0 : 1, desc: isScout ? 'Reveal terrain beyond vision — free for Scout' : 'Reveal terrain beyond vision (1 MP)' },
     ];
 
     actionDefs.forEach(def => {
-      const available   = actAvailable(def.id, terr);
+      // Fix: shelter unavailable if improved shelter already built here
+      const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
+      const available   = !shelterMaxed && actAvailable(def.id, terr);
       const hasMP       = mp >= def.mpCost;
       const needsScrap  = def.id === ACT_SHELTER;
       const hasScrap    = !needsScrap || scrap > 0;
-      const actionUsed  = (def.id === ACT_SURVEY && isScout) ? false : used;  // Scout ignores actUsed for Survey
+      const actionUsed  = (def.id === ACT_SURVEY && isScout && !uiResting.val) ? false : used;  // Scout ignores actUsed for Survey, but not while resting
       const canAct      = available && hasMP && !actionUsed && hasScrap;
 
       // Dynamic desc: BUILD SHELTER shows what will actually be built
       let desc = def.desc;
       if (def.id === ACT_SHELTER) {
-        desc = scrap === 0 ? 'Needs scrap — none in pack'
-             : scrap === 1 ? '1 scrap → shelter ⛺ (1 MP)'
-             :               scrap + ' scrap → improved shelter 🏠 (2 MP)';
+        desc = shelterMaxed  ? 'Improved shelter already here — nothing to build'
+             : scrap === 0   ? 'Needs scrap — none in pack'
+             : scrap === 1   ? '1 scrap → shelter ⛺ (1 MP, +4 pts)'
+             :                 scrap + ' scrap → improved shelter 🏠 (2 MP, +8 pts)';
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = actionUsed  ? 'Action already used today'
-                        : !available  ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
-                                       : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh · Flooded Ruins)'
-                                       : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
-                                       : 'Not available here')
-                        : !hasMP      ? `Needs ${def.mpCost} MP (have ${mp})`
-                        : !hasScrap   ? `Needs scrap (have ${scrap})`
+      const blockReason = actionUsed   ? 'Action already used today'
+                        : shelterMaxed ? 'Max shelter built here'
+                        : !available   ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
+                                        : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh · Flooded Ruins)'
+                                        : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
+                                        : 'Not available here')
+                        : !hasMP       ? `Needs ${def.mpCost} MP (have ${mp})`
+                        : !hasScrap    ? `Needs scrap (have ${scrap})`
                         : '';
 
       const btn = document.createElement('button');

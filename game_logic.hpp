@@ -92,7 +92,7 @@ static int effectiveMP(int pid) {
   int used = 0;
   for (int k = 0; k < 5; k++) used += (int)p.inv[k];
   if (used > (int)p.invSlots) mp--;        // encumbrance
-  return max(0, mp);
+  return max(2, mp);  // floor of 2: even worst LL can still move 2 hexes/day
 }
 
 // ── §6.2 End-of-day radiation Endure check ───────────────────────────────────
@@ -326,6 +326,13 @@ static void movePlayer(int pid, int dir) {
   p.r = (int16_t)nr;
   p.steps++;
 
+  // Exploration bonus: +1 score first time this player visits this hex
+  bool firstVisit = !(G.map[p.r][p.q].footprints & (1 << pid));
+  if (firstVisit) {
+    p.score = (uint16_t)min((int)p.score + 1, 65535);
+  }
+  int8_t exploGain = firstVisit ? 1 : 0;
+
   // Mark footprint at new hex (visible to all players)
   G.map[p.r][p.q].footprints |= (1 << pid);
 
@@ -363,6 +370,8 @@ static void movePlayer(int pid, int dir) {
   { GameEvent ev = {}; ev.type = EVT_MOVE; ev.pid = (uint8_t)pid;
     ev.q = p.q; ev.r = p.r;
     ev.radD = radGain; ev.radR = p.radiation;
+    ev.exploD = exploGain;
+    ev.moveMP = p.movesLeft;
     enqEvt(ev); }
   collectResource(pid, p.q, p.r);
 }
@@ -455,7 +464,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 2);
       CheckResult cr = resolveCheck(pid, SK_FORAGE, dn, 0);
       ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
-      broadcastCheck(pid, SK_FORAGE, cr, false);
+      broadcastCheck(pid, SK_FORAGE, cr);
       if (cr.total >= (int)dn) {
         uint8_t yield = (terr == 0 || terr == 2) ? 2 : 1;  // Open Scrub (hunt) + Rust Forest → 2 food on full success
         p.inv[1]     = (uint8_t)min((int)p.inv[1] + yield, 99);
@@ -512,7 +521,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       }
       CheckResult cr = resolveCheck(pid, SK_SCAVENGE, dn, 0);
       ev.actDn = dn; ev.actTot = (int8_t)cr.total;
-      broadcastCheck(pid, SK_SCAVENGE, cr, false);
+      broadcastCheck(pid, SK_SCAVENGE, cr);
       if (cr.total >= (int)dn) {
         // Success: award 1 Scrap (placeholder for proper Scavenge deck)
         p.inv[4]      = (uint8_t)min((int)p.inv[4] + 1, 99);
@@ -594,7 +603,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 2);
       CheckResult cr = resolveCheck(pid, SK_TREAT, dn, 0);
       ev.actDn = dn; ev.actTot = (int8_t)cr.total;
-      broadcastCheck(pid, SK_TREAT, cr, false);
+      broadcastCheck(pid, SK_TREAT, cr);
       if (cr.success) {
         switch (condTgt) {
           case TC_MINOR:   if (p.wounds[0] > 0) p.wounds[0]--; break;
@@ -634,13 +643,23 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
     // ──────────────────────────────────────────────────────────────
     case ACT_SURVEY: {
       bool isScout = (p.archetype == 4);  // Scout: Survey costs 0 MP and doesn't use action slot
+      if (p.resting) break;               // resting players cannot act — even Scout
       if (p.actUsed && !isScout) break;   // non-Scout blocked if action already used
       if (!isScout && p.movesLeft < 1) break;
       if (!isScout) {
         p.actUsed   = true;
         p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 1);
       }
-      ev.actScoreD = 2; p.score = (uint16_t)min((int)p.score + 2, 65535);
+      // Per-hex SURVEY cap: +2 pts first survey only; repeats reveal terrain but no pts
+      { int hexIdx = (int)p.r * MAP_COLS + (int)p.q;
+        bool alreadySurveyed = (p.surveyedMap[hexIdx / 8] >> (hexIdx % 8)) & 1;
+        if (!alreadySurveyed) {
+          p.surveyedMap[hexIdx / 8] |= (uint8_t)(1 << (hexIdx % 8));
+          ev.actScoreD = 2; p.score = (uint16_t)min((int)p.score + 2, 65535);
+        } else {
+          ev.actScoreD = 0;  // already surveyed — no pts, still reveals terrain
+        }
+      }
       ev.actOut    = AO_SUCCESS;
       // Build ring of hexes at distance visR+1 and return to caller for direct send
       if (survBuf && survLen) {
