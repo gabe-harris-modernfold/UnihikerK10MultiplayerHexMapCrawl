@@ -493,7 +493,7 @@ function initCharSheetBindings() {
 
   // LL track (dossier)
   van.derive(() => {
-    renderTrackBoxes('cs-ll-track', uiLL.val, []);
+    renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
     const llVal = document.getElementById('cs-ll-val');
     const mpVal = document.getElementById('cs-mp-val');
     if (llVal) llVal.textContent = String(uiLL.val);
@@ -502,7 +502,7 @@ function initCharSheetBindings() {
 
   // LL mini-track (HUD)
   van.derive(() => {
-    renderTrackBoxes('hud-ll-track', uiLL.val, []);
+    renderTrackBoxes('hud-ll-track', uiLL.val, [], 0, 7);
     const v = document.getElementById('hud-ll-val');
     if (v) v.textContent = String(uiLL.val);
   });

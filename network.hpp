@@ -619,11 +619,25 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.lastMoveMs = 0;
         p.score = 0; p.steps = 0;
         memset(p.inv, 0, sizeof(p.inv));
+        // Starting resources (all archetypes)
+        p.inv[0] = 2;  // water tokens
+        p.inv[1] = 1;  // food tokens
+        if (arch == 1) {  // Quartermaster: extra food
+          p.inv[1] = 2;
+        }
+        if (arch == 2) {  // Medic: medicine kit
+          p.inv[3] = 2;
+        }
+        if (arch == 3) {  // Mule: extra food + medicine + scrap
+          p.inv[1] = 2;
+          p.inv[3] = 1;  // medicine
+          p.inv[4] = 1;  // scrap
+        }
         snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
 
         // Wayfarer initialisation
         p.archetype    = (uint8_t)arch;
-        p.ll           = 6;
+        p.ll           = 7;
         p.food         = 6;
         p.water        = 6;
         p.fatigue      = 0;
@@ -632,9 +646,10 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.statusBits   = 0;
         p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
         memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-        memset(p.wounds,  0, sizeof(p.wounds));
-        memset(p.invType, 0, sizeof(p.invType));
-        memset(p.invQty,  0, sizeof(p.invQty));
+        memset(p.wounds,      0, sizeof(p.wounds));
+        memset(p.invType,     0, sizeof(p.invType));
+        memset(p.invQty,      0, sizeof(p.invQty));
+        memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
         p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0;
         p.fThreshBelow = 0; p.wThreshBelow = 0;
         p.movesLeft    = (int8_t)effectiveMP(arch);
@@ -836,7 +851,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           int nr = esp_random() % MAP_ROWS;
           if (G.map[nr][nq].terrain == 0) { pl.q = (int16_t)nq; pl.r = (int16_t)nr; break; }
         }
-        pl.ll = 6; pl.food = 4; pl.water = 4;
+        pl.ll = 7; pl.food = 4; pl.water = 4;
         pl.fatigue = 0; pl.radiation = 0; pl.resolve = 3;
         pl.actUsed = false; pl.resting = false;
         pl.movesLeft = (int8_t)effectiveMP(i);

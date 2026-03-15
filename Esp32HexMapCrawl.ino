@@ -262,7 +262,7 @@ struct Player {
   uint16_t steps;
 
   // ── Wayfarer survival tracks ──────────────────────────────────
-  uint8_t  ll;          // Life Level  0–6   (start: 6)
+  uint8_t  ll;          // Life Level  0–7   (start: 7)
   uint8_t  food;        // F track     0–6   (start: 6)
   uint8_t  water;       // W track     0–6   (start: 6)
   uint8_t  fatigue;     // T track     0–8   (start: 0)
@@ -1270,7 +1270,7 @@ void setup() {
     memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
     // Wayfarer defaults
     p.archetype    = (uint8_t)i;
-    p.ll = 6; p.food = 6; p.water = 6;
+    p.ll = 7; p.food = 6; p.water = 6;
     p.fatigue = 0; p.radiation = 0; p.resolve = 3;  // §4.4: start at 3, max 5
     p.statusBits = 0; p.invSlots = ARCHETYPE_INV_SLOTS[i];
     memcpy(p.skills, ARCHETYPE_SKILLS[i], NUM_SKILLS);

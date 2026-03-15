@@ -15,7 +15,7 @@ const uiCurrentCell = van.state(null);
 // Cooldown ring (0=ready, 1=freshly moved)
 const uiCooldown    = van.state(0);
 // §4 Survival tracks
-const uiLL          = van.state(6);
+const uiLL          = van.state(7);
 const uiFood        = van.state(6);
 const uiWater       = van.state(6);
 const uiResolve     = van.state(3);
@@ -95,7 +95,7 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
   inv: [0,0,0,0,0], st: 100, pr: 2, sr: 2, sp: 0,
   // Wayfarer fields
-  ll: 6, food: 6, water: 6, fat: 0, rad: 0, res: 3,
+  ll: 7, food: 6, water: 6, fat: 0, rad: 0, res: 3,
   arch: 0, sb: 0, is: 8,
   sk: [0,0,0,0,0,0],
   wd: [0,0,0],
@@ -247,6 +247,7 @@ function handleMsg(msg) {
       if (msg.vc) loadTerrainVariants(msg.vc);
       if (msg.gs) Object.assign(gameState, msg.gs);
       hideConnectOverlay();
+      if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
       updateSidebar();
       if (myId >= 0 && players[myId]?.mp > 0 && maxMP <= 0) maxMP = players[myId].mp;
       if (myId >= 0) displayMP = players[myId].mp ?? 6;
@@ -462,8 +463,8 @@ function handleEvent(ev) {
       const cls    = ev.dll < 0 ? 'log-check-fail' : 'log-mv';
       addLog(`<span class="${cls}">\u2600 Day ${ev.day}: ${escHtml(who)} F:${ev.f} W:${ev.w}${llTxt}</span>`);
       if (ev.pid === myId) {
-        if (ev.dll < 0) showToast(`\u2600 Dawn LL${ev.dll}  F:${ev.f} W:${ev.w}`);
-        else showToast(`\u2600 Day ${ev.day} — MP:${ev.mp}`);
+        const llTxt = ev.dll < 0 ? ` LL${ev.dll}` : ev.dll > 0 ? ` LL+${ev.dll}` : '';
+        showToast(`\u2600 Day ${ev.day}${llTxt} F:${ev.f} W:${ev.w}`);
       }
       updateSidebar();
       break;
@@ -479,7 +480,7 @@ function handleEvent(ev) {
         p.au   = (ev.out !== AO_BLOCKED);  // BLOCKED = action slot not consumed
         if (ev.fd)   p.inv[1] = Math.min(99, (p.inv[1] ?? 0) + ev.fd);
         if (ev.wd)   p.inv[0] = Math.min(99, (p.inv[0] ?? 0) + ev.wd);
-        if (ev.lld)  p.ll     = Math.max(0, Math.min(6, p.ll + (ev.lld ?? 0)));
+        if (ev.lld)  p.ll     = Math.max(0, Math.min(7, p.ll + (ev.lld ?? 0)));
         if (ev.rad !== undefined) p.rad = ev.rad;
         if (ev.resd) p.res    = Math.max(0, Math.min(5, (p.res ?? 3) + ev.resd));
         // Update wound/status bits on successful Treat (§7.3A)
@@ -539,7 +540,7 @@ function handleEvent(ev) {
       }
       // Narrate action result for accessibility / AI agents
       if (ev.pid === myId) {
-        const actNames = ['','Forage','Water','Scavenge','Shelter','Treat','Survey','Rest'];
+        const actNames = ['Forage','Water','','Scavenge','Shelter','Treat','Survey','Rest'];
         const outNames = ['','Success','Partial','Failed'];
         const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
         narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
@@ -786,11 +787,11 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
 
 // ── Time-of-day clock ────────────────────────────────────────────
 const TIME_PHASES = [
-  { name:'FIRST LIGHT', icon:'☀',      r:255, g:180, b:100, a:0.10 },
-  { name:'HIGH WATCH',  icon:'☀',      r:255, g:220, b:150, a:0.05 },
-  { name:'NOON BURN',   icon:'☀',      r:255, g:240, b:200, a:0.02 },
-  { name:'LOW SUN',     icon:'🌇',r:255, g:160, b: 60, a:0.18 },
-  { name:'DUST HOUR',   icon:'🌆',r:210, g: 90, b: 20, a:0.38 },
+  { name:'FIRST LIGHT', icon:'☀',      r:255, g:180, b:100, a:0.03 },
+  { name:'HIGH WATCH',  icon:'☀',      r:255, g:220, b:150, a:0.01 },
+  { name:'NOON BURN',   icon:'☀',      r:255, g:240, b:200, a:0.00 },
+  { name:'LOW SUN',     icon:'🌇',r:255, g:160, b: 60, a:0.06 },
+  { name:'DUST HOUR',   icon:'🌆',r:210, g: 90, b: 20, a:0.14 },
   { name:'DARK WATCH',  icon:'🌑',r: 15, g:  8, b: 40, a:0.72 },
 ];
 function getTimePhase(mpVal) {

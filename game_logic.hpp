@@ -87,7 +87,7 @@ static void applyWStep(Player& p, int dir, int& llDelta) {
 // Called while holding G.mutex.
 static int effectiveMP(int pid) {
   Player& p  = G.players[pid];
-  int     mp = (int)p.ll;
+  int     mp = (int)p.ll + 1;
   mp -= min((int)p.wounds[1], 2);          // major wounds: −1 each, max −2
   int used = 0;
   for (int k = 0; k < 5; k++) used += (int)p.inv[k];
@@ -209,7 +209,7 @@ static void dawnUpkeep() {
         }
       }
     } else if (llDelta > 0) {
-      p.ll = (uint8_t)min((int)p.ll + llDelta, 6);
+      p.ll = (uint8_t)min((int)p.ll + llDelta, 7);
     }
     int8_t actualDelta = (int8_t)((int)p.ll - (int)prevLL); // true LL change (clamped)
     if (actualDelta < 0) ledFlash(255, 0, 0);  // red = Life Level lost
@@ -620,7 +620,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
           case TC_GRIEVOUS: {  // §7.3A: remove 1 Grievous Wound + restore 1 LL
             if (p.wounds[2] > 0) {
               p.wounds[2]--;
-              if (p.ll < 6) { p.ll++; ev.actLLD = 1; }
+              if (p.ll < 7) { p.ll++; ev.actLLD = 1; }
             }
             break;
           }
@@ -699,7 +699,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
       // Improved shelter relaxes the fatigue threshold (fat<6 instead of fat<4)
       bool llOk  = (p.food >= 4 && p.water >= 3);
       bool fatOk = (p.fatigue < 4) || (hexShelt == 2 && p.fatigue < 6);
-      if (llOk && fatOk && p.ll < 6) {
+      if (llOk && fatOk && p.ll < 7) {
         p.ll++;
         ev.actLLD = 1;
       }
