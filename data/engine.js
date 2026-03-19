@@ -648,9 +648,10 @@ function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   return {
     terrain:    terrainByte,
-    footprints: dataByte & 0x3F,  // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 3, // bits 6-7: 0=none, 1=shelter, 2=improved shelter
-    variant:    variantByte
+    footprints: dataByte & 0x3F,       // bits 0-5: which players visited (bitmask)
+    shelter:    (dataByte >> 6) & 3,   // bits 6-7: 0=none, 1=shelter, 2=improved shelter
+    resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
+    variant:    variantByte & 0xF,     // low nibble: terrain image variant (0-15)
   };
 }
 

@@ -460,7 +460,7 @@ static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
 
 // ── PSRAM image cache (hex tile PNGs, populated alongside web files at boot) ──
 struct ImgFile { char name[40]; uint8_t* buf; size_t len; };
-static const int MAX_IMG_CACHE = 64;
+static const int MAX_IMG_CACHE = 100;
 static ImgFile   imgCache[MAX_IMG_CACHE];
 static int       imgCacheCount = 0;
 
@@ -958,7 +958,8 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
         tt = cell.terrain;
         // Data byte: bits 0-5 = footprints (which players visited), bit 6 = shelter
         dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
-        vv = cell.variant;
+        // Variant byte: high nibble = resource type (0-5), low nibble = terrain variant (0-15)
+        vv = (cell.resource << 4) | (cell.variant & 0x0F);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
       }
@@ -993,7 +994,8 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       uint8_t  tt   = cell.terrain;
       // Data byte: bits 0-5 = footprints (which players visited), bit 6 = shelter
       uint8_t  dd   = (cell.footprints & 0x3F) | (cell.shelter << 6);
-      uint8_t  vv   = cell.variant;
+      // Variant byte: high nibble = resource type (0-5), low nibble = terrain variant (0-15)
+      uint8_t  vv   = (cell.resource << 4) | (cell.variant & 0x0F);
       if (pos + 10 < cap) {
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
@@ -1025,7 +1027,8 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR) {
       if (pos + 10 < cap) {
         HexCell& cell = G.map[cr][cq];
         uint8_t dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
-        uint8_t vv = cell.variant;
+        // Variant byte: high nibble = resource type (0-5), low nibble = terrain variant (0-15)
+        uint8_t vv = (cell.resource << 4) | (cell.variant & 0x0F);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[cell.terrain >> 4]; buf[pos++] = HEX_CH[cell.terrain & 0xF];
