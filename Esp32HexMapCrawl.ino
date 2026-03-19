@@ -559,24 +559,24 @@ static uint8_t pickVariant(uint8_t n, uint32_t rnd) {
   return 0;
 }
 
-static const uint8_t T_BASE[NUM_TERRAIN]  = { 33, 15, 20,  8,  5,  5,  0,  7,  4,  1,  2,  0 };
+static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 10,  3,  2,  2,  0,  3,  2,  1,  3,  0 };
 //                                              0   1   2   3   4   5   6   7   8   9  10  11=River (path-placed only)
-//  Forest raised 12→20 (+8), Open Scrub reduced 41→33 (−8) to keep sum=100.
+//  Open Scrub doubled (33→66); other terrains halved; Nuke Crater 2→3 for Glass Fields.
 
 // Clump % per terrain — how strongly each type pulls adjacent cells to match it.
 // 0 = purely random, 100 = maximum neighbourhood pull.
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
-  35,  // 0 Open Scrub   — light background scatter
-  65,  // 1 Ash Dunes    — dune belts
-  50,  // 2 Rust Forest  — lower blob pull; linear belts seeded in Phase 1.5
-  70,  // 3 Marsh        — marshes spread
-  60,  // 4 Broken Urban — ruined district clusters
-  75,  // 5 Flooded Ruins — ruined district spreads wide
-  60,  // 6 Glass Fields — glass plains cluster
-  70,  // 7 Rolling Hills — hill ranges
-  80,  // 8 Mountain     — mountain ranges
-  15,  // 9 Settlement   — rare, isolated
-  85,  // 10 Nuke Crater — crater scars cluster
+  15,  // 0 Open Scrub   — minimal pull; keeps scrub as scattered background
+  40,  // 1 Ash Dunes    — small dune pockets
+  30,  // 2 Rust Forest  — scattered forest fragments; belts provide linear form
+  45,  // 3 Marsh        — small marshy patches
+  35,  // 4 Broken Urban — ruined clusters, compact
+  50,  // 5 Flooded Ruins — slightly larger ruin spreads
+  35,  // 6 Glass Fields — small glass patches near craters/BU
+  40,  // 7 Rolling Hills — scattered hill groups
+  55,  // 8 Mountain     — ranges form but don't wall off huge areas
+  10,  // 9 Settlement   — rare, isolated single hexes
+  55,  // 10 Nuke Crater — craters scatter rather than mega-cluster
   95,  // 11 River Channel — once a river starts it strongly continues
 };
 
@@ -614,12 +614,12 @@ static void generateMap() {
   {
     static const uint8_t AXIS_A[3] = { 0, 1, 2 };
     static const uint8_t AXIS_B[3] = { 3, 4, 5 };
-    int numBelts = 8 + (int)(esp_random() % 5);  // 8–12 belts
+    int numBelts = 4 + (int)(esp_random() % 3);  // 4–6 belts
     for (int b = 0; b < numBelts; b++) {
       int bRow    = (int)(esp_random() % MAP_ROWS);
       int bCol    = (int)(esp_random() % MAP_COLS);
       int ax      = (int)(esp_random() % 3);
-      int halfLen = 3 + (int)(esp_random() % 7); // 3–9 steps each way → 6–18 hex belt
+      int halfLen = 2 + (int)(esp_random() % 4); // 2–5 steps each way → 4–10 hex belt
       for (int side = 0; side < 2; side++) {
         int dir = (side == 0) ? AXIS_A[ax] : AXIS_B[ax];
         int cr = bRow, cc = bCol;
@@ -820,6 +820,65 @@ static void generateMap() {
     for (int r = 0; r < MAP_ROWS; r++)
       for (int c = 0; c < MAP_COLS; c++)
         G.map[r][c].terrain = scratch[r][c];
+  }
+
+  // ── Phase 2.9: Guaranteed minimums for Settlement and Nuke Crater ───────────
+  // With halved base weights, rare terrains can easily generate 0–1 instances.
+  // This pass ensures at least 3 Settlements and 2 Nuke Craters exist.
+  // Placement picks isolated Open Scrub hexes away from incompatible neighbours.
+  // Any newly placed Nuke Craters also get their Glass Fields ring applied.
+  {
+    const uint8_t MIN_SETTLE = 3;
+    const uint8_t MIN_CRATER = 2;
+
+    // Count current instances
+    uint8_t nSettle = 0, nCrater = 0;
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++) {
+        uint8_t t = G.map[r][c].terrain;
+        if (t == 9)  nSettle++;
+        if (t == 10) nCrater++;
+      }
+
+    // ── Guarantee Settlements ──────────────────────────────────────────────
+    for (uint8_t attempt = 0; nSettle < MIN_SETTLE && attempt < 200; attempt++) {
+      int r = (int)(esp_random() % MAP_ROWS);
+      int c = (int)(esp_random() % MAP_COLS);
+      if (G.map[r][c].terrain != 0) continue;  // must be Open Scrub
+      // Must not neighbour Mountain(8), River(11), Settlement(9), or Nuke Crater(10)
+      bool ok = true;
+      for (int d = 0; d < 6 && ok; d++) {
+        uint8_t nt = G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain;
+        if (nt == 8 || nt == 9 || nt == 10 || nt == 11) ok = false;
+      }
+      if (!ok) continue;
+      G.map[r][c].terrain = 9;
+      nSettle++;
+    }
+
+    // ── Guarantee Nuke Craters ────────────────────────────────────────────
+    for (uint8_t attempt = 0; nCrater < MIN_CRATER && attempt < 200; attempt++) {
+      int r = (int)(esp_random() % MAP_ROWS);
+      int c = (int)(esp_random() % MAP_COLS);
+      if (G.map[r][c].terrain != 0) continue;  // must be Open Scrub
+      // Must not neighbour existing Crater or Settlement
+      bool ok = true;
+      for (int d = 0; d < 6 && ok; d++) {
+        uint8_t nt = G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain;
+        if (nt == 9 || nt == 10) ok = false;
+      }
+      if (!ok) continue;
+      G.map[r][c].terrain = 10;
+      nCrater++;
+      // Apply Glass Fields ring for the new crater (80% conversion, same as Phase 2.6)
+      for (int d = 0; d < 6; d++) {
+        int nr = wrapR(r + DR[d]);
+        int nc = wrapQ(c + DQ[d]);
+        uint8_t nt = G.map[nr][nc].terrain;
+        if (nt == 4 || nt == 8 || nt == 10) continue;  // BU/Mountain/Crater: skip
+        if ((esp_random() % 100) < 80) G.map[nr][nc].terrain = 6;
+      }
+    }
   }
 
   // ── Phase 3: resource placement ───────────────────────────────
