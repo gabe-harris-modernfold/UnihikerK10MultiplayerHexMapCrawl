@@ -7,7 +7,7 @@ A 6-player cooperative post-apocalyptic hex-crawl survival game running on the *
 
 ## Overview
 
-**WASTELAND CRAWL** is a collaborative survival exploration game designed for the **Unihiker K10**, an ESP32-S3 development board with an integrated 2.8" touchscreen display. The game runs a built-in WiFi access point that allows up to 10 players to connect via web browser on their phones or computers, forming a shared party navigating a procedurally generated post-apocalyptic hex grid.
+**WASTELAND CRAWL** is a collaborative survival exploration game designed for the **Unihiker K10**, an ESP32-S3 development board with an integrated 2.8" touchscreen display. The game runs a built-in WiFi access point that allows up to 6 players to connect via web browser on their phones or computers, forming a shared party navigating a procedurally generated post-apocalyptic hex grid.
 
 ### Platform: Unihiker K10 (ESP32-S3)
 
@@ -100,7 +100,7 @@ Every **5 minutes (in-game day)**, players must manage:
 
 #### Multi-Player Synchronization
 - **WebSocket Protocol:** JSON messages broadcast position, actions, and game state changes
-- **Low-Latency Updates:** 100ms game tick ensures responsive gameplay across 10 players
+- **Low-Latency Updates:** 100ms game tick ensures responsive gameplay across 6 players
 - **Conflict Resolution:** Server is authority; all decisions validated server-side
 - **Player Names & Colors:** Customizable per-session; visible on hex grid and in party roster
 
