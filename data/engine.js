@@ -87,6 +87,43 @@ function loadTerrainVariants(vc) {
   }
 }
 
+// ── Forage animal images ──────────────────────────────────────────
+// Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
+let forrageAnimalImgs = [];
+
+function loadForrageAnimalImgs(count) {
+  forrageAnimalImgs = [];
+  for (let v = 0; v < count; v++) {
+    const img  = new Image();
+    img.loaded = false;
+    img.src    = '/img/forrageAnimal' + v + '.png';
+    img.onload  = () => { img.loaded = true; };
+    img.onerror = () => { img.loaded = false; };
+    forrageAnimalImgs[v] = img;
+  }
+}
+
+// ── Shelter images ────────────────────────────────────────────────
+// Naming: /img/shelterBasic<N>.png, /img/shelterImproved<N>.png
+// shelterImgs[0] = basic variants, shelterImgs[1] = improved variants
+const shelterImgs = [[], []];
+const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
+
+function loadShelterVariants(sv) {
+  for (let s = 0; s < 2; s++) {
+    const count = (sv && sv[s]) || 0;
+    shelterImgs[s] = [];
+    for (let v = 0; v < count; v++) {
+      const img  = new Image();
+      img.loaded = false;
+      img.src    = '/img/' + SHELTER_IMG_NAMES[s] + v + '.png';
+      img.onload  = () => { img.loaded = true; };
+      img.onerror = () => { img.loaded = false; };
+      shelterImgs[s][v] = img;
+    }
+  }
+}
+
 // ── State ───────────────────────────────────────────────────────
 let myId = -1;
 // gameMap[r][q] = { terrain, resource, amount } or null (fogged/unknown)
@@ -249,6 +286,8 @@ function handleMsg(msg) {
         if (p.on) { renderPos[p.id].q = p.q; renderPos[p.id].r = p.r; }
       });
       if (msg.vc) loadTerrainVariants(msg.vc);
+      if (msg.sv) loadShelterVariants(msg.sv);
+      if (msg.fa) loadForrageAnimalImgs(msg.fa);
       if (msg.gs) Object.assign(gameState, msg.gs);
       hideConnectOverlay();
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
@@ -1002,15 +1041,34 @@ function render() {
         }
       }
 
-      // Shelter indicator: 1=shelter (⛺), 2=improved shelter (🏠)
+      // Food resource — forage animal PNG centred on hex (resource type 2 = food)
+      if (cell.resource === 2 && cell.amount > 0 && forrageAnimalImgs.length > 0) {
+        const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
+        const fImg = forrageAnimalImgs[v];
+        if (fImg && fImg.loaded) {
+          const sz = HEX_SZ * 0.9;
+          ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
+        }
+      }
+
+      // Shelter indicator: 1=basic, 2=improved — PNG centred on hex, emoji fallback
       if (cell.shelter) {
-        ctx.save();
-        ctx.fillStyle    = cell.shelter === 2 ? '#7EC8E3' : '#D4A574';
-        ctx.font         = `${Math.max(12, Math.round(HEX_SZ * 0.5))}px monospace`;
-        ctx.textAlign    = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillText(cell.shelter === 2 ? '🏠' : '⛺', cx + HEX_SZ * 0.35, cy - HEX_SZ * 0.35);
-        ctx.restore();
+        const si   = cell.shelter - 1;  // 0=basic, 1=improved
+        const imgs = shelterImgs[si];
+        const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
+        const sImg = v >= 0 ? imgs[v] : null;
+        if (sImg && sImg.loaded) {
+          const sz = HEX_SZ * 0.9;
+          ctx.drawImage(sImg, cx - sz / 2, cy - sz / 2, sz, sz);
+        } else {
+          ctx.save();
+          ctx.fillStyle    = cell.shelter === 2 ? '#7EC8E3' : '#D4A574';
+          ctx.font         = `${Math.max(12, Math.round(HEX_SZ * 0.5))}px monospace`;
+          ctx.textAlign    = 'right';
+          ctx.textBaseline = 'top';
+          ctx.fillText(cell.shelter === 2 ? '🏠' : '⛺', cx + HEX_SZ * 0.35, cy - HEX_SZ * 0.35);
+          ctx.restore();
+        }
       }
     }
   }

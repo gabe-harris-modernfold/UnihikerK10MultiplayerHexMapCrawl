@@ -543,6 +543,8 @@ static uint8_t terrainSpawnRes(uint8_t t, uint32_t rnd) {
 //   Phase 2.6 pass adjacent to qualifying Broken Urban clusters (≥2 BU).
 // ── Image variant counts (filled from SD (SPI) scan before generateMap) ──
 static uint8_t terrainVariantCount[NUM_TERRAIN] = {};  // 0 = no variants found
+static uint8_t shelterVariantCount[2]           = {};  // [0]=basic, [1]=improved
+static uint8_t forrageAnimalCount               = 0;   // forrageAnimal<N>.png
 
 // Rank-quadratic weighted pick: variant 0 has weight (n)^2, variant n-1 has weight 1.
 // With n=8: v0=31%, v1=24%, v2=18%, v3=12%, v4=8%, v5=4%, v6=1%, v7=0.5%
@@ -1515,8 +1517,49 @@ void setup() {
       }
     }
   }
+  // Derive shelter variant counts from imgCache
+  const char* SHELTER_PFX[2] = { "shelterBasic", "shelterImproved" };
+  for (int i = 0; i < imgCacheCount; i++) {
+    String fname = String(imgCache[i].name);
+    for (int s = 0; s < 2; s++) {
+      String pfx = String(SHELTER_PFX[s]);
+      if (fname.startsWith(pfx) && fname.endsWith(".png")) {
+        String numStr = fname.substring(pfx.length(), fname.length() - 4);
+        if (numStr.length() > 0) {
+          bool dig = true;
+          for (int k = 0; k < (int)numStr.length(); k++)
+            if (!isDigit((unsigned char)numStr[k])) { dig = false; break; }
+          if (dig) {
+            int idx = numStr.toInt();
+            if (idx + 1 > (int)shelterVariantCount[s])
+              shelterVariantCount[s] = (uint8_t)min(idx + 1, 255);
+          }
+        }
+        break;
+      }
+    }
+  }
+  // Derive forage animal variant count from imgCache
+  for (int i = 0; i < imgCacheCount; i++) {
+    String fname = String(imgCache[i].name);
+    if (fname.startsWith("forrageAnimal") && fname.endsWith(".png")) {
+      String numStr = fname.substring(13, fname.length() - 4);  // len("forrageAnimal")=13
+      if (numStr.length() > 0) {
+        bool dig = true;
+        for (int k = 0; k < (int)numStr.length(); k++)
+          if (!isDigit((unsigned char)numStr[k])) { dig = false; break; }
+        if (dig) {
+          int idx = numStr.toInt();
+          if (idx + 1 > (int)forrageAnimalCount)
+            forrageAnimalCount = (uint8_t)min(idx + 1, 255);
+        }
+      }
+    }
+  }
   for (int t = 0; t < NUM_TERRAIN; t++)
     Serial.printf(" %s:%d", T_SHORT[t], terrainVariantCount[t]);
+  Serial.printf("  shelterBasic:%d shelterImproved:%d forrageAnimal:%d",
+    shelterVariantCount[0], shelterVariantCount[1], forrageAnimalCount);
   Serial.println();
 
   splashAdd("Generating map...");

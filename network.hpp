@@ -127,12 +127,16 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d},"
-    "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}",
+    "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
+    "\"sv\":[%d,%d],"
+    "\"fa\":%d}",
     G.threatClock, G.dayCount, G.sharedFood, G.sharedWater,
     terrainVariantCount[0], terrainVariantCount[1], terrainVariantCount[2],
     terrainVariantCount[3], terrainVariantCount[4], terrainVariantCount[5],
     terrainVariantCount[6], terrainVariantCount[7], terrainVariantCount[8],
-    terrainVariantCount[9], terrainVariantCount[10]);
+    terrainVariantCount[9], terrainVariantCount[10],
+    shelterVariantCount[0], shelterVariantCount[1],
+    forrageAnimalCount);
   xSemaphoreGive(G.mutex);
 
   Serial.printf("[SYNC]    →P%d | visR:%d mask:%c | mapStr:%dB | total:%d/5500B\n",

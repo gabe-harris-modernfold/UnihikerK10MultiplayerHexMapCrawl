@@ -72,7 +72,11 @@
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_action_panel2.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_shelter_rest.js\")",
       "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\patch_typography.js\")",
-      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\check_typo.js\")"
+      "Bash(node \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Temp\\\\check_typo.js\")",
+      "Bash(find C:SourceCodeEsp32HexMapCrawl -name *.h)",
+      "Bash(ls -1 /c/SourceCode/Esp32HexMapCrawl/data/img/*.png)",
+      "Bash(find /c/SourceCode/Esp32HexMapCrawl/data/img -type f -name *.png)",
+      "Bash(ls -la /c/SourceCode/Esp32HexMapCrawl/data/img/forrage*)"
     ]
   }
 }
