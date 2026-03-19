@@ -1,7 +1,7 @@
 # WASTELAND CRAWL
 ## ESP32-S3 WebSocket Hex-Crawl Game
 
-A 10-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization.
+A 6-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization.
 
 ---
 
