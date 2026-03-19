@@ -1043,7 +1043,7 @@ function render() {
       }
 
       // Food resource — forage animal PNG centred on hex (resource type 2 = food)
-      if (cell.resource === 2 && cell.amount > 0 && forrageAnimalImgs.length > 0) {
+      if (cell.resource === 2 && forrageAnimalImgs.length > 0) {
         const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
         const fImg = forrageAnimalImgs[v];
         if (fImg && fImg.loaded) {
