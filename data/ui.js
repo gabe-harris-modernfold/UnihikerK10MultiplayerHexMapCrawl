@@ -109,7 +109,6 @@ function updateSidebar() {
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiActUsed.val = me.au   ?? false;
   uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x0C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
@@ -513,7 +512,7 @@ function initCharSheetBindings() {
     }
   }
 
-  // LL track (dossier)
+  // LL track (character sheet)
   van.derive(() => {
     renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
   });
@@ -699,7 +698,6 @@ function initActionPanel() {
     const cell = gameMap[me.r]?.[me.q];
     const terr        = cell?.terrain ?? null;
     const mp          = me.mp  ?? 0;
-    const used        = me.au  ?? false;
     const scrap       = me.inv?.[4] ?? 0;
     const shelterLevel = cell?.shelter ?? 0;
     const isScout     = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
@@ -736,8 +734,6 @@ function initActionPanel() {
     const terrTags   = [forageHere && 'Forage', scavHere && 'Salvage', waterHere && 'Water'].filter(Boolean).join(' · ');
     actionStatusBar.innerHTML =
       `<span class="act-mp-badge">MP: ${mp}</span>` +
-      (used ? '<span class="act-used-badge">\u2297 ACTION USED</span>'
-            : '<span class="act-avail-badge">\u25CF ACTION READY</span>') +
       `<span class="act-terrain-ctx">${terrName}${terrTags ? ' · ' + terrTags : ''}</span>`;
 
     document.getElementById('action-water-ctrl').style.display = 'none';
@@ -753,8 +749,11 @@ function initActionPanel() {
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
       { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TREAT,   icon: '\u2764', label: 'TREAT',         mpCost: 2,             desc: 'Field medicine (Skill check)' },
-      { id: ACT_SURVEY,  icon: '\u25CE', label: 'SURVEY',        mpCost: isScout ? 0 : 1, desc: isScout ? 'Reveal terrain beyond vision — free for Scout' : 'Reveal terrain beyond vision (1 MP)' },
     ];
+    // Scout-exclusive: SURVEY is hidden for non-Scouts
+    if (isScout) {
+      actionDefs.push({ id: ACT_SURVEY, icon: '\u25CE', label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
+    }
 
     actionDefs.forEach(def => {
       // Fix: shelter unavailable if improved shelter already built here
@@ -763,8 +762,7 @@ function initActionPanel() {
       const hasMP       = mp >= def.mpCost;
       const needsScrap  = def.id === ACT_SHELTER;
       const hasScrap    = !needsScrap || scrap > 0;
-      const actionUsed  = (def.id === ACT_SURVEY && isScout && !uiResting.val) ? false : used;  // Scout ignores actUsed for Survey, but not while resting
-      const canAct      = available && hasMP && !actionUsed && hasScrap;
+      const canAct      = available && hasMP && hasScrap;
 
       // Dynamic desc: BUILD SHELTER shows what will actually be built
       let desc = def.desc;
@@ -776,8 +774,7 @@ function initActionPanel() {
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = actionUsed   ? 'Action already used today'
-                        : shelterMaxed ? 'Max shelter built here'
+      const blockReason = shelterMaxed ? 'Max shelter built here'
                         : !available   ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
                                         : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh · Flooded Ruins)'
                                         : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
@@ -802,7 +799,7 @@ function initActionPanel() {
 
       btn.addEventListener('click', () => {
         if (!canAct) {
-          showToast(actionUsed ? '\u2297 Action already used today' : !available ? '\u2297 Not available here' : !hasMP ? '\u2297 Insufficient MP' : '\u2297 Need scrap to build');
+          showToast(!available ? '\u2297 Not available here' : !hasMP ? '\u2297 Insufficient MP' : '\u2297 Need scrap to build');
           return;
         }
         if (def.id === ACT_WATER) {
@@ -843,7 +840,6 @@ function initActionPanel() {
   van.derive(() => {
     const btn = document.getElementById('action-hud-btn');
     if (!btn) return;
-    btn.classList.toggle('action-btn-used', uiActUsed.val);
     btn.classList.toggle('has-condition', uiHasCond.val);
   });
   van.derive(() => {
@@ -929,7 +925,7 @@ function initMenuSystem() {
       mh2({ class: 'menu-title' }, '\u2630 COMMAND'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('howto')    }, '\u2B21  HOW TO PLAY'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('settings') }, '\u25C9  SETTINGS'),
-      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  DOSSIER'),
+      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  CHARACTER'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('about')    }, '\u25A3  ABOUT'),
       mb({ class: 'menu-resume-btn', onclick: closeMenu }, '\u25B6 RESUME'),
     );
@@ -1036,7 +1032,7 @@ function initMenuSystem() {
 
       sec('Actions',
         mp({ class: 'menu-text-body' },
-          'You get one action per day. Open the ☞ ACTION menu to choose. ' +
+          'Open the ☞ ACTION menu to choose an action. ' +
           'Actions cost MP and most require a skill check. Every action awards points (see Scoring). Settlement terrain reduces all TREAT difficulty by 2.'
         ),
         md({ class: 'ht-act-list' },
@@ -1234,7 +1230,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Fields'),
-            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/mp/actUsed), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
+            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/mp), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Advantage'),

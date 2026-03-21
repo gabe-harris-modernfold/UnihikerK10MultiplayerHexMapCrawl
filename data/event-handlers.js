@@ -211,7 +211,6 @@ export function handleDawn(ev, ctx) {
   if (pm) {
     pm.ll = ev.ll;
     pm.mp = ev.mp;
-    pm.au = false; // Action slot restored
     pm.rest = false;
   }
 

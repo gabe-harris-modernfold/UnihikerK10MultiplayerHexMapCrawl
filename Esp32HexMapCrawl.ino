@@ -291,7 +291,6 @@ struct Player {
   int8_t   movesLeft;     // MP budget remaining this day; reset to effectiveMP at each Dawn
 
   // ── Action tracking (§5 Turn rules) ─────────────────────────
-  bool     actUsed;       // one action per day; cleared at dawn
   bool     encPenApplied; // encumbrance -1 MP penalty applied this day; cleared at dawn
   bool     resting;       // player rested this day; cleared at dawn; if all rest → day ends early
   bool     radClean;    // no rad hex entered this day; true → R−1 at next dawn (clean zone)
@@ -528,6 +527,7 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   else if (vl ==  0) { *outVisR = VISION_R;     *outMaskRes = false; } // STD
   else if (vl ==  1) { *outVisR = VISION_R + 1; *outMaskRes = false; } // HIGH
   else               { *outVisR = VISION_R + 2; *outMaskRes = false; } // VHIGH (Rolling Hills, Mountain)
+  if (G.players[pid].archetype == 4) *outVisR += 2;  // Scout: +2 vision radius
 }
 
 // ── Slot management ────────────────────────────────────────────
@@ -1792,7 +1792,7 @@ void setup() {
     memset(p.invType, 0, sizeof(p.invType));
     memset(p.invQty,  0, sizeof(p.invQty));
     p.fThreshBelow = 0; p.wThreshBelow = 0;
-    p.actUsed = false; p.encPenApplied = false; p.radClean = true;
+    p.encPenApplied = false; p.radClean = true;
     p.movesLeft = (int8_t)effectiveMP(i);  // consistent with handleConnect
     snprintf(p.name, sizeof(p.name), "%s%d", ARCHETYPE_NAME[i], i);
   }
@@ -2039,7 +2039,6 @@ void setup() {
         // Status & turn state
         j += ",\"sb\":";          j += p.statusBits;
         j += ",\"mp\":";          j += p.movesLeft;
-        j += ",\"actUsed\":";     j += p.actUsed       ? "true" : "false";
         j += ",\"encPenApplied\":"; j += p.encPenApplied ? "true" : "false";
         j += ",\"resting\":";     j += p.resting       ? "true" : "false";
         j += ",\"radClean\":";    j += p.radClean      ? "true" : "false";

@@ -77,7 +77,8 @@
       "Bash(ls -1 /c/SourceCode/Esp32HexMapCrawl/data/img/*.png)",
       "Bash(find /c/SourceCode/Esp32HexMapCrawl/data/img -type f -name *.png)",
       "Bash(ls -la /c/SourceCode/Esp32HexMapCrawl/data/img/forrage*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

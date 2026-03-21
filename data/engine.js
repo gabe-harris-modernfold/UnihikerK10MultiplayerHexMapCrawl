@@ -23,7 +23,6 @@ const uiMP          = van.state(6);
 // §6.2 Radiation track
 const uiRad         = van.state(0);
 // §5 Action tracking
-const uiActUsed     = van.state(false);
 const uiResting     = van.state(false);  // true after REST until dawn
 const uiHasCond     = van.state(false);  // true when player has treatable conditions
 let maxMP = 6;           // plain copy used by non-reactive rendering (time-of-day clock)
@@ -217,7 +216,7 @@ function buildAgentState() {
       q: me.q, r: me.r,
       ll: me.ll, food: me.food, water: me.water,
       rad: me.rad, resolve: me.res, fat: me.fat,
-      mp: me.mp, actUsed: me.au, resting: me.rest,
+      mp: me.mp, resting: me.rest,
       inv: { water: me.inv[0], food: me.inv[1], fuel: me.inv[2], med: me.inv[3], scrap: me.inv[4] },
       wounds: me.wd, statusBits: me.sb,
       score: me.sc, name: me.nm,
@@ -399,7 +398,6 @@ function handleMsg(msg) {
         if (pd.res !== undefined) p.res = pd.res;   // resolve (§4.4)
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
         if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
-        if (pd.au  !== undefined) p.au  = !!pd.au;  // action used this day
         if (pd.vm  !== undefined) p.vm  = pd.vm;    // valid move bitmask
         if (pd.rt  !== undefined) {
           p.rest = !!pd.rt;
@@ -583,7 +581,6 @@ function handleEvent(ev) {
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
         if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT; }  // lock MP; snap displayMP; start night fade
-        players[ev.pid].au    = false;  // new day: action slot restored
         players[ev.pid].rest = false;
         if (ev.pid === myId) {
           if (uiResting.val && ev.expd < 0) showShelterWarning();
@@ -614,7 +611,6 @@ function handleEvent(ev) {
         p.mp   = ev.mp;
         p.ll   = ev.ll;
         p.fat  = ev.fat;
-        p.au   = (ev.out !== AO_BLOCKED);  // BLOCKED = action slot not consumed
         if (ev.fd)   p.inv[1] = Math.min(99, (p.inv[1] ?? 0) + ev.fd);
         if (ev.wd)   p.inv[0] = Math.min(99, (p.inv[0] ?? 0) + ev.wd);
         if (ev.lld)  p.ll     = Math.max(0, Math.min(7, p.ll + (ev.lld ?? 0)));
