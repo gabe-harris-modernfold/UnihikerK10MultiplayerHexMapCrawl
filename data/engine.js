@@ -28,9 +28,16 @@ const uiHeatExp     = van.state(0);
 // §5 Action tracking
 const uiActUsed     = van.state(false);
 const uiResting     = van.state(false);  // true after REST until dawn
+const uiHasCond     = van.state(false);  // true when player has treatable conditions
 let maxMP = 6;  // set from dawnMP at EVT_DAWN; personal day-length for time-of-day clock
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
+// Log panel visibility (persisted to localStorage)
+const uiLogVisible  = van.state(localStorage.getItem('logVisible') !== '0');
+van.derive(() => {
+  const lp = document.getElementById('log-panel');
+  if (lp) lp.style.display = uiLogVisible.val ? '' : 'none';
+});
 function openMenu(page = 'main') { uiMenuPage.val = page; }
 function closeMenu()             { uiMenuPage.val = null; }
 function narrateState(msg) {
@@ -931,7 +938,10 @@ function render() {
         const t = TERRAIN[cell.terrain];
         ctx.fillStyle   = t?.fill || '#2A2010';
       } else if (dist === myVisionR + 1) {
-        ctx.globalAlpha = 0.9;   // outer fog ring — slightly transparent
+        ctx.globalAlpha = 0.78;  // inner fog ring — more visible
+        ctx.fillStyle   = '#141008';
+      } else if (dist === myVisionR + 2) {
+        ctx.globalAlpha = 0.92;  // outer fog ring — subtly transparent
         ctx.fillStyle   = '#141008';
       } else {
         ctx.globalAlpha = 1;     // deep fog — fully opaque
@@ -961,39 +971,19 @@ function render() {
         if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
       }
 
-      // ── River bank lines (terrain 11) ────────────────────────────
-      // Fallback dynamic rendering when no tile image is loaded.
-      // Draws a muddy bank line inset from each edge bordering non-river terrain.
+      // ── River ripples (terrain 11) ────────────────────────────────
+      // Animated concentric ellipses using the RAF timestamp for smooth motion.
       if (cell.terrain === 11 && (!tImg || !tImg.loaded)) {
-        // Direction offsets: 0:SE 1:NE 2:N 3:NW 4:SW 5:S (matches server DQ/DR)
-        const RIV_DQ = [1, 1, 0, -1, -1, 0];
-        const RIV_DR = [0, -1, -1,  0,  1, 1];
-        // Direction d → edge vertex index: ei = (d + 5) % 6
-        // Edge ei connects vertex ei to vertex (ei+1)%6 at angles PI/3*ei and PI/3*(ei+1)
+        const rt = performance.now() / 1000;
         ctx.save();
-        ctx.strokeStyle = '#4A5030';  // muddy khaki bank
-        ctx.lineWidth   = 2.5;
-        ctx.lineCap     = 'round';
-        for (let d = 0; d < 6; d++) {
-          const nq  = (mapQ + RIV_DQ[d] + MAP_COLS) % MAP_COLS;
-          const nr  = (mapR + RIV_DR[d] + MAP_ROWS) % MAP_ROWS;
-          const nbr = gameMap[nr]?.[nq];
-          if (nbr && nbr.terrain === 11) continue;  // river–river edge: no bank line
-          const ei  = (d + 5) % 6;
-          const a1  = Math.PI / 3 * ei;
-          const a2  = Math.PI / 3 * ((ei + 1) % 6);
-          const vx1 = cx + (HEX_SZ - 1) * Math.cos(a1);
-          const vy1 = cy + (HEX_SZ - 1) * Math.sin(a1);
-          const vx2 = cx + (HEX_SZ - 1) * Math.cos(a2);
-          const vy2 = cy + (HEX_SZ - 1) * Math.sin(a2);
-          // Inward normal — nudge line toward hex center
-          const mx  = (vx1 + vx2) / 2, my = (vy1 + vy2) / 2;
-          const nd  = Math.sqrt((cx - mx) ** 2 + (cy - my) ** 2);
-          const nx  = (cx - mx) / nd,  ny = (cy - my) / nd;
-          const off = 3;
+        ctx.lineWidth = 1;
+        for (let w = 0; w < 3; w++) {
+          const phase = (rt * 0.45 + w * 0.33) % 1;
+          const scale = 0.25 + phase * 0.55;
+          const alpha = 0.18 * (1 - phase);
+          ctx.strokeStyle = `rgba(30,70,90,${alpha.toFixed(3)})`;
           ctx.beginPath();
-          ctx.moveTo(vx1 + nx * off, vy1 + ny * off);
-          ctx.lineTo(vx2 + nx * off, vy2 + ny * off);
+          ctx.ellipse(cx, cy, HEX_SZ * scale * 0.85, HEX_SZ * scale * 0.38, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.restore();
@@ -1031,7 +1021,7 @@ function render() {
 
           ctx.save();
           ctx.filter     = `sepia(1) hue-rotate(330deg) saturate(${sat}) brightness(${bri})`;
-          ctx.globalAlpha = 0.9;
+          ctx.globalAlpha = 0.45;
           ctx.font        = `${footprintSize}px monospace`;
           ctx.textAlign   = 'center';
           ctx.textBaseline = 'middle';

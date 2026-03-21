@@ -115,10 +115,12 @@ body::after{
 
 /* ── Rest status bubbles ────────────────────────────────────── */
 #rest-bubbles{
+  position:fixed;top:36px;left:0;right:0;z-index:15;
   display:flex;flex-wrap:wrap;gap:5px;
   padding:4px 10px;
   background:rgba(4,3,2,0.82);border-bottom:1px solid var(--bdr);
-  justify-content:center;align-items:center;flex-shrink:0
+  justify-content:center;align-items:center;
+  pointer-events:none
 }
 .rest-bubble{
   display:flex;flex-direction:column;align-items:center;gap:1px;
@@ -180,8 +182,8 @@ canvas{display:block;width:100%;height:100%}
 .res-val{min-width:26px;text-align:right;color:var(--gold-hi)}
 .res-name{color:var(--txt-dim);font-size:var(--fs-d)}
 #my-score{
-  font-size:var(--fs-v);color:var(--gold-hi);font-weight:bold;
-  text-shadow:0 0 10px rgba(228,180,32,0.35)
+  font-size:20px;color:var(--gold-hi);font-weight:bold;
+  text-shadow:0 0 14px rgba(228,180,32,0.55)
 }
 #pos-info{font-size:var(--fs-d);color:var(--txt-dim);margin-top:1px;letter-spacing:var(--ls-d)}
 #players-panel{padding:7px;flex:1;overflow-y:auto}
@@ -189,7 +191,7 @@ canvas{display:block;width:100%;height:100%}
 .p-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .p-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
 .p-name.me{color:var(--gold-hi);font-weight:bold}
-.p-sc{color:var(--txt-dim);font-size:var(--fs-d);white-space:nowrap}
+.p-sc{color:var(--gold);font-size:var(--fs-d);white-space:nowrap}
 
 /*──────────────────────── Terrain Card ─────────────────────────*/
 #terrain-card{
@@ -291,6 +293,15 @@ canvas{display:block;width:100%;height:100%}
 .action-settl-note{font-size:var(--fs-b);color:var(--gold);letter-spacing:var(--ls-b);padding:2px 0 4px;opacity:0.85}
 /* ACTION HUD button dims when action is used today */
 #action-hud-btn.action-btn-used{opacity:0.45}
+/* ACTION HUD button pulses when player has treatable conditions */
+#action-hud-btn.has-condition{
+  border-color:#A84040;color:#D06060;
+  animation:cond-pulse 1.4s ease-in-out infinite
+}
+@keyframes cond-pulse{
+  0%,100%{box-shadow:0 0 0px rgba(180,40,40,0)}
+  50%    {box-shadow:0 0 10px rgba(180,40,40,0.5)}
+}
 
 /* ── REST HUD button — always larger and more prominent ─────── */
 #rest-hud-btn{
@@ -339,13 +350,10 @@ canvas{display:block;width:100%;height:100%}
 .hi-row{display:flex;gap:6px;margin-bottom:5px;font-size:var(--fs-d);align-items:flex-start}
 .hi-label{color:var(--txt-dim);min-width:72px;flex-shrink:0;letter-spacing:var(--ls-d)}
 .hi-val{color:var(--txt);flex:1;word-break:break-word;font-size:var(--fs-b)}
-.hi-desc{
-  font-size:var(--fs-d);color:var(--txt-dim);line-height:1.6;margin-top:6px;
-  border-top:1px solid var(--bdr);padding-top:6px
-}
-#hi-tag-list{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+#hi-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
 #hi-res-list{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
 .hi-badge{font-size:var(--fs-d);padding:2px 6px;border-radius:10px;border:1px solid;color:#888;border-color:#888}
+.hi-act-badge{font-size:var(--fs-d);padding:2px 6px;border-radius:10px;border:1px solid var(--bdr-hi);color:var(--gold);background:rgba(192,120,24,0.10)}
 #hex-close{position:absolute;top:6px;right:8px;cursor:pointer;font-size:var(--fs-d);color:var(--bdr-hi)}
 #hex-close:hover{color:var(--gold)}
 
@@ -741,7 +749,7 @@ canvas{display:block;width:100%;height:100%}
 /*──────────────────────────── Responsive ───────────────────────*/
 /* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */
 .hr-lbl{display:none;font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
-#hud-score-wrap{display:none;align-items:center;gap:3px}
+#hud-score-wrap{display:flex;align-items:center;gap:3px}
 #hud-score{font-size:var(--fs-v);font-weight:bold;color:var(--gold-hi);white-space:nowrap;letter-spacing:var(--ls-v)}
 
 /* Squeeze HUD title at mid-range widths to prevent wrapping */
@@ -912,7 +920,7 @@ canvas{display:block;width:100%;height:100%}
 .ht-track-row{display:grid;grid-template-columns:90px 44px 1fr;gap:6px;align-items:baseline}
 .ht-track-lbl{font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);color:var(--gold);white-space:nowrap}
 .ht-track-val{font-size:var(--fs-d);color:var(--txt-dim);white-space:nowrap}
-.ht-track-desc{font-size:var(--fs-d);color:var(--txt-dim);line-height:1.5}
+.ht-track-desc{font-size:var(--fs-b);color:var(--txt-dim);line-height:1.5}
 
 /* Actions list */
 .ht-act-list{display:flex;flex-direction:column;gap:8px;margin-top:4px}

@@ -16,7 +16,6 @@
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot">●</span>
     <span id="hud-clock" class="hud-clock"></span>
-    <span id="hud-vis" class="hud-stat">—</span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
   <button class="hud-btn" id="char-btn" aria-label="open dossier">&#x1F5D9; DOSSIER</button>
@@ -62,18 +61,16 @@
     <div id="hex-info">
       <span id="hex-close">&#x2715;</span>
       <h2><span class="hi-icon" id="hi-icon">&#x2620;</span><span id="hi-title">HEX DATA</span></h2>
-      <div class="hi-row"><span class="hi-label">Coordinates</span><span class="hi-val" id="hi-coords">—</span></div>
-      <div class="hi-row"><span class="hi-label">Terrain</span><span class="hi-val" id="hi-terrain">—</span></div>
-      <div class="hi-row"><span class="hi-label">Movement</span><span class="hi-val" id="hi-movement">—</span></div>
-      <div class="hi-row"><span class="hi-label">Visibility</span><span class="hi-val" id="hi-visibility">—</span></div>
-      <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
-      <div class="hi-row"><span class="hi-label">Tags</span>
-        <div><div id="hi-tag-list"></div></div>
+      <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
+      <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
+      <div class="hi-row"><span class="hi-label">Vision</span><span class="hi-val" id="hi-vis">—</span></div>
+      <div class="hi-row"><span class="hi-label">Actions</span>
+        <div><div id="hi-actions"></div></div>
       </div>
-      <div class="hi-row"><span class="hi-label">Resources</span>
+      <div class="hi-row"><span class="hi-label">Resource</span>
         <div><div id="hi-res-list"></div></div>
       </div>
-      <div class="hi-desc" id="hi-desc">Move onto a hex to reveal its data.</div>
+      <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
     </div>
 
   </div>

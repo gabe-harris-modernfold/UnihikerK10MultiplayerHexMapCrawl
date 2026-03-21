@@ -9,28 +9,46 @@ function updateTerrainCard() {
 
 function populateHexInfo(q, r, cell) {
   const t = TERRAIN[cell.terrain] || TERRAIN[0];
-  document.getElementById('hi-icon').textContent    = t.icon;
-  document.getElementById('hi-title').textContent   = t.name.toUpperCase();
-  document.getElementById('hi-coords').textContent  = `Q:${q}  R:${r}`;
-  document.getElementById('hi-terrain').textContent = t.name;
-  document.getElementById('hi-hazard').textContent  = t.hazard;
-  document.getElementById('hi-desc').textContent    = t.desc;
+  document.getElementById('hi-icon').textContent  = t.icon;
+  document.getElementById('hi-title').textContent = t.name.toUpperCase();
 
-  document.getElementById('hi-movement').textContent =
-    t.mc === 255 ? 'IMPASSABLE' : `Cost ${t.mc}×  |  Shelter ${t.sv}`;
+  // Move cost
+  document.getElementById('hi-mc').textContent =
+    t.mc === 255 ? 'IMPASSABLE' : `${t.mc}× MP`;
 
-  const visLabels = ['PENALTY — terrain only', 'STANDARD', 'HIGH — +2 hex range'];
-  document.getElementById('hi-visibility').textContent = visLabels[t.vis + 1] || 'STANDARD';
+  // Shelter — actual built level on this specific hex
+  const shelterLabels = ['None', 'Basic ⛺', 'Improved 🏠', 'Fortified 🏰'];
+  document.getElementById('hi-shelter').textContent =
+    shelterLabels[cell.shelter] || 'None';
 
-  const tagList = document.getElementById('hi-tag-list');
-  tagList.innerHTML = '';
-  (t.tags || []).forEach(tag => {
-    const b = document.createElement('span');
-    b.className = TAG_CLASS[tag] || 'hi-badge';
-    b.textContent = tag;
-    tagList.appendChild(b);
+  // Vision modifier
+  const visLabels = ['PENALTY', 'STANDARD', 'HIGH +2 hex'];
+  document.getElementById('hi-vis').textContent = visLabels[t.vis + 1] || 'STANDARD';
+
+  // Hazard
+  document.getElementById('hi-hazard').textContent = t.hazard || 'None';
+
+  // Available actions for this terrain
+  const actionList = document.getElementById('hi-actions');
+  actionList.innerHTML = '';
+  const actionDefs = [
+    { id: ACT_FORAGE, label: 'FORAGE' },
+    { id: ACT_WATER,  label: 'WATER'  },
+    { id: ACT_SCAV,   label: 'SCAVENGE' },
+  ];
+  actionDefs.forEach(({ id, label }) => {
+    if (actAvailable(id, cell.terrain)) {
+      const b = document.createElement('span');
+      b.className = 'hi-act-badge';
+      b.textContent = label;
+      actionList.appendChild(b);
+    }
   });
+  if (!actionList.hasChildNodes()) {
+    actionList.innerHTML = '<span class="res-none-label">—</span>';
+  }
 
+  // Resource tokens on this hex
   const resList = document.getElementById('hi-res-list');
   resList.innerHTML = '';
   if (cell.resource > 0 && cell.amount > 0) {
@@ -87,6 +105,7 @@ function updateSidebar() {
   uiColdExp.val = me.cx   ?? 0;
   uiHeatExp.val = me.hx   ?? 0;
   uiActUsed.val = me.au   ?? false;
+  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x0C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => p.on)
@@ -381,23 +400,6 @@ function initHudBindings() {
 
   // Movement points — rendered as track boxes in #hud-mp-track (see #hud-ll)
 
-  // Visibility for current hex
-  const visEl = document.getElementById('hud-vis');
-  if (visEl) {
-    visEl.textContent = '';
-    van.add(visEl, () => {
-      if (myId < 0 || !players[myId]) return '—';
-      const q = players[myId].q, r = players[myId].r;
-      const cell = gameMap[r]?.[q];
-      if (!cell) return '—';
-      const t = TERRAIN[cell.terrain];
-      const vis = t?.vis ?? 0;
-      if (vis > 0) return 'HIGH VIS';
-      if (vis < 0) return 'PENALTY';
-      return 'STANDARD';
-    });
-  }
-
   // Inventory: sidebar + mobile HUD + char sheet; bump animation on increase
   for (let i = 0; i < 5; i++) {
     const inv = document.getElementById(`inv${i}`);
@@ -500,9 +502,9 @@ function initCharSheetBindings() {
     if (v) v.textContent = String(uiLL.val);
   });
 
-  // MP mini-track (HUD) — 6-box bar next to LL
+  // MP mini-track (HUD) — boxes match player's actual maxMP for the day
   van.derive(() => {
-    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, 6);
+    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, maxMP || 6);
   });
 
   // Food track (thresholds at boxes 4, 2)
@@ -842,7 +844,9 @@ function initActionPanel() {
 
   van.derive(() => {
     const btn = document.getElementById('action-hud-btn');
-    if (btn) btn.classList.toggle('action-btn-used', uiActUsed.val);
+    if (!btn) return;
+    btn.classList.toggle('action-btn-used', uiActUsed.val);
+    btn.classList.toggle('has-condition', uiHasCond.val);
   });
   van.derive(() => {
     const btn = document.getElementById('rest-hud-btn');
@@ -1296,6 +1300,18 @@ function initMenuSystem() {
             }
           }, 'CONFIRM')
         )
+      ),
+
+      md({ class: 'settings-row' },
+        mp({ class: 'settings-label' }, 'Event Log'),
+        mb({
+          class: 'menu-item-btn',
+          style: () => `padding:3px 10px;font-size:var(--fs-d);border-color:${uiLogVisible.val ? 'var(--gold)' : 'var(--bdr-mid)'}`,
+          onclick: () => {
+            uiLogVisible.val = !uiLogVisible.val;
+            localStorage.setItem('logVisible', uiLogVisible.val ? '1' : '0');
+          }
+        }, () => uiLogVisible.val ? 'VISIBLE  ▣' : 'HIDDEN  ▢')
       ),
 
       md({ class: 'settings-row' },
