@@ -46,9 +46,37 @@ function narrateState(msg) {
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
 const uiPickPending = van.state(false); // true while waiting for server pick response
 
+// ── Magic number constants ────────────────────────────────────────
+// Animation & timing
+const LERP_RATE              = 0.26;    // per-frame position interpolation (higher = snappier)
+const MOVE_COOLDOWN_BASE_MS  = 220;    // base move cooldown in ms (multiplied by terrain MC)
+const NIGHT_FADE_INIT        = 0.72;   // initial alpha when REST action completes
+const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn overlay
+const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
+const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
+const FOOTPRINT_FADE_MS      = 4000;   // ms to fully fade from bright tan to dark
+
+// Rendering dimensions
+const HEX_SZ_MIN             = 36;     // minimum hex size in pixels
+const HEX_SZ_MAX             = 64;     // maximum hex size in pixels
+const HEX_SZ_VIEWPORT_DIVISOR = 11;   // viewport width ÷ this = hex count per row → hex size
+const ICON_SIZE_SCALE        = 0.44;  // icon size as fraction of hex size
+const ARROW_SIZE_SCALE       = 0.62;  // arrow size as fraction of icon size
+const SHADOW_HORIZONTAL_SCALE = 0.36; // shadow ellipse horizontal scale
+const SHADOW_VERTICAL_SCALE  = 0.09;  // shadow ellipse vertical scale
+const HEAD_RADIUS_SCALE      = 1.05;  // character head radius scale for font size
+
+// Fog of war & visibility
+const FOG_INNER_ALPHA        = 0.78;  // alpha for inner fog ring (more visible)
+const SHADOW_ALPHA           = 0.72;  // shadow under character icons
+
+// WebSocket connection
+const WIFI_CREDS_SEND_DELAY_MS = 300; // delay before auto-sending WiFi creds
+const RECONNECT_DELAY_MS      = 2000; // delay before attempting reconnect
+
 // ── Move cooldown tracking (client-side estimate) ─────────────────
 let lastMoveSent   = 0;   // Date.now() of last move sent
-let moveCooldownMs = 220; // mirrors server MOVE_CD_MS × current terrain MC
+let moveCooldownMs = MOVE_COOLDOWN_BASE_MS; // mirrors server MOVE_CD_MS × current terrain MC
 
 // ── Smooth animation ─────────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 }));
@@ -57,13 +85,31 @@ const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 })
 // key: 'q_r_pid' → Date.now() when that player last stepped on that hex.
 // Used to drive the bright-red → black colour fade on canvas.
 const footprintTimestamps = new Map();
-const FOOTPRINT_FADE_MS   = 4000;  // ms to fully fade from light tan to dark transparent
 
 // ── Surveyed cells ────────────────────────────────────────────────
 // Cells revealed by the SURVEY action beyond normal vision radius.
 // Rendered at reduced opacity as scouted-but-not-directly-visible.
 // Cleared whenever the local player moves.
 const surveyedCells = new Set(); // 'q_r' keys
+
+// ── Image Loading Utility ─────────────────────────────────────────
+/**
+ * Factory function to create an Image object with load tracking.
+ * Sets up onload/onerror callbacks to track loading state.
+ * @param {string} src - Image URL to load
+ * @returns {Image} Image object with .loaded property (boolean)
+ */
+function createImageWithLoadTracking(src) {
+  const img = new Image();
+  img.loaded = false;
+  img.src = src;
+  img.onload = () => { img.loaded = true; };
+  img.onerror = () => {
+    img.loaded = false;
+    console.warn(`Failed to load image: ${src}`);
+  };
+  return img;
+}
 
 // ── Terrain hex images ────────────────────────────────────────────
 // Naming: /img/hex<Name><N>.png  (e.g. hexOpenScrub0.png, hexOpenScrub1.png)
@@ -76,19 +122,18 @@ const TERRAIN_IMG_NAMES = [
 ];
 const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
 
+/**
+ * Load terrain variant images for all terrain types.
+ * @param {Array<number>|null} vc - Variant counts per terrain type
+ */
 function loadTerrainVariants(vc) {
   for (let t = 0; t < NUM_TERRAIN; t++) {
-    const name  = TERRAIN_IMG_NAMES[t];
+    const name = TERRAIN_IMG_NAMES[t];
     const count = (vc && vc[t]) || 0;
-    terrainImgVariants[t] = [];
-    for (let v = 0; v < count; v++) {
-      const img  = new Image();
-      img.loaded = false;
-      img.src    = '/img/hex' + name + v + '.png';
-      img.onload  = () => { img.loaded = true; };
-      img.onerror = () => { img.loaded = false; };
-      terrainImgVariants[t][v] = img;
-    }
+    terrainImgVariants[t] = Array.from(
+      { length: count },
+      (_, v) => createImageWithLoadTracking(`/img/hex${name}${v}.png`)
+    );
   }
 }
 
@@ -96,16 +141,15 @@ function loadTerrainVariants(vc) {
 // Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
 let forrageAnimalImgs = [];
 
+/**
+ * Load forage animal images.
+ * @param {number} count - Number of forage animal variants
+ */
 function loadForrageAnimalImgs(count) {
-  forrageAnimalImgs = [];
-  for (let v = 0; v < count; v++) {
-    const img  = new Image();
-    img.loaded = false;
-    img.src    = '/img/forrageAnimal' + v + '.png';
-    img.onload  = () => { img.loaded = true; };
-    img.onerror = () => { img.loaded = false; };
-    forrageAnimalImgs[v] = img;
-  }
+  forrageAnimalImgs = Array.from(
+    { length: count },
+    (_, v) => createImageWithLoadTracking(`/img/forrageAnimal${v}.png`)
+  );
 }
 
 // ── Shelter images ────────────────────────────────────────────────
@@ -114,18 +158,17 @@ function loadForrageAnimalImgs(count) {
 const shelterImgs = [[], []];
 const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
 
+/**
+ * Load shelter variant images for both basic and improved types.
+ * @param {Array<number>|null} sv - Variant counts [basic_count, improved_count]
+ */
 function loadShelterVariants(sv) {
   for (let s = 0; s < 2; s++) {
     const count = (sv && sv[s]) || 0;
-    shelterImgs[s] = [];
-    for (let v = 0; v < count; v++) {
-      const img  = new Image();
-      img.loaded = false;
-      img.src    = '/img/' + SHELTER_IMG_NAMES[s] + v + '.png';
-      img.onload  = () => { img.loaded = true; };
-      img.onerror = () => { img.loaded = false; };
-      shelterImgs[s][v] = img;
-    }
+    shelterImgs[s] = Array.from(
+      { length: count },
+      (_, v) => createImageWithLoadTracking(`/img/${SHELTER_IMG_NAMES[s]}${v}.png`)
+    );
   }
 }
 
@@ -209,6 +252,10 @@ let socket;
 let serverHasWifiCreds = false;
 let pendingLobbyRedirect = false;  // true while downed-death pause is running
 
+/**
+ * Establish WebSocket connection to game server.
+ * Handles initial connection setup and auto-reconnection on close.
+ */
 function connect() {
   socket = new WebSocket(wsUrl);
   socket.onopen    = () => {
@@ -221,10 +268,13 @@ function connect() {
         const ssid = localStorage.getItem('wifi_ssid');
         if (ssid) send({ t: 'wifi', ssid, pass: localStorage.getItem('wifi_pass') ?? '' });
       }
-    }, 300);  // brief delay to receive 'saved' message first if server has creds
+    }, WIFI_CREDS_SEND_DELAY_MS);  // brief delay to receive 'saved' message first if server has creds
   };
-  socket.onclose   = () => { setStatus('Reconnecting...'); setTimeout(connect, 2000); };
-  socket.onerror   = () => {};
+  socket.onclose   = () => { setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS); };
+  socket.onerror   = (event) => {
+    console.error('WebSocket error:', event);
+    setStatus('Connection error — retrying...');
+  };
   socket.onmessage = e => handleMsg(JSON.parse(e.data));
 }
 function send(obj) {
@@ -266,9 +316,23 @@ function checkAutoRest() {
 }
 
 // ── Message handler ──────────────────────────────────────────────
+/**
+ * Main WebSocket message router. Processes all server messages and updates game state.
+ * Validates message structure and player IDs before updating state.
+ * @param {Object} msg - Message object from server with type field (t)
+ */
 function handleMsg(msg) {
+  if (!msg || !msg.t) {
+    console.warn('Invalid message: missing type field', msg);
+    return;
+  }
+
   switch (msg.t) {
     case 'asgn':
+      if (typeof msg.id !== 'number' || msg.id < 0 || msg.id >= MAX_PLAYERS) {
+        console.warn('Invalid assignment: bad player ID', msg.id);
+        break;
+      }
       myId = msg.id;
       uiPickPending.val = false;
       uiResting.val = false;  // clear any stale resting state from the previous survivor
@@ -276,7 +340,7 @@ function handleMsg(msg) {
       break;
 
     case 'lobby':
-      lobbyAvail.val    = msg.avail || [];
+      lobbyAvail.val    = Array.isArray(msg.avail) ? msg.avail : [];
       uiPickPending.val = false;
       if (!pendingLobbyRedirect) showCharSelect();  // suppressed during downed-death pause
       break;
@@ -284,8 +348,20 @@ function handleMsg(msg) {
     case 'sync':
       if (msg.id  !== undefined) myId = msg.id;
       if (msg.vr  !== undefined) myVisionR = msg.vr;
+      if (typeof msg.map !== 'string') {
+        console.warn('Sync message: missing or invalid map data');
+        break;
+      }
       parseMapFog(msg.map);
+      if (!Array.isArray(msg.p)) {
+        console.warn('Sync message: player array invalid');
+        break;
+      }
       msg.p.forEach(p => {
+        if (typeof p.id !== 'number' || p.id < 0 || p.id >= MAX_PLAYERS) {
+          console.warn('Sync: invalid player ID', p.id);
+          return;
+        }
         Object.assign(players[p.id], p);
         players[p.id].rest = !!p.rt;  // map rt → rest (mirrors 's' handler)
         if (p.on) { renderPos[p.id].q = p.q; renderPos[p.id].r = p.r; }
@@ -305,7 +381,15 @@ function handleMsg(msg) {
       break;
 
     case 's':
+      if (!Array.isArray(msg.p)) {
+        console.warn('State update: player array invalid');
+        break;
+      }
       msg.p.forEach((pd, i) => {
+        if (i < 0 || i >= MAX_PLAYERS) {
+          console.warn('State update: player index out of bounds', i);
+          return;
+        }
         const p = players[i];
         p.on = pd.on; p.q = pd.q; p.r = pd.r; p.sc = pd.sc;
         p.inv = pd.inv; p.sp = pd.sp;
@@ -343,7 +427,7 @@ function handleMsg(msg) {
         const _cell = gameMap[_me.r]?.[_me.q];
         if (_cell) {
           const _mc = TERRAIN[_cell.terrain]?.mc;
-          if (_mc && _mc !== 255) moveCooldownMs = 220 * _mc;
+          if (_mc && _mc !== 255) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * _mc;
         }
       }
       updateTerrainCard();
@@ -498,7 +582,7 @@ function handleEvent(ev) {
         players[ev.pid].water = ev.w;
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
-        if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = 0.72; }  // lock MP; snap displayMP; start night fade
+        if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT; }  // lock MP; snap displayMP; start night fade
         players[ev.pid].au    = false;  // new day: action slot restored
         players[ev.pid].rest = false;
         if (ev.pid === myId) {
@@ -723,20 +807,32 @@ const canvas = document.getElementById('hexCanvas');
 const ctx    = canvas.getContext('2d');
 let HEX_SZ   = 56;
 
+/**
+ * Recalculate hex size based on canvas viewport width.
+ * Ensures hex size stays within min/max range for readability.
+ */
 function resize() {
   const wrap = document.getElementById('canvas-wrap');
   canvas.width  = wrap.clientWidth;
   canvas.height = wrap.clientHeight;
-  HEX_SZ = Math.max(36, Math.min(64, Math.floor(canvas.width / 11)));
+  HEX_SZ = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(canvas.width / HEX_SZ_VIEWPORT_DIVISOR)));
 }
 window.addEventListener('resize', resize);
 resize();
 
-// ── Draw terrain icon centred in a hex ───────────────────────────
+/**
+ * Draw terrain icon centered in a hex cell.
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {number} cx - Center X coordinate
+ * @param {number} cy - Center Y coordinate
+ * @param {number} hexSz - Hex size in pixels
+ * @param {number} terrainIdx - Terrain type index
+ * @param {boolean} hasResource - Whether cell has a resource (affects positioning/opacity)
+ */
 function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
   const t = TERRAIN[terrainIdx];
   if (!t) return;
-  const sz   = Math.max(10, hexSz * 0.44);
+  const sz   = Math.max(10, hexSz * ICON_SIZE_SCALE);
   const offY = hasResource ? -hexSz * 0.42 : 0;
 
   ctx.save();
@@ -749,9 +845,20 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
   ctx.restore();
 }
 
-// ── Draw character/player icon ────────────────────────────────────
+/**
+ * Draw character/player icon on the hex grid.
+ * Includes head, torso, name label, and ground shadow.
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {number} cx - Center X coordinate
+ * @param {number} cy - Center Y coordinate
+ * @param {number} hexSz - Hex size in pixels
+ * @param {string} color - Character color (CSS color string)
+ * @param {string} label - Character label (1-2 chars)
+ * @param {boolean} isMe - Whether this is the current player (affects glow)
+ * @param {string} nm - Character name for label tooltip
+ */
 function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
-  const scale  = hexSz * 0.44;
+  const scale  = hexSz * ICON_SIZE_SCALE;
   const headR  = scale * 0.40;
   const headCY = cy - scale * 0.32;
   const torsoT = cy - scale * 0.00;
@@ -761,7 +868,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
   // Ground shadow
   ctx.save();
   ctx.beginPath();
-  ctx.ellipse(cx + 1, cy + scale * 1.0, scale * 0.36, scale * 0.09, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 1, cy + scale * 1.0, scale * SHADOW_HORIZONTAL_SCALE, scale * SHADOW_VERTICAL_SCALE, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.40)';
   ctx.fill();
   ctx.restore();
@@ -800,7 +907,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
     ctx.stroke();
     ctx.restore(); // end glow
 
-    const arrowSz  = Math.max(10, scale * 0.62);
+    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
     const arrowBot = headCY - headR - 3;
     ctx.save();
     ctx.fillStyle    = '#FFD700';
@@ -815,7 +922,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
   // Player number in head
   ctx.save();
   ctx.fillStyle    = isMe ? '#000' : '#EEE';
-  ctx.font         = `bold ${Math.max(7, Math.round(headR * 1.05))}px monospace`;
+  ctx.font         = `bold ${Math.max(7, Math.round(headR * HEAD_RADIUS_SCALE))}px monospace`;
   ctx.textAlign    = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, headCY + 0.5);
@@ -825,7 +932,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
   if (nm) {
     const tag      = nm.substring(0, 8).toUpperCase();
     const nameSz   = Math.max(8, Math.round(hexSz * 0.21));
-    const arrowSz  = Math.max(10, scale * 0.62);
+    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
     // Position: above the ▼ arrow for self, above head for others
     const topY     = isMe ? headCY - headR - arrowSz - 6 : headCY - headR - 4;
     ctx.save();
@@ -835,7 +942,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
     const tw = ctx.measureText(tag).width;
     // Dark pill backdrop
     const padX = 3, padY = 2;
-    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA})`;
     ctx.beginPath();
     ctx.roundRect(cx - tw / 2 - padX, topY - nameSz - padY, tw + padX * 2, nameSz + padY * 2, 2);
     ctx.fill();
@@ -940,7 +1047,7 @@ function render() {
         const t = TERRAIN[cell.terrain];
         ctx.fillStyle   = t?.fill || '#2A2010';
       } else if (dist === myVisionR + 1) {
-        ctx.globalAlpha = 0.78;  // inner fog ring — more visible
+        ctx.globalAlpha = FOG_INNER_ALPHA;  // inner fog ring — more visible
         ctx.fillStyle   = '#141008';
       } else if (dist === myVisionR + 2) {
         ctx.globalAlpha = 0.92;  // outer fog ring — subtly transparent
@@ -1094,7 +1201,7 @@ function render() {
   {
     // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting
     const mpTarget = uiResting.val ? 0 : uiMP.val;
-    const lerpRate = uiResting.val ? 0.003 : 0.08;
+    const lerpRate = uiResting.val ? RESTING_LERP_RATE : MOVING_LERP_RATE;
     displayMP += (mpTarget - displayMP) * lerpRate;
     const phase = getTimePhase(displayMP);
     ctx.save();
@@ -1111,7 +1218,7 @@ function render() {
     ctx.fillStyle = 'rgb(15,8,40)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
-    nightFade = Math.max(0, nightFade - 0.004); // ~3 s at 60fps
+    nightFade = Math.max(0, nightFade - NIGHT_FADE_DECAY_RATE); // ~3 s at 60fps
   }
 
   requestAnimationFrame(render);
