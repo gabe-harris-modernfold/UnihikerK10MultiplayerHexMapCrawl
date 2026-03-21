@@ -71,11 +71,9 @@ body::after{
   white-space:nowrap;flex:1;letter-spacing:var(--ls-d)
 }
 .conn-dot{color:var(--gold-hi);font-size:var(--fs-d);min-width:8px}
-.hud-stat{padding:0 4px;color:var(--txt-dim);letter-spacing:var(--ls-d)}
 .hud-clock{padding:0 5px;font-size:var(--fs-l);font-family:var(--stencil);color:var(--gold);letter-spacing:var(--ls-l);white-space:nowrap;transition:color 0.6s ease}
 .hud-clock.phase-dark{color:#6070A0}
 @media(max-width:440px){.hud-clock{display:none}}
-#hud-res{display:none;gap:6px;align-items:center}
 .hr-item{display:flex;align-items:center;gap:3px}
 .hr-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .hr-val{font-size:var(--fs-v);color:var(--gold-hi);font-weight:bold;min-width:14px;text-align:right}
@@ -115,7 +113,7 @@ body::after{
 
 /* ── Rest status bubbles ────────────────────────────────────── */
 #rest-bubbles{
-  position:fixed;top:36px;left:0;right:0;z-index:15;
+  position:fixed;top:var(--hud-h,36px);left:0;right:0;z-index:15;
   display:flex;flex-wrap:wrap;gap:5px;
   padding:4px 10px;
   background:rgba(4,3,2,0.82);border-bottom:1px solid var(--bdr);
@@ -219,13 +217,15 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────────── Hex Info Popup ───────────────────────*/
 #hex-info{
-  position:absolute;top:68px;right:8px;width:196px;
+  position:absolute;top:8px;right:8px;width:196px;
   background:var(--bg-card);border:1px solid var(--bdr-hi);
-  border-radius:2px;padding:12px;z-index:6;display:none;
-  max-height:calc(85dvh - 100px);overflow-y:auto;
+  border-radius:2px;padding:12px;z-index:7;display:none;
+  max-height:calc(85dvh - 24px);overflow-y:auto;
   box-shadow:0 4px 28px rgba(0,0,0,0.65)
 }
 #hex-info.open{display:block}
+/* Hide terrain card while expanded hex-info occupies the same slot */
+#terrain-card.expanded{visibility:hidden}
 
 /* ── Action panel modal overlay ──────────────────────────────── */
 #action-panel{
@@ -437,10 +437,6 @@ canvas{display:block;width:100%;height:100%}
   font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);
   color:var(--txt-dim);flex:1;text-align:right
 }
-.stat-bar-wrap{margin-top:10px}
-.stat-bar-label{display:flex;justify-content:space-between;font-size:var(--fs-d);color:var(--txt-dim);margin-bottom:3px}
-.stat-bar{height:6px;background:var(--bg-input);border-radius:2px;overflow:hidden;border:1px solid var(--bdr)}
-.stat-bar-fill{height:100%;border-radius:2px;transition:width 0.4s}
 .inv-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .inv-box{
   background:var(--bg-input);border:1px solid var(--bdr);
@@ -501,6 +497,7 @@ canvas{display:block;width:100%;height:100%}
   100%{background:var(--bg-panel);border-color:var(--bdr-mid);color:var(--gold)}
 }
 .dir-btn.on-cooldown{animation:cd-flash 0.3s ease-out}
+.dir-btn.blocked{opacity:0.28;color:var(--bdr);cursor:not-allowed;pointer-events:none}
 
 /*──────────────────────────── Overlays ─────────────────────────*/
 #connect-overlay{
@@ -684,11 +681,6 @@ canvas{display:block;width:100%;height:100%}
 .tr-stats{font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
 .tr-vis-hi {color:#448866}
 .tr-vis-pen{color:#A05030}
-.res-ref-list{display:flex;flex-direction:column;gap:5px}
-.res-ref-row{display:flex;align-items:center;gap:8px}
-.res-ref-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.res-ref-name{color:var(--gold);min-width:70px;font-size:var(--fs-d)}
-.res-ref-desc{color:var(--txt-dim);font-size:var(--fs-d)}
 .settings-row{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--bdr)}
 .settings-row:last-child{border-bottom:none;margin-bottom:0}
 .settings-label{
@@ -851,10 +843,6 @@ canvas{display:block;width:100%;height:100%}
 .dot-med  {background:#7A1E1E}
 .dot-scrap{background:#5C5448}
 
-/*──────────── Stamina bar gradient states ───────────────────────*/
-.stat-bar-fill{background:linear-gradient(90deg,#3A6030,#5A8828)}
-.stat-bar-fill[data-level="mid"]{background:linear-gradient(90deg,#A07800,#C09010)}
-.stat-bar-fill[data-level="low"]{background:linear-gradient(90deg,#8A2000,#A03810)}
 
 /*──────────── Server-full retry button ─────────────────────────*/
 .server-full-retry-btn{
@@ -1109,6 +1097,10 @@ canvas{display:block;width:100%;height:100%}
   font-size:var(--fs-l);letter-spacing:var(--ls-l);color:var(--gold);
   font-family:var(--stencil);margin-left:8px;opacity:0.7
 }
+/* ── K10 sliders ────────────────────────────────────────────────── */
+.settings-slider-row{display:flex;align-items:center;gap:8px;flex:1}
+.settings-slider{flex:1;accent-color:var(--gold);cursor:pointer}
+.settings-slider-val{min-width:48px;text-align:right;font-size:var(--fs-d);color:var(--gold)}
 /* ── Regen / danger zone settings ──────────────────────────────── */
 .settings-section-divider{
   border:none;border-top:1px solid var(--bdr);margin:14px 0 10px

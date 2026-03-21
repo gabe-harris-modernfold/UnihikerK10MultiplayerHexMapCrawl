@@ -22,14 +22,12 @@ const uiResolve     = van.state(3);
 const uiMP          = van.state(6);
 // §6.2 Radiation track
 const uiRad         = van.state(0);
-// §6.4 Exposure markers
-const uiColdExp     = van.state(0);
-const uiHeatExp     = van.state(0);
 // §5 Action tracking
 const uiActUsed     = van.state(false);
 const uiResting     = van.state(false);  // true after REST until dawn
 const uiHasCond     = van.state(false);  // true when player has treatable conditions
-let maxMP = 6;  // set from dawnMP at EVT_DAWN; personal day-length for time-of-day clock
+let maxMP = 6;           // plain copy used by non-reactive rendering (time-of-day clock)
+const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
@@ -59,7 +57,7 @@ const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 })
 // key: 'q_r_pid' → Date.now() when that player last stepped on that hex.
 // Used to drive the bright-red → black colour fade on canvas.
 const footprintTimestamps = new Map();
-const FOOTPRINT_FADE_MS   = 4000;  // ms to fully fade from red to near-black
+const FOOTPRINT_FADE_MS   = 4000;  // ms to fully fade from light tan to dark transparent
 
 // ── Surveyed cells ────────────────────────────────────────────────
 // Cells revealed by the SURVEY action beyond normal vision radius.
@@ -137,7 +135,7 @@ let myId = -1;
 let gameMap = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(null));
 let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
-  inv: [0,0,0,0,0], st: 100, pr: 2, sr: 2, sp: 0,
+  inv: [0,0,0,0,0], sp: 0, st: 0,
   // Wayfarer fields
   ll: 7, food: 6, water: 6, fat: 0, rad: 0, res: 3,
   arch: 0, sb: 0, is: 8,
@@ -299,10 +297,11 @@ function handleMsg(msg) {
       hideConnectOverlay();
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
       updateSidebar();
-      if (myId >= 0 && players[myId]?.mp > 0 && maxMP <= 0) maxMP = players[myId].mp;
+      if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
       if (myId >= 0) displayMP = players[myId].mp ?? 6;
       updateTerrainCard();
       updateRestBubbles();
+      updateDirButtons();
       break;
 
     case 's':
@@ -317,6 +316,7 @@ function handleMsg(msg) {
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
         if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
         if (pd.au  !== undefined) p.au  = !!pd.au;  // action used this day
+        if (pd.vm  !== undefined) p.vm  = pd.vm;    // valid move bitmask
         if (pd.rt  !== undefined) {
           p.rest = !!pd.rt;
           if (i === myId) uiResting.val = !!pd.rt;
@@ -326,6 +326,7 @@ function handleMsg(msg) {
       updateSidebar();
       updateTerrainCard();
       updateRestBubbles();
+      updateDirButtons();
       break;
 
     case 'vis':
@@ -497,7 +498,7 @@ function handleEvent(ev) {
         players[ev.pid].water = ev.w;
         players[ev.pid].ll    = ev.ll;
         players[ev.pid].mp    = ev.mp;
-        if (ev.pid === myId) { maxMP = ev.mp; displayMP = ev.mp; nightFade = 0.72; }  // lock MP; snap displayMP; start night fade
+        if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = 0.72; }  // lock MP; snap displayMP; start night fade
         players[ev.pid].au    = false;  // new day: action slot restored
         players[ev.pid].rest = false;
         if (ev.pid === myId) {
@@ -585,10 +586,6 @@ function handleEvent(ev) {
         if (sp && gameMap[sp.r]?.[sp.q] !== undefined) {
           gameMap[sp.r][sp.q].shelter = ev.cnd;
         }
-      // Track scrap delta for all actions (SCAV gives +1, SHELTER spends -1/-2)
-      if (ev.sd !== undefined && ev.sd !== 0) {
-        players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
-      }
       } else if (ev.pid === myId) {
         const toastMsg =
           ev.out === AO_BLOCKED  ? `\u2297 ${actNm}: not available` :
@@ -596,6 +593,10 @@ function handleEvent(ev) {
           ev.out === AO_PARTIAL  ? `\u25D1 ${actNm}: partial success` :
                                    `\u25CB ${actNm}: failed`;
         showToast(toastMsg);
+      }
+      // Apply scrap delta for ALL actions (SCAV gives +1, SHELTER spends -1/-2)
+      if (ev.sd !== undefined && ev.sd !== 0) {
+        players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
       }
       // Narrate action result for accessibility / AI agents
       if (ev.pid === myId) {
@@ -648,9 +649,10 @@ function handleEvent(ev) {
 }
 
 // ── Map decode ──────────────────────────────────────────────────
-// New encoding: 2 bytes per cell (4 hex chars)
-//   terrainByte = 0x00-0x0A (terrain index) or 0xFF (fog)
-//   dataByte    = (footprints[0-5])|(shelter<<6)  shelter: 0=none, 1=shelter, 2=improved shelter
+// 3 bytes per cell (6 hex chars):
+//   TT = terrain byte (0x00-0x0B) or 0xFF (fog)
+//   DD = bits 0-5: footprint bitmask, bit 6: shelter level
+//   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   return {
@@ -1010,18 +1012,17 @@ function render() {
           const fx = cx + Math.cos(angle) * radius;
           const fy = cy + Math.sin(angle) * radius;
 
-          // t=0 → just stamped (bright red); t=1 → fully faded (near black)
+          // t=0 → just stamped (light tan); t=1 → fully faded (dark transparent)
           const ts = footprintTimestamps.get(`${mapQ}_${mapR}_${fpid}`);
           const t  = ts ? Math.min(1, (now - ts) / FOOTPRINT_FADE_MS) : 1;
 
-          // sepia(1)+hue-rotate(330deg) shifts the emoji palette into the red spectrum.
-          // saturate and brightness interpolate from vivid/bright → dim/dark.
-          const sat = (10 * (1 - t)).toFixed(1);
-          const bri = (1.8 * (1 - t) + 0.06).toFixed(2);
+          // sepia(1) keeps the warm tan hue naturally; brightness fades light→dark.
+          const bri = (1.5 * (1 - t) + 0.12).toFixed(2);  // 1.62 fresh → 0.12 old
+          const sat = (1.4 * (1 - t) + 0.2).toFixed(2);   // 1.6  fresh → 0.2  old
 
           ctx.save();
-          ctx.filter     = `sepia(1) hue-rotate(330deg) saturate(${sat}) brightness(${bri})`;
-          ctx.globalAlpha = 0.45;
+          ctx.filter      = `sepia(1) saturate(${sat}) brightness(${bri})`;
+          ctx.globalAlpha = 0.82 * (1 - t) + 0.04;  // 0.86 fresh → 0.04 old
           ctx.font        = `${footprintSize}px monospace`;
           ctx.textAlign   = 'center';
           ctx.textBaseline = 'middle';

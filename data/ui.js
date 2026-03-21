@@ -21,9 +21,9 @@ function populateHexInfo(q, r, cell) {
   document.getElementById('hi-shelter').textContent =
     shelterLabels[cell.shelter] || 'None';
 
-  // Vision modifier
-  const visLabels = ['PENALTY', 'STANDARD', 'HIGH +2 hex'];
-  document.getElementById('hi-vis').textContent = visLabels[t.vis + 1] || 'STANDARD';
+  // Vision modifier — t.vis range is -3..+2; shift by 3 for array index
+  const visLabels = ['BLIND (vis 0)', 'MASKED (vis limited)', 'LOW (−1 hex)', 'STANDARD', 'HIGH (+1 hex)', 'HIGH (+2 hex)'];
+  document.getElementById('hi-vis').textContent = visLabels[t.vis + 3] ?? 'STANDARD';
 
   // Hazard
   document.getElementById('hi-hazard').textContent = t.hazard || 'None';
@@ -61,6 +61,16 @@ function populateHexInfo(q, r, cell) {
   }
 }
 
+// Keep --hud-h in sync so #rest-bubbles always clears the real HUD height,
+// even when its flex items wrap onto a second row on narrow screens.
+(function () {
+  const hud = document.getElementById('hud');
+  const update = () =>
+    document.documentElement.style.setProperty('--hud-h', hud.offsetHeight + 'px');
+  update();
+  new ResizeObserver(update).observe(hud);
+})();
+
 document.getElementById('terrain-card').addEventListener('click', () => {
   if (myId < 0) return;
   const me   = players[myId];
@@ -73,9 +83,6 @@ document.getElementById('terrain-card').addEventListener('click', () => {
     card.classList.remove('expanded');
   } else {
     populateHexInfo(me.q, me.r, cell);
-    const cardRect = card.getBoundingClientRect();
-    const wrapRect = document.getElementById('canvas-wrap').getBoundingClientRect();
-    info.style.top = (cardRect.bottom - wrapRect.top + 4) + 'px';
     info.classList.add('open');
     card.classList.add('expanded');
   }
@@ -102,8 +109,6 @@ function updateSidebar() {
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiColdExp.val = me.cx   ?? 0;
-  uiHeatExp.val = me.hx   ?? 0;
   uiActUsed.val = me.au   ?? false;
   uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x0C) !== 0);
   uiPlayers.val = players
@@ -113,6 +118,19 @@ function updateSidebar() {
     .sort((a, b) => b.sc - a.sc)
     .map((entry, rank) => ({ ...entry, rank: rank + 1 }));
   updateClock();
+}
+
+// ── Direction button blocked state ──────────────────────────────
+function updateDirButtons() {
+  if (myId < 0) return;
+  const vm = players[myId].vm ?? 0x3F; // default: all passable if not yet received
+  for (let d = 0; d < 6; d++) {
+    const btn = document.getElementById(`dir-btn-${d}`);
+    if (!btn) continue;
+    const blocked = !(vm & (1 << d));
+    btn.classList.toggle('blocked', blocked);
+    btn.title = blocked ? 'Blocked (impassable or unavailable)' : '';
+  }
 }
 
 // ── Narrative time-of-day clock ──────────────────────────────────
@@ -300,6 +318,11 @@ function move(dir) {
     showToast('\u26A0 Exhausted \u2014 wait for dawn');
     return;
   }
+  const vm = myId >= 0 ? (players[myId].vm ?? 0x3F) : 0x3F;
+  if (!(vm & (1 << dir))) {
+    showToast('\u26D4 Impassable \u2014 direction blocked');
+    return;
+  }
   const now = Date.now();
   if (now - lastMoveSent < moveCooldownMs - 30) {
     document.querySelectorAll('.dir-btn[data-dir]').forEach(b => {
@@ -471,6 +494,8 @@ function initCharSheetBindings() {
   function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count = 6) {
     const el = document.getElementById(containerId);
     if (!el) return;
+    // Trim excess boxes when count decreases (e.g. maxMP changes between days)
+    while (el.children.length > count) el.removeChild(el.lastChild);
     while (el.children.length < count) {
       const b = document.createElement('div');
       b.className = 'track-box';
@@ -491,8 +516,6 @@ function initCharSheetBindings() {
   // LL track (dossier)
   van.derive(() => {
     renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
-    const mpLabel = document.getElementById('cs-mp-label');
-    if (mpLabel) mpLabel.textContent = `MP: ${uiMP.val}`;
   });
 
   // LL mini-track (HUD)
@@ -504,7 +527,7 @@ function initCharSheetBindings() {
 
   // MP mini-track (HUD) — boxes match player's actual maxMP for the day
   van.derive(() => {
-    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, maxMP || 6);
+    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, uiMaxMP.val || 6);
   });
 
   // Food track (thresholds at boxes 4, 2)
@@ -568,32 +591,6 @@ function initCharSheetBindings() {
     }
   });
 
-  // §6.4 Exposure markers
-  van.derive(() => {
-    const cx        = uiColdExp.val;
-    const hx        = uiHeatExp.val;
-    const coldBadge = document.getElementById('cs-cold-badge');
-    const heatBadge = document.getElementById('cs-heat-badge');
-    const coldVal   = document.getElementById('cs-cold-val');
-    const heatVal   = document.getElementById('cs-heat-val');
-    const effects   = document.getElementById('cs-exp-effects');
-    const row       = document.getElementById('cs-exposure-row');
-    if (coldVal)   coldVal.textContent   = String(cx);
-    if (heatVal)   heatVal.textContent   = String(hx);
-    if (coldBadge) coldBadge.className   = 'exp-badge cold' + (cx > 0 ? ' active' : '');
-    if (heatBadge) heatBadge.className   = 'exp-badge heat' + (hx > 0 ? ' active' : '');
-    if (effects) {
-      const parts = [];
-      if (cx >= 1) parts.push('\u2744End\u22121');
-      if (cx >= 2) parts.push('Nav\u22121');
-      if (cx >= 3) parts.push('+Fat/Dawn');
-      if (hx >= 1) parts.push('+H\u2082O/Dawn');
-      if (hx >= 2) parts.push('For\u22121');
-      if (hx >= 3) parts.push('+Fat/Dawn');
-      effects.textContent = parts.length ? '\u00a0' + parts.join(' ') : '';
-    }
-    if (row) row.style.display = (cx > 0 || hx > 0) ? '' : 'none';
-  });
 }
 
 function initMapBindings() {
@@ -637,6 +634,7 @@ function initActionPanel() {
   const actionPanel     = document.getElementById('action-panel');
   const actionBtnList   = document.getElementById('action-btn-list');
   const actionStatusBar = document.getElementById('action-status-bar');
+  let terrName = '';  // hoisted so closeActionPanel can read the last-opened terrain name
 
   // Water MP stepper
   let waterMpVal = 1;
@@ -730,8 +728,8 @@ function initActionPanel() {
       return;
     }
 
-    // Terrain context for action panel header
-    const terrName   = (terr != null && terr <= 10) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    // Terrain context for action panel header (also read by closeActionPanel)
+    terrName   = (terr != null && terr <= 10) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
     const forageHere = terr != null && TERRAIN_FORAGE_DN[terr] > 0;
     const scavHere   = terr != null && TERRAIN_SALVAGE_DN[terr] > 0;
     const waterHere  = terr != null && TERRAIN_HAS_WATER[terr] > 0;
@@ -890,6 +888,20 @@ function initMenuSystem() {
       const passInp = document.getElementById('wifi-pass');
       if (ssidInp) ssidInp.value = localStorage.getItem('wifi_ssid') || '';
       if (passInp) passInp.value = localStorage.getItem('wifi_pass') || '';
+      const volSlider = document.getElementById('k10-vol-slider');
+      const ledSlider = document.getElementById('k10-led-slider');
+      if (volSlider) {
+        const v = parseInt(localStorage.getItem('k10_audioVol') ?? '5');
+        volSlider.value = v;
+        const lbl = document.getElementById('k10-vol-val');
+        if (lbl) lbl.textContent = v === 0 ? '0 (mute)' : String(v);
+      }
+      if (ledSlider) {
+        const b = parseInt(localStorage.getItem('k10_ledBright') ?? '5');
+        ledSlider.value = b;
+        const lbl = document.getElementById('k10-led-val');
+        if (lbl) lbl.textContent = b === 0 ? '0 (off)' : String(b);
+      }
     }, 0);
   });
 
@@ -1327,6 +1339,49 @@ function initMenuSystem() {
       md({ class: 'settings-row' },
         mp({ class: 'settings-label' }, 'Connection'),
         mp({ class: 'settings-val' }, () => uiConn.val)
+      ),
+
+      sec('K10 Hardware',
+        md({ class: 'settings-row' },
+          mp({ class: 'settings-label' }, 'K10 Volume'),
+          md({ class: 'settings-slider-row' },
+            minput({
+              id: 'k10-vol-slider', type: 'range', min: '0', max: '9', step: '1',
+              value: localStorage.getItem('k10_audioVol') ?? '5',
+              class: 'settings-slider',
+              oninput: e => {
+                const v = parseInt(e.target.value);
+                const lbl = document.getElementById('k10-vol-val');
+                if (lbl) lbl.textContent = v === 0 ? '0 (mute)' : String(v);
+                localStorage.setItem('k10_audioVol', v);
+                send({ t: 'settings', audioVol: v, ledBright: parseInt(document.getElementById('k10-led-slider')?.value ?? '5') });
+              }
+            }),
+            ms({ id: 'k10-vol-val', class: 'settings-slider-val' },
+              (() => { const v = parseInt(localStorage.getItem('k10_audioVol') ?? '5'); return v === 0 ? '0 (mute)' : String(v); })()
+            )
+          )
+        ),
+        md({ class: 'settings-row' },
+          mp({ class: 'settings-label' }, 'K10 LED Brightness'),
+          md({ class: 'settings-slider-row' },
+            minput({
+              id: 'k10-led-slider', type: 'range', min: '0', max: '9', step: '1',
+              value: localStorage.getItem('k10_ledBright') ?? '5',
+              class: 'settings-slider',
+              oninput: e => {
+                const v = parseInt(e.target.value);
+                const lbl = document.getElementById('k10-led-val');
+                if (lbl) lbl.textContent = v === 0 ? '0 (off)' : String(v);
+                localStorage.setItem('k10_ledBright', v);
+                send({ t: 'settings', audioVol: parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: v });
+              }
+            }),
+            ms({ id: 'k10-led-val', class: 'settings-slider-val' },
+              (() => { const v = parseInt(localStorage.getItem('k10_ledBright') ?? '5'); return v === 0 ? '0 (off)' : String(v); })()
+            )
+          )
+        )
       ),
 
       sec('WiFi Network',

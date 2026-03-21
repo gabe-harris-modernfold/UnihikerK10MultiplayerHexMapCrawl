@@ -93,10 +93,10 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     // Basic / legacy fields
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"id\":%d,\"on\":%d,\"q\":%d,\"r\":%d,\"sc\":%d,\"nm\":\"%s\","
-      "\"inv\":[%d,%d,%d,%d,%d],\"st\":%d,\"sp\":%d,",
+      "\"inv\":[%d,%d,%d,%d,%d],\"sp\":%d,",
       i, p.connected ? 1 : 0, p.q, p.r, p.score, p.name,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
-      p.stamina, p.steps);
+      p.steps);
     // Wayfarer vitals
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
@@ -127,14 +127,14 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d},"
-    "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
+    "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
     "\"sv\":[%d,%d],"
     "\"fa\":%d}",
     G.threatClock, G.dayCount, G.sharedFood, G.sharedWater,
-    terrainVariantCount[0], terrainVariantCount[1], terrainVariantCount[2],
-    terrainVariantCount[3], terrainVariantCount[4], terrainVariantCount[5],
-    terrainVariantCount[6], terrainVariantCount[7], terrainVariantCount[8],
-    terrainVariantCount[9], terrainVariantCount[10],
+    terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
+    terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
+    terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
+    terrainVariantCount[9],  terrainVariantCount[10], terrainVariantCount[11],
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount);
   xSemaphoreGive(G.mutex);
@@ -147,7 +147,7 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
 static void broadcastState() {
-  static char buf[1500];  // 6 players × ~175 chars + header/footer ~80
+  static char buf[1600];  // 6 players × ~185 chars + header/footer ~80
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
 
   int pos = snprintf(buf, sizeof(buf),
@@ -158,13 +158,13 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
-      "\"sb\":%d,\"mp\":%d,\"fth\":%d,\"wth\":%d,\"au\":%d}",
+      "\"sb\":%d,\"mp\":%d,\"fth\":%d,\"wth\":%d,\"au\":%d,\"vm\":%d}",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
       p.statusBits, (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
-      p.actUsed ? 1 : 0);
+      p.actUsed ? 1 : 0, (int)computeValidMoves(i));
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d}}",
@@ -323,19 +323,27 @@ static void drainEvents() {
         ws.textAll(buf, len);
         break;
 
-      case EVT_JOINED:
+      case EVT_JOINED: {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"join\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
+        // K10 event log + player-join melody
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d joined", (int)ev.pid);
+          k10LogAdd(lb); }
+        k10PlayMelody(ENTERTAINER);
         break;
+      }
 
-      case EVT_LEFT:
+      case EVT_LEFT: {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d left", (int)ev.pid);
+          k10LogAdd(lb); }
         break;
+      }
 
-      case EVT_DAWN:
+      case EVT_DAWN: {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
@@ -346,7 +354,13 @@ static void drainEvents() {
           (int)ev.dawnFth, (int)ev.dawnWth,
           (int)ev.radR, (int)ev.dawnFat, (int)ev.dawnExpD);
         ws.textAll(buf, len);
+        // K10 event log — only once per day (pid==0 guards double-logging for 6-player dawn)
+        if (ev.pid == 0) {
+          char lb[34]; snprintf(lb, sizeof(lb), "Day %d dawn", (int)ev.dawnDay);
+          k10LogAdd(lb);
+        }
         break;
+      }
 
       case EVT_DUSK:
         len = snprintf(buf, sizeof(buf),
@@ -358,7 +372,14 @@ static void drainEvents() {
         ws.textAll(buf, len);
         break;
 
-      case EVT_ACTION:
+      case EVT_ACTION: {
+        // K10 event log — brief action summary
+        static const char* ACT_SHORT[8] = {"FORAGE","WATER","?","SCAV","SHELTER","TREAT","SURVEY","REST"};
+        const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d: %s%s",
+            (int)ev.pid, aShort, ev.actOut ? " OK" : " FAIL");
+          k10LogAdd(lb); }
+      }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
           "\"mp\":%d,\"ll\":%d,\"fat\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
@@ -591,7 +612,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     const char* ap = strstr(data, "\"arch\""); if (!ap) return;
     const char* av = strchr(ap + 6, ':');      if (!av) return;
     int arch = atoi(av + 1);
-    if (arch < 0 || arch >= MAX_PLAYERS) return;
+    if (arch < 0 || arch >= NUM_ARCHETYPES) return;
 
     // Verify client is in the lobby
     bool inLobby = false;
@@ -604,7 +625,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
     bool assigned = false;
     struct { int16_t q, r; uint8_t terrain; int8_t visLvl; int visR, attempts, connCount;
-             uint8_t perc, str; char name[12]; } snap = {};
+             char name[12]; } snap = {};
 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
       Player& p = G.players[arch];
@@ -657,7 +678,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         memset(p.invType,     0, sizeof(p.invType));
         memset(p.invQty,      0, sizeof(p.invQty));
         memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
-        p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0;
         p.fThreshBelow = 0; p.wThreshBelow = 0;
         p.movesLeft    = (int8_t)effectiveMP(arch);
         p.actUsed      = false;
@@ -665,10 +685,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.resting      = false;  // defensive: clear any stale resting flag from previous session
         p.radClean     = true;
 
-        p.stamina    = 100;
-        uint32_t rnd = esp_random();
-        p.perception = 1 + (uint8_t)(rnd % 3);
-        p.strength   = 1 + (uint8_t)((rnd >> 8) % 3);
         G.connectedCount++;
 
         // Mark starting hex with player footprint
@@ -683,7 +699,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         snap.visR    = (snap.visLvl <= -3) ? 0 : (snap.visLvl == -2) ? 1 : (snap.visLvl == -1) ? 2 :
                        (snap.visLvl == 0) ? VISION_R : (snap.visLvl == 1) ? VISION_R+1 : VISION_R+2;
         snap.attempts    = attempts;
-        snap.perc        = p.perception; snap.str = p.strength;
         snap.connCount   = G.connectedCount;
         memcpy(snap.name, p.name, 12);
         assigned = true;
@@ -701,8 +716,8 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       Serial.printf("[CONNECT] Slot:%d (%s) client:#%lu | spawn:(%2d,%2d) %s [%s] visR:%d attempts:%d\n",
         arch, ARCHETYPE_NAME[arch], (unsigned long)client->id(),
         snap.q, snap.r, T_NAME[snap.terrain], VIS_LABEL[snap.visLvl + 3], snap.visR, snap.attempts);
-      Serial.printf("[CONNECT]   name:\"%s\" | perc:%d str:%d | players now:%d/%d\n",
-        snap.name, snap.perc, snap.str, snap.connCount, MAX_PLAYERS);
+      Serial.printf("[CONNECT]   name:\"%s\" | players now:%d/%d\n",
+        snap.name, snap.connCount, MAX_PLAYERS);
 
       char buf[48];
       snprintf(buf, sizeof(buf), "{\"t\":\"asgn\",\"id\":%d}", arch);
@@ -828,10 +843,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       slot = findSlot(client->id());
       if (slot >= 0) {
         res = resolveCheck(slot, (uint8_t)sk, (uint8_t)dn, (uint8_t)bonus);
-        Player& p    = G.players[slot];
-        p.chkSk      = (uint8_t)sk;
-        p.chkDn      = (uint8_t)dn;
-        p.chkBonus   = (uint8_t)bonus;
       }
       xSemaphoreGive(G.mutex);
     }
@@ -897,6 +908,19 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     }
     if (survLen > 0)
       client->text(survBuf, (size_t)survLen);
+
+  } else if (strncmp(tv, "settings", (size_t)(te - tv)) == 0) {
+    // Settings: {"t":"settings","audioVol":N,"ledBright":N}
+    const char* avp = strstr(data, "\"audioVol\"");
+    if (avp) { const char* avv = strchr(avp + 10, ':'); if (avv) {
+      int v = atoi(avv + 1);
+      if (v >= 0 && v <= 9) s_audioVol = (uint8_t)v;
+    }}
+    const char* lbp = strstr(data, "\"ledBright\"");
+    if (lbp) { const char* lbv = strchr(lbp + 11, ':'); if (lbv) {
+      int b = atoi(lbv + 1);
+      if (b >= 0 && b <= 9) s_ledBright = (uint8_t)b;
+    }}
   }
 }
 

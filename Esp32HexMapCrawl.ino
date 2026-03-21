@@ -19,17 +19,18 @@
  *                      High CLUMP% → that terrain clusters into organic blobs/lines.
  *            Phase 3 = resource placement (terrain-specific loot tables).
  *
- * Encoding : 2 bytes / cell (4 hex chars):
- *              Byte 1 = terrain (0x00-0x0A) or 0xFF (fog)
- *              Byte 2 = (resource<<2)|(amount&3)|(shelter<<5), or 0x00 if masked/fogged
+ * Encoding : 3 bytes / cell (6 hex chars):
+ *              TT = terrain (0x00-0x0B) or 0xFF (fog)
+ *              DD = bits 0-5: footprint bitmask; bit 6: shelter level
+ *              VV = high nibble: resource type (0-5); low nibble: terrain variant (0-15)
  *
- * Vis-disk : {"t":"vis","vr":N,"q":QQ,"r":RR,"cells":"QQRRTTDD..."}
- *              QQ=col, RR=row, TT=terrain, DD=data  (2 hex chars each)
+ * Vis-disk : {"t":"vis","vr":N,"q":QQ,"r":RR,"cells":"QQRRTTDDVV..."}
+ *              QQ=col, RR=row, TT=terrain, DD=data, VV=variant (2 hex chars each = 10 total/cell)
  *
- * 11 Terrain types (index 0-10):
+ * 12 Terrain types (index 0-11):
  *   0 Open Scrub    MC=1  SV=0  vis=STANDARD
  *   1 Ash Dunes     MC=2  SV=0  vis=STANDARD
- *   2 Rust Forest   MC=2  SV=1  vis=PENALTY (resources masked)
+ *   2 Rust Forest   MC=2  SV=1  vis=BLIND (resources masked)
  *   3 Marsh         MC=3  SV=0  vis=STANDARD
  *   4 Broken Urban  MC=2  SV=1  vis=PENALTY
  *   5 Flooded Ruins MC=3  SV=2  vis=STANDARD
@@ -38,6 +39,7 @@
  *   8 Mountain      MC=4  SV=2  vis=STANDARD
  *   9 Settlement    MC=1  SV=3  vis=STANDARD
  *  10 Nuke Crater   MC=∞  SV=0  vis=STANDARD (impassable)
+ *  11 River Channel MC=2  SV=0  vis=STANDARD (path-placed only)
  *
  * WiFi: AP mode, SSID "WASTELAND", IP 192.168.4.1
  *
@@ -283,16 +285,6 @@ struct Player {
   uint8_t  invType[INV_SLOTS_MAX];  // item type per slot (0 = empty)
   uint8_t  invQty[INV_SLOTS_MAX];   // quantity per slot
 
-  // ── Legacy stats (kept for debug; may evolve in later phases) ─
-  uint8_t  stamina;     // 0–100
-  uint8_t  perception;  // 1–5
-  uint8_t  strength;    // 1–5
-
-  // ── Skill check state ────────────────────────────────────────
-  uint8_t  chkSk;       // skill index of last check (SK_* constant)
-  uint8_t  chkDn;       // DN of last check
-  uint8_t  chkBonus;    // item bonus applied to last check
-
   // ── Dawn / resource-economy tracking (§4) ───────────────────
   uint8_t  fThreshBelow;  // bitmask: bit0=F crossed below 4, bit1=F crossed below 2
   uint8_t  wThreshBelow;  // bitmask: bit0=W crossed below 5, bit1=W crossed below 3, bit2=W attempted below 1
@@ -370,7 +362,6 @@ struct GameState {
 
   // ── Threat Clock (shared, all modes) ─────────────────────────
   uint8_t  threatClock;   // 0–20
-  uint8_t  tcTriggered;   // bitmask: bit0=T5 bit1=T9 bit2=T13 bit3=T17
   bool     crisisState;   // true once TC reaches 17
 
   // ── Shared resource pools ─────────────────────────────────────
@@ -427,6 +418,29 @@ static unsigned long  lastStatusMs  = 0;
 static unsigned long  lastScreenMs  = 0;
 static constexpr uint32_t SCREEN_MS  = 2000;  // screen refresh interval
 static UNIHIKER_K10   k10;
+static Music          k10Music;              // K10 speaker/buzzer
+
+// ── K10 multi-screen state ─────────────────────────────────────────────────
+#define K10_LOG_SIZE 15
+struct K10LogEntry { char text[34]; uint32_t ms; };
+static K10LogEntry  k10Log[K10_LOG_SIZE];
+static uint8_t      k10LogHead  = 0;
+static uint8_t      k10LogCount = 0;
+static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
+
+static uint8_t  k10Screen   = 0;          // 0=players 1=events 2=threat 3=resources
+static uint8_t  k10GestCnt  = 0;          // debounce: consecutive ticks same gesture
+static uint8_t  k10GestLast = GestureNone;
+static bool     k10BtnBLast = false;
+
+static uint32_t k10TeamScore   = 0;       // cached team score for milestone detection
+static uint32_t k10LedPulse    = 0;       // LED 0 pulse end time (millis)
+static uint8_t  k10PulseR = 0, k10PulseG = 0, k10PulseB = 0;
+static uint8_t  k10PrevTCLevel = 0;       // previous TC threshold level (for audio)
+static bool     k10ResCritPrev = false;   // previous resource-critical state (for audio)
+
+static uint8_t  s_audioVol   = 5;         // 0=mute, 1–9 (settings page)
+static uint8_t  s_ledBright  = 5;         // 0–9 LED brightness (settings page)
 
 // ── LED flash (game events → RGB LEDs) ─────────────────────────────────────
 static volatile uint8_t  g_ledR = 0, g_ledG = 0, g_ledB = 0;
@@ -437,6 +451,27 @@ void ledFlash(uint8_t r, uint8_t g, uint8_t b) {
   g_ledR = r; g_ledG = g; g_ledB = b;
   g_ledEndMs = millis() + 300;
   k10.rgb->write(-1, r, g, b);
+}
+
+// ── K10 event log (thread-safe ring buffer) ────────────────────────────────
+static void k10LogAdd(const char* text) {
+  taskENTER_CRITICAL(&k10LogMux);
+  uint8_t idx;
+  if (k10LogCount < K10_LOG_SIZE) {
+    idx = (k10LogHead + k10LogCount) % K10_LOG_SIZE;
+    k10LogCount++;
+  } else {
+    idx = k10LogHead;
+    k10LogHead = (k10LogHead + 1) % K10_LOG_SIZE;
+  }
+  strlcpy(k10Log[idx].text, text, 34);
+  k10Log[idx].ms = millis();
+  taskEXIT_CRITICAL(&k10LogMux);
+}
+
+// Play a melody only if audio is not muted.
+static void k10PlayMelody(Melodies m) {
+  if (s_audioVol > 0) k10Music.playMusic(m, OnceInBackground);
 }
 
 AsyncWebServer server(80);
@@ -942,9 +977,10 @@ static void generateMap() {
 }
 
 // ── Map encode: fog masked ─────────────────────────────────────
-// 2 bytes / cell (4 hex chars):
-//   TT = terrain byte (0x00-0x0A) or 0xFF if fogged
-//   DD = (resource<<2)|(amount&3)|(shelter<<5), or 0x00 if fogged or maskRes
+// 3 bytes / cell (6 hex chars):
+//   TT = terrain byte (0x00-0x0B) or 0xFF if fogged
+//   DD = bits 0-5: footprint bitmask, bit 6: shelter level; 0x00 if fogged
+//   VV = high nibble: resource type, low nibble: terrain variant; 0x00 if fogged or maskRes
 static const char HEX_CH[] = "0123456789ABCDEF";
 
 static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskRes) {
@@ -975,9 +1011,9 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
 }
 
 // ── Build full vision-disk message ─────────────────────────────
-// Format: {"t":"vis","vr":N,"q":QQ,"r":RR,"cells":"QQRRTTDD..."}
-// Each cell: QQ=col, RR=row, TT=terrain, DD=data (2 hex chars each = 8 total)
-// Max cells: visR=6 → 127 cells × 8 + header ≈ 1064 chars (within 1100 buf)
+// Format: {"t":"vis","vr":N,"q":QQ,"r":RR,"cells":"QQRRTTDDVV..."}
+// Each cell: QQ=col, RR=row, TT=terrain, DD=data, VV=variant (2 hex chars each = 10 total)
+// Max cells: visR=6 → 127 cells × 10 + header ≈ 1280 chars (within 1400 buf)
 // maskRes: when true (PENALTY terrain), sends DD=0 — terrain visible, no resource info
 // Returns total message length AND writes cell count to *outCells for debug.
 static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskRes, int* outCells = nullptr) {
@@ -1013,7 +1049,7 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
 
 // ── Build survey-ring vision disk (one hex beyond visR) ────────
 // Sends terrain data for all hexes at exactly distance visR+1 around (pq,pr).
-// Format matches applyVisDisk on the client: "QQRRTTDD..." (8 hex chars/cell).
+// Format matches applyVisDisk on the client: "QQRRTTDDVV..." (10 hex chars/cell).
 // Returns message length written into buf.
 static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR) {
   int pos = snprintf(buf, cap, "{\"t\":\"ev\",\"k\":\"surv\",\"cells\":\"");
@@ -1043,9 +1079,8 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR) {
 }
 
 
-// ── K10 screen: server status dashboard ────────────────────────
-// Redraws portrait 240×320 TFT every SCREEN_MS with player stats.
-static void drawStatusScreen() {
+// ── K10 screen 0: player status dashboard ──────────────────────
+static void drawPlayerScreen() {
   struct {
     bool    on;
     char    name[12];
@@ -1093,6 +1128,7 @@ static void drawStatusScreen() {
   // ── Header band (y 0–27) ──────────────────────────────────────
   k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E1000, 0x1E1000, true);
   k10.canvas->canvasText("WASTELAND", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
+  k10.canvas->canvasText("[P]", 192, 10, 0x504030, Canvas::eCNAndENFont16, 50, false);
 
   k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
 
@@ -1171,13 +1207,320 @@ static void drawStatusScreen() {
   k10.canvas->updateCanvas();
 }
 
+// ── K10 screen 1: event log ────────────────────────────────────
+static void drawEventLogScreen() {
+  static const uint32_t C_HDR  = 0xC89030;
+  static const uint32_t C_INFO = 0x907050;
+  static const uint32_t C_LINE = 0x503830;
+  static const uint32_t C_DIM  = 0x403020;
+
+  k10.canvas->canvasClear();
+  k10.canvas->canvasSetLineWidth(1);
+  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E1000, 0x1E1000, true);
+  k10.canvas->canvasText("EVENT LOG", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
+  k10.canvas->canvasText("[E]", 192, 10, 0x504030, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+
+  K10LogEntry snap[K10_LOG_SIZE];
+  uint8_t snapHead = 0, snapCount = 0;
+  taskENTER_CRITICAL(&k10LogMux);
+  memcpy(snap, k10Log, sizeof(k10Log));
+  snapHead  = k10LogHead;
+  snapCount = k10LogCount;
+  taskEXIT_CRITICAL(&k10LogMux);
+
+  char buf[50];
+  int  y   = 32;
+  uint32_t now = millis();
+  for (int i = (int)snapCount - 1; i >= 0 && y <= 300; i--) {
+    uint8_t  idx = (snapHead + (uint8_t)i) % K10_LOG_SIZE;
+    uint32_t age = (now - snap[idx].ms) / 1000;
+    uint32_t mm  = age / 60, ss = age % 60;
+    snprintf(buf, sizeof(buf), "-%lum%02lus %s",
+             (unsigned long)mm, (unsigned long)ss, snap[idx].text);
+    uint32_t col = (age < 60) ? C_HDR : C_INFO;
+    k10.canvas->canvasText(buf, 2, y, col, Canvas::eCNAndENFont16, 50, false);
+    y += 18;
+  }
+  if (snapCount == 0)
+    k10.canvas->canvasText("No events yet", 2, 50, C_DIM, Canvas::eCNAndENFont16, 50, false);
+
+  k10.canvas->canvasLine(0, 306, 239, 306, C_LINE);
+  snprintf(buf, sizeof(buf), "%d events", (int)snapCount);
+  k10.canvas->canvasText(buf, 2, 308, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->updateCanvas();
+}
+
+// ── K10 screen 2: threat clock ─────────────────────────────────
+static void drawThreatScreen() {
+  static const uint32_t C_HDR  = 0xC89030;
+  static const uint32_t C_INFO = 0x907050;
+  static const uint32_t C_LINE = 0x503830;
+  static const uint32_t C_DIM  = 0x403020;
+
+  uint8_t snapTC   = 0;
+  bool    crisis   = false;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    snapTC = G.threatClock; crisis = G.crisisState;
+    xSemaphoreGive(G.mutex);
+  }
+
+  k10.canvas->canvasClear();
+  k10.canvas->canvasSetLineWidth(1);
+  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E1000, 0x1E1000, true);
+  k10.canvas->canvasText("THREAT CLOCK", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
+  k10.canvas->canvasText("[T]", 192, 10, 0x504030, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "TC: %d / 20", (int)snapTC);
+  k10.canvas->canvasText(buf, 2, 32, C_HDR, Canvas::eCNAndENFont24, 50, false);
+
+  // Progress bar (y=60–78)
+  int barW = (int)((snapTC * 230L) / 20);
+  uint32_t barCol = (snapTC >= TC_THRESHOLD_D) ? 0xC84830 :
+                    (snapTC >= TC_THRESHOLD_C) ? 0xC06020 :
+                    (snapTC >= TC_THRESHOLD_A) ? 0xC89030 : 0x88C040;
+  k10.canvas->canvasRectangle(4, 60, 234, 78, C_LINE, C_DIM, true);
+  if (barW > 0) k10.canvas->canvasRectangle(4, 60, 4 + barW, 78, barCol, barCol, true);
+  // Threshold tick marks at TC 5, 9, 13, 17
+  const uint8_t TC_TICKS[4] = { TC_THRESHOLD_A, TC_THRESHOLD_B, TC_THRESHOLD_C, TC_THRESHOLD_D };
+  for (int t = 0; t < 4; t++) {
+    int tx = 4 + (int)((TC_TICKS[t] * 230L) / 20);
+    k10.canvas->canvasLine(tx, 57, tx, 81, 0x808080);
+  }
+
+  // Next threshold text
+  const char* nextLabel = nullptr;
+  int         nextIn    = 0;
+  if      (snapTC < TC_THRESHOLD_A) { nextLabel = "TC5: Encounter"; nextIn = TC_THRESHOLD_A - snapTC; }
+  else if (snapTC < TC_THRESHOLD_B) { nextLabel = "TC9: Hazard+1";  nextIn = TC_THRESHOLD_B - snapTC; }
+  else if (snapTC < TC_THRESHOLD_C) { nextLabel = "TC13: Roll-1";   nextIn = TC_THRESHOLD_C - snapTC; }
+  else if (snapTC < TC_THRESHOLD_D) { nextLabel = "TC17: CRISIS";   nextIn = TC_THRESHOLD_D - snapTC; }
+  else                               { nextLabel = "CRISIS ACTIVE";  nextIn = 0; }
+  if (nextIn > 0)
+    snprintf(buf, sizeof(buf), "Next: %s (in %d)", nextLabel, nextIn);
+  else
+    snprintf(buf, sizeof(buf), "%s", nextLabel);
+  k10.canvas->canvasText(buf, 2, 84, C_INFO, Canvas::eCNAndENFont16, 50, false);
+
+  // Crisis banner
+  if (crisis || snapTC >= TC_THRESHOLD_D) {
+    k10.canvas->canvasRectangle(0, 106, 240, 130, 0xC84830, 0xC84830, true);
+    k10.canvas->canvasText("! CRISIS STATE !", 6, 109, 0xFFFFFF, Canvas::eCNAndENFont24, 50, false);
+  }
+
+  k10.canvas->canvasLine(0, 134, 239, 134, C_LINE);
+  k10.canvas->canvasText("Ruins scavenge: TC+1", 2, 138, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasText("TC5 Enc TC9 Hzd+1", 2, 156, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasText("TC13 Roll-1 TC17 CRISIS", 2, 174, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->updateCanvas();
+}
+
+// ── K10 screen 3: resources ────────────────────────────────────
+static void drawResourceScreen() {
+  static const uint32_t C_HDR  = 0xC89030;
+  static const uint32_t C_INFO = 0x907050;
+  static const uint32_t C_LINE = 0x503830;
+  static const uint32_t C_DIM  = 0x403020;
+  static const uint32_t C_OK   = 0x88C040;
+  static const uint32_t C_WARN = 0xC8A030;
+  static const uint32_t C_CRIT = 0xC84830;
+
+  uint8_t snapSF = 0, snapSW = 0;
+  int     conn   = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    snapSF = G.sharedFood; snapSW = G.sharedWater;
+    for (int i = 0; i < MAX_PLAYERS; i++) if (G.players[i].connected) conn++;
+    xSemaphoreGive(G.mutex);
+  }
+
+  k10.canvas->canvasClear();
+  k10.canvas->canvasSetLineWidth(1);
+  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E1000, 0x1E1000, true);
+  k10.canvas->canvasText("RESOURCES", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
+  k10.canvas->canvasText("[R]", 192, 10, 0x504030, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+
+  char buf[48];
+  int fPerDay = max(conn, 1);
+  int fDays   = snapSF / fPerDay;
+  uint32_t fCol   = (snapSF <= 2) ? C_CRIT : (snapSF <= 5) ? C_WARN : C_OK;
+  uint32_t fTlCol = (fDays  <= 2) ? C_CRIT : (fDays  <= 5) ? C_WARN : C_OK;
+
+  k10.canvas->canvasText("FOOD (shared)", 2, 32, C_INFO, Canvas::eCNAndENFont16, 50, false);
+  snprintf(buf, sizeof(buf), "SF: %d tokens", (int)snapSF);
+  k10.canvas->canvasText(buf, 2, 50, fCol, Canvas::eCNAndENFont24, 50, false);
+  int fBarW = (int)(min((int)snapSF, 30) * 230 / 30);
+  k10.canvas->canvasRectangle(4, 78, 234, 92, C_LINE, C_DIM, true);
+  if (fBarW > 0) k10.canvas->canvasRectangle(4, 78, 4 + fBarW, 92, fCol, fCol, true);
+  snprintf(buf, sizeof(buf), "-%d/day  ~%d days", fPerDay, fDays);
+  k10.canvas->canvasText(buf, 2, 96, fTlCol, Canvas::eCNAndENFont16, 50, false);
+
+  k10.canvas->canvasLine(0, 115, 239, 115, C_LINE);
+
+  int wPerDay = max(conn * 2, 1);
+  int wDays   = snapSW / wPerDay;
+  uint32_t wCol   = (snapSW <= 2) ? C_CRIT : (snapSW <= 5) ? C_WARN : C_OK;
+  uint32_t wTlCol = (wDays  <= 2) ? C_CRIT : (wDays  <= 5) ? C_WARN : C_OK;
+
+  k10.canvas->canvasText("WATER (shared)", 2, 119, C_INFO, Canvas::eCNAndENFont16, 50, false);
+  snprintf(buf, sizeof(buf), "SW: %d tokens", (int)snapSW);
+  k10.canvas->canvasText(buf, 2, 137, wCol, Canvas::eCNAndENFont24, 50, false);
+  int wBarW = (int)(min((int)snapSW, 30) * 230 / 30);
+  k10.canvas->canvasRectangle(4, 165, 234, 179, C_LINE, C_DIM, true);
+  if (wBarW > 0) k10.canvas->canvasRectangle(4, 165, 4 + wBarW, 179, wCol, wCol, true);
+  snprintf(buf, sizeof(buf), "-%d/day  ~%d days", wPerDay, wDays);
+  k10.canvas->canvasText(buf, 2, 183, wTlCol, Canvas::eCNAndENFont16, 50, false);
+
+  k10.canvas->canvasLine(0, 202, 239, 202, C_LINE);
+  snprintf(buf, sizeof(buf), "Players online: %d", conn);
+  k10.canvas->canvasText(buf, 2, 206, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  k10.canvas->updateCanvas();
+}
+
+// ── K10 gesture + button B screen switching ────────────────────
+static void checkGestureSwitch() {
+  uint8_t g = GestureNone;
+  if      (k10.isGesture(TiltForward)) g = TiltForward;
+  else if (k10.isGesture(TiltRight))   g = TiltRight;
+  else if (k10.isGesture(TiltBack))    g = TiltBack;
+  else if (k10.isGesture(ScreenUp))    g = ScreenUp;
+
+  if (g != GestureNone) {
+    if (g == k10GestLast) { if (k10GestCnt < 2) k10GestCnt++; }
+    else                  { k10GestLast = g; k10GestCnt = 1; }
+    if (k10GestCnt >= 2) {
+      if      (g == TiltForward) k10Screen = 1;
+      else if (g == TiltRight)   k10Screen = 2;
+      else if (g == TiltBack)    k10Screen = 3;
+      else if (g == ScreenUp)    k10Screen = 0;
+    }
+  } else {
+    k10GestCnt  = 0;
+    k10GestLast = GestureNone;
+  }
+
+  bool btnB = k10.buttonB && k10.buttonB->isPressed();
+  if (btnB && !k10BtnBLast) k10Screen = (k10Screen + 1) % 4;
+  k10BtnBLast = btnB;
+}
+
+// ── Time-of-day LED colour ────────────────────────────────────────────────────
+// Six phases across DAY_TICKS (3000 ticks = 5 min), linearly interpolated:
+//   Dawn       0– 8%  : deep amber-orange  — first light
+//   Morning    8–30%  : warm golden yellow  — active play
+//   Midday    30–60%  : cool blue-white     — high sun
+//   Afternoon 60–80%  : golden amber        — fading light
+//   Dusk      80–92%  : burnt red-orange    — sunset
+//   Night     92–100% : deep indigo, dim    — end of day
+struct TodStop { float pct; uint8_t r, g, b; };
+static void todColour(uint32_t dayTick, uint8_t& r, uint8_t& g, uint8_t& b) {
+  static const TodStop STOPS[] = {
+    { 0.00f, 180,  55,   5 },   // dawn      — amber-orange
+    { 0.08f, 200, 130,  15 },   // morning   — golden yellow
+    { 0.30f,  40,  90, 180 },   // midday    — cool blue-white
+    { 0.60f, 200, 110,  10 },   // afternoon — warm amber
+    { 0.80f, 160,  25,   5 },   // dusk      — burnt red-orange
+    { 0.92f,  10,   8,  60 },   // night     — deep indigo
+    { 1.00f,  10,   8,  60 },   // (clamp end)
+  };
+  constexpr uint8_t N = sizeof(STOPS) / sizeof(STOPS[0]);
+  float t = (float)dayTick / (float)DAY_TICKS;
+  if (t >= 1.0f) t = 0.99f;
+  for (uint8_t i = 0; i < N - 1; i++) {
+    if (t >= STOPS[i].pct && t < STOPS[i+1].pct) {
+      float frac = (t - STOPS[i].pct) / (STOPS[i+1].pct - STOPS[i].pct);
+      r = (uint8_t)(STOPS[i].r + frac * (STOPS[i+1].r - STOPS[i].r));
+      g = (uint8_t)(STOPS[i].g + frac * (STOPS[i+1].g - STOPS[i].g));
+      b = (uint8_t)(STOPS[i].b + frac * (STOPS[i+1].b - STOPS[i].b));
+      return;
+    }
+  }
+  r = STOPS[N-1].r; g = STOPS[N-1].g; b = STOPS[N-1].b;
+}
+
+// ── K10 LED update — all three LEDs show time-of-day ambient colour ──────────
+// ledFlash() overrides all LEDs for 300 ms (red=LL lost / green=radiation).
+// LED 0 additionally accepts the short score-pulse (k10LedPulse).
+static void updateLEDs() {
+  k10.rgb->brightness(s_ledBright);
+  uint32_t now = millis();
+
+  uint32_t snapDayTick = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    snapDayTick = G.dayTick;
+    xSemaphoreGive(G.mutex);
+  }
+
+  uint8_t tr, tg, tb;
+  todColour(snapDayTick, tr, tg, tb);
+
+  // LED 0 — TOD base; briefly replaced by score pulse (team score gain/loss)
+  if (k10LedPulse && now < k10LedPulse) {
+    k10.rgb->write(0, k10PulseR, k10PulseG, k10PulseB);
+  } else {
+    k10LedPulse = 0;
+    k10.rgb->write(0, tr, tg, tb);
+  }
+
+  // LEDs 1 & 2 — TOD ambient (flash override handled by ledFlash / g_ledEndMs)
+  k10.rgb->write(1, tr, tg, tb);
+  k10.rgb->write(2, tr, tg, tb);
+}
+
+// ── K10 audio: score milestones, TC thresholds, resource alerts ─
+static void checkScoreAudio() {
+  uint32_t teamScore = 0;
+  uint8_t  snapTC    = 0;
+  bool     crisis    = false;
+  uint8_t  minRes    = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    for (int i = 0; i < MAX_PLAYERS; i++)
+      if (G.players[i].connected) teamScore += G.players[i].score;
+    snapTC  = G.threatClock;
+    crisis  = G.crisisState;
+    minRes  = min(G.sharedFood, G.sharedWater);
+    xSemaphoreGive(G.mutex);
+  }
+
+  // Score milestone (every 100 points)
+  if (teamScore / 100 != k10TeamScore / 100) {
+    if (teamScore > k10TeamScore) {
+      k10PlayMelody(JUMP_UP);
+      k10LedPulse = millis() + 600;
+      k10PulseR = 0x00; k10PulseG = 0xC8; k10PulseB = 0x30;  // green
+    } else {
+      k10PlayMelody(JUMP_DOWN);
+      k10LedPulse = millis() + 600;
+      k10PulseR = 0xC8; k10PulseG = 0x10; k10PulseB = 0x10;  // red
+    }
+  }
+  k10TeamScore = teamScore;
+
+  // TC threshold audio (fire once per level increase)
+  uint8_t tcLvl = (snapTC >= TC_THRESHOLD_D) ? 4 :
+                  (snapTC >= TC_THRESHOLD_C) ? 3 :
+                  (snapTC >= TC_THRESHOLD_B) ? 2 :
+                  (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
+  if (tcLvl > k10PrevTCLevel) {
+    k10PlayMelody((tcLvl == 4 || crisis) ? WAWAWAWAA : BA_DING);
+  }
+  k10PrevTCLevel = tcLvl;
+
+  // Resource critical alert (fire once on transition to critical)
+  bool resCrit = (minRes <= 2);
+  if (resCrit && !k10ResCritPrev) k10PlayMelody(BADDY);
+  k10ResCritPrev = resCrit;
+}
+
 // ── Periodic player status table ───────────────────────────────
 // Printed from loop() every STATUS_MS. Takes the mutex briefly.
 static void printStatus() {
   // Snapshot under mutex
   struct Snap {
     bool     on; int16_t q, r; uint16_t score, steps;
-    uint8_t  terrain, stamina;
+    uint8_t  terrain;
     char     name[12]; uint32_t connectMs;
     // Wayfarer fields
     uint8_t  ll, food, water, fatigue, radiation, resolve;
@@ -1203,7 +1546,6 @@ static void printStatus() {
     snap[i].q       = p.q; snap[i].r = p.r;
     snap[i].score   = p.score; snap[i].steps = p.steps;
     snap[i].terrain = G.map[p.r][p.q].terrain;
-    snap[i].stamina = p.stamina;
     snap[i].connectMs = p.connectMs;
     memcpy(snap[i].name, p.name, 12);
     snap[i].ll        = p.ll;
@@ -1421,7 +1763,7 @@ void setup() {
 
   G.tickId = 0; G.connectedCount = 0;
   // Wayfarer shared state
-  G.threatClock = 0; G.tcTriggered = 0; G.crisisState = false;
+  G.threatClock = 0; G.crisisState = false;
   G.sharedFood  = 30; G.sharedWater = 30;
   G.dayTick = 0; G.dayCount = 0;
 
@@ -1429,7 +1771,7 @@ void setup() {
     Player& p = G.players[i];
     p.connected = false; p.wsClientId = 0;
     p.q = p.r = 0; p.score = 0; p.lastMoveMs = 0; p.steps = 0;
-    p.connectMs = 0; p.stamina = 100; p.perception = 2; p.strength = 2;
+    p.connectMs = 0;
     memset(p.inv, 0, sizeof(p.inv));
     // Starting resources: sparse to create early pressure
     p.inv[0] = 2;  // water tokens (all archetypes)
@@ -1449,7 +1791,6 @@ void setup() {
     memset(p.wounds,  0, sizeof(p.wounds));
     memset(p.invType, 0, sizeof(p.invType));
     memset(p.invQty,  0, sizeof(p.invQty));
-    p.chkSk = 0; p.chkDn = 7; p.chkBonus = 0;
     p.fThreshBelow = 0; p.wThreshBelow = 0;
     p.actUsed = false; p.encPenApplied = false; p.radClean = true;
     p.movesLeft = (int8_t)effectiveMP(i);  // consistent with handleConnect
@@ -1723,14 +2064,6 @@ void setup() {
         j += ",\"invQty\":[";
         for (int s = 0; s < INV_SLOTS_MAX; s++) { if (s) j += ","; j += p.invQty[s]; }
         j += "]";
-        // Skill check state
-        j += ",\"chkSk\":";       j += p.chkSk;
-        j += ",\"chkDn\":";       j += p.chkDn;
-        j += ",\"chkBonus\":";    j += p.chkBonus;
-        // Legacy stats
-        j += ",\"stamina\":";     j += p.stamina;
-        j += ",\"perception\":";  j += p.perception;
-        j += ",\"strength\":";    j += p.strength;
         // Score / steps
         j += ",\"score\":";       j += p.score;
         j += ",\"steps\":";       j += p.steps;
@@ -1876,15 +2209,25 @@ void loop() {
     }
   }
 
+  checkGestureSwitch();
+  checkScoreAudio();
+
   if (now - lastScreenMs >= SCREEN_MS) {
     lastScreenMs = now;
-    drawStatusScreen();
+    switch (k10Screen) {
+      case 1:  drawEventLogScreen();  break;
+      case 2:  drawThreatScreen();    break;
+      case 3:  drawResourceScreen();  break;
+      default: drawPlayerScreen();    break;
+    }
   }
 
-  // Turn off LED flash when duration expires
+  // LED flash: restore per-LED role colors after flash expires
   if (g_ledEndMs && now >= g_ledEndMs) {
-    k10.rgb->write(-1, 0, 0, 0);
     g_ledEndMs = 0;
+    updateLEDs();
+  } else if (!g_ledEndMs) {
+    updateLEDs();
   }
 
   if (now - lastStatusMs >= STATUS_MS) {

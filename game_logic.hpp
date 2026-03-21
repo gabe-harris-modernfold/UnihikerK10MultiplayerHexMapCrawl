@@ -317,6 +317,22 @@ static void collectResource(int pid, int q, int r) {
   }
 }
 
+// ── Valid move bitmask ────────────────────────────────────────────────────────
+// Returns a 6-bit mask (bit N = direction N is passable and player can move).
+// Used by broadcastState() to let the client gray out blocked direction buttons.
+static uint8_t computeValidMoves(int pid) {
+  Player& p = G.players[pid];
+  if (!p.connected) return 0;
+  if ((p.statusBits & ST_DOWNED) || p.resting || p.movesLeft == 0) return 0;
+  uint8_t mask = 0;
+  for (int d = 0; d < 6; d++) {
+    int nq = wrapQ(p.q + DQ[d]);
+    int nr = wrapR(p.r + DR[d]);
+    if (TERRAIN_MC[G.map[nr][nq].terrain] != 255) mask |= (1 << d);
+  }
+  return mask;
+}
+
 // ── Player move ───────────────────────────────────────────────────────────────
 static void movePlayer(int pid, int dir) {
   if (dir < 0 || dir > 5) return;
@@ -628,7 +644,7 @@ static void doTreat(int pid, int condTgt, GameEvent& ev) {
       }
       default: break;  // unreachable
     }
-    addScore(p, ev, (condTgt == TC_GRIEVOUS) ? 10 : (condTgt == TC_MAJOR) ? 6 : 3);
+    addScore(p, ev, (condTgt == TC_GRIEVOUS) ? 10 : 3);  // TC_MAJOR blocked (requires Med Kit)
     ev.actOut = AO_SUCCESS;
   } else {
     if (condTgt == TC_BLEED && p.fatigue < 8) p.fatigue++;  // bleed fail → fatigue
