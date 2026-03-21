@@ -512,7 +512,7 @@ function initCharSheetBindings() {
     }
   }
 
-  // LL track (character sheet)
+  // LL track (survivor)
   van.derive(() => {
     renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
   });
@@ -925,7 +925,7 @@ function initMenuSystem() {
       mh2({ class: 'menu-title' }, '\u2630 COMMAND'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('howto')    }, '\u2B21  HOW TO PLAY'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('settings') }, '\u25C9  SETTINGS'),
-      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  CHARACTER'),
+      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  SURVIVOR'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('about')    }, '\u25A3  ABOUT'),
       mb({ class: 'menu-resume-btn', onclick: closeMenu }, '\u25B6 RESUME'),
     );

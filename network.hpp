@@ -330,7 +330,7 @@ static void drainEvents() {
         // K10 event log + player-join melody
         { char lb[34]; snprintf(lb, sizeof(lb), "P%d joined", (int)ev.pid);
           k10LogAdd(lb); }
-        k10PlayMelody(ENTERTAINER);
+        k10PlaySeq(SEQ_JOIN);
         break;
       }
 

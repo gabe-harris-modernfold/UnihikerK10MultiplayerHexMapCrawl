@@ -136,7 +136,7 @@ static void duskCheck() {
 
     if (ev.actOut == AO_FAIL) {
       p.wounds[1]++;                  // +1 Major Wound
-      if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); }  // red = LL lost
+      if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10PlaySeq(SEQ_DAMAGE); }  // red = LL lost
       if (p.ll == 0) {
         p.statusBits |= ST_DOWNED;
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
@@ -240,7 +240,7 @@ static void dawnUpkeep() {
       p.ll = (uint8_t)min((int)p.ll + llDelta, 7);
     }
     int8_t actualDelta = (int8_t)((int)p.ll - (int)prevLL); // true LL change (clamped)
-    if (actualDelta < 0) ledFlash(255, 0, 0);  // red = Life Level lost
+    if (actualDelta < 0) { ledFlash(255, 0, 0); k10PlaySeq(SEQ_DAMAGE); }  // red = LL lost
 
     // ── Reset daily move budget and action flags ────────────────────────────
     p.movesLeft    = (int8_t)effectiveMP(pid);

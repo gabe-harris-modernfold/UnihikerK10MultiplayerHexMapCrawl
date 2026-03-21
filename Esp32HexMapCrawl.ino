@@ -468,9 +468,27 @@ static void k10LogAdd(const char* text) {
   taskEXIT_CRITICAL(&k10LogMux);
 }
 
-// Play a melody only if audio is not muted.
-static void k10PlayMelody(Melodies m) {
-  if (s_audioVol > 0) k10Music.playMusic(m, OnceInBackground);
+// ── Custom tone sequences ────────────────────────────────────────────────────
+// freq=0 terminates the sequence. beat: 8000 = 1 full beat (~1s); 2000 = ~250ms
+struct ToneStep { int freq; int beat; };
+
+static const ToneStep SEQ_DAMAGE[]     = {{1300, 900},  {0,0}};              // 1 quick high — LL lost
+static const ToneStep SEQ_SCORE_UP[]   = {{220, 2000}, {277, 2000}, {330, 2000}, {0,0}}; // 3 low ascending
+static const ToneStep SEQ_SCORE_DOWN[] = {{330, 2000}, {277, 2000}, {220, 2000}, {0,0}}; // 3 low descending
+static const ToneStep SEQ_ALERT[]      = {{196, 2000}, {220, 2000}, {247, 2000}, {0,0}}; // 3 mid-low alert
+static const ToneStep SEQ_CRISIS[]     = {{174, 2000}, {196, 2000}, {174, 2000}, {0,0}}; // 3 very low crisis
+static const ToneStep SEQ_RESOURCE[]   = {{185, 3000}, {185, 3000}, {185, 3000}, {0,0}}; // 3 slow low pulses
+static const ToneStep SEQ_JOIN[]       = {{220, 2000}, {262, 2000}, {330, 2000}, {0,0}}; // 3 low welcoming
+
+static void toneTaskFn(void* arg) {
+  for (const ToneStep* s = (const ToneStep*)arg; s->freq; s++)
+    k10Music.playTone(s->freq, s->beat);
+  vTaskDelete(nullptr);
+}
+
+static void k10PlaySeq(const ToneStep* seq) {
+  if (s_audioVol > 0)
+    xTaskCreate(toneTaskFn, "tone", 2048, (void*)seq, 1, nullptr);
 }
 
 AsyncWebServer server(80);
@@ -1487,11 +1505,11 @@ static void checkScoreAudio() {
   // Score milestone (every 100 points)
   if (teamScore / 100 != k10TeamScore / 100) {
     if (teamScore > k10TeamScore) {
-      k10PlayMelody(JUMP_UP);
+      k10PlaySeq(SEQ_SCORE_UP);
       k10LedPulse = millis() + 600;
       k10PulseR = 0x00; k10PulseG = 0xC8; k10PulseB = 0x30;  // green
     } else {
-      k10PlayMelody(JUMP_DOWN);
+      k10PlaySeq(SEQ_SCORE_DOWN);
       k10LedPulse = millis() + 600;
       k10PulseR = 0xC8; k10PulseG = 0x10; k10PulseB = 0x10;  // red
     }
@@ -1504,13 +1522,13 @@ static void checkScoreAudio() {
                   (snapTC >= TC_THRESHOLD_B) ? 2 :
                   (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
   if (tcLvl > k10PrevTCLevel) {
-    k10PlayMelody((tcLvl == 4 || crisis) ? WAWAWAWAA : BA_DING);
+    k10PlaySeq((tcLvl == 4 || crisis) ? SEQ_CRISIS : SEQ_ALERT);
   }
   k10PrevTCLevel = tcLvl;
 
   // Resource critical alert (fire once on transition to critical)
   bool resCrit = (minRes <= 2);
-  if (resCrit && !k10ResCritPrev) k10PlayMelody(BADDY);
+  if (resCrit && !k10ResCritPrev) k10PlaySeq(SEQ_RESOURCE);
   k10ResCritPrev = resCrit;
 }
 
