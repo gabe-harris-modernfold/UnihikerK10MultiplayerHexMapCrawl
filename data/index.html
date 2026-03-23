@@ -23,7 +23,6 @@
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">LL</span>
       <div class="track-boxes" id="hud-ll-track"></div>
-      <span class="hud-ll-val" id="hud-ll-val">7</span>
     </div>
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">MP</span>
@@ -71,6 +70,10 @@
         <div><div id="hi-res-list"></div></div>
       </div>
       <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
+      <div class="hi-row hi-ground-row" id="hi-ground-row" style="display:none">
+        <span class="hi-label">On Ground</span>
+        <div><div id="hi-ground-list"></div></div>
+      </div>
     </div>
 
   </div>
@@ -138,9 +141,16 @@
       </div>
       <button id="action-water-go" class="chk-action-btn">&#x2248; COLLECT WATER</button>
     </div>
-    <!-- TREAT condition sub-control -->
-    <div id="action-treat-ctrl" style="display:none">
-      <div id="action-treat-list"><!-- condition buttons --></div>
+    <!-- TRADE resource sub-control -->
+    <div id="action-trade-ctrl" style="display:none">
+      <div id="action-trade-target-list"><!-- co-located player buttons --></div>
+      <div id="action-trade-offer-form" style="display:none">
+        <div class="check-lbl" style="margin-top:10px">OFFERING</div>
+        <div id="trade-give-row" class="trade-res-row"></div>
+        <div class="check-lbl" style="margin-top:8px">REQUESTING</div>
+        <div id="trade-want-row" class="trade-res-row"></div>
+        <button id="action-trade-send" class="chk-action-btn" style="margin-top:10px">&#x21C4; SEND OFFER</button>
+      </div>
     </div>
   </div>
 </div>
@@ -169,6 +179,35 @@
 
 <!-- Toast stack -->
 <div id="toast-stack"></div>
+
+<!-- Item action context menu (z-index 50, slide-up sheet) -->
+<div id="item-menu-backdrop"></div>
+<div id="item-action-menu" role="dialog" aria-modal="true" aria-label="Item actions">
+  <div id="item-menu-title">
+    <img id="item-menu-icon" class="item-icon-img" src="" alt="" width="32" height="32">
+    <span id="item-menu-name">—</span>
+  </div>
+  <div id="item-menu-story"></div>
+  <div id="item-menu-btns"></div>
+  <button class="item-menu-btn" id="item-menu-close">&#x2715; Cancel</button>
+</div>
+
+<!-- Incoming trade offer overlay (z-index 19, above action panel) -->
+<div id="trade-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="trade-overlay-title">
+  <div id="trade-box">
+    <div id="trade-overlay-title" class="check-lbl">&#x21C4; TRADE OFFER</div>
+    <div id="trade-from-label"></div>
+    <div class="check-lbl" style="margin-top:8px">THEY OFFER YOU</div>
+    <div id="trade-give-display"></div>
+    <div class="check-lbl" style="margin-top:6px">THEY WANT</div>
+    <div id="trade-want-display"></div>
+    <div id="trade-expire-bar"><div id="trade-expire-fill"></div></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="trade-accept-btn" class="chk-action-btn">&#x2713; ACCEPT</button>
+      <button id="trade-decline-btn" class="chk-action-btn">&#x2715; DECLINE</button>
+    </div>
+  </div>
+</div>
 <!-- Flavor banner (shelter warning etc.) -->
 <div id="flavor-banner"></div>
 
@@ -187,9 +226,9 @@
       </div>
     </div>
 
-    <!-- Wayfarer / archetype + skills -->
+    <!-- Survivor / archetype + skills -->
     <div class="cs-section">
-      <h3>Wayfarer</h3>
+      <h3>Survivor</h3>
       <div id="cs-arch-banner">
         <span id="cs-arch-icon"></span><span id="cs-arch-name">—</span>
       </div>
@@ -241,9 +280,16 @@
       </div>
     </div>
 
+    <!-- Equipment Slots -->
+    <div class="cs-section">
+      <h3>Strapped On</h3>
+      <div id="cs-equip-grid"><!-- populated by renderEquipment() in ui.js --></div>
+    </div>
+
     <!-- Inventory -->
     <div class="cs-section">
-      <h3>Inventory</h3>
+      <h3>Carried Misery</h3>
+      <!-- Legacy resources -->
       <div class="inv-grid">
         <div class="inv-box"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
         <div class="inv-box"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
@@ -251,6 +297,8 @@
         <div class="inv-box"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
         <div class="inv-box"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
       </div>
+      <!-- Typed item inventory grid (populated by renderInventory()) -->
+      <div id="cs-item-grid" style="margin-top:10px"><!-- populated by renderInventory() --></div>
     </div>
 
     <!-- Score -->
@@ -281,11 +329,11 @@
         <tr><th>Tab</th><th>URL</th><th>Purpose</th></tr>
         <tr><td>Tab 1</td><td>http://192.168.4.70/</td><td>Game UI — movement, actions</td></tr>
         <tr><td>Tab 2</td><td>http://192.168.4.70/state</td><td>Live JSON — score, position, supplies, day</td></tr>
-        <tr><td>Tab 3</td><td>http://192.168.4.70/view?pid=0</td><td>Player map view — visible hexes, terrain, resources</td></tr>
+        <tr><td>Tab 3</td><td>http://192.168.4.70/state?pid=0</td><td>Player map view — visible hexes, terrain, resources</td></tr>
       </table>
       <p class="help-note">&#x26A0; Open Tab 2 and Tab 3 in <strong>separate windows</strong> — navigating away from Tab 1 will disconnect your WebSocket session and reset the game.</p>
       <p class="help-note">&#x1F4A1; <strong>Preferred method:</strong> Read game state without navigating at all — call <code>window.__gameState</code> via browser JavaScript console or automation tools. This gives you full state (position, supplies, visible cells) without leaving the game tab.</p>
-      <p>Tab 3 only works when the player is connected (Tab 1 is open and a character has been selected). First player is player zero: <code>/view?pid=0</code>. If it returns <code>{"error":"player not connected"}</code>, go to Tab 1 and select a character first.</p>
+      <p>Tab 3 only works when the player is connected (Tab 1 is open and a character has been selected). First player is player zero: <code>/state?pid=0</code>. The <code>view</code> object will be absent if the player is not connected — go to Tab 1 and select a character first.</p>
     </div>
 
     <div class="help-section">
@@ -294,7 +342,7 @@
         <li>Navigate Tab 1 to <code>http://192.168.4.70/</code></li>
         <li>The character select screen will appear. Click <strong>▶ SELECT GUIDE (pid:0)</strong>. Guide has the best NAVIGATE skill (●●) and a trait that reduces movement cost for companions.</li>
         <li>After selecting, you spawn with LL:7 (full health), 6 MP, and score 0.</li>
-        <li>Immediately refresh Tab 3 (<code>/view?pid=0</code>) to read your starting visible cells.</li>
+        <li>Immediately refresh Tab 3 (<code>/state?pid=0</code>) to read your starting visible cells.</li>
       </ol>
     </div>
 
@@ -306,7 +354,7 @@
     </div>
 
     <div class="help-section">
-      <h3>Reading /view?pid=N</h3>
+      <h3>Reading /state?pid=N</h3>
       <p>Each cell in the <code>cells</code> array contains:</p>
       <pre class="help-code">{ "q": 14, "r": 10,
   "dq": 0, "dr": -3,       // offset from player
@@ -364,7 +412,7 @@
         <tr><td>dq &gt; 0, dr &gt; 0</td><td>Southeast ↘</td><td>↘</td></tr>
         <tr><td>dq &lt; 0, dr &gt; 0</td><td>Southwest ↙</td><td>↙</td></tr>
       </table>
-      <p class="help-note">Note: A = SW, D = SE (not W/E). Use <code>dq</code>/<code>dr</code> from <code>/view</code> to compute direction, not intuition.</p>
+      <p class="help-note">Note: A = SW, D = SE (not W/E). Use <code>dq</code>/<code>dr</code> from <code>/state?pid=N</code> to compute direction, not intuition.</p>
     </div>
 
     <div class="help-section">
@@ -374,7 +422,7 @@
         <li><strong>Shelter:</strong> Build when scrap ≥ 2 and LL ≤ 4. Costs 2 scrap, stops daily LL bleed, gives 4–8 pts. Shelters are permanent.</li>
         <li><strong>Food/Water:</strong> Each REST consumes 1 food and 1 water. Thresholds: Food at 4, 2. Water at 5, 3, 1. Each downward cross costs 1 LL. FORAGE every 2–3 days minimum.</li>
         <li><strong>Radiation:</strong> Glass Fields and Ash Dunes give +RAD. RAD≥4 = Rad-Sick. RAD≥7 = Dusk Check risk. Move through quickly.</li>
-        <li><strong>Rust Forest:</strong> visR drops to 0 inside — <code>/view</code> returns only current cell. Avoid unless foraging.</li>
+        <li><strong>Rust Forest:</strong> visR drops to 0 inside — <code>/state?pid=N</code> view returns only current cell. Avoid unless foraging.</li>
       </ul>
     </div>
 
@@ -386,7 +434,7 @@
         <li>SCAVENGE on Broken Urban or Glass Fields → +5 pts + scrap</li>
         <li>BUILD SHELTER (Improved) → +8 pts + stops exposure</li>
         <li>FORAGE → +3 pts + food</li>
-        <li>SURVEY → +2 pts + reveals cells in /view</li>
+        <li>SURVEY → +2 pts + reveals cells in /state?pid=N</li>
         <li>COLLECT WATER → minor pts + water</li>
       </ol>
     </div>
@@ -394,7 +442,7 @@
     <div class="help-section">
       <h3>Workflow Loop Summary</h3>
       <pre class="help-code">EACH TURN:
-1. Read window.__gameState (or refresh /view?pid=N in separate window)
+1. Read window.__gameState (or refresh /state?pid=N in separate window)
 2. Filter visibleCells: footprints==0 AND terrain IN [4,5,6,9]
 3. Pick nearest unvisited high-value cell
 4. Use action slot: SCAVENGE if on SV≥1 terrain, else FORAGE if low food
@@ -411,6 +459,7 @@
 <script type="text/javascript" src="/van.js"></script>
 <script type="text/javascript" src="/van-ui.js"></script>
 <script type="text/javascript" src="/game-data.js"></script>
+<script type="text/javascript" src="/ash-particle-system.js"></script>
 <script type="text/javascript" src="/engine.js"></script>
 <script type="text/javascript" src="/ui.js"></script>
 <script>

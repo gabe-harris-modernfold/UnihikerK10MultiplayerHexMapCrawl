@@ -104,13 +104,14 @@ const PLAYER_COLORS = [
 ];
 
 // ── Action system constants (mirrors server ACT_* / AO_*) ────────
-const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_PURIFY = 2, ACT_SCAV = 3;
-const ACT_SHELTER = 4, ACT_TREAT = 5, ACT_SURVEY  = 6, ACT_REST = 7;
+const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_SCAV = 3;
+const ACT_SHELTER = 4, ACT_SURVEY = 6, ACT_REST = 7;
+const ACT_TRADE = 8;  // client-only sentinel — no server action type (above server's 0–7 range)
+const RES_SHORT = ['WAT', 'FOD', 'FUL', 'MED', 'SCP'];  // short labels for trade resource steppers
 const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
-const TC_MINOR = 0, TC_BLEED = 1, TC_FEVER = 2, TC_MAJOR = 3, TC_RAD = 4, TC_GRIEVOUS = 5;
 const ACT_NAMES = ['FORAGE','COLLECT WATER','','SCAVENGE',
-                   'BUILD SHELTER','TREAT','SURVEY','REST'];
-const ACT_MP    = [2, 1, 1, 2, 3, 2, 1, 0];  // default MP cost per action
+                   'BUILD SHELTER','','SURVEY','REST'];
+const ACT_MP    = [2, 1, 0, 2, 3, 0, 1, 0];  // default MP cost per action
 // Which terrain indices allow each action (matches server terrain arrays)
 // Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8
 // Water:  Marsh(3), Flooded(5)
@@ -129,7 +130,7 @@ function actAvailable(actId, terrainIdx) {
   }
 }
 
-// ── Wayfarer archetypes (§9.4 Synergy Roles) ─────────────────────
+// ── Survivor archetypes (§9.4 Synergy Roles) ─────────────────────
 // Indices 0-5 mirror server ARCHETYPE_NAME[] and slot assignment.
 // skills: [Navigate, Forage, Scavenge, Treat, Shelter, Endure]  0=none 1=trained 2=expert
 const ARCHETYPES = [
@@ -147,7 +148,7 @@ const ARCHETYPES = [
     name: 'QUARTERMASTER',
     icon: '\u25A3',   // ▣ box
     color: '#FFAA22',
-    trait: 'In a Camp (2+ Wayfarers), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
+    trait: 'In a Camp (2+ Survivors), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
     skills: [0, 2, 1, 1, 1, 0],
     invSlots: 8,
     desc: 'Supply expert. Stretches the group\'s rations when camped with other survivors. Trait is inactive when travelling solo.',
@@ -194,6 +195,149 @@ const ARCHETYPES = [
     flavor: 'Lasts longer than most. Which isn\u2019t saying much.'
   },
 ];
+
+// ── Item system ──────────────────────────────────────────────────────────────
+// Mirrors ItemCategory / EquipSlot enums in Esp32HexMapCrawl.ino
+const ITEM_CATEGORY = { CONSUMABLE:0, EQUIPMENT:1, MATERIAL:2, KEY:3 };
+const EQUIP_SLOT    = { NONE:0, HEAD:1, BODY:2, HAND:3, FEET:4, VEHICLE:5 };
+const EQUIP_SLOT_NAMES = ['','Noggin','Hide','Mitts','Hooves','Rust Bucket'];
+const ITEM_CATEGORY_NAMES = ['Gulpable','Bolt-On','Salvage','Relic'];
+
+// Item catalog — mirrors /data/items.cfg on SD card.
+// Image paths: img/items/item_<id>.png (illustration) and img/items/icon_<id>.png (badge)
+// Narrative: preUse (shown before use prompt), postUse (after effect), story (key item lore)
+// Missing image files fall back to placeholder via getItemImg() / getItemIcon()
+const ITEMS = [
+  { id:1,  name:'Trauma Patch',     category:0, slot:0,
+    img:'img/items/item_1.png',  icon:'img/items/icon_1.png',
+    preUse:  'You tear it open. It smells like antiseptic and desperation.',
+    postUse: 'Slapped on. Definitely going to scar. +2 LL.',
+    story:   null },
+  { id:2,  name:'Mystery Rations',  category:0, slot:0,
+    img:'img/items/item_2.png',  icon:'img/items/icon_2.png',
+    preUse:  'The label just says "FOOD". That\'s optimistic.',
+    postUse: 'You don\'t ask what it was. Your body forgives you. +3 Food.',
+    story:   null },
+  { id:3,  name:'Almost Water',     category:0, slot:0,
+    img:'img/items/item_3.png',  icon:'img/items/icon_3.png',
+    preUse:  'Filtered, sealed, and technically drinkable.',
+    postUse: 'Tastes like nothing. In a good way. +3 Water.',
+    story:   null },
+  { id:4,  name:'Glow Flush',       category:0, slot:0,
+    img:'img/items/item_4.png',  icon:'img/items/icon_4.png',
+    preUse:  'The injector hisses. You hold your breath.',
+    postUse: 'A wave of nausea, then clarity. You stop ticking. -4 Rad.',
+    story:   null },
+  { id:5,  name:'Panic Juice',      category:0, slot:0,
+    img:'img/items/item_5.png',  icon:'img/items/icon_5.png',
+    preUse:  'The needle goes in. Your heart immediately disagrees.',
+    postUse: 'Wired. Alert. Slightly insane. -4 Fatigue, +1 Resolve, -1 Food.',
+    story:   null },
+  { id:6,  name:'Sweet Oblivion',   category:0, slot:0,
+    img:'img/items/item_6.png',  icon:'img/items/icon_6.png',
+    preUse:  'One dose. Only use if you can afford to be slow.',
+    postUse: 'The pain goes somewhere quieter. +1 LL, -3 Fatigue.',
+    story:   null },
+  { id:7,  name:'Calorie Brick',    category:0, slot:0,
+    img:'img/items/item_7.png',  icon:'img/items/icon_7.png',
+    preUse:  'Dense, dry, aggressively optimistic packaging.',
+    postUse: 'Hits fast. Fades fast. +1 Food, -2 Fatigue, -1 Water.',
+    story:   null },
+  { id:8,  name:'Screaming Spike',  category:0, slot:0,
+    img:'img/items/item_8.png',  icon:'img/items/icon_8.png',
+    preUse:  'You won\'t feel the needle. You won\'t remember using it either.',
+    postUse: 'Your legs move before your brain does. +3 MP now.',
+    story:   null },
+  { id:9,  name:'Anti-Rot Kit',     category:0, slot:0,
+    img:'img/items/item_9.png',  icon:'img/items/icon_9.png',
+    preUse:  'Antibiotics, antiseptic, and a prayer.',
+    postUse: 'Fever breaks. The rot stops spreading. Status cleared.',
+    story:   null },
+  { id:10, name:'Bright Bad Idea',  category:0, slot:0,
+    img:'img/items/item_10.png', icon:'img/items/icon_10.png',
+    preUse:  'Burning red light, visible for miles. Everyone will know.',
+    postUse: 'The sky lights up. Hope and danger arrive together.',
+    story:   null },
+  { id:11, name:'Dent Absorber',    category:1, slot:2,
+    img:'img/items/item_11.png', icon:'img/items/icon_11.png',
+    preUse:  null, postUse: null,
+    story:   'Cracked ceramic plates stitched into a salvaged vest. Won\'t stop everything, but it\'ll buy you seconds. +2 LL ceiling while equipped.' },
+  { id:12, name:'Glow Suit',        category:1, slot:2,
+    img:'img/items/item_12.png', icon:'img/items/icon_12.png',
+    preUse:  null, postUse: null,
+    story:   'Thick, yellow, and suffocating. A full seal against chemical and radiation hazards. Reduces Rad each dawn.' },
+  { id:13, name:'Wheeze Filter',    category:1, slot:1,
+    img:'img/items/item_13.png', icon:'img/items/icon_13.png',
+    preUse:  null, postUse: null,
+    story:   'Filters ash and particulates. Uncomfortable to sleep in. Unlocks traversal through toxic terrain.' },
+  { id:14, name:'Dark Goggles',     category:1, slot:1,
+    img:'img/items/item_14.png', icon:'img/items/icon_14.png',
+    preUse:  null, postUse: null,
+    story:   'Military surplus. One lens is cracked but it works. Extends vision radius +1 while equipped.' },
+  { id:15, name:'Trudge Stompers',  category:1, slot:4,
+    img:'img/items/item_15.png', icon:'img/items/icon_15.png',
+    preUse:  null, postUse: null,
+    story:   'Steel-toed, broken-in to someone else\'s feet. -1 Fatigue, +1 MP while equipped.' },
+  { id:16, name:'Hoarder\'s Rig',   category:1, slot:2,
+    img:'img/items/item_16.png', icon:'img/items/icon_16.png',
+    preUse:  null, postUse: null,
+    story:   'Loop after loop, pocket after pocket. If you can strap it on, you can carry it. +4 inventory slots while equipped.' },
+  { id:17, name:'Rust Rocket',      category:1, slot:5,
+    img:'img/items/item_17.png', icon:'img/items/icon_17.png',
+    preUse:  null, postUse: null,
+    story:   'Still runs. Barely. Costs 1 fuel at dawn — feed it and it moves fast. +4 MP while fuelled.' },
+  { id:18, name:'Floaty Disaster',  category:1, slot:5,
+    img:'img/items/item_18.png', icon:'img/items/icon_18.png',
+    preUse:  null, postUse: null,
+    story:   'Lashed together from oil drums and wishful thinking. Slow on land, essential on the river. Unlocks River Channel traversal.' },
+  { id:19, name:'Vertical Regret',  category:1, slot:3,
+    img:'img/items/item_19.png', icon:'img/items/icon_19.png',
+    preUse:  null, postUse: null,
+    story:   'Forty metres of woven polyester. Rated to 500kg. You\'re betting your life on it. Unlocks cliff traversal.' },
+  { id:20, name:'Doom Clicker',     category:1, slot:3,
+    img:'img/items/item_20.png', icon:'img/items/icon_20.png',
+    preUse:  null, postUse: null,
+    story:   'Vintage civil defence issue. Every click is a data point. Every data point is bad news. Reveals radiation on adjacent hexes.' },
+  { id:21, name:'Useful Garbage',   category:2, slot:0,
+    img:'img/items/item_21.png', icon:'img/items/icon_21.png',
+    preUse: null, postUse: null, story: null },
+  { id:22, name:'Sparky Bits',      category:2, slot:0,
+    img:'img/items/item_22.png', icon:'img/items/icon_22.png',
+    preUse: null, postUse: null, story: null },
+  { id:23, name:'Burn Juice Can',   category:2, slot:0,
+    img:'img/items/item_23.png', icon:'img/items/icon_23.png',
+    preUse: null, postUse: null, story: null },
+  { id:24, name:'Expired Meds',     category:2, slot:0,
+    img:'img/items/item_24.png', icon:'img/items/icon_24.png',
+    preUse: null, postUse: null, story: null },
+  { id:25, name:'Doomed Diary',     category:3, slot:0,
+    img:'img/items/item_25.png', icon:'img/items/icon_25.png',
+    preUse:  null, postUse: null,
+    story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too.' },
+];
+
+// Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist
+const ITEM_IMG_PLACEHOLDER  = 'img/items/item_placeholder.png';
+const ITEM_ICON_PLACEHOLDER = 'img/items/icon_placeholder.png';
+
+// Get item definition by ID. Returns undefined if not found.
+function getItemById(id) { return ITEMS.find(i => i.id === id); }
+
+// Get illustration path. Falls back to placeholder (onerror should also be set on <img>).
+function getItemImg(id)  {
+  const item = getItemById(id);
+  return item ? item.img  : ITEM_IMG_PLACEHOLDER;
+}
+function getItemIcon(id) {
+  const item = getItemById(id);
+  return item ? item.icon : ITEM_ICON_PLACEHOLDER;
+}
+
+// Get narrative text. phase: 'preUse' | 'postUse' | 'story'. Returns null if not set.
+function getItemNarrative(id, phase) {
+  const item = getItemById(id);
+  return item ? (item[phase] ?? null) : null;
+}
 
 // Short skill labels for display
 const SK_SHORT = ['Nav', 'For', 'Scav', 'Trt', 'Shel', 'End'];

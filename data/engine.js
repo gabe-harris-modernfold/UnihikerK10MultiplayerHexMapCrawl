@@ -31,6 +31,9 @@ const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
 const uiLogVisible  = van.state(localStorage.getItem('logVisible') !== '0');
+// Overlay open states — toggled via .val; van.derive in ui.js handles class changes
+const uiHexInfoOpen = van.state(false);
+const uiCharOpen    = van.state(false);
 van.derive(() => {
   const lp = document.getElementById('log-panel');
   if (lp) lp.style.display = uiLogVisible.val ? '' : 'none';
@@ -44,6 +47,7 @@ function narrateState(msg) {
 // Lobby / character selection
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
 const uiPickPending = van.state(false); // true while waiting for server pick response
+let pickTimeoutId = null;               // safety: auto-clear uiPickPending if server never responds
 
 // ── Magic number constants ────────────────────────────────────────
 // Animation & timing
@@ -54,6 +58,7 @@ const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn ove
 const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
 const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
 const FOOTPRINT_FADE_MS      = 4000;   // ms to fully fade from bright tan to dark
+const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on the current player
 
 // Rendering dimensions
 const HEX_SZ_MIN             = 36;     // minimum hex size in pixels
@@ -64,6 +69,16 @@ const ARROW_SIZE_SCALE       = 0.62;  // arrow size as fraction of icon size
 const SHADOW_HORIZONTAL_SCALE = 0.36; // shadow ellipse horizontal scale
 const SHADOW_VERTICAL_SCALE  = 0.09;  // shadow ellipse vertical scale
 const HEAD_RADIUS_SCALE      = 1.05;  // character head radius scale for font size
+
+// River ripple animation
+const RIVER_RIPPLE_COUNT     = 3;      // number of concentric ripple rings per river hex
+const RIVER_RIPPLE_SPEED     = 0.45;  // how fast rings advance per second (phase units/s)
+const RIVER_RIPPLE_SPACING   = 0.33;  // phase offset between successive rings (0–1)
+const RIVER_RIPPLE_W_SCALE   = 0.85;  // ellipse horizontal radius as fraction of hex size × wave scale
+const RIVER_RIPPLE_H_SCALE   = 0.38;  // ellipse vertical radius as fraction of hex size × wave scale
+
+// Footprint rendering
+const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint circle layout
 
 // Fog of war & visibility
 const FOG_INNER_ALPHA        = 0.78;  // alpha for inner fog ring (more visible)
@@ -76,6 +91,7 @@ const RECONNECT_DELAY_MS      = 2000; // delay before attempting reconnect
 // ── Move cooldown tracking (client-side estimate) ─────────────────
 let lastMoveSent   = 0;   // Date.now() of last move sent
 let moveCooldownMs = MOVE_COOLDOWN_BASE_MS; // mirrors server MOVE_CD_MS × current terrain MC
+let restSent       = false; // guard against REST double-click before server ack
 
 // ── Smooth animation ─────────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 }));
@@ -84,6 +100,11 @@ const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 })
 // key: 'q_r_pid' → Date.now() when that player last stepped on that hex.
 // Used to drive the bright-red → black colour fade on canvas.
 const footprintTimestamps = new Map();
+
+// ── Name-tag width cache ──────────────────────────────────────────
+// Avoids a ctx.measureText() call every frame per visible player.
+// Keyed by player index; invalidated when tag text or font size changes.
+const nameWidthCache = new Array(MAX_PLAYERS).fill(null);
 
 // ── Surveyed cells ────────────────────────────────────────────────
 // Cells revealed by the SURVEY action beyond normal vision radius.
@@ -178,7 +199,7 @@ let gameMap = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(null))
 let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
   inv: [0,0,0,0,0], sp: 0, st: 0,
-  // Wayfarer fields
+  // Survivor fields
   ll: 7, food: 6, water: 6, fat: 0, rad: 0, res: 3,
   arch: 0, sb: 0, is: 8,
   sk: [0,0,0,0,0,0],
@@ -193,6 +214,8 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
 
 // Shared game state (Threat Clock, Day, shared stores)
 let gameState = { tc: 0, dc: 0, sf: 30, sw: 30 };
+// Ground items from latest sync/ground_update
+let groundItems = [];
 
 // ── Agent state snapshot ─────────────────────────────────────────
 // Updated after every WS message. Read via: window.__gameState
@@ -293,9 +316,9 @@ function updateRestBubbles() {
     const bubble = document.createElement('div');
     bubble.className = 'rest-bubble' + (p.rest ? ' rest-bubble-on' : '');
     bubble.style.setProperty('--pc', PLAYER_COLORS[p.id]);
-    const tag = (p.nm || `P${p.id}`).substring(0, 6).toUpperCase();
+    const tag = (p.nm || `P${p.id}`).substring(0, 9).toUpperCase();
     bubble.innerHTML = p.rest
-      ? `<span class="rb-zzz">Zzz</span><span class="rb-name">${tag}</span>`
+      ? `<span class="rb-zzz">REST</span><span class="rb-name">${tag}</span>`
       : `<span class="rb-name">${tag}</span>`;
     bar.appendChild(bubble);
   }
@@ -333,6 +356,7 @@ function handleMsg(msg) {
         break;
       }
       myId = msg.id;
+      if (pickTimeoutId) { clearTimeout(pickTimeoutId); pickTimeoutId = null; }
       uiPickPending.val = false;
       uiResting.val = false;  // clear any stale resting state from the previous survivor
       hideCharSelect();
@@ -340,8 +364,16 @@ function handleMsg(msg) {
 
     case 'lobby':
       lobbyAvail.val    = Array.isArray(msg.avail) ? msg.avail : [];
+      if (pickTimeoutId) { clearTimeout(pickTimeoutId); pickTimeoutId = null; }
       uiPickPending.val = false;
-      if (!pendingLobbyRedirect) showCharSelect();  // suppressed during downed-death pause
+      if (!pendingLobbyRedirect) {
+        if (myId >= 0) {
+          // Already assigned: auto-repick same slot on reconnect instead of showing char select (BUG-01)
+          send({ t: 'pick', arch: myId });
+        } else {
+          showCharSelect();
+        }
+      }
       break;
 
     case 'sync':
@@ -369,6 +401,7 @@ function handleMsg(msg) {
       if (msg.sv) loadShelterVariants(msg.sv);
       if (msg.fa) loadForrageAnimalImgs(msg.fa);
       if (msg.gs) Object.assign(gameState, msg.gs);
+      if (Array.isArray(msg.gi)) groundItems = msg.gi;
       hideConnectOverlay();
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
       updateSidebar();
@@ -377,6 +410,22 @@ function handleMsg(msg) {
       updateTerrainCard();
       updateRestBubbles();
       updateDirButtons();
+      // Catch stale downed state on reconnect: if server synced us with ll:0 we are dead.
+      // Close the socket so the server resets the slot (p.connected=false) and re-adds us
+      // to the lobby on reconnect — otherwise a second pick is rejected as "not in lobby".
+      if (myId >= 0 && !pendingLobbyRedirect && players[myId].ll === 0) {
+        myId = -1;
+        pendingLobbyRedirect = true;
+        addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you.</span>');
+        showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
+        socket.close();  // triggers server slot reset + auto-reconnect → re-enter lobby
+        setTimeout(() => { pendingLobbyRedirect = false; showCharSelect(); }, 3500);
+      }
+      // Re-render char-sheet if open — ensures wounds/status reflect fresh server state (BUG-10)
+      if (document.getElementById('char-overlay')?.classList.contains('open')) {
+        renderInventory?.();
+        renderEquipment?.();
+      }
       break;
 
     case 's':
@@ -390,10 +439,14 @@ function handleMsg(msg) {
           return;
         }
         const p = players[i];
+        const wasOn = p.on;
         p.on = pd.on; p.q = pd.q; p.r = pd.r; p.sc = pd.sc;
+        // Snap renderPos when a player first comes online so they don't lerp from (0,0) (Bug-4)
+        if (pd.on && !wasOn) { renderPos[i].q = pd.q; renderPos[i].r = pd.r; }
         p.inv = pd.inv; p.sp = pd.sp;
         p.ll = pd.ll; p.food = pd.food; p.water = pd.water;
         p.fat = pd.fat; p.rad = pd.rad; p.sb = pd.sb;
+        if (pd.wd) p.wd = pd.wd;
         if (pd.mp  !== undefined) p.mp  = pd.mp;
         if (pd.res !== undefined) p.res = pd.res;   // resolve (§4.4)
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
@@ -403,12 +456,26 @@ function handleMsg(msg) {
           p.rest = !!pd.rt;
           if (i === myId) uiResting.val = !!pd.rt;
         }
+        if (pd.it) p.it = pd.it;   // typed inventory types
+        if (pd.iq) p.iq = pd.iq;   // typed inventory quantities
+        if (pd.eq) p.eq = pd.eq;   // equipment slots
       });
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
       updateTerrainCard();
       updateRestBubbles();
       updateDirButtons();
+      // Catch missed downed event: if server state shows ll:0 we are dead.
+      // Close the socket so the server resets the slot (p.connected=false) and re-adds us
+      // to the lobby on reconnect — otherwise a second pick is rejected as "not in lobby".
+      if (myId >= 0 && !pendingLobbyRedirect && players[myId].ll === 0) {
+        myId = -1;
+        pendingLobbyRedirect = true;
+        addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you.</span>');
+        showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
+        socket.close();  // triggers server slot reset + auto-reconnect → re-enter lobby
+        setTimeout(() => { pendingLobbyRedirect = false; showCharSelect(); }, 3500);
+      }
       break;
 
     case 'vis':
@@ -427,6 +494,14 @@ function handleMsg(msg) {
           const _mc = TERRAIN[_cell.terrain]?.mc;
           if (_mc && _mc !== 255) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * _mc;
         }
+        // If the current hex still has a resource after the move, collection was
+        // blocked. The only server-side reason is a full inventory — notify the player.
+        const _cur = gameMap[_me.r]?.[_me.q];
+        if (_cur?.resource > 0) {
+          const _totalInv = (_me.inv ?? [0,0,0,0,0]).reduce((a, b) => a + (b || 0), 0);
+          if (_totalInv >= (_me.sp ?? 6))
+            showToast(`\u22a0 Inventory full \u2014 ${RES_NAMES[_cur.resource] ?? 'resource'} left behind`);
+        }
       }
       updateTerrainCard();
       updateSidebar();
@@ -435,6 +510,16 @@ function handleMsg(msg) {
     case 'ev':
       handleEvent(msg);
       break;
+
+    case 'ground_update': {
+      // Server sends this as a top-level message when any player drops or picks up an item
+      if (Array.isArray(msg.gi)) groundItems = msg.gi;
+      if (document.getElementById('hex-info')?.classList.contains('open') && myId >= 0) {
+        const me = players[myId];
+        renderHexGroundItems?.(me.q, me.r);
+      }
+      break;
+    }
 
     case 'full':
       document.getElementById('connect-box').innerHTML =
@@ -463,11 +548,9 @@ function handleMsg(msg) {
 function handleEvent(ev) {
   switch (ev.k) {
     case 'col': {
-      const me = myId >= 0 ? players[myId] : null;
-      if (me && hexDistWrap(me.q, me.r, ev.q, ev.r) <= myVisionR) {
-        if (gameMap[ev.r] && gameMap[ev.r][ev.q])
-          gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: 0, amount: 0 };
-      }
+      // Clear resource unconditionally — null check handles fog cells
+      if (gameMap[ev.r]?.[ev.q])
+        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: 0, amount: 0 };
       const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
       if (ev.pid === myId) {
@@ -500,7 +583,12 @@ function handleEvent(ev) {
         gameMap[ev.r][ev.q] = { ...c, footprints: (c.footprints || 0) | (1 << ev.pid) };
       }
       // Record timestamp for the red→black fade animation.
-      footprintTimestamps.set(`${ev.q}_${ev.r}_${ev.pid}`, Date.now());
+      const _fpNow = Date.now();
+      footprintTimestamps.set(`${ev.q}_${ev.r}_${ev.pid}`, _fpNow);
+      // Prune expired entries so the Map doesn't grow unbounded over long sessions.
+      for (const [key, ts] of footprintTimestamps) {
+        if (_fpNow - ts > FOOTPRINT_FADE_MS) footprintTimestamps.delete(key);
+      }
       if (ev.radd && ev.radd > 0) {
         pm.rad = ev.rad ?? pm.rad;
         if (ev.pid === myId) {
@@ -516,10 +604,8 @@ function handleEvent(ev) {
       }
       // Narrate position for accessibility / AI agents
       if (ev.pid === myId) {
-        const TNAME = ['Open Scrub','Ash Dunes','Rust Forest','Marsh','Broken Urban',
-                       'Flooded Ruins','Glass Fields','Rolling Hills','Mountain','Settlement','Nuke Crater','River Channel'];
         const cell = gameMap[ev.r]?.[ev.q];
-        const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
+        const tName = TERRAIN[cell?.terrain ?? 0]?.name ?? 'Unknown';
         const shelterNote = cell?.shelter ? ' Shelter present.' : '';
         const exploNote   = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
         narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}${exploNote}`);
@@ -528,12 +614,15 @@ function handleEvent(ev) {
     }
     case 'join':
       players[ev.pid].on = true;
+      // Snap renderPos so the new player doesn't lerp from (0,0) to their hex (Bug-4)
+      if (ev.q !== undefined) { renderPos[ev.pid].q = ev.q; renderPos[ev.pid].r = ev.r; }
+      else { renderPos[ev.pid].q = players[ev.pid].q; renderPos[ev.pid].r = players[ev.pid].r; }
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
       updateRestBubbles();
       break;
     case 'regen':
       showToast('☠ Wasteland reborn. Survivors scattered.');
-      addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, wayfarer.</span>');
+      addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, survivor.</span>');
       break;
     case 'downed': {
       // Server has reset our slot — show death message then redirect to char selection
@@ -582,9 +671,11 @@ function handleEvent(ev) {
         players[ev.pid].mp    = ev.mp;
         if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT; }  // lock MP; snap displayMP; start night fade
         players[ev.pid].rest = false;
+        players[ev.pid].au   = 0;  // reset action slot at dawn
         if (ev.pid === myId) {
           if (uiResting.val && ev.expd < 0) showShelterWarning();
           uiResting.val = false;  // clear resting at dawn
+          restSent = false;
         }
         updateRestBubbles();
         if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
@@ -599,6 +690,9 @@ function handleEvent(ev) {
       if (ev.pid === myId) {
         const llTxt = ev.dll < 0 ? ` LL${ev.dll}` : ev.dll > 0 ? ` LL+${ev.dll}` : '';
         showToast(`\u2600 Day ${ev.day}${llTxt} F:${ev.f} W:${ev.w}`);
+        // Re-render action panel if open — was showing stale resting message
+        const _ap = document.getElementById('action-panel');
+        if (_ap?.classList.contains('open')) setTimeout(openActionPanel, 0);
       }
       updateSidebar();
       break;
@@ -613,16 +707,9 @@ function handleEvent(ev) {
         p.fat  = ev.fat;
         if (ev.fd)   p.inv[1] = Math.min(99, (p.inv[1] ?? 0) + ev.fd);
         if (ev.wd)   p.inv[0] = Math.min(99, (p.inv[0] ?? 0) + ev.wd);
-        if (ev.lld)  p.ll     = Math.max(0, Math.min(7, p.ll + (ev.lld ?? 0)));
+
         if (ev.rad !== undefined) p.rad = ev.rad;
         if (ev.resd) p.res    = Math.max(0, Math.min(5, (p.res ?? 3) + ev.resd));
-        // Update wound/status bits on successful Treat (§7.3A)
-        if (ev.a === ACT_TREAT && ev.out === AO_SUCCESS && p.wd) {
-          if (ev.cnd === TC_MINOR   && p.wd[0] > 0)  p.wd[0]--;
-          if (ev.cnd === TC_BLEED)                    p.sb = (p.sb ?? 0) & ~0x04;
-          if (ev.cnd === TC_FEVER)                    p.sb = (p.sb ?? 0) & ~0x08;
-          if (ev.cnd === TC_GRIEVOUS && p.wd[2] > 0) p.wd[2]--;
-        }
       }
       const who   = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const actNm = ACT_NAMES[ev.a] ?? `Act${ev.a}`;
@@ -636,17 +723,8 @@ function handleEvent(ev) {
       if (ev.wd)   detail += ` +${ev.wd}Water`;
       if (ev.lld)  detail += ` ${ev.lld > 0 ? '+' : ''}${ev.lld}LL`;
       if (ev.radd) detail += ` ${ev.radd > 0 ? '+' : ''}${ev.radd}R`;
-      if (ev.resd)   detail += ` +${ev.resd}Resolve`;
-  if (ev.scoreD) detail += ` \u271F${ev.scoreD}pts`;
-      if (ev.a === ACT_TREAT) {
-        const TREAT_COND_NAMES = ['Minor wound','Bleeding','Fever','Major wound','Radiation','Grievous wound'];
-        const cndTxt = TREAT_COND_NAMES[ev.cnd] ?? `Cond${ev.cnd}`;
-        if (ev.out === AO_SUCCESS) {
-          detail += ev.cnd === TC_GRIEVOUS ? ' \u2605Grievous healed' : ` \u2014 ${cndTxt} treated`;
-        } else if (ev.out === AO_FAIL) {
-          detail += ` \u2014 ${cndTxt} treatment failed`;
-        }
-      }
+      if (ev.resd) detail += ` +${ev.resd}Resolve`;
+      if (ev.scoreD) detail += ` \u271F${ev.scoreD}pts`;
       addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
       // Special toasts for REST and SHELTER
       if (ev.a === ACT_REST && ev.out === AO_SUCCESS) {
@@ -663,7 +741,7 @@ function handleEvent(ev) {
         showToast(`🔨 ${msg}`);
         // Update local gameMap immediately so the shelter icon renders without waiting for next move
         const sp = players[ev.pid];
-        if (sp && gameMap[sp.r]?.[sp.q] !== undefined) {
+        if (sp && gameMap[sp.r]?.[sp.q] != null) {
           gameMap[sp.r][sp.q].shelter = ev.cnd;
         }
       } else if (ev.pid === myId) {
@@ -685,23 +763,33 @@ function handleEvent(ev) {
         const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
         narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
       }
+      // Track action-slot state client-side (mirrors server p.actUsed)
+      if (ev.out !== AO_BLOCKED) {
+        const meIsScout = (players[ev.pid]?.arch ?? -1) === 4;
+        if (!(ev.a === ACT_SURVEY && meIsScout)) {
+          players[ev.pid].au = 1;  // slot consumed
+        }
+      }
+      if (ev.a === ACT_REST && ev.pid === myId) restSent = false;
       updateSidebar();
       break;
     }
 
     case 'surv': {
       // SURVEY result: update gameMap and mark cells as surveyed for rendering.
-      if (ev.cells) {
-        applyVisDisk(ev.cells);
-        // Extract q,r coords and add to the surveyed set so the render loop
-        // shows these cells as terrain instead of fog.
-        for (let i = 0; i < ev.cells.length; i += 10) {
-          const sq = parseInt(ev.cells.substr(i,     2), 16);
-          const sr = parseInt(ev.cells.substr(i + 2, 2), 16);
-          surveyedCells.add(`${sq}_${sr}`);
+      try {
+        if (ev.cells) {
+          applyVisDisk(ev.cells);
+          // Extract q,r coords and add to the surveyed set so the render loop
+          // shows these cells as terrain instead of fog.
+          for (let i = 0; i < ev.cells.length; i += 10) {
+            const sq = parseInt(ev.cells.substr(i,     2), 16);
+            const sr = parseInt(ev.cells.substr(i + 2, 2), 16);
+            surveyedCells.add(`${sq}_${sr}`);
+          }
         }
-      }
-      if (ev.pid === myId) showToast('\u25CE Survey: outer ring revealed');
+        if (ev.pid === myId) showToast('\u25CE Survey: outer ring revealed');
+      } catch(e) { console.error('surv event error', e); }
       break;
     }
 
@@ -725,6 +813,58 @@ function handleEvent(ev) {
       }
       break;
     }
+
+    case 'trd_off': {
+      // Trade offer sent: log for everyone; show overlay only for the target
+      const fromName = (ev.from >= 0 && ev.from < MAX_PLAYERS && players[ev.from]?.nm) || 'P' + ev.from;
+      const toName   = (ev.to   >= 0 && ev.to   < MAX_PLAYERS && players[ev.to]?.nm)   || 'P' + ev.to;
+      const giveTxt  = ev.give.map((v, i) => v > 0 ? RES_SHORT[i] + '\u00d7' + v : null).filter(Boolean).join(' ') || '\u2014';
+      const wantTxt  = ev.want.map((v, i) => v > 0 ? RES_SHORT[i] + '\u00d7' + v : null).filter(Boolean).join(' ') || '\u2014';
+      addLog(`<span class="log-col">\u21C4 ${escHtml(fromName)} offers ${escHtml(toName)}: ${giveTxt} for ${wantTxt}</span>`);
+      if (ev.to === myId) {
+        window._openTradeOffer?.(ev.from, ev.give, ev.want);
+      }
+      break;
+    }
+
+    case 'trd_res': {
+      // Trade result: 1=accepted 2=declined 3=expired
+      const fromName = (ev.from >= 0 && ev.from < MAX_PLAYERS && players[ev.from]?.nm) || 'P' + ev.from;
+      const toName   = (ev.to   >= 0 && ev.to   < MAX_PLAYERS && players[ev.to]?.nm)   || 'P' + ev.to;
+      const TRADE_LABELS = ['', 'ACCEPTED', 'DECLINED', 'EXPIRED'];
+      const label = TRADE_LABELS[ev.res] ?? 'UNKNOWN';
+      const cls   = ev.res === 1 ? 'log-col' : 'log-check-fail';
+      addLog(`<span class="${cls}">\u21C4 Trade ${label}: ${escHtml(fromName)} \u2194 ${escHtml(toName)}</span>`);
+      if (ev.from === myId || ev.to === myId) {
+        showToast('\u21C4 Trade ' + label);
+        window._closeTradeOverlay?.();
+        updateSidebar();
+      }
+      break;
+    }
+
+    case 'item_result': {
+      // Server ack for use_item / equip_item / unequip_item
+      if (ev.ok) {
+        if (ev.msg) showToast(ev.msg);
+        // Apply inventory/equip deltas if included
+        if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
+          const p = players[ev.pid];
+          if (ev.it) p.it = ev.it;
+          if (ev.iq) p.iq = ev.iq;
+          if (ev.eq) p.eq = ev.eq;
+        }
+      } else {
+        showToast('\u2297 ' + (ev.msg || 'Action failed'));
+      }
+      // Refresh char-sheet inventory/equipment if open
+      if (document.getElementById('char-overlay')?.classList.contains('open')) {
+        renderInventory?.();
+        renderEquipment?.();
+      }
+      break;
+    }
+
   }
 }
 
@@ -757,8 +897,8 @@ function parseMapFog(hexStr) {
 }
 
 // ── Apply vis-disk update ────────────────────────────────────────
-// Format: "QQRRTTDD..." — 8 hex chars per cell
-//   QQ=col, RR=row, TT=terrain, DD=data
+// Format: "QQRRTTDDVV..." — 10 hex chars per cell (5 bytes)
+//   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
 function applyVisDisk(cells) {
   for (let i = 0; i < cells.length; i += 10) {
     const q  = parseInt(cells.substr(i,     2), 16);
@@ -801,17 +941,28 @@ function drawHexPath(ctx, cx, cy, size) {
 // ── Canvas setup ─────────────────────────────────────────────────
 const canvas = document.getElementById('hexCanvas');
 const ctx    = canvas.getContext('2d');
-let HEX_SZ   = 56;
+let HEX_SZ    = 56;
+// CSS-pixel dimensions used throughout the render loop.
+// canvas.width/height hold physical pixels (= cssWidth/Height × devicePixelRatio).
+let cssWidth  = 0;
+let cssHeight = 0;
 
 /**
- * Recalculate hex size based on canvas viewport width.
- * Ensures hex size stays within min/max range for readability.
+ * Recalculate hex size and canvas resolution based on viewport size.
+ * Scales the canvas buffer by devicePixelRatio for crisp rendering on
+ * HiDPI / Retina screens while keeping all draw coordinates in CSS pixels.
  */
 function resize() {
   const wrap = document.getElementById('canvas-wrap');
-  canvas.width  = wrap.clientWidth;
-  canvas.height = wrap.clientHeight;
-  HEX_SZ = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(canvas.width / HEX_SZ_VIEWPORT_DIVISOR)));
+  const dpr  = window.devicePixelRatio || 1;
+  cssWidth   = wrap.clientWidth;
+  cssHeight  = wrap.clientHeight;
+  canvas.width  = cssWidth  * dpr;
+  canvas.height = cssHeight * dpr;
+  canvas.style.width  = cssWidth  + 'px';
+  canvas.style.height = cssHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);  // reset any prior transform then scale
+  HEX_SZ = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(cssWidth / HEX_SZ_VIEWPORT_DIVISOR)));
 }
 window.addEventListener('resize', resize);
 resize();
@@ -910,7 +1061,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
     ctx.font         = `bold ${arrowSz}px monospace`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'bottom';
-    const bounce = Math.sin(Date.now() / 350) * 2;
+    const bounce = Math.sin(Date.now() / ARROW_BOUNCE_PERIOD_MS) * 2;
     ctx.fillText('▼', cx, arrowBot + bounce);
     ctx.restore();
   }
@@ -935,7 +1086,14 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
     ctx.font        = `${nameSz}px 'Courier New', monospace`;
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'bottom';
-    const tw = ctx.measureText(tag).width;
+    // Cache measureText result — recompute only when name or font size changes.
+    const _cacheKey = `${tag}|${nameSz}`;
+    if (!drawCharIcon._twCache) drawCharIcon._twCache = new Map();
+    let tw = drawCharIcon._twCache.get(_cacheKey);
+    if (tw === undefined) {
+      tw = ctx.measureText(tag).width;
+      drawCharIcon._twCache.set(_cacheKey, tw);
+    }
     // Dark pill backdrop
     const padX = 3, padY = 2;
     ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA})`;
@@ -979,11 +1137,23 @@ function getTimePhase(mpVal) {
 var nightFade = 0;  // extra night overlay that fades out after dawn
 var displayMP = 6;    // smoothly lerped toward uiMP.val each frame
 
+// ── Ash particle system (Pass 3) ────────────────────────────────
+const ashParticles = (typeof AshParticleSystem !== 'undefined') ? new AshParticleSystem({
+  maxAlpha:         0.52,   // peak opacity at spawn point
+  driftSpeed:       0.04,   // px/ms base speed (randomized ±)
+  wobbleAmp:        8,      // px of sine-wave wobble layered on drift
+  wobbleFreq:       0.0007, // wobble sine frequency (rad/ms)
+  maxDistanceHexes: 3,      // hex-distance at which particle is garbage collected
+  countPerTerrain:  2,      // target active particles per ash/mountain hex
+  radiusMin:        1.5,    // min gradient radius as multiple of HEX_SZ
+  radiusMax:        3.0,    // max gradient radius as multiple of HEX_SZ
+}) : null;
+
 // ── Render ──────────────────────────────────────────────────────
 function render() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
   ctx.fillStyle = '#050301';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
 
   // Lerp all player render positions
   for (let i = 0; i < MAX_PLAYERS; i++) {
@@ -1001,14 +1171,14 @@ function render() {
   // Camera: centre on my smooth position
   const meRp = (myId >= 0) ? renderPos[myId] : { q: 0, r: 0 };
   const cp   = hexToPixel(meRp.q, meRp.r, HEX_SZ);
-  const ox   = canvas.width  / 2 - cp.x;
-  const oy   = canvas.height / 2 - cp.y;
+  const ox   = cssWidth  / 2 - cp.x;
+  const oy   = cssHeight / 2 - cp.y;
 
   // Fog uses the ACTUAL integer position (accurate fog boundary)
   const meAct = (myId >= 0) ? players[myId] : { q: 0, r: 0 };
 
-  const viewQ   = Math.ceil(canvas.width  / (HEX_SZ * 1.5)) + 2;
-  const viewR   = Math.ceil(canvas.height / (HEX_SZ * SQRT3)) + 2;
+  const viewQ   = Math.ceil(cssWidth  / (HEX_SZ * 1.5)) + 2;
+  const viewR   = Math.ceil(cssHeight / (HEX_SZ * SQRT3)) + 2;
   const centreQ = Math.round(meRp.q);
   const centreR = Math.round(meRp.r);
 
@@ -1024,8 +1194,8 @@ function render() {
       const cx = px.x + ox;
       const cy = px.y + oy;
 
-      if (cx < -HEX_SZ * 2 || cx > canvas.width  + HEX_SZ * 2) continue;
-      if (cy < -HEX_SZ * 2 || cy > canvas.height + HEX_SZ * 2) continue;
+      if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+      if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
 
       const dist     = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
       const cell     = gameMap[mapR][mapQ];
@@ -1052,11 +1222,8 @@ function render() {
         ctx.globalAlpha = 1;     // deep fog — fully opaque
         ctx.fillStyle   = '#080402';
       }
-      ctx.strokeStyle = 'rgba(160,160,160,0.25)';
-      ctx.lineWidth   = 0.4;
       ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.stroke();
 
       if (!visible && !surveyed) continue;
 
@@ -1065,7 +1232,7 @@ function render() {
 
       // Terrain hex image (if loaded) — alpha channel handles hex shape, no clipping
       const _tv  = terrainImgVariants[cell.terrain];
-      const tImg = (_tv && _tv[cell.variant || 0]) || (_tv && _tv[0]);
+      const tImg = (_tv && _tv.length > 0) ? (_tv[cell.variant % _tv.length] || _tv[0]) : null;
       if (tImg && tImg.loaded) {
         const imgSz = HEX_SZ * 2;
         ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
@@ -1082,13 +1249,13 @@ function render() {
         const rt = performance.now() / 1000;
         ctx.save();
         ctx.lineWidth = 1;
-        for (let w = 0; w < 3; w++) {
-          const phase = (rt * 0.45 + w * 0.33) % 1;
+        for (let w = 0; w < RIVER_RIPPLE_COUNT; w++) {
+          const phase = (rt * RIVER_RIPPLE_SPEED + w * RIVER_RIPPLE_SPACING) % 1;
           const scale = 0.25 + phase * 0.55;
           const alpha = 0.18 * (1 - phase);
           ctx.strokeStyle = `rgba(30,70,90,${alpha.toFixed(3)})`;
           ctx.beginPath();
-          ctx.ellipse(cx, cy, HEX_SZ * scale * 0.85, HEX_SZ * scale * 0.38, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx, cy, HEX_SZ * scale * RIVER_RIPPLE_W_SCALE, HEX_SZ * scale * RIVER_RIPPLE_H_SCALE, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.restore();
@@ -1111,13 +1278,14 @@ function render() {
           if ((cell.footprints & (1 << fpid)) === 0) continue;
 
           const angle  = (footprintIdx * Math.PI * 2) / Math.max(1, footprintCount);
-          const radius = HEX_SZ * 0.28;
+          const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
           const fx = cx + Math.cos(angle) * radius;
           const fy = cy + Math.sin(angle) * radius;
 
-          // t=0 → just stamped (light tan); t=1 → fully faded (dark transparent)
+          // t=0 → just stamped (light tan); t=1 → fully faded (invisible — skip draw)
           const ts = footprintTimestamps.get(`${mapQ}_${mapR}_${fpid}`);
           const t  = ts ? Math.min(1, (now - ts) / FOOTPRINT_FADE_MS) : 1;
+          if (t >= 1) { footprintIdx++; continue; }  // expired — nothing visible to draw
 
           // sepia(1) keeps the warm tan hue naturally; brightness fades light→dark.
           const bri = (1.5 * (1 - t) + 0.12).toFixed(2);  // 1.62 fresh → 0.12 old
@@ -1168,6 +1336,34 @@ function render() {
     }
   }
 
+  // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ──────────
+  ctx.strokeStyle = 'rgba(50,50,50,0.5)';
+  ctx.lineWidth   = 2.0;
+  ctx.globalAlpha = 1;
+  for (let dr = -viewR; dr <= viewR; dr++) {
+    for (let dq = -viewQ; dq <= viewQ; dq++) {
+      const vq = centreQ + dq;
+      const vr = centreR + dr;
+      const px = hexToPixel(vq, vr, HEX_SZ);
+      const cx = px.x + ox;
+      const cy = px.y + oy;
+      if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+      if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      ctx.stroke();
+    }
+  }
+
+  // ── Current hex outline highlight ────────────────────────────────
+  if (myId >= 0 && players[myId]?.on) {
+    const mePx = hexToPixel(meAct.q, meAct.r, HEX_SZ);
+    drawHexPath(ctx, mePx.x + ox, mePx.y + oy, HEX_SZ - 1);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(90,90,90,0.5)';
+    ctx.lineWidth   = 1.0;
+    ctx.stroke();
+  }
+
   // ── Pass 2: Character icons ────────────────────────────────────
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i];
@@ -1187,23 +1383,32 @@ function render() {
     const pp  = hexToPixel(vq, vr, HEX_SZ);
     const pcx = pp.x + ox;
     const pcy = pp.y + oy;
-    if (pcx < -HEX_SZ * 2 || pcx > canvas.width  + HEX_SZ * 2) continue;
-    if (pcy < -HEX_SZ * 2 || pcy > canvas.height + HEX_SZ * 2) continue;
+    if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
+    if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
     drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId, players[i].nm);
   }
 
+  // ── Pass 3: Ash particle overlay ─────────────────────────────
+  if (ashParticles) {
+    ashParticles.update(gameMap, HEX_SZ);
+    ashParticles.render(ctx, ox, oy, HEX_SZ);
+  }
+
   // ── Time-of-day tint overlay ──────────────────────────────────
   {
-    // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting
-    const mpTarget = uiResting.val ? 0 : uiMP.val;
-    const lerpRate = uiResting.val ? RESTING_LERP_RATE : MOVING_LERP_RATE;
+    // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting.
+    // Exception: if nightFade > 0 a dawn event just fired — don't lerp toward 0 (BUG-13).
+    // nightFade > 0 means dawn already happened; trust displayMP (snapped at dawn) not resting flag.
+    const stillResting = uiResting.val && nightFade <= 0;
+    const mpTarget = stillResting ? 0 : uiMP.val;
+    const lerpRate = stillResting ? RESTING_LERP_RATE : MOVING_LERP_RATE;
     displayMP += (mpTarget - displayMP) * lerpRate;
     const phase = getTimePhase(displayMP);
     ctx.save();
     ctx.globalAlpha = phase.a;
     ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
     ctx.restore();
   }
 
@@ -1212,7 +1417,7 @@ function render() {
     ctx.save();
     ctx.globalAlpha = nightFade;
     ctx.fillStyle = 'rgb(15,8,40)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
     ctx.restore();
     nightFade = Math.max(0, nightFade - NIGHT_FADE_DECAY_RATE); // ~3 s at 60fps
   }

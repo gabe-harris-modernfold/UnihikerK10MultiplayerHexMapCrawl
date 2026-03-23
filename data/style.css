@@ -193,9 +193,9 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────────── Terrain Card ─────────────────────────*/
 #terrain-card{
-  position:absolute;top:8px;right:8px;width:196px;
+  position:absolute;top:40px;right:8px;width:196px;
   background:var(--bg-card);border:1px solid var(--bdr-mid);
-  border-radius:2px;cursor:pointer;z-index:5;
+  border-radius:2px;cursor:pointer;z-index:16;
   transition:border-color 0.2s;
   box-shadow:inset 0 0 0 1px rgba(92,60,22,0.2)
 }
@@ -217,15 +217,14 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────────── Hex Info Popup ───────────────────────*/
 #hex-info{
-  position:absolute;top:8px;right:8px;width:196px;
+  position:absolute;top:84px;right:8px;width:196px;
   background:var(--bg-card);border:1px solid var(--bdr-hi);
-  border-radius:2px;padding:12px;z-index:7;display:none;
-  max-height:calc(85dvh - 24px);overflow-y:auto;
+  border-radius:2px;padding:12px;z-index:17;display:none;
+  max-height:calc(85dvh - 96px);overflow-y:auto;
   box-shadow:0 4px 28px rgba(0,0,0,0.65)
 }
 #hex-info.open{display:block}
-/* Hide terrain card while expanded hex-info occupies the same slot */
-#terrain-card.expanded{visibility:hidden}
+/* terrain card stays visible; hex-info drops below it */
 
 /* ── Action panel modal overlay ──────────────────────────────── */
 #action-panel{
@@ -742,7 +741,7 @@ canvas{display:block;width:100%;height:100%}
 /* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */
 .hr-lbl{display:none;font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
 #hud-score-wrap{display:flex;align-items:center;gap:3px}
-#hud-score{font-size:var(--fs-v);font-weight:bold;color:var(--gold-hi);white-space:nowrap;letter-spacing:var(--ls-v)}
+#hud-score{display:none;font-size:var(--fs-v);font-weight:bold;color:var(--gold-hi);white-space:nowrap;letter-spacing:var(--ls-v)}
 
 /* Squeeze HUD title at mid-range widths to prevent wrapping */
 @media(max-width:600px) and (min-width:481px){
@@ -752,6 +751,7 @@ canvas{display:block;width:100%;height:100%}
 @media(max-width:480px){
   #sidebar{display:none}#log-panel{display:none}
   #hud-score-wrap{display:inline-flex}
+  #hud-score{display:block}
   .dir-btn{width:40px;height:40px;font-size:18px}
   #terrain-card{width:min(170px,calc(100vw - 16px))}
   #hex-info{width:min(170px,calc(100vw - 16px))}
@@ -999,7 +999,10 @@ canvas{display:block;width:100%;height:100%}
 .arch-card:not(.arch-taken):hover{
   border-color:var(--arch-color,var(--gold))
 }
-.arch-taken{opacity:0.38}
+.arch-taken > .arch-header,
+.arch-taken > .arch-skills,
+.arch-taken > .arch-trait,
+.arch-taken > .arch-flavor{opacity:0.38}
 
 .arch-header{
   display:flex;align-items:center;gap:8px
@@ -1083,8 +1086,7 @@ canvas{display:block;width:100%;height:100%}
   font-family:var(--stencil);
   color:var(--blood);font-size:var(--fs-l);letter-spacing:var(--ls-l);
   border:1px solid var(--blood);
-  padding:6px 8px;display:block;text-align:center;
-  opacity:0.75
+  padding:6px 8px;display:block;text-align:center
 }
 
 /* ── Action panel: inline unavailability reason ──────────────── */
@@ -1116,6 +1118,16 @@ canvas{display:block;width:100%;height:100%}
   cursor:pointer;transition:background 0.15s,border-color 0.15s
 }
 .menu-regen-btn:hover{background:#3a0a0a;border-color:#A03030;color:#A03030}
+.erase-slot-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.menu-erase-slot-btn{
+  flex:1 1 calc(33.33% - 4px);min-width:calc(33.33% - 4px);
+  background:#200808;color:#A02828;
+  border:1px solid #A02828;border-radius:2px;
+  font-family:'Courier New',monospace;font-size:var(--fs-d);
+  letter-spacing:var(--ls-b);text-transform:uppercase;
+  padding:7px 4px;cursor:pointer;transition:background 0.15s,border-color 0.15s
+}
+.menu-erase-slot-btn:hover{background:#3a0a0a;border-color:#A03030;color:#A03030}
 
 
 /* ── Help / Agent Instructions Overlay ──────────────────────────────── */
@@ -1238,3 +1250,168 @@ canvas{display:block;width:100%;height:100%}
   font-size: var(--fs-d);
   color: var(--ash);
 }
+
+/* ── Trade overlay ─────────────────────────────────────────────── */
+#trade-overlay{
+  position:fixed;inset:0;
+  background:rgba(4,3,2,0.88);
+  display:none;align-items:center;justify-content:center;
+  z-index:19
+}
+#trade-overlay.open{display:flex}
+#trade-box{
+  background:var(--bg-panel);border:1px solid var(--gold);
+  border-radius:2px;padding:20px 24px;
+  width:min(380px,92vw)
+}
+#trade-from-label{color:var(--gold-hi);font-size:var(--fs-b);margin-top:4px}
+#trade-give-display,#trade-want-display{
+  color:var(--txt);font-size:var(--fs-b);margin-top:2px;min-height:18px
+}
+#trade-expire-bar{
+  height:4px;background:var(--bdr-mid);margin-top:10px;border-radius:2px;overflow:hidden
+}
+#trade-expire-fill{
+  height:100%;background:var(--gold);width:100%;
+  transition:width 0.5s linear
+}
+.trade-res-row{
+  display:flex;gap:6px;flex-wrap:wrap;margin-top:4px
+}
+.trade-stepper{
+  display:flex;align-items:center;gap:3px;
+  border:1px solid var(--bdr-hi);padding:3px 5px;border-radius:2px
+}
+.trade-stepper-label{
+  color:var(--ash);font-size:var(--fs-d);min-width:26px;text-align:center
+}
+.trade-stepper button{
+  background:transparent;border:none;color:var(--gold);
+  font-size:14px;cursor:pointer;padding:0 2px;line-height:1
+}
+.trade-stepper-val{
+  color:var(--gold-hi);min-width:16px;text-align:center;font-size:var(--fs-b)
+}
+
+/* ── Item system ────────────────────────────────────────────────── */
+
+/* Equipment slot grid */
+#cs-equip-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:4px
+}
+.equip-slot{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:6px 4px;border:1px solid var(--bdr-mid);border-radius:2px;
+  background:var(--bg-deep);cursor:pointer;min-height:58px;
+  transition:border-color 0.15s
+}
+.equip-slot:hover{border-color:var(--bdr-hi)}
+.equip-slot.filled{border-color:var(--gold)}
+.equip-slot-name{
+  font-size:9px;letter-spacing:1px;text-transform:uppercase;
+  color:var(--txt-dim);font-family:'Courier New',monospace
+}
+.equip-slot-icon{
+  width:28px;height:28px;object-fit:cover;border-radius:1px;
+  image-rendering:pixelated
+}
+.equip-slot-label{
+  font-size:var(--fs-d);color:var(--gold);text-align:center;
+  max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'Courier New',monospace
+}
+.equip-slot-empty{
+  font-size:18px;color:var(--bdr-hi);line-height:28px
+}
+
+/* Typed item inventory grid */
+#cs-item-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:4px
+}
+.item-slot{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:4px 3px;border:1px solid var(--bdr-mid);border-radius:2px;
+  background:var(--bg-deep);cursor:pointer;min-height:54px;
+  position:relative;transition:border-color 0.15s
+}
+.item-slot:hover{border-color:var(--bdr-hi)}
+.item-slot.occupied{border-color:var(--rust)}
+.item-slot-icon{
+  width:26px;height:26px;object-fit:cover;border-radius:1px;
+  image-rendering:pixelated
+}
+.item-slot-qty{
+  position:absolute;top:2px;right:3px;
+  font-size:9px;color:var(--gold-hi);font-family:'Courier New',monospace;
+  font-weight:bold
+}
+.item-slot-name{
+  font-size:8px;letter-spacing:0.5px;text-transform:uppercase;
+  color:var(--txt);text-align:center;max-width:58px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'Courier New',monospace
+}
+.item-slot-empty-icon{
+  font-size:14px;color:var(--bdr-mid);line-height:26px
+}
+/* Item category badge strip */
+.item-cat-badge{
+  font-size:7px;letter-spacing:0.5px;text-transform:uppercase;
+  padding:0 3px;border-radius:1px;
+  font-family:'Courier New',monospace;margin-top:1px
+}
+.cat-consumable{background:#2A3A0A;color:#8ABB30}
+.cat-equipment {background:#0A1F3A;color:#3A88C8}
+.cat-material  {background:#2A1A00;color:#C87828}
+.cat-key       {background:#3A0A1A;color:#C83060}
+
+/* Item action context menu */
+#item-action-menu{
+  position:fixed;bottom:0;left:0;right:0;z-index:50;
+  background:var(--bg-panel);border-top:2px solid var(--gold);
+  padding:12px 16px 20px;display:none;
+  animation:slide-up 0.18s ease-out
+}
+#item-action-menu.open{display:block}
+@keyframes slide-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+#item-menu-title{
+  font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-h);
+  color:var(--gold-hi);margin-bottom:10px;display:flex;align-items:center;gap:8px
+}
+#item-menu-title img{width:32px;height:32px;object-fit:cover;border-radius:1px}
+#item-menu-title span{flex:1}
+#item-menu-story{
+  font-size:var(--fs-d);color:var(--txt-dim);font-style:italic;
+  margin-bottom:10px;line-height:1.4
+}
+.item-menu-btn{
+  display:block;width:100%;padding:9px 12px;margin-bottom:5px;
+  background:var(--bg-card);border:1px solid var(--bdr-mid);border-radius:2px;
+  color:var(--gold);font-family:'Courier New',monospace;font-size:var(--fs-b);
+  text-align:left;cursor:pointer;letter-spacing:var(--ls-b);text-transform:uppercase
+}
+.item-menu-btn:hover{border-color:var(--gold);color:var(--gold-hi)}
+.item-menu-btn:active{background:var(--rust)}
+.item-menu-btn.danger{border-color:var(--blood);color:#C84040}
+#item-menu-close{
+  margin-top:6px;color:var(--txt-dim);border-color:var(--bdr)
+}
+#item-menu-backdrop{
+  position:fixed;inset:0;z-index:49;display:none;background:rgba(0,0,0,0.55)
+}
+#item-menu-backdrop.open{display:block}
+
+/* Ground items in hex-info panel */
+.hi-ground-pickup{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 6px;margin:2px 3px 2px 0;
+  background:var(--bg-deep);border:1px solid var(--bdr-mid);border-radius:2px;
+  color:var(--txt);font-size:var(--fs-d);cursor:pointer
+}
+.hi-ground-pickup:hover{border-color:var(--gold);color:var(--gold)}
+.hi-ground-pickup img{width:16px;height:16px;object-fit:cover;border-radius:1px}
+.hi-ground-pickup .gp-plus{color:var(--gold-hi);font-weight:bold}
+
+/* Broken image fallback */
+img.item-icon-img{background:var(--bg-deep)}
+img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
