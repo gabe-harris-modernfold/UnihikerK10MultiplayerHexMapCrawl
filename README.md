@@ -151,7 +151,7 @@ Esp32HexMapCrawl/
 **Designed for:** Unihiker K10 ESP32-S3 with integrated TFT display
 **Game Engine:** ESPAsyncWebServer + Custom WebSocket Protocol
 **Theme:** Post-apocalyptic survival exploration
-**Players:** Up to 10 simultaneous via WiFi
+**Players:** Up to 6 simultaneous via WiFi
 
 ---
 
