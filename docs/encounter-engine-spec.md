@@ -16,7 +16,7 @@ The game currently has a "not yet implemented" placeholder for encounters (see `
 - **Linear with optional side rooms**: Main path is linear push-deeper, but some nodes offer one-shot side choices that return to the same depth
 - **Survey reveals POI**: POI hexes are invisible until Surveyed; surveying at half the normal survey range shows an eye icon on hexes that contain encounters. POI visibility is per-player — only the surveyor sees it
 - **Free entry**: No MP cost to enter an encounter; internal node costs handle resource drain
-- **Client-side loot tables**: Client fetches and caches `loot_tables.json` once at game start; client rolls loot table drops locally
+- **Client-side loot tables**: Client fetches and caches `loot_tables.json` once at game start; client rolls loot table drops locally and reports the result (`item_id`, `item_qty`) in `enc_choice`
 - **Finite encounter pools**: Server tracks used encounter files per terrain type; once a terrain's pool is exhausted, no more POIs spawn for that terrain
 - **Fully locked during encounter**: Player cannot perform any non-encounter actions (rest, trade, craft, move) while in an active encounter
 - **Spectator view**: Same-hex allies fetch the encounter JSON and see a read-only view of encounter progress with assist buttons
@@ -175,11 +175,11 @@ struct HexCell {
 ```
 Memory impact: +475 bytes (19x25).
 
-**ActiveEncounter** -- per-player encounter tracking (~24 bytes x 6 = 144 bytes):
+**ActiveEncounter** -- per-player encounter tracking (~20 bytes x 6 = ~120 bytes):
 ```cpp
 #define ENC_MAX_ITEMS 3   // max typed items pending per encounter
 struct ActiveEncounter {
-  uint8_t  active;
+  uint8_t  active;         // bit 0 = in encounter, bit 7 = reachedTerminal (set when success_node has empty choices; checked on enc_bank for +10 full-clear bonus)
   uint8_t  encIdx;         // poi value for hex marking
   uint8_t  hexQ, hexR;
   uint8_t  pendingLoot[5]; // accumulated unbanked resource loot
@@ -228,6 +228,8 @@ uint8_t  encStatus;
 uint8_t  encEnds;
 uint8_t  encAssistRes;  // resource type for assist event
 int8_t   encRiskRed;    // risk reduction for assist event
+// NOTE: enc_path (encounter file path for spectator fetch) is NOT in GameEvent.
+// It is sent as a separate freeform WebSocket JSON message alongside EVT_ENC_START.
 ```
 
 ---
@@ -279,7 +281,7 @@ Same-hex allies can spend 1 resource each to reduce risk **before** the active p
 
 - Max 1 assist per ally per node (tracked via `assistUsed` bitmask), regardless of resource type
 - Total assist reduction capped at -15 per node
-- Assist resets when active player advances to a new node
+- On node advance: `assistUsed`, `assistRisk`, and `sideRoomUsed` all reset (same transition)
 
 ---
 
@@ -290,20 +292,20 @@ Same-hex allies can spend 1 resource each to reduce risk **before** the active p
 |---------|--------|---------|
 | `enc_start` | `q, r` | Enter POI encounter |
 | `enc_assist` | `target, res` | Ally spends resource to help |
-| `enc_choice` | `ci, cost_ll, cost_fat, cost_rad, cost_food, cost_water, base_risk, skill, loot[5], can_bank` | Player picks a choice |
+| `enc_choice` | `ci, cost_ll, cost_fat, cost_rad, cost_food, cost_water, cost_resolve, base_risk, skill, loot[5], item_id, item_qty, can_bank` | Player picks a choice |
 | `enc_bank` | -- | Bank accumulated loot, end encounter |
 | `enc_abort` | -- | Leave encounter, lose pending loot, increment Threat Clock |
 
 ### Server -> Client (via event queue)
 | Event | Key Fields | Purpose |
 |-------|-----------|---------| 
-| `EVT_ENC_START` | `pid, q, r, enc_path` | Notify same-hex allies: encounter begun + file path for spectator fetch |
+| `EVT_ENC_START` | `pid, q, r` | Notify same-hex allies: encounter begun. `enc_path` sent as a separate freeform WebSocket JSON message (not packed into GameEvent — keeps GameEvent compact/numeric) |
 | `EVT_ENC_ASSIST` | `pid (ally), target, res, riskRed` | Assist applied |
 | `EVT_ENC_RESULT` | `pid, out, skill, dn, total, loot[5], penalties, status, ends` | Choice resolved |
 | `EVT_ENC_BANK` | `pid, q, r, loot[5]` | Loot secured |
 | `EVT_ENC_END` | `pid, q, r, reason` | Encounter ended (hazard/abort/dawn/downed) |
 
-**Validation on `enc_choice`**: Server checks player can afford costs, is in active encounter, and is not downed. Server resolves the roll. Client sends cost/risk values from the JSON; server fully trusts the encounter data (SD card is not player-modifiable) but validates affordability.
+**Validation on `enc_choice`**: Server checks player can afford costs, is in active encounter, and is not downed. Server resolves the roll. Client sends cost/risk values from the JSON; server fully trusts the encounter data (SD card is not player-modifiable) but validates affordability. Server does not track the current node key — `can_bank` is sent by the client in `enc_choice` and trusted. Choice-index validity is not server-validated (cheating is out of scope). If more rigor is needed later, add a `uint8_t nodeDepth` to `ActiveEncounter` and define a convention that nodes in the JSON are depth-ordered.
 
 **Rejection on `enc_start`**: If a POI is already claimed by another player, server sends a specific rejection: "Another survivor is already inside." Client displays this message distinctly from generic errors.
 
@@ -416,11 +418,11 @@ On `enc_start`, server picks a random unused file index for the hex's terrain ty
 | System | Interaction |
 |--------|------------|
 | **Threat Clock** | Starting any encounter increments TC by 1 (all terrain types). Voluntary abort also increments TC by 1. Dawn abort does NOT increment TC. TC thresholds add +5/+10/+15/+20 to base_risk. |
-| **Day Cycle** | Dawn during active encounter -> forced abort (pending loot lost, no TC increment). Players cannot REST while in encounter. |
+| **Day Cycle** | Dawn during active encounter -> forced abort (pending loot lost, no TC increment). Dawn abort consumes the POI (same as all entry paths). Player remains at the POI hex. Players cannot REST while in encounter. |
 | **Movement** | Blocked while `encounters[pid].active`. Entering a POI hex does NOT auto-start; player must choose "Enter" action. Entry is free (no MP cost). |
 | **Survey** | Surveying reveals POI hexes within **half normal survey range** (rounded down). Eye icon visible only to the surveying player (per-player visibility). POIs are invisible until surveyed. |
 | **Conditions** | Hazard `status` field sets statusBits (bleeding, fever, etc.). Existing condition penalties affect subsequent encounter checks via `resolveCheck()`. Being Downed ends the encounter immediately with all pending loot lost. |
-| **Score** | Banking loot: +3 per total resource unit. Full clear bonus: +10. |
+| **Score** | Banking loot: +3 per individual resource unit (`sum(pendingLoot[0..4]) * 3`). Full clear bonus: +10 (awarded when `reachedTerminal` flag is set on `enc_bank`). |
 | **Save** | `SAVE_VERSION` bumps to 5. `poi` byte persists in map binary. Active encounters are transient — disconnecting mid-encounter immediately clears state, pending loot lost, POI consumed. |
 | **Action lock** | Player is fully locked during encounter — no trading, resting, crafting, or other actions. Only encounter choices, banking, aborting, and receiving assists. |
 
@@ -448,7 +450,7 @@ Placeholders are resolved independently per client — different players may see
 ```javascript
 function rollLootTable(tableName, lootTables) {
   const table = lootTables[tableName];
-  if (!table) return null;
+  if (!table) { console.warn(`rollLootTable: missing table "${tableName}"`); return null; }
   const totalWeight = table.reduce((sum, e) => sum + e.weight, 0);
   let roll = Math.floor(Math.random() * totalWeight);
   for (const entry of table) {
@@ -595,6 +597,10 @@ function rollLootTable(tableName, lootTables) {
           //   success_node MUST point back to the current node.
           //   The client uses this flag to display the choice differently (indented/dimmed).
           //   Grays out after one use. Optional field — omit for main-path choices.
+          //   NOTE: Side rooms that loop back to the current node do NOT re-trigger that node's loot
+          //   (loot is granted on first arrival only). If a side room should reward the player,
+          //   either point success_node to a small dedicated loot node, or use a future
+          //   optional "choice_loot" field on the choice itself.
           "side_room": true
         }
       ]
@@ -645,6 +651,8 @@ function rollLootTable(tableName, lootTables) {
       // "penalty": Stat changes applied to the player. Negative values = damage/loss.
       //   Valid keys: "ll", "fatigue", "radiation", "food", "water", "resolve"
       //   Values are signed: negative = harm, positive = gain (rare but possible).
+      //   Rule: positive stat penalties apply as stat gains (e.g., +1 ll = heal 1 LL).
+      //   Positive resource penalties (food, water) are added to pendingLoot.
       //   If penalties cause player to become Downed, encounter ends immediately, all pending loot lost.
       "penalty": { "ll": -1 },
 
@@ -802,7 +810,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 - "Claimed" rejection display
 
 ### Phase 4: Content
-- Per-biome loot tables in `loot_tables.json` (`{biome}_common`, `{biome}_rare` for each terrain)
+- Per-biome loot tables in `loot_tables.json` — currently only `urban` and `marsh` are defined. **16 missing tables** to add: `scrub_common`, `scrub_rare`, `dunes_common`, `dunes_rare`, `forest_common`, `forest_rare`, `flooded_common`, `flooded_rare`, `glass_common`, `glass_rare`, `ridge_common`, `ridge_rare`, `mountain_common`, `mountain_rare`, `settlement_common`, `settlement_rare`
 - 3-5 starter encounter JSON files across terrain types
 - `index.json` encounter pool
 - Placeholder word lists in encounter files
@@ -828,7 +836,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 4. Verify POI visibility is per-player (Player A surveys, Player B doesn't see it)
 5. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies with file path
 6. Verify second player trying to enter same POI gets "claimed" rejection
-7. Make choices, verify server resolves rolls and sends `enc_result` events
+7. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events
 8. Test side room: take a side room choice, verify it grays out and can't be repeated
 9. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score: +3 per resource, +10 full clear
 10. Test spectator view: ally on same hex sees read-only encounter progress
