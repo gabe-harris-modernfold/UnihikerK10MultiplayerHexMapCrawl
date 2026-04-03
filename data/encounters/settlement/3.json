@@ -1,0 +1,87 @@
+{
+  "id": "settlement_guard_01",
+  "title": "{{post_name}} Guard Post",
+  "start_node": "checkpoint",
+  "nodes": {
+    "checkpoint": {
+      "text": "A sandbag wall with a rusted oil-drum fire blocks the road into the settlement. Two guards in mismatched armor block your path, one resting a hand on a machete. The taller one squints at you and asks your business.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "State your intentions calmly.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "waved_through",
+          "hazard_id": "guard_suspicion"
+        },
+        {
+          "label": "Offer scrap as a toll.",
+          "cost": { "res": 4, "fatigue": 0 },
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "waved_through",
+          "hazard_id": "shaken_down"
+        }
+      ]
+    },
+    "waved_through": {
+      "text": "The guard waves you through with a grunt. Beyond the barricade, a small supply cache sits near the guardhouse — a locked box and a crate left open. One of the guards offers you leftover rations from the night watch.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 2] },
+        { "res": 4, "qty": [0, 1] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Volunteer for the night watch.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 45,
+          "skill": 5,
+          "success_node": "watch_reward",
+          "hazard_id": "raider_probe"
+        }
+      ]
+    },
+    "watch_reward": {
+      "text": "You spend hours on the wall, cold and alert. Near dawn a shadow at the perimeter turns out to be a stray dog. The lead guard finds you still standing at post and hands over a sealed kit from the settlement's emergency stores.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 2] },
+        { "res": 2, "qty": [1, 1] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "guard_suspicion": {
+      "text": "The shorter guard grabs your collar and searches you roughly before the other waves him off. You lose nothing but time and pride.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "shaken_down": {
+      "text": "The guard pockets your scrap and holds out his hand again. You pay double or you don't get through.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "raider_probe": {
+      "text": "Three figures test the wire at the east corner. In the scramble one of them lands a blow across your ribs before retreating into the dark.",
+      "penalty": { "ll": -1, "fatigue": 2 },
+      "wound": [0, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "post_name": [
+      "Eastwall",
+      "Gate Three",
+      "The Rubble Line",
+      "Cindermere",
+      "South Drum",
+      "Bonewall",
+      "Ashgate"
+    ]
+  }
+}

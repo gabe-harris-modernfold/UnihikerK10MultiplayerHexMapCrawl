@@ -107,6 +107,14 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       p.wsClientId = 0;
       p.resting    = false;  // clear stale resting flag on disconnect
       G.connectedCount--;
+      // Clear active encounter on disconnect (POI already consumed at enc_start)
+      if (encounters[slot].active) {
+        uint8_t hq = encounters[slot].hexQ, hr = encounters[slot].hexR;
+        encounters[slot] = {};
+        GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)slot;
+        eev.q = (int16_t)hq; eev.r = (int16_t)hr; eev.encOut = 4;  // reason: disconnect
+        enqEvt(eev);
+      }
       { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev); }
     }
     xSemaphoreGive(G.mutex);
@@ -379,6 +387,11 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       slot = findSlot(client->id());
       if (slot >= 0) {
+        if (encounters[slot].active) {
+          xSemaphoreGive(G.mutex);
+          client->text("{\"t\":\"err\",\"msg\":\"Cannot move during encounter\"}");
+          goto move_done;
+        }
         movePlayer(slot, dir);          // logs [MOVE] or [BLOCKED]
         playerVisParams(slot, &vr, &mr);
         visLen = buildVisDisk(visBuf, sizeof(visBuf),
@@ -391,6 +404,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         slot, vr, mr ? 'Y' : 'N', visCells, visLen);
       client->text(visBuf, (size_t)visLen);
     }
+    move_done:;
 
   } else if (strncmp(tv, "n", (size_t)(te - tv)) == 0) {
     // Name: {"t":"n","name":"X"}
@@ -609,13 +623,20 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       slot = findSlot(client->id());
-      if (slot >= 0)
+      if (slot >= 0) {
+        if (encounters[slot].active) {
+          xSemaphoreGive(G.mutex);
+          client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
+          goto act_done;
+        }
         handleAction(slot, (uint8_t)actType, mpParam, 0,
                      survBuf, sizeof(survBuf), &survLen);
+      }
       xSemaphoreGive(G.mutex);
     }
     if (survLen > 0)
       client->text(survBuf, (size_t)survLen);
+    act_done:;
 
   } else if (strncmp(tv, "trade_offer", (size_t)(te - tv)) == 0) {
     // Trade offer: {"t":"trade_offer","to":N,"give":[w,f,fu,m,s],"want":[w,f,fu,m,s]}
@@ -650,6 +671,11 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     bool valid = false;
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int fromSlot = findSlot(client->id());
+      if (fromSlot >= 0 && (encounters[fromSlot].active || encounters[toPid].active)) {
+        xSemaphoreGive(G.mutex);
+        client->text("{\"t\":\"err\",\"msg\":\"Cannot trade during encounter\"}");
+        return;
+      }
       if (fromSlot >= 0 && fromSlot != toPid &&
           G.players[toPid].connected &&
           samehex(fromSlot, toPid) &&
@@ -698,6 +724,11 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int mySlot = findSlot(client->id());
+      if (mySlot >= 0 && (encounters[mySlot].active || encounters[fromPid].active)) {
+        xSemaphoreGive(G.mutex);
+        client->text("{\"t\":\"err\",\"msg\":\"Cannot trade during encounter\"}");
+        return;
+      }
       GameEvent tev = {};
       tev.type    = EVT_TRADE_RESULT;
       tev.pid     = (uint8_t)fromPid;
@@ -966,6 +997,335 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       if (b >= 0 && b <= 9) s_ledBright = (uint8_t)b;
     }}
     saveK10Prefs();
+
+  // ── Encounter: enter POI ─────────────────────────────────────────────────────
+  } else if (strncmp(tv, "enc_start", (size_t)(te - tv)) == 0) {
+    // {"t":"enc_start","q":5,"r":8}
+    const char* qp = strstr(data, "\"q\""); if (!qp) return;
+    const char* qv = strchr(qp + 3, ':');  if (!qv) return;
+    const char* rp = strstr(data, "\"r\""); if (!rp) return;
+    const char* rv = strchr(rp + 3, ':');  if (!rv) return;
+    int hq = atoi(qv + 1), hr = atoi(rv + 1);
+    if (hq < 0 || hq >= MAP_COLS || hr < 0 || hr >= MAP_ROWS) return;
+
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int pid = findSlot(client->id());
+      if (pid >= 0 && !encounters[pid].active && !(G.players[pid].statusBits & ST_DOWNED)) {
+        Player& p   = G.players[pid];
+        HexCell& cell = G.map[hr][hq];
+        if ((int)p.q != hq || (int)p.r != hr) {
+          client->text("{\"t\":\"err\",\"msg\":\"Not at that hex\"}");
+        } else if (cell.poi == 0) {
+          client->text("{\"t\":\"err\",\"msg\":\"Already looted\"}");
+        } else {
+          // Check if another player is already inside at this hex
+          bool claimed = false;
+          for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (i == pid || !encounters[i].active) continue;
+            if (encounters[i].hexQ == (uint8_t)hq && encounters[i].hexR == (uint8_t)hr) {
+              claimed = true; break;
+            }
+          }
+          if (claimed) {
+            client->text("{\"t\":\"err\",\"msg\":\"Another survivor is already inside\"}");
+          } else {
+            uint8_t terrain = cell.terrain;
+            if (terrain >= 10 || encPools[terrain].count == 0) {
+              client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
+            } else {
+              cell.poi = 0;  // consume POI immediately
+              if (G.threatClock < 20) G.threatClock++;
+              uint8_t idx = (uint8_t)(1 + ((uint32_t)esp_random() % encPools[terrain].count));
+              encounters[pid].active           = 1;
+              encounters[pid].encIdx           = idx;
+              encounters[pid].hexQ             = (uint8_t)hq;
+              encounters[pid].hexR             = (uint8_t)hr;
+              memset(encounters[pid].pendingLoot,     0, 5);
+              memset(encounters[pid].pendingItemType, 0, ENC_MAX_ITEMS);
+              memset(encounters[pid].pendingItemQty,  0, ENC_MAX_ITEMS);
+              encounters[pid].pendingItemCount = 0;
+              encounters[pid].assistRisk       = 0;
+              encounters[pid].assistUsed       = 0;
+              // Send encounter path directly to active player
+              char pathBuf[72];
+              int pathLen = snprintf(pathBuf, sizeof(pathBuf),
+                "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d}",
+                encPools[terrain].path, (int)idx);
+              client->text(pathBuf, (size_t)pathLen);
+              // Broadcast EVT_ENC_START to allies
+              GameEvent ev = {};
+              ev.type = EVT_ENC_START; ev.pid = (uint8_t)pid;
+              ev.q = (int16_t)hq; ev.r = (int16_t)hr;
+              enqEvt(ev);
+              Serial.printf("[ENC] P%d enters %s/%d at (%d,%d)\n",
+                pid, encPools[terrain].path, (int)idx, hq, hr);
+            }
+          }
+        }
+      }
+      xSemaphoreGive(G.mutex);
+    }
+
+  // ── Encounter: make a choice ─────────────────────────────────────────────────
+  } else if (strncmp(tv, "enc_choice", (size_t)(te - tv)) == 0) {
+    // {"t":"enc_choice","ci":0,"cost_ll":0,"cost_fat":1,"cost_rad":0,"cost_food":0,
+    //  "cost_water":0,"cost_resolve":0,"base_risk":35,"skill":2,
+    //  "loot":[0,0,0,1,0],"lt":"urban_common","can_bank":true,
+    //  "is_terminal":false,
+    //  "haz_ll":0,"haz_fat":0,"haz_rad":0,"haz_st":0,"haz_wt":0,"haz_wc":0,"haz_ends":0}
+    #define ENC_JP(field, key) const char* field##_p = strstr(data, "\"" key "\""); \
+      int field = 0; if (field##_p) { const char* vp = strchr(field##_p + strlen("\"" key "\""), ':'); if (vp) field = atoi(vp + 1); }
+    ENC_JP(costLL,  "cost_ll")   ENC_JP(costFat,  "cost_fat")
+    ENC_JP(costRad, "cost_rad")  ENC_JP(costFood, "cost_food")
+    ENC_JP(costWat, "cost_water") ENC_JP(costRes, "cost_resolve")
+    ENC_JP(baseRisk,"base_risk") ENC_JP(skill,    "skill")
+    ENC_JP(isTerm,  "is_terminal")
+    ENC_JP(hazLL,   "haz_ll")   ENC_JP(hazFat, "haz_fat")
+    ENC_JP(hazRad,  "haz_rad")  ENC_JP(hazSt,  "haz_st")
+    ENC_JP(hazWt,   "haz_wt")   ENC_JP(hazWc,  "haz_wc")
+    ENC_JP(hazEnds, "haz_ends")
+    #undef ENC_JP
+    // Parse loot array
+    uint8_t lootArr[5] = {0};
+    const char* lp = strstr(data, "\"loot\"");
+    if (lp) { const char* lb = strchr(lp + 6, '['); if (lb) { lb++;
+      for (int i = 0; i < 5; i++) {
+        while (*lb == ' ') lb++;
+        lootArr[i] = (uint8_t)constrain(atoi(lb), 0, 99);
+        const char* nx = strchr(lb, i < 4 ? ',' : ']'); if (!nx) break; lb = nx + 1;
+      }
+    }}
+    // Parse loot_table string
+    char ltName[20] = {0};
+    const char* ltp = strstr(data, "\"lt\"");
+    if (ltp) { const char* lts = strchr(ltp + 4, '"'); if (lts) { lts++;
+      const char* lte = strchr(lts + 1, '"');
+      if (lte) { int ln = min((int)(lte - lts), 19); strncpy(ltName, lts, ln); ltName[ln] = 0; }
+    }}
+
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int pid = findSlot(client->id());
+      if (pid >= 0 && encounters[pid].active && !(G.players[pid].statusBits & ST_DOWNED)) {
+        Player& p = G.players[pid];
+        ActiveEncounter& enc = encounters[pid];
+        // Validate affordability
+        bool canAfford = (p.ll >= costLL) && (p.fatigue + costFat <= 8) &&
+                         (p.radiation + costRad <= 10) &&
+                         (p.inv[1] >= costFood) && (p.inv[0] >= costWat) &&
+                         (p.resolve >= costRes);
+        if (!canAfford) {
+          client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
+          xSemaphoreGive(G.mutex); return;
+        }
+        // Deduct costs
+        if (costLL)   { if (p.ll > (uint8_t)costLL) p.ll -= (uint8_t)costLL; else p.ll = 0; }
+        p.fatigue  = (uint8_t)constrain((int)p.fatigue  + costFat, 0, 8);
+        p.radiation= (uint8_t)constrain((int)p.radiation+ costRad, 0, 10);
+        p.inv[1]   = (uint8_t)max(0, (int)p.inv[1] - costFood);
+        p.inv[0]   = (uint8_t)max(0, (int)p.inv[0] - costWat);
+        p.resolve  = (uint8_t)max(0, (int)p.resolve - costRes);
+        updateRadStatus(p);
+        // Compute DN and roll
+        uint8_t dn = computeEncounterDN(pid, (uint8_t)constrain(baseRisk, 0, 100),
+                                        (uint8_t)constrain(skill, 0, 5), enc.assistRisk);
+        CheckResult cr = resolveCheck(pid, (uint8_t)constrain(skill, 0, 5), dn, 0);
+        // Build result event
+        GameEvent ev = {};
+        ev.type      = EVT_ENC_RESULT;
+        ev.pid       = (uint8_t)pid;
+        ev.encSkill  = (uint8_t)constrain(skill, 0, 5);
+        ev.encDN     = dn;
+        ev.encTotal  = (int8_t)cr.total;
+        ev.encOut    = cr.success ? 1 : 0;
+        bool encounterEnded = false;
+        if (cr.success) {
+          // Accumulate loot
+          for (int i = 0; i < 5; i++) {
+            enc.pendingLoot[i] = (uint8_t)min(99, (int)enc.pendingLoot[i] + (int)lootArr[i]);
+            ev.encLoot[i] = lootArr[i];
+          }
+          // Roll loot table item if present
+          if (ltName[0]) {
+            uint8_t itm = 0, qty = 0;
+            rollLootTable(ltName, &itm, &qty);
+            if (itm && qty && enc.pendingItemCount < ENC_MAX_ITEMS) {
+              enc.pendingItemType[enc.pendingItemCount] = itm;
+              enc.pendingItemQty[enc.pendingItemCount]  = qty;
+              enc.pendingItemCount++;
+              ev.encItemType = itm; ev.encItemQty = qty;
+            }
+          }
+          // Mark terminal node
+          if (isTerm) enc.active |= (1 << 7);
+        } else {
+          // Apply hazard penalties
+          ev.encPenLL  = (int8_t)hazLL;
+          ev.encPenFat = (int8_t)hazFat;
+          ev.encPenRad = (int8_t)hazRad;
+          ev.encStatus = (uint8_t)hazSt;
+          ev.encEnds   = (uint8_t)(hazEnds ? 1 : 0);
+          if (hazLL < 0) {
+            int newLL = (int)p.ll + hazLL;
+            p.ll = (uint8_t)max(0, newLL);
+            if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; }
+            if (p.ll == 0) ledFlash(255, 0, 0);
+          }
+          p.fatigue  = (uint8_t)constrain((int)p.fatigue  + hazFat, 0, 8);
+          p.radiation= (uint8_t)constrain((int)p.radiation+ hazRad, 0, 10);
+          if (hazRad) updateRadStatus(p);
+          if (hazSt)  p.statusBits |= (uint8_t)hazSt;
+          if (hazWc > 0 && hazWt < 3) {
+            p.wounds[hazWt] = (uint8_t)min(10, (int)p.wounds[hazWt] + hazWc);
+            if (p.wounds[hazWt]) p.statusBits |= ST_WOUNDED;
+          }
+          bool downed = (p.statusBits & ST_DOWNED) != 0;
+          encounterEnded = downed || (hazEnds != 0);
+        }
+        // Reset per-node assist state
+        enc.assistRisk = 0; enc.assistUsed = 0;
+        if (encounterEnded) {
+          // End encounter — loot lost
+          if (p.statusBits & ST_DOWNED) {
+            GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+            enqEvt(devt);
+          }
+          uint8_t hq = enc.hexQ, hr2 = enc.hexR;
+          enc = {};
+          // Always send EVT_ENC_END so allies can clear the banner regardless of downed state
+          { GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)pid;
+            eev.q = (int16_t)hq; eev.r = (int16_t)hr2;
+            eev.encOut = (G.players[pid].statusBits & ST_DOWNED) ? 3 : 0; // 3=downed, 0=hazard
+            enqEvt(eev); }
+        }
+        enqEvt(ev);
+        Serial.printf("[ENC] P%d choice: DN%d roll%d %s%s\n",
+          pid, dn, cr.total, cr.success ? "OK" : "FAIL", encounterEnded ? " (end)" : "");
+      }
+      xSemaphoreGive(G.mutex);
+    }
+
+  // ── Encounter: bank loot and exit ────────────────────────────────────────────
+  } else if (strncmp(tv, "enc_bank", (size_t)(te - tv)) == 0) {
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int pid = findSlot(client->id());
+      if (pid >= 0 && encounters[pid].active) {
+        Player& p = G.players[pid];
+        ActiveEncounter& enc = encounters[pid];
+        bool fullClear = (enc.active & (1 << 7)) != 0;
+        // Transfer resource loot
+        int totalRes = 0;
+        for (int i = 0; i < 5; i++) {
+          p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + (int)enc.pendingLoot[i]);
+          totalRes += enc.pendingLoot[i];
+        }
+        // Transfer typed items — overflow goes to ground
+        for (int j = 0; j < enc.pendingItemCount; j++) {
+          uint8_t itemId = enc.pendingItemType[j];
+          uint8_t qty    = enc.pendingItemQty[j];
+          if (!itemId || !qty) continue;
+          bool placed = false;
+          for (int s = 0; s < p.invSlots && !placed; s++) {
+            if (p.invType[s] == itemId) {
+              const ItemDef* def = getItemDef(itemId);
+              uint8_t cap = def ? def->maxStack : 1;
+              if (p.invQty[s] < cap) {
+                uint8_t space = cap - p.invQty[s];
+                uint8_t add   = min(qty, space);
+                p.invQty[s]  += add;
+                qty           -= add;
+                placed = (qty == 0);
+              }
+            }
+          }
+          if (!placed) {
+            for (int s = 0; s < p.invSlots && !placed; s++) {
+              if (!p.invType[s]) {
+                p.invType[s] = itemId; p.invQty[s] = qty; placed = true;
+              }
+            }
+          }
+          if (!placed) {
+            // Inventory full — drop to ground
+            int gslot = -1;
+            for (int g = 0; g < MAX_GROUND; g++) {
+              if (groundItems[g].itemType == itemId && groundItems[g].q == p.q && groundItems[g].r == p.r)
+                { gslot = g; break; }
+            }
+            if (gslot < 0) {
+              for (int g = 0; g < MAX_GROUND; g++) {
+                if (!groundItems[g].itemType) { gslot = g; break; }
+              }
+            }
+            if (gslot >= 0) {
+              groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
+              groundItems[gslot].itemType = itemId;
+              groundItems[gslot].qty = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
+            }
+          }
+        }
+        // Score: +3 per resource unit banked, +10 full clear
+        int scoreGain = totalRes * 3 + (fullClear ? 10 : 0);
+        GameEvent ev = {};
+        ev.type = EVT_ENC_BANK; ev.pid = (uint8_t)pid;
+        ev.q = (int16_t)enc.hexQ; ev.r = (int16_t)enc.hexR;
+        memcpy(ev.encLoot, enc.pendingLoot, 5);
+        addScore(p, ev, scoreGain);
+        enqEvt(ev);
+        Serial.printf("[ENC] P%d banked (res:%d score+%d%s)\n",
+          pid, totalRes, scoreGain, fullClear ? " FULLCLEAR" : "");
+        enc = {};
+      }
+      xSemaphoreGive(G.mutex);
+    }
+
+  // ── Encounter: voluntary abort ────────────────────────────────────────────────
+  } else if (strncmp(tv, "enc_abort", (size_t)(te - tv)) == 0) {
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int pid = findSlot(client->id());
+      if (pid >= 0 && encounters[pid].active) {
+        uint8_t hq = encounters[pid].hexQ, hr2 = encounters[pid].hexR;
+        encounters[pid] = {};
+        if (G.threatClock < 20) G.threatClock++;  // TC +1 for voluntary abort
+        GameEvent ev = {}; ev.type = EVT_ENC_END; ev.pid = (uint8_t)pid;
+        ev.q = (int16_t)hq; ev.r = (int16_t)hr2; ev.encOut = 1;  // reason: abort
+        enqEvt(ev);
+        Serial.printf("[ENC] P%d aborted (TC now %d)\n", pid, (int)G.threatClock);
+      }
+      xSemaphoreGive(G.mutex);
+    }
+
+  // ── Encounter: ally assist ────────────────────────────────────────────────────
+  } else if (strncmp(tv, "enc_assist", (size_t)(te - tv)) == 0) {
+    // {"t":"enc_assist","target":2,"res":3}
+    const char* tgp = strstr(data, "\"target\""); if (!tgp) return;
+    const char* tgv = strchr(tgp + 8, ':');       if (!tgv) return;
+    int target = atoi(tgv + 1);
+    const char* rep = strstr(data, "\"res\""); if (!rep) return;
+    const char* rev = strchr(rep + 5, ':');    if (!rev) return;
+    int res = atoi(rev + 1);
+    if (target < 0 || target >= MAX_PLAYERS) return;
+    if (res < 0 || res > 4) return;
+
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int pid = findSlot(client->id());
+      if (pid >= 0 && pid != target && encounters[target].active &&
+          G.players[target].connected &&
+          (int)G.players[pid].q == (int)G.players[target].q &&
+          (int)G.players[pid].r == (int)G.players[target].r &&
+          G.players[pid].inv[res] > 0 &&
+          !(encounters[target].assistUsed & (1 << pid))) {
+        G.players[pid].inv[res]--;
+        encounters[target].assistRisk = (int8_t)max(-12, (int)encounters[target].assistRisk - 4);
+        encounters[target].assistUsed |= (1 << pid);
+        GameEvent ev = {};
+        ev.type = EVT_ENC_ASSIST; ev.pid = (uint8_t)pid; ev.tradeTo = (uint8_t)target;
+        ev.encAssistRes = (uint8_t)res; ev.encRiskRed = -4;
+        enqEvt(ev);
+        Serial.printf("[ENC] P%d assists P%d (res:%d) assistRisk now %d\n",
+          pid, target, res, (int)encounters[target].assistRisk);
+      }
+      xSemaphoreGive(G.mutex);
+    }
   }
 }
 

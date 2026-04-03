@@ -210,6 +210,8 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
   au: false, rest: false,
+  // §6 Encounter
+  enc: false,
 }));
 
 // Shared game state (Threat Clock, Day, shared stores)
@@ -459,6 +461,7 @@ function handleMsg(msg) {
         if (pd.it) p.it = pd.it;   // typed inventory types
         if (pd.iq) p.iq = pd.iq;   // typed inventory quantities
         if (pd.eq) p.eq = pd.eq;   // equipment slots
+        if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
       });
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
@@ -540,6 +543,11 @@ function handleMsg(msg) {
                                   `WiFi: ${msg.status ?? 'unknown'}`
         );
       }
+      break;
+
+    case 'enc_path':
+      // Direct message: server sends encounter location to the active player
+      window._startEncounterFetch?.(msg.biome, msg.id);
       break;
   }
   buildAgentState();
@@ -865,22 +873,111 @@ function handleEvent(ev) {
       break;
     }
 
+    case 'enc_start': {
+      // POI consumed — clear it from local map so eye disappears immediately
+      if (gameMap[ev.r]?.[ev.q])
+        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      addLog(`<span class="log-col">\uD83D\uDC41 ${escHtml(who)} enters encounter (${ev.q},${ev.r})</span>`);
+      // Show ally banner to co-located players who are not in the encounter
+      if (ev.pid !== myId && players[myId]) {
+        const me = players[myId];
+        if (me.q === ev.q && me.r === ev.r) window._showAllyEncBanner?.(ev.pid);
+      }
+      updateSidebar();
+      break;
+    }
+
+    case 'enc_assist': {
+      const asName  = players[ev.pid]?.nm || `P${ev.pid}`;
+      const tgtName = players[ev.tgt]?.nm || `P${ev.tgt}`;
+      const RES_ASSIST_NAMES = ['Food','Water','Meds','Tools','Fuel'];
+      const resIdx  = (ev.res >= 0 && ev.res < 5) ? ev.res : -1;
+      const resName = resIdx >= 0 ? RES_ASSIST_NAMES[resIdx] : 'res';
+      // Deduct resource from assisting player client-side (optimistic; confirmed by next 's' broadcast)
+      if (resIdx >= 0 && ev.pid >= 0 && ev.pid < MAX_PLAYERS && players[ev.pid]?.inv)
+        players[ev.pid].inv[resIdx] = Math.max(0, (players[ev.pid].inv[resIdx] ?? 0) - 1);
+      addLog(`<span class="log-col">\u2194 ${escHtml(asName)} assists ${escHtml(tgtName)} (${resName} \u2192 \u2212${Math.abs(ev.rd)} DN)</span>`);
+      if (ev.pid === myId || ev.tgt === myId) {
+        showToast(`\u2194 Assist: \u2212${Math.abs(ev.rd)} DN`);
+        updateSidebar();
+      }
+      window._onEncAssist?.(ev);
+      break;
+    }
+
+    case 'enc_res': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const SKILL_NAMES_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
+      const skillName = SKILL_NAMES_ENC[ev.skill] ?? `Sk${ev.skill}`;
+      const outClass = ev.out ? 'log-col' : 'log-check-fail';
+      addLog(`<span class="${outClass}">\u2234 ${escHtml(who)} ${skillName} vs DN${ev.dn} \u2192 ${ev.tot}: ${ev.out ? 'SUCCESS' : 'FAIL'}</span>`);
+      if (ev.pid === myId) {
+        const p = players[myId];
+        if (p) {
+          if (ev.penLL)  p.ll  = Math.max(0, (p.ll  ?? 0) + ev.penLL);
+          if (ev.penFat) p.fat = Math.max(0, (p.fat ?? 0) + ev.penFat);
+          if (ev.penRad) p.rad = Math.max(0, (p.rad ?? 0) + ev.penRad);
+          if (ev.st) p.sb = ev.st;
+        }
+        updateSidebar();
+        if (!ev.out) {
+          const pen = [
+            ev.penLL  < 0 ? `${ev.penLL} LL`  : null,
+            ev.penFat < 0 ? `${ev.penFat} Fat` : null,
+            ev.penRad < 0 ? `${ev.penRad} Rad` : null,
+          ].filter(Boolean).join(', ');
+          showToast(`\u2297 Failed (${pen || 'hazard'})`);
+        }
+        window._onEncResult?.(ev);
+      }
+      break;
+    }
+
+    case 'enc_bank': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const lootSum = (ev.loot ?? []).reduce((a, b) => a + b, 0);
+      addLog(`<span class="log-col">\u25a0 ${escHtml(who)} secured loot (${lootSum} items, +${ev.scoreD} pts)</span>`);
+      if (ev.pid === myId) {
+        showToast(`\u25a0 Loot secured! +${ev.scoreD} pts`);
+        window._onEncBank?.(ev);
+        updateSidebar();
+      }
+      window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
+    case 'enc_end': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected' };
+      const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
+      addLog(`<span class="log-check-fail">\u25a0 ${escHtml(who)} encounter ended (${reasonTxt})</span>`);
+      if (ev.pid === myId) {
+        showToast(`\u25a0 Encounter ended: ${reasonTxt}`);
+        window._onEncEnd?.(ev);
+        updateSidebar();
+      }
+      window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
   }
 }
 
 // ── Map decode ──────────────────────────────────────────────────
 // 3 bytes per cell (6 hex chars):
 //   TT = terrain byte (0x00-0x0B) or 0xFF (fog)
-//   DD = bits 0-5: footprint bitmask, bit 6: shelter level
+//   DD = bits 0-5: footprint bitmask, bit 6: has shelter (any), bit 7: has POI
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   return {
     terrain:    terrainByte,
-    footprints: dataByte & 0x3F,       // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 3,   // bits 6-7: 0=none, 1=shelter, 2=improved shelter
+    footprints: dataByte & 0x3F,           // bits 0-5: which players visited (bitmask)
+    shelter:    (dataByte >> 6) & 1,       // bit 6: 0=none, 1=has shelter
+    poi:        (dataByte >> 7) & 1,       // bit 7: 0=none, 1=has POI encounter
     resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
-    variant:    variantByte & 0xF,     // low nibble: terrain image variant (0-15)
+    variant:    variantByte & 0xF,        // low nibble: terrain image variant (0-15)
   };
 }
 
@@ -1314,9 +1411,20 @@ function render() {
         }
       }
 
-      // Shelter indicator: 1=basic, 2=improved — PNG centred on hex, emoji fallback
+      // POI encounter indicator — eye icon (bottom-right corner of hex)
+      if (cell.poi) {
+        ctx.save();
+        ctx.font         = `${Math.max(10, Math.round(HEX_SZ * 0.4))}px monospace`;
+        ctx.textAlign    = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle    = '#FFD700';
+        ctx.fillText('\uD83D\uDC41', cx + HEX_SZ * 0.45, cy + HEX_SZ * 0.45);
+        ctx.restore();
+      }
+
+      // Shelter indicator: 1=has shelter — PNG centred on hex, emoji fallback
       if (cell.shelter) {
-        const si   = cell.shelter - 1;  // 0=basic, 1=improved
+        const si   = 0;  // basic shelter (bit 6 is now boolean)
         const imgs = shelterImgs[si];
         const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
         const sImg = v >= 0 ? imgs[v] : null;

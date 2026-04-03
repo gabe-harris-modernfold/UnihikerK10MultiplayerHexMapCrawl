@@ -279,6 +279,7 @@ struct HexCell {
   uint8_t shelter;
   uint8_t footprints;
   uint8_t variant;
+  uint8_t poi;  // 0 = none/looted, non-zero = has encounter
 };
 
 struct Player {
@@ -358,7 +359,12 @@ enum EvtType : uint8_t {
   EVT_DOWNED       = 10,
   EVT_REGEN        = 11,
   EVT_TRADE_OFFER  = 12,
-  EVT_TRADE_RESULT = 13
+  EVT_TRADE_RESULT = 13,
+  EVT_ENC_START    = 14,
+  EVT_ENC_ASSIST   = 15,
+  EVT_ENC_RESULT   = 16,
+  EVT_ENC_BANK     = 17,
+  EVT_ENC_END      = 18
 };
 
 struct GameEvent {
@@ -395,6 +401,19 @@ struct GameEvent {
   uint8_t  tradeGive[5];
   uint8_t  tradeWant[5];
   uint8_t  tradeResult;
+  // ── Encounter fields (active when type is EVT_ENC_*) ───────────
+  uint8_t  encOut;       // 0=fail/reason-code, 1=success
+  uint8_t  encSkill;
+  uint8_t  encDN;
+  int8_t   encTotal;
+  uint8_t  encLoot[5];
+  int8_t   encPenLL, encPenFat, encPenRad;
+  uint8_t  encStatus;
+  uint8_t  encEnds;
+  uint8_t  encAssistRes;  // resource type for assist event
+  int8_t   encRiskRed;    // risk reduction for assist event
+  uint8_t  encItemType;   // typed item dropped (loot table roll)
+  uint8_t  encItemQty;
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
@@ -410,6 +429,49 @@ struct TradeOffer {
   uint8_t  wantItemQty[4];
   uint32_t expiresMs;
 };
+
+// ── Encounter engine structs ───────────────────────────────────
+#define ENC_MAX_ITEMS 3
+struct ActiveEncounter {
+  uint8_t  active;          // bit 0 = in encounter, bit 7 = reachedTerminal
+  uint8_t  encIdx;          // encounter file index selected at enc_start
+  uint8_t  hexQ, hexR;
+  uint8_t  pendingLoot[5];  // unbanked resource loot [Water,Food,Fuel,Med,Scrap]
+  uint8_t  pendingItemType[ENC_MAX_ITEMS];
+  uint8_t  pendingItemQty[ENC_MAX_ITEMS];
+  uint8_t  pendingItemCount;
+  int8_t   assistRisk;  // accumulated risk reduction from assists (≥ -12)
+  uint8_t  assistUsed;  // bitmask: which ally pids assisted this node
+};
+static ActiveEncounter encounters[MAX_PLAYERS];
+
+struct EncPoolInfo {
+  uint8_t count;
+  char    path[12];  // e.g. "urban", "marsh"
+};
+static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
+
+// POI encounter probability per terrain type (0-100 %)
+static const uint8_t TERRAIN_POI_PCT[NUM_TERRAIN] = {
+  3,   // 0 Open Scrub
+  4,   // 1 Ash Dunes
+  7,   // 2 Rust Forest
+  4,   // 3 Marsh
+  28,  // 4 Broken Urban
+  18,  // 5 Flooded District
+  3,   // 6 Glass Fields
+  5,   // 7 Ridge
+  5,   // 8 Mountain
+  23,  // 9 Settlement
+  0,   // 10 Nuke Crater (impassable)
+  0    // 11 River Channel (impassable)
+};
+
+// ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
+struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
+struct LootTable  { char name[20]; LootEntry entries[8]; uint8_t count; };
+static LootTable  lootTables[20];
+static uint8_t    lootTableCount = 0;
 
 struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 
@@ -436,7 +498,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 4;
+static constexpr uint8_t  SAVE_VERSION = 5;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -717,6 +779,12 @@ void setup() {
   loadItemRegistry();
   { char ib[30]; snprintf(ib, 30, "Items: %d loaded", (int)itemCount);
     splashAdd(ib, 0x60A040); }
+
+  splashAdd("Loading encounters...");
+  loadEncounterIndex();
+  loadLootTables();
+  { char eb[30]; snprintf(eb, 30, "Enc: %d tables", (int)lootTableCount);
+    splashAdd(eb, 0x60A040); }
 
   splashAdd("Generating map...");
   Serial.println("[SETUP] Loading or generating map...");

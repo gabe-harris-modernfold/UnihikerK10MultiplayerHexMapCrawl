@@ -123,11 +123,15 @@ function updateSidebar() {
 function updateDirButtons() {
   if (myId < 0) return;
   const me       = players[myId];
+  const inEnc    = !!me.enc;
   const resting  = me.rest || uiResting.val;
   const exhausted = (me.mp ?? 1) === 0;
-  // While resting or exhausted, show all 6 buttons dimmed (not hidden) with a helpful tooltip (BUG-12)
-  const vm = (resting || exhausted) ? 0 : (me.vm ?? 0x3F);
-  const blockMsg = resting ? 'Resting \u2014 waiting for dawn' : exhausted ? 'No MP \u2014 REST to recover' : 'Blocked (impassable)';
+  // While in encounter, resting, or exhausted, show all 6 buttons dimmed with a helpful tooltip (BUG-12)
+  const vm = (inEnc || resting || exhausted) ? 0 : (me.vm ?? 0x3F);
+  const blockMsg = inEnc ? 'Inside encounter \u2014 complete or bank first'
+    : resting ? 'Resting \u2014 waiting for dawn'
+    : exhausted ? 'No MP \u2014 REST to recover'
+    : 'Blocked (impassable)';
   for (let d = 0; d < 6; d++) {
     const btn = document.getElementById(`dir-btn-${d}`);
     if (!btn) continue;
@@ -331,6 +335,10 @@ function move(dir) {
   if (myId >= 0 && players[myId]?.ll === 0) {
     showToast('☠ You have been downed — select a new survivor');
     addLog('<span class="log-check-fail">☠ Cannot move — you have been downed.</span>');
+    return;
+  }
+  if (myId >= 0 && players[myId]?.enc) {
+    showToast('\u26D4 Inside encounter \u2014 complete or bank first');
     return;
   }
   if (myId >= 0 && uiMP.val <= 0) {
@@ -772,6 +780,10 @@ function initActionPanel() {
       addLog('<span class="log-check-fail">☠ Cannot act — you have been downed.</span>');
       return;
     }
+    if (players[myId]?.enc) {
+      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
+      return;
+    }
     const me   = players[myId];
     const cell = gameMap[me.r]?.[me.q];
     const terr        = cell?.terrain ?? null;
@@ -945,6 +957,10 @@ function initActionPanel() {
   document.getElementById('rest-hud-btn').addEventListener('click', () => {
     if (myId >= 0 && players[myId]?.ll === 0) {
       showToast('☠ You have been downed — select a new survivor');
+      return;
+    }
+    if (myId >= 0 && players[myId]?.enc) {
+      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
       return;
     }
     if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
@@ -1880,6 +1896,241 @@ function renderHexGroundItems(q, r) {
 document.getElementById('item-menu-close')?.addEventListener('click', closeItemMenu);
 document.getElementById('item-menu-backdrop')?.addEventListener('click', closeItemMenu);
 
+// ── Encounter overlay + ally banner ──────────────────────────────
+function initEncounterOverlay() {
+  const overlay    = document.getElementById('enc-overlay');
+  const nodeText   = document.getElementById('enc-node-text');
+  const dnLabel    = document.getElementById('enc-dn-label');
+  const riskFill   = document.getElementById('enc-risk-fill');
+  const lootDisp   = document.getElementById('enc-loot-display');
+  const choiceList = document.getElementById('enc-choice-list');
+  const bankRow    = document.getElementById('enc-bank-row');
+  const bankBtn    = document.getElementById('enc-bank-btn');
+  const abortBtn   = document.getElementById('enc-abort-btn');
+
+  const RES_NAMES_ENC = ['Food','Water','Meds','Tools','Fuel'];
+
+  // State for the active encounter
+  let currentEnc   = null;   // loaded encounter JSON
+  let currentNode  = null;   // current node object
+  let pendingLoot  = [0,0,0,0,0];
+  let canBank      = false;
+  let pendingNextKey = '';   // next node key sent in enc_choice, consumed by _onEncResult
+
+  function resolveText(text, placeholders) {
+    if (!placeholders) return text;
+    return text.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+      const opts = placeholders[key];
+      return (Array.isArray(opts) && opts.length) ? opts[Math.floor(Math.random() * opts.length)] : key;
+    });
+  }
+
+  function renderLoot() {
+    const parts = pendingLoot.map((v, i) => v > 0 ? `${RES_NAMES_ENC[i]}×${v}` : null).filter(Boolean);
+    lootDisp.textContent = parts.length ? `Pending: ${parts.join('  ')}` : '';
+  }
+
+  const SKILL_LABELS_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
+
+  function renderNode(node) {
+    currentNode = node;
+    nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
+
+    const baseRisk = node.choices?.[0]?.base_risk ?? 0;
+    dnLabel.textContent = baseRisk > 0 ? `BASE RISK ${baseRisk}%` : 'NO RISK';
+    riskFill.style.width = `${baseRisk}%`;
+
+    choiceList.innerHTML = '';
+    (node.choices ?? []).forEach(ch => {
+      const btn = document.createElement('button');
+      btn.className = 'enc-choice-btn';
+      const riskClass = ch.base_risk <= 30 ? 'enc-risk-low' : ch.base_risk <= 60 ? 'enc-risk-mid' : 'enc-risk-high';
+      const cost = ch.cost ?? {};
+      const costParts = [
+        cost.ll        ? `${cost.ll} LL`        : null,
+        cost.fatigue   ? `${cost.fatigue} Fat`   : null,
+        cost.radiation ? `${cost.radiation} Rad` : null,
+        cost.food      ? `${cost.food} Food`     : null,
+        cost.water     ? `${cost.water} Water`   : null,
+      ].filter(Boolean);
+      btn.innerHTML =
+        `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>` +
+        `<span class="enc-cost-tag">${costParts.length ? 'Cost: ' + costParts.join(' \u00b7 ') : 'No cost'}</span>` +
+        `<span class="enc-risk-tag ${riskClass}">Risk ${ch.base_risk}%  \u2014 ${SKILL_LABELS_ENC[ch.skill] ?? 'Skill'}</span>`;
+      btn.addEventListener('click', () => sendChoice(ch));
+      choiceList.appendChild(btn);
+    });
+
+    canBank = node.can_bank ?? false;
+    bankRow.style.display = canBank ? '' : 'none';
+    renderLoot();
+  }
+
+  function sendChoice(ch) {
+    const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
+    const hazPen = haz.penalty ?? {};
+    const wound  = Array.isArray(haz.wound) ? haz.wound : [0, 0];
+    const cost   = ch.cost ?? {};
+    const nextKey = ch.success_node ?? '';
+
+    // Loot is defined on the destination node, not on the choice.
+    // Roll qty client-side; server trusts the values (SD is not player-modifiable).
+    const nextNode = nextKey ? currentEnc?.nodes?.[nextKey] : null;
+    const nodeLoot = [0,0,0,0,0];
+    if (nextNode?.loot) {
+      nextNode.loot.forEach(entry => {
+        const res = entry.res;
+        if (res >= 0 && res < 5 && Array.isArray(entry.qty)) {
+          const mn = entry.qty[0], mx = entry.qty[1] ?? entry.qty[0];
+          nodeLoot[res] += mn + Math.floor(Math.random() * (mx - mn + 1));
+        }
+      });
+    }
+    const lootTable = nextNode?.loot_table ?? '';
+
+    send({
+      t:           'enc_choice',
+      base_risk:   ch.base_risk  ?? 50,
+      skill:       ch.skill      ?? 2,
+      loot:        nodeLoot,
+      lt:          lootTable,
+      can_bank:    ch.can_bank   ?? false,
+      ci:          nextKey,
+      cost_ll:     cost.ll        ?? 0,
+      cost_fat:    cost.fatigue   ?? 0,
+      cost_rad:    cost.radiation ?? 0,
+      cost_food:   cost.food      ?? 0,
+      cost_water:  cost.water     ?? 0,
+      haz_ll:      hazPen.ll        ?? 0,
+      haz_fat:     hazPen.fatigue   ?? 0,
+      haz_rad:     hazPen.radiation ?? 0,
+      haz_st:      haz.status       ?? 0,
+      haz_wt:      wound[0]         ?? 0,
+      haz_wc:      wound[1]         ?? 0,
+      haz_ends:    haz.ends_encounter ? 1 : 0,
+      is_terminal: nextKey === '' ? 1 : 0,
+    });
+    pendingNextKey = nextKey;
+    choiceList.querySelectorAll('.enc-choice-btn').forEach(b => b.disabled = true);
+  }
+
+  function openEncounter(enc) {
+    currentEnc  = enc;
+    pendingLoot = [0,0,0,0,0];
+    overlay.classList.add('open');
+    overlay.style.display = '';
+    const startNode = enc.nodes?.[enc.start_node] ?? Object.values(enc.nodes ?? {})[0];
+    if (startNode) renderNode(startNode);
+  }
+
+  function closeEncounter() {
+    overlay.classList.remove('open');
+    overlay.style.display = 'none';
+    currentEnc     = null;
+    currentNode    = null;
+    pendingLoot    = [0,0,0,0,0];
+    pendingNextKey = '';
+    canBank        = false;
+    bankRow.style.display = 'none';
+    choiceList.innerHTML  = '';
+  }
+
+  // Called from engine.js enc_path handler
+  window._startEncounterFetch = function(biome, id) {
+    fetch(`/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(enc => openEncounter(enc))
+      .catch(e => showToast(`\u2297 Encounter load failed: ${e.message}`));
+  };
+
+  // Called from engine.js enc_res handler — advance node or stay on failure
+  window._onEncResult = function(ev) {
+    if (ev.ends) { closeEncounter(); return; }
+    const nextKey = pendingNextKey;
+    pendingNextKey = '';
+    if (ev.out) {
+      // Success: accumulate loot and advance to next node
+      if (Array.isArray(ev.loot))
+        ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
+      if (nextKey && currentEnc?.nodes?.[nextKey]) {
+        renderNode(currentEnc.nodes[nextKey]);
+      } else {
+        // Terminal node reached — show bank button only
+        renderLoot();
+        choiceList.innerHTML = '';
+        canBank = true;
+        bankRow.style.display = '';
+      }
+    } else {
+      // Failure: stay on current node, re-enable choices
+      renderNode(currentNode);
+    }
+  };
+
+  window._onEncBank = function() { closeEncounter(); };
+  window._onEncEnd  = function() { closeEncounter(); };
+
+  bankBtn.addEventListener('click', () => {
+    send({ t: 'enc_bank' });
+    closeEncounter();
+  });
+
+  abortBtn.addEventListener('click', () => {
+    send({ t: 'enc_abort' });
+    closeEncounter();
+  });
+
+  // ── Ally encounter banner ────────────────────────────────────────
+  const allyBanner    = document.getElementById('ally-enc-banner');
+  const allyTitle     = document.getElementById('ally-enc-title');
+  const allySub       = document.getElementById('ally-enc-sub');
+  const allyAssistRow = document.getElementById('ally-enc-assist-row');
+  const allyDismiss   = document.getElementById('ally-enc-dismiss');
+  let allyEncPid = -1;
+
+  window._showAllyEncBanner = function(pid) {
+    allyEncPid = pid;
+    const nm = players[pid]?.nm || `P${pid}`;
+    allyTitle.textContent = `\uD83D\uDC41 ${nm.toUpperCase()} IS INSIDE`;
+    allySub.textContent   = 'Spend a resource to assist (reduces DN by 4)';
+    // Build assist buttons
+    allyAssistRow.innerHTML = '';
+    RES_NAMES_ENC.forEach((rn, ri) => {
+      const inv = players[myId]?.inv?.[ri] ?? 0;
+      const b = document.createElement('button');
+      b.className = 'enc-assist-btn';
+      b.textContent = `${rn} (${inv})`;
+      b.disabled = inv <= 0;
+      b.addEventListener('click', () => {
+        send({ t: 'enc_assist', tgt: allyEncPid, res: ri });
+        b.disabled = true;
+      });
+      allyAssistRow.appendChild(b);
+    });
+    allyBanner.classList.add('visible');
+    allyBanner.style.display = '';
+  };
+
+  // If pid is supplied, only hide if the banner is currently tracking that player.
+  window._hideAllyEncBanner = function(pid) {
+    if (pid !== undefined && pid !== allyEncPid) return;
+    allyEncPid = -1;
+    allyBanner.classList.remove('visible');
+    allyBanner.style.display = 'none';
+  };
+
+  window._onEncAssist = function() {
+    // Refresh assist button counts after any assist event
+    allyAssistRow.querySelectorAll('.enc-assist-btn').forEach((btn, ri) => {
+      const inv = players[myId]?.inv?.[ri] ?? 0;
+      btn.textContent = `${RES_NAMES_ENC[ri]} (${inv})`;
+      btn.disabled = inv <= 0;
+    });
+  };
+
+  allyDismiss.addEventListener('click', window._hideAllyEncBanner);
+}
+
 // ── VanJS entry point ─────────────────────────────────────────────
 function initVanJS() {
   initHudBindings();
@@ -1890,6 +2141,7 @@ function initVanJS() {
   initPlayerList();
   initMenuSystem();
   initCharSelect();
+  initEncounterOverlay();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────

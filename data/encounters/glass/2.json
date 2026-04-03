@@ -1,0 +1,58 @@
+{
+  "id": "glass_observatory_01",
+  "title": "The Shattered Observatory",
+  "start_node": "base",
+  "nodes": {
+    "base": {
+      "text": "The observatory dome has collapsed inward, but the concrete base is intact. A reinforced door stands half-open, jammed on melted glass that pooled into the doorframe.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Force the door open the rest of the way.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "instrument_room",
+          "hazard_id": "door_shard"
+        }
+      ]
+    },
+    "instrument_room": {
+      "text": "The main instrument room is half-buried in fused glass that poured through a collapsed skylight. One workbench is clear. A locked cabinet against the far wall is undamaged.",
+      "can_bank": true,
+      "loot": [{ "res": 4, "qty": [1, 2] }],
+      "loot_table": "glass_common",
+      "choices": [
+        {
+          "label": "Break open the instrument cabinet.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "deep_storage",
+          "hazard_id": "chemical_vial"
+        }
+      ]
+    },
+    "deep_storage": {
+      "text": "Behind the cabinet, a sealed storage closet. Pre-war research equipment, wrapped carefully. Someone expected to return.",
+      "can_bank": true,
+      "loot": [{ "res": 4, "qty": [2, 4] }],
+      "loot_table": "glass_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "door_shard": {
+      "text": "A glass fragment the size of your fist shears off as the door gives. It catches your forearm.",
+      "penalty": { "ll": -1 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "chemical_vial": {
+      "text": "A pressurized vial inside the cabinet ruptures. Acrid smoke burns your throat and eyes.",
+      "penalty": { "radiation": 1, "fatigue": 1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

@@ -1,0 +1,61 @@
+{
+  "id": "dunes_buried_car_01",
+  "title": "The {{color}} Car",
+  "start_node": "roof_exposed",
+  "nodes": {
+    "roof_exposed": {
+      "text": "Only the roof and windshield of a {{color}} sedan are visible above the dune. The glass is intact. Inside, dark shapes. The door seam is still sealed.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Break the windshield to get inside.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 5,
+          "success_node": "interior",
+          "hazard_id": "glass_fragments"
+        }
+      ]
+    },
+    "interior": {
+      "text": "The interior is dry and well-preserved — sealed by the dune for years. Bags on the back seat, a first aid kit under the passenger seat. The glove box is locked.",
+      "can_bank": true,
+      "loot": [{ "res": 1, "qty": [1, 2] }, { "res": 0, "qty": [1, 2] }],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Force the locked glove box.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "glove_box",
+          "hazard_id": "needle_stab"
+        }
+      ]
+    },
+    "glove_box": {
+      "text": "Inside the glove box: a revolver with six rounds, a folded map, and a sealed prescription bottle. The map means nothing now, but the rest is useful.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 4, "qty": [1, 1] }],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "glass_fragments": {
+      "text": "Windshield glass sprays inward. A shard opens a line across your cheek.",
+      "penalty": { "ll": -1 },
+      "status": 4,
+      "ends_encounter": false
+    },
+    "needle_stab": {
+      "text": "A used syringe rolls out and stabs into your thumb. You don't know what was in it.",
+      "penalty": { "ll": -1, "radiation": 1 },
+      "status": 8,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "color": ["sand-faded red", "pale blue", "sun-bleached white", "dusty green"]
+  }
+}

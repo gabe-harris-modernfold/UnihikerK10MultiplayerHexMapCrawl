@@ -300,3 +300,163 @@ static const ItemDef* getItemDef(uint8_t id) {
     if (itemRegistry[i].id == id) return &itemRegistry[i];
   return nullptr;
 }
+
+// ── Encounter engine: boot loading ────────────────────────────────────────────
+
+// JSON helpers (minimal, for known encounter JSON formats)
+static const char* jsonFindKey(const char* json, const char* key) {
+  char search[32];
+  snprintf(search, sizeof(search), "\"%s\"", key);
+  const char* p = strstr(json, search);
+  if (!p) return nullptr;
+  p += strlen(search);
+  while (*p == ' ' || *p == '\t' || *p == ':') p++;
+  return p;
+}
+static int   jsonInt(const char* p) { if (!p) return 0; while (*p == ' ') p++; return atoi(p); }
+static bool  jsonStr(const char* p, char* buf, int bufLen) {
+  if (!p) return false;
+  while (*p == ' ') p++;
+  if (*p != '"') return false;
+  p++;
+  int i = 0;
+  while (*p && *p != '"' && i < bufLen - 1) buf[i++] = *p++;
+  buf[i] = 0;
+  return true;
+}
+
+// Load /encounters/index.json → encPools[0..9]
+static void loadEncounterIndex() {
+  File f = SD.open("/encounters/index.json");
+  if (!f) { Serial.println("[ENC] /encounters/index.json not found"); return; }
+  size_t sz = min((size_t)f.size(), (size_t)512);
+  char* buf = (char*)malloc(sz + 1);
+  if (!buf) { f.close(); return; }
+  f.read((uint8_t*)buf, sz);
+  buf[sz] = 0;
+  f.close();
+  memset(encPools, 0, sizeof(encPools));
+  for (int t = 0; t <= 9; t++) {
+    char tKey[4]; snprintf(tKey, sizeof(tKey), "\"%d\"", t);
+    const char* entry = strstr(buf, tKey);
+    if (!entry) continue;
+    entry += strlen(tKey);
+    int copyLen = min(80, (int)(sz - (size_t)(entry - buf)));
+    char tmp[80]; strncpy(tmp, entry, copyLen); tmp[copyLen] = 0;
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) encPools[t].count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, encPools[t].path, sizeof(encPools[t].path));
+    Serial.printf("[ENC]   terrain %d: %-10s %d files\n", t, encPools[t].path, encPools[t].count);
+  }
+  free(buf);
+}
+
+// Load /encounters/loot_tables.json → lootTables[0..19]
+static void loadLootTables() {
+  File f = SD.open("/encounters/loot_tables.json");
+  if (!f) { Serial.println("[ENC] /encounters/loot_tables.json not found"); return; }
+  size_t sz = f.size();
+  char* buf = (char*)ps_malloc(sz + 1);
+  if (!buf) buf = (char*)malloc(sz + 1);
+  if (!buf) { f.close(); return; }
+  f.read((uint8_t*)buf, sz);
+  buf[sz] = 0;
+  f.close();
+  lootTableCount = 0;
+  const char* p = buf;
+  while (lootTableCount < 20 && *p) {
+    // Find next quoted key
+    const char* nameStart = strchr(p, '"');
+    if (!nameStart) break;
+    nameStart++;
+    const char* nameEnd = strchr(nameStart, '"');
+    if (!nameEnd) break;
+    // Verify this is a table name (followed by ": [")
+    const char* after = nameEnd + 1;
+    while (*after == ' ' || *after == '\t') after++;
+    if (*after != ':') { p = nameEnd + 1; continue; }
+    after++;
+    while (*after == ' ' || *after == '\t') after++;
+    if (*after != '[') { p = nameEnd + 1; continue; }
+    int nameLen = min((int)(nameEnd - nameStart), 19);
+    LootTable& tbl = lootTables[lootTableCount];
+    strncpy(tbl.name, nameStart, nameLen); tbl.name[nameLen] = 0;
+    tbl.count = 0;
+    // Parse entries in the array
+    const char* arr = after + 1;
+    while (tbl.count < 8) {
+      const char* entry = strchr(arr, '{');
+      if (!entry) break;
+      const char* entryEnd = strchr(entry, '}');
+      if (!entryEnd) break;
+      int elen = min((int)(entryEnd - entry), 80);
+      char eb[80]; strncpy(eb, entry, elen); eb[elen] = 0;
+      LootEntry& le = tbl.entries[tbl.count];
+      le.item = 0; le.qtyMin = 1; le.qtyMax = 1; le.weight = 10;
+      const char* iv = jsonFindKey(eb, "item");   if (iv) le.item   = (uint8_t)jsonInt(iv);
+      const char* wv = jsonFindKey(eb, "weight"); if (wv) le.weight = (uint8_t)jsonInt(wv);
+      const char* qv = jsonFindKey(eb, "qty");
+      if (qv) {
+        while (*qv == ' ') qv++;
+        if (*qv == '[') {
+          qv++;
+          le.qtyMin = (uint8_t)atoi(qv);
+          const char* comma = strchr(qv, ',');
+          le.qtyMax = comma ? (uint8_t)atoi(comma + 1) : le.qtyMin;
+        }
+      }
+      tbl.count++;
+      arr = entryEnd + 1;
+      while (*arr == ' ' || *arr == '\t' || *arr == '\n' || *arr == '\r') arr++;
+      if (*arr == ']') { arr++; break; }
+    }
+    lootTableCount++;
+    p = arr;
+  }
+  free(buf);
+  Serial.printf("[ENC] Loaded %d loot tables\n", (int)lootTableCount);
+}
+
+// Roll a weighted loot table entry → writes item ID and qty to out params
+static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQty) {
+  *outItem = 0; *outQty = 0;
+  for (int i = 0; i < lootTableCount; i++) {
+    if (strncmp(lootTables[i].name, tableName, 19) != 0) continue;
+    LootTable& tbl = lootTables[i];
+    if (tbl.count == 0) return;
+    int totalW = 0;
+    for (int j = 0; j < tbl.count; j++) totalW += tbl.entries[j].weight;
+    if (totalW == 0) return;
+    int roll = (int)((uint32_t)esp_random() % (uint32_t)totalW);
+    int cum = 0;
+    for (int j = 0; j < tbl.count; j++) {
+      cum += tbl.entries[j].weight;
+      if (roll < cum) {
+        *outItem = tbl.entries[j].item;
+        uint8_t range = tbl.entries[j].qtyMax - tbl.entries[j].qtyMin;
+        *outQty = tbl.entries[j].qtyMin + (range > 0 ? (uint8_t)(esp_random() % (range + 1)) : 0);
+        return;
+      }
+    }
+    return;
+  }
+}
+
+// ── Encounter DN computation (spec §3) ────────────────────────────────────────
+static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/, int8_t assistMod) {
+  int effectiveRisk = constrain((int)baseRisk + (int)assistMod, 0, 100);
+  if (G.threatClock >= TC_THRESHOLD_A) effectiveRisk += 5;
+  if (G.threatClock >= TC_THRESHOLD_B) effectiveRisk += 5;
+  if (G.threatClock >= TC_THRESHOLD_C) effectiveRisk += 5;
+  if (G.threatClock >= TC_THRESHOLD_D) effectiveRisk += 5;
+  effectiveRisk = constrain(effectiveRisk, 0, 100);
+  int rawDN = 2 + (effectiveRisk * 10) / 100;
+  Player& p = G.players[pid];
+  int bonus = 0;
+  if (p.ll > 4)        bonus += (p.ll - 4) / 2;
+  if (p.resolve > 2)   bonus += (p.resolve - 2);
+  if (p.fatigue > 4)   rawDN += (p.fatigue - 4);
+  if (p.radiation > 3) rawDN += (p.radiation - 3) / 2;
+  return (uint8_t)constrain(rawDN - bonus, 2, 12);
+}

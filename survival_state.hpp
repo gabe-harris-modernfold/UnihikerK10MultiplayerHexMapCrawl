@@ -253,6 +253,7 @@ static void movePlayer(int pid, int dir) {
   if (dir < 0 || dir > 5) return;
   Player& p  = G.players[pid];
   if (p.statusBits & ST_DOWNED) return;  // downed — waiting for slot reset
+  if (encounters[pid].active)  return;  // locked during active encounter
   if (p.resting) {
     Serial.printf("[BLOCKED] P%d \"%s\" resting — waiting for other survivors to finish\n", pid, p.name);
     return;

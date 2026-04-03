@@ -1,0 +1,87 @@
+{
+  "id": "settlement_well_01",
+  "title": "The {{well_adj}} Communal Well",
+  "start_node": "well_plaza",
+  "nodes": {
+    "well_plaza": {
+      "text": "A cracked stone plaza holds a hand-cranked well ringed by settlement folk waiting their turn. The rope is worn down to bare wire near the pulley. Someone scratched DRINK DEEP on the surrounding wall — someone else scratched DON'T underneath it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wait your turn at the crank.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 10,
+          "skill": 5,
+          "success_node": "water_drawn",
+          "hazard_id": "rope_snap"
+        },
+        {
+          "label": "Offer labor for priority access.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "water_drawn",
+          "hazard_id": "overexertion"
+        }
+      ]
+    },
+    "water_drawn": {
+      "text": "Cold brown water rises from below — unpleasant, but drinkable once you filter it through your rag. The locals nod and move aside. A woman nearby is trading sealed canteen caps for scraps of food.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [2, 3] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Help repair the pulley mechanism.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "well_deep",
+          "hazard_id": "pinched_hand"
+        }
+      ]
+    },
+    "well_deep": {
+      "text": "Dropping down into the shaft on a makeshift harness, you find a pre-war filtration canister lodged above the waterline. The settlement folk haul you up and press medicine and rations into your hands without a word.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 1] },
+        { "res": 1, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "rope_snap": {
+      "text": "The frayed wire gives way and the bucket plummets. The crank handle spins and catches you across the knuckles.",
+      "penalty": { "ll": -1, "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "overexertion": {
+      "text": "The crank is heavier than it looks and you pull something in your shoulder. The locals take the handle away and let you drink anyway.",
+      "penalty": { "fatigue": 2 },
+      "ends_encounter": false
+    },
+    "pinched_hand": {
+      "text": "A rusted gear catches two of your fingers. You free yourself but the wound bleeds freely for the rest of the day.",
+      "penalty": { "ll": -1, "fatigue": 1 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "well_adj": [
+      "Cracked",
+      "Rusted",
+      "Brackish",
+      "Worn",
+      "Old Cinder",
+      "Half-Dry",
+      "Grim"
+    ]
+  }
+}

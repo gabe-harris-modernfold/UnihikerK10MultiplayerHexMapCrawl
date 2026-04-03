@@ -1,0 +1,61 @@
+{
+  "id": "ridge_lookout_01",
+  "title": "The {{adjective}} Fire Tower",
+  "start_node": "base_ladder",
+  "nodes": {
+    "base_ladder": {
+      "text": "A rusted fire tower rises from the ridge crest. The ladder is intact but {{ladder_condition}}. A locked storage box is bolted to the base.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the tower to the observation deck.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 25,
+          "skill": 5,
+          "success_node": "observation_deck",
+          "hazard_id": "rung_failure"
+        }
+      ]
+    },
+    "observation_deck": {
+      "text": "The observation deck gives a panoramic view of the wastes. A weather kit and sealed supply cache are still strapped to the wall mounts — never collected.",
+      "can_bank": true,
+      "loot": [{ "res": 0, "qty": [1, 2] }, { "res": 1, "qty": [1, 2] }],
+      "loot_table": "ridge_common",
+      "choices": [
+        {
+          "label": "Force the observer's locker under the window bench.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "observer_locker",
+          "hazard_id": "wind_gust"
+        }
+      ]
+    },
+    "observer_locker": {
+      "text": "Inside the locker: a sealed personal kit, emergency flares, and a hand radio. The radio is dead but the rest is usable.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 4, "qty": [1, 2] }],
+      "loot_table": "ridge_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "rung_failure": {
+      "text": "A rung snaps under your weight. You catch yourself but slam hard into the ladder. The bruises are deep.",
+      "penalty": { "ll": -2, "fatigue": 1 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "wind_gust": {
+      "text": "A gust rocks the tower. You grab the rail but lose your footing. Heart pounding, it takes long minutes to recover.",
+      "penalty": { "fatigue": 2 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adjective": ["Rusted", "Leaning", "Cracked", "Storm-Scored"],
+    "ladder_condition": ["slick with lichen", "bowed outward at the middle", "missing two rungs", "groaning with every touch"]
+  }
+}

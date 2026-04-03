@@ -1,0 +1,60 @@
+{
+  "id": "forest_hut_01",
+  "title": "The {{adjective}} Forester's Hut",
+  "start_node": "doorway",
+  "nodes": {
+    "doorway": {
+      "text": "A low wooden hut stands in a clearing, its {{adjective}} roof mostly intact. The door is wedged shut from the inside.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Force the door with your shoulder.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 5,
+          "success_node": "main_room",
+          "hazard_id": "door_splinter"
+        }
+      ]
+    },
+    "main_room": {
+      "text": "The single room holds a cold stove, empty shelves, and a workbench covered in rusted tools. A trapdoor in the floor is sealed with a padlock.",
+      "can_bank": true,
+      "loot": [{ "res": 4, "qty": [1, 3] }],
+      "loot_table": "forest_common",
+      "choices": [
+        {
+          "label": "Break the padlock on the trapdoor.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cellar",
+          "hazard_id": "bad_air"
+        }
+      ]
+    },
+    "cellar": {
+      "text": "A root cellar, surprisingly dry. Rows of sealed jars line wooden shelves. Some are cloudy but most look intact.",
+      "can_bank": true,
+      "loot": [{ "res": 1, "qty": [2, 4] }, { "res": 0, "qty": [1, 2] }],
+      "loot_table": "forest_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "door_splinter": {
+      "text": "A wooden shard drives into your shoulder as the door gives way.",
+      "penalty": { "ll": -1 },
+      "status": 4,
+      "ends_encounter": false
+    },
+    "bad_air": {
+      "text": "Stale gas hits you as the trapdoor opens. You retch and stagger back, vision blurring.",
+      "penalty": { "fatigue": 2, "ll": -1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adjective": ["mossy", "fire-scorched", "overgrown", "tar-patched"]
+  }
+}

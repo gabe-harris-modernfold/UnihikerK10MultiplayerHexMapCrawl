@@ -1,0 +1,95 @@
+{
+  "id": "marsh_barge_01",
+  "title": "The {{adjective}} Barge",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A flat-bottomed barge lists hard to port in a reed-choked channel, its hull stove in below the waterline on the starboard side. A cargo crane arm hangs over the deck like a broken limb, and beneath it, a sealed container is still bolted to the deck — above the waterline, barely. The gangplank is gone but a rope ladder trails from the gunwale.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the rope ladder to the deck",
+          "cost": { "fatigue": 1 },
+          "base_risk": 20,
+          "skill": 5,
+          "success_node": "deck",
+          "hazard_id": "ladder_snap"
+        },
+        {
+          "label": "Wade around to the lower stern hatch",
+          "cost": { "fatigue": 2, "water": 1 },
+          "base_risk": 22,
+          "skill": 0,
+          "success_node": "deck",
+          "hazard_id": "hull_slice"
+        }
+      ]
+    },
+    "deck": {
+      "text": "The deck is slick with algae and tilted enough that you walk with one foot on the railing. The container is a shipping box, its lock corroded to uselessness — one strike with your heel pops it. Inside is a mix of pre-war industrial supplies: lubricant cans, cable spools, and one undamaged fuel canister.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 3] },
+        { "res": 4, "qty": [2, 4] }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Force the wheelhouse door for the captain's locker",
+          "cost": { "fatigue": 2 },
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "wheelhouse",
+          "hazard_id": "list_shift"
+        },
+        {
+          "label": "Pry open the forward cargo hatch",
+          "cost": { "fatigue": 2 },
+          "base_risk": 38,
+          "skill": 2,
+          "success_node": "wheelhouse",
+          "hazard_id": "gas_pocket"
+        }
+      ]
+    },
+    "wheelhouse": {
+      "text": "The wheelhouse is humid and close, every surface furred with black mould. The captain's locker holds a first-aid kit sealed in a waterproof case, a paper chart of pre-war waterways, and a half-eaten brick of compressed rations that's still sealed. You work fast — the barge groans and settles lower as you strip the last useful item.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 2] },
+        { "res": 1, "qty": [1, 2] }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "ladder_snap": {
+      "text": "Two rungs from the top the ladder's top fitting tears free of the gunwale. You drop into the shallows and one leg hits the sunken hull hard.",
+      "penalty": { "fatigue": 2, "ll": -7 },
+      "wound": [1, 1],
+      "ends_encounter": false
+    },
+    "hull_slice": {
+      "text": "A torn hull plate hidden beneath the waterline opens a deep gash across your calf. The sting is immediate and fierce.",
+      "penalty": { "fatigue": 2, "ll": -8 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "list_shift": {
+      "text": "The barge settles another foot to port with a grinding shudder. You're thrown into the bulkhead and slide toward the open railing. You catch the crane arm and hang there until the movement stops.",
+      "penalty": { "fatigue": 3, "ll": -5 },
+      "ends_encounter": false
+    },
+    "gas_pocket": {
+      "text": "The hatch releases a pocket of trapped methane. Your eyes water and your lungs seize for a terrifying few seconds before you stagger back into open air.",
+      "penalty": { "fatigue": 2, "ll": -4 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adjective": ["Rusting", "Sunken", "Tilted", "Rotting", "Listing", "Grounded", "Derelict", "Beached"]
+  }
+}

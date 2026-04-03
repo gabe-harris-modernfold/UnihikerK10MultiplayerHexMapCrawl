@@ -1,0 +1,61 @@
+{
+  "id": "mountain_mine_01",
+  "title": "The {{adjective}} Mine Entrance",
+  "start_node": "adit",
+  "nodes": {
+    "adit": {
+      "text": "A timber-framed mine adit cuts into the mountain face. The supports are {{adjective}} but standing. Cold air pushes out from the dark — a good sign. Something is preserved inside.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Enter the mine and follow the main shaft.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "shaft_midpoint",
+          "hazard_id": "partial_collapse"
+        }
+      ]
+    },
+    "shaft_midpoint": {
+      "text": "The shaft opens into a wider chamber where miners once took breaks. A rusted locker stands against the wall. Equipment crates are stacked in the corner, sealed under a canvas tarp.",
+      "can_bank": true,
+      "loot": [{ "res": 4, "qty": [2, 4] }],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Push deeper to the main work face.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 60,
+          "skill": 5,
+          "success_node": "work_face",
+          "hazard_id": "gas_pocket"
+        }
+      ]
+    },
+    "work_face": {
+      "text": "The work face is untouched. Emergency supply alcoves are cut into the rock walls — miners were required to cache supplies here by law. Most are still full.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [1, 3] }, { "res": 2, "qty": [1, 2] }],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "partial_collapse": {
+      "text": "A section of the roof gives way. You're buried to the knees before you claw free.",
+      "penalty": { "ll": -2, "fatigue": 1 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "gas_pocket": {
+      "text": "A gas pocket ruptures ahead. The air burns. You turn back, half-conscious, and collapse at the chamber entrance.",
+      "penalty": { "ll": -2, "radiation": 2 },
+      "status": 2,
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": ["rotting", "cracked", "fire-blackened", "moss-covered"]
+  }
+}

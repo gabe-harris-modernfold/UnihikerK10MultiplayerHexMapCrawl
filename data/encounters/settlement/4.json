@@ -1,0 +1,87 @@
+{
+  "id": "settlement_seeds_01",
+  "title": "The {{keeper_name}} Seed Cache",
+  "start_node": "cache_door",
+  "nodes": {
+    "cache_door": {
+      "text": "A cellar door set into the earth behind a settlement longhouse is padlocked and marked with a crude painted leaf. A wiry elder sits in a folding chair nearby, watching you with flat grey eyes. She doesn't speak first.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask about the sealed cache.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 4,
+          "success_node": "inside_cache",
+          "hazard_id": "refused_entry"
+        },
+        {
+          "label": "Offer medicine in trade.",
+          "cost": { "res": 3, "fatigue": 0 },
+          "base_risk": 20,
+          "skill": 1,
+          "success_node": "inside_cache",
+          "hazard_id": "medicine_rejected"
+        }
+      ]
+    },
+    "inside_cache": {
+      "text": "The cellar holds rows of sealed clay jars and wax-stopped tins, each labeled in cramped handwriting. The elder explains one wall holds grain and dried legumes; the other holds what she calls the long game — seeds that haven't been planted in decades. She lets you take from the first wall.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 3] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Help catalog and preserve the tins.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "deep_cache",
+          "hazard_id": "mold_exposure"
+        }
+      ]
+    },
+    "deep_cache": {
+      "text": "Hours of careful work reveal a sealed metal box behind a false panel — old pre-war medical storage repurposed for the rarest seeds. The elder opens it in silence and presses a packet of medicine and a fuel cell into your hands. Payment, she says, for not stealing what you could have taken.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 2, "qty": [0, 1] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "refused_entry": {
+      "text": "The elder doesn't answer. She just stares until you take a step back. No words, no violence — just a wall you can't climb.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": true
+    },
+    "medicine_rejected": {
+      "text": "She takes the medicine, examines it, and hands it back. Expired, she says. You get nothing for the offer.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "mold_exposure": {
+      "text": "A burst tin releases a cloud of grey spores. Your eyes water and your throat burns for the rest of the afternoon.",
+      "penalty": { "fatigue": 2, "radiation": 1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "keeper_name": [
+      "Maren's",
+      "Dusk-Hand",
+      "Old Sera's",
+      "The Grey Warden",
+      "Pale Root",
+      "Halfmile",
+      "Thornmother's",
+      "Cinder-Stalk"
+    ]
+  }
+}

@@ -383,6 +383,18 @@ static void generateMap() {
       cell.variant  = (n > 0) ? pickVariant(n, esp_random()) : 0;
     }
 
+  // ── Phase 5: POI placement ────────────────────────────────────
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int c = 0; c < MAP_COLS; c++) {
+      G.map[r][c].poi = 0;
+      uint8_t t = G.map[r][c].terrain;
+      if (t >= NUM_TERRAIN || TERRAIN_POI_PCT[t] == 0) continue;
+      if ((esp_random() % 100) < TERRAIN_POI_PCT[t]) {
+        G.map[r][c].poi = 1;
+      }
+    }
+  }
+
   // ── Post-generation map stats ────────────────────────────────
   uint16_t tCount[NUM_TERRAIN] = {0};
   uint16_t rCount[6]           = {0};
@@ -425,7 +437,8 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
       if (hexDistWrap(pq, pr, c, r) <= visR) {
         HexCell& cell = G.map[r][c];
         tt = cell.terrain;
-        dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
+        dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+        if (cell.poi) dd |= (1 << 7);
         vv = (cell.resource << 4) | (cell.variant & 0x0F);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
@@ -454,7 +467,8 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       int      cr   = wrapR(pr + dr);
       HexCell& cell = G.map[cr][cq];
       uint8_t  tt   = cell.terrain;
-      uint8_t  dd   = (cell.footprints & 0x3F) | (cell.shelter << 6);
+      uint8_t  dd   = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+      if (cell.poi) dd |= (1 << 7);
       uint8_t  vv   = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
       if (pos + 10 < cap) {
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
@@ -483,7 +497,8 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       int cr = wrapR(pr + dr);
       if (pos + 10 < cap) {
         HexCell& cell = G.map[cr][cq];
-        uint8_t dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
+        uint8_t dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+        if (cell.poi) dd |= (1 << 7);
         uint8_t vv = (cell.resource << 4) | (cell.variant & 0x0F);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];

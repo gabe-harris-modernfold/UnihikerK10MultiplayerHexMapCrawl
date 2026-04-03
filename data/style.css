@@ -1415,3 +1415,65 @@ canvas{display:block;width:100%;height:100%}
 /* Broken image fallback */
 img.item-icon-img{background:var(--bg-deep)}
 img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
+
+/* ── Encounter overlay ──────────────────────────────────────────────── */
+#enc-overlay{
+  position:fixed;inset:0;
+  background:rgba(4,3,2,0.92);
+  display:none;align-items:center;justify-content:center;
+  z-index:21
+}
+#enc-overlay.open{display:flex}
+#enc-box{
+  background:var(--bg-panel);border:1px solid var(--gold);
+  border-radius:2px;padding:20px 22px;
+  width:min(420px,94vw);max-height:85vh;overflow-y:auto;
+  display:flex;flex-direction:column;gap:8px
+}
+#enc-node-text{
+  color:var(--txt);font-size:var(--fs-b);line-height:1.45;
+  margin-top:6px;white-space:pre-wrap
+}
+#enc-risk-bar-wrap{margin-top:2px}
+#enc-risk-bar{
+  height:6px;background:var(--bdr-mid);border-radius:3px;overflow:hidden;margin-top:4px
+}
+#enc-risk-fill{
+  height:100%;border-radius:3px;
+  background:linear-gradient(90deg,#3a8,#fa0,#e43);
+  transition:width 0.3s ease
+}
+#enc-loot-display{
+  font-size:var(--fs-d);color:var(--gold);min-height:14px;margin-top:2px
+}
+#enc-choice-list{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.enc-choice-btn{
+  width:100%;text-align:left;padding:8px 10px;
+  background:transparent;border:1px solid var(--bdr-hi);color:var(--txt);
+  font-family:var(--stencil);font-size:var(--fs-d);letter-spacing:var(--ls-d);
+  border-radius:2px;cursor:pointer;line-height:1.3
+}
+.enc-choice-btn:hover{border-color:var(--gold);color:var(--gold-hi);background:rgba(255,193,7,0.06)}
+.enc-choice-btn .enc-cost-tag{color:var(--txt-dim);font-size:10px;display:block;margin-top:2px}
+.enc-choice-btn .enc-risk-tag{font-size:10px}
+.enc-risk-low{color:#3a8}.enc-risk-mid{color:#fa0}.enc-risk-high{color:#e43}
+#enc-bank-row{margin-top:4px}
+
+/* ── Ally encounter banner ──────────────────────────────────────────── */
+#ally-enc-banner{
+  position:fixed;bottom:calc(var(--hud-h,36px) + 8px);left:50%;transform:translateX(-50%);
+  background:var(--bg-panel);border:1px solid var(--gold);
+  border-radius:2px;padding:10px 14px;
+  z-index:18;min-width:220px;max-width:min(340px,90vw);
+  display:none;flex-direction:column;gap:4px
+}
+#ally-enc-banner.visible{display:flex}
+#ally-enc-sub{color:var(--txt-dim);font-size:var(--fs-d);margin-top:2px}
+#ally-enc-assist-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.enc-assist-btn{
+  padding:4px 8px;background:transparent;
+  border:1px solid var(--bdr-hi);color:var(--txt);
+  font-family:var(--stencil);font-size:10px;letter-spacing:1px;
+  border-radius:2px;cursor:pointer
+}
+.enc-assist-btn:hover{border-color:var(--gold);color:var(--gold-hi)}

@@ -1,0 +1,59 @@
+{
+  "id": "ridge_cliffcache_01",
+  "title": "The Cliff-Face Cache",
+  "start_node": "cliff_base",
+  "nodes": {
+    "cliff_base": {
+      "text": "A narrow ledge runs along the cliff face about eight meters up. Something is wedged into a crack up there — a pack or bag, left by someone who knew this ridge.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Free-climb to the ledge.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 35,
+          "skill": 5,
+          "success_node": "ledge",
+          "hazard_id": "handhold_failure"
+        }
+      ]
+    },
+    "ledge": {
+      "text": "The ledge is barely wide enough to stand on. The pack is there, bungee-strapped to an iron piton. Behind it, a crevice goes deeper than expected.",
+      "can_bank": true,
+      "loot": [{ "res": 1, "qty": [1, 2] }, { "res": 4, "qty": [1, 2] }],
+      "loot_table": "ridge_common",
+      "choices": [
+        {
+          "label": "Reach into the crevice and feel for more.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 55,
+          "skill": 1,
+          "success_node": "crevice_depth",
+          "hazard_id": "crevice_creature"
+        }
+      ]
+    },
+    "crevice_depth": {
+      "text": "Deep in the crevice, a sealed metal tin wedged tight. Prying it loose takes both hands. Inside: bandages, a sealed syringe, and a folded note you can't read.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [2, 3] }],
+      "loot_table": "ridge_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "handhold_failure": {
+      "text": "A handhold crumbles. You scramble and catch yourself two meters lower, scraping your palms raw.",
+      "penalty": { "ll": -1, "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "crevice_creature": {
+      "text": "Something strikes from inside the crevice. You yank your arm back — deep punctures on your forearm.",
+      "penalty": { "ll": -2 },
+      "status": 1,
+      "wound": [1, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

@@ -211,6 +211,32 @@
 <!-- Flavor banner (shelter warning etc.) -->
 <div id="flavor-banner"></div>
 
+<!-- ──────────────── Encounter Overlay (active player) ──────────────── -->
+<div id="enc-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="enc-title">
+  <div id="enc-box">
+    <div id="enc-title" class="check-lbl">&#x1F441; ENCOUNTER</div>
+    <div id="enc-node-text"></div>
+    <div id="enc-risk-bar-wrap">
+      <div class="check-lbl" id="enc-dn-label">DN —</div>
+      <div id="enc-risk-bar"><div id="enc-risk-fill"></div></div>
+    </div>
+    <div id="enc-loot-display"></div>
+    <div id="enc-choice-list"></div>
+    <div id="enc-bank-row" style="display:none">
+      <button id="enc-bank-btn" class="chk-action-btn">&#x25A0; BANK &amp; EXIT</button>
+    </div>
+    <button id="enc-abort-btn" class="chk-action-btn" style="margin-top:6px;border-color:#888;color:#888">&#x2715; ABORT</button>
+  </div>
+</div>
+
+<!-- ──────────────── Ally Encounter Banner (same-hex observers) ──────── -->
+<div id="ally-enc-banner" style="display:none">
+  <div id="ally-enc-title" class="check-lbl">&#x1F441; SURVIVOR INSIDE</div>
+  <div id="ally-enc-sub"></div>
+  <div id="ally-enc-assist-row"></div>
+  <button id="ally-enc-dismiss" class="chk-action-btn" style="margin-top:8px;font-size:10px">DISMISS</button>
+</div>
+
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
 <div id="char-overlay">
   <div id="char-sheet">
