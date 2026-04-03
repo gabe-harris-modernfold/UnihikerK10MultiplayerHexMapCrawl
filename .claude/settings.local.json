@@ -15,7 +15,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Read(//c/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/**)",
-      "Bash(\"C:/SourceCode/Esp32HexMapCrawl/data/style.css\":*)"
+      "Bash(\"C:/SourceCode/Esp32HexMapCrawl/data/style.css\":*)",
+      "Bash(wc -l /c/SourceCode/Esp32HexMapCrawl/*.hpp /c/SourceCode/Esp32HexMapCrawl/*.ino)"
     ]
   }
 }

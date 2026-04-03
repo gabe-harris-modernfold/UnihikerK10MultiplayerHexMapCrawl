@@ -18,7 +18,7 @@ The game currently has a "not yet implemented" placeholder for encounters (see `
 - **Free entry**: No MP cost to enter an encounter; internal node costs handle resource drain
 - **Server-side loot tables**: Server reads `loot_tables.json` at boot (~1-2KB) and resolves typed item drops during `enc_choice` handling. Client receives results in EVT_ENC_RESULT — no client-side loot table cache or rolling needed. Keeps full server authority
 - **Random encounter selection**: Server picks randomly from the full pool each time (`random(0, count)`). With 260+ files across biomes, repeats are rare in a single session. *(Used-encounter bitmask tracking deferred to v2 if needed)*
-- **Fully locked during encounter**: Player cannot perform any non-encounter actions (rest, trade, craft, move) while in an active encounter
+- **Fully locked during encounter**: Player cannot perform any non-encounter actions (move, forage, scavenge, shelter, survey, rest, trade) while in an active encounter
 - **Minimal ally view**: Same-hex allies see a "Player X is in an encounter" banner with assist buttons. No spectator narrative view — allies don't fetch the encounter JSON. *(Full spectator read-along deferred to v2)*
 
 ---
@@ -300,6 +300,51 @@ Same-hex allies can spend 1 resource (any type) each to reduce risk **before** t
 
 **Abort penalty**: Voluntary abort (`enc_abort`) increments the Threat Clock by 1 — you made noise even leaving empty-handed. Dawn-forced abort does NOT increment TC.
 
+### Exact WebSocket JSON Formats
+
+Follows the existing codebase pattern: client messages use `"t"` for type, server events use `{"t":"ev","k":"<shortcode>"}`.
+
+**Client → Server:**
+```json
+// Enter encounter
+{"t":"enc_start","q":5,"r":8}
+
+// Ally assist (spend 1 resource for -4 risk)
+{"t":"enc_assist","target":2,"res":3}
+
+// Make a choice (costs/risk from encounter JSON, loot_table name for server to roll)
+{"t":"enc_choice","ci":0,"cost_ll":0,"cost_fat":1,"cost_rad":0,"cost_food":0,"cost_water":0,"cost_resolve":0,"base_risk":35,"skill":2,"loot":[0,0,0,1,0],"lt":"urban_common","can_bank":true}
+
+// Bank loot and exit
+{"t":"enc_bank"}
+
+// Abort encounter
+{"t":"enc_abort"}
+```
+
+**Server → Client (via event queue):**
+```json
+// Encounter started — broadcast to same-hex allies
+{"t":"ev","k":"enc_start","pid":2,"q":5,"r":8}
+
+// Assist applied
+{"t":"ev","k":"enc_assist","pid":3,"tgt":2,"res":3,"rd":-4}
+
+// Choice resolved (success with loot table item)
+{"t":"ev","k":"enc_res","pid":2,"out":1,"skill":2,"dn":7,"tot":9,"loot":[0,0,0,1,0],"it":21,"iq":1,"penLL":0,"penFat":0,"penRad":0,"st":0,"ends":0}
+
+// Choice resolved (hazard, terminal)
+{"t":"ev","k":"enc_res","pid":2,"out":0,"skill":2,"dn":9,"tot":6,"loot":[0,0,0,0,0],"it":0,"iq":0,"penLL":-2,"penFat":2,"penRad":0,"st":4,"ends":1}
+
+// Loot banked
+{"t":"ev","k":"enc_bank","pid":2,"q":5,"r":8,"loot":[1,0,2,3,0],"scoreD":28}
+
+// Encounter ended (reason: "hazard", "abort", "dawn", "downed", "disconnect")
+{"t":"ev","k":"enc_end","pid":2,"q":5,"r":8,"reason":"dawn"}
+```
+
+**Note on `loot_table` string parsing:** The `"lt"` field in `enc_choice` is a string (e.g., `"urban_common"`). Server extracts this using `strstr`/`strchr` to find the quoted value, then matches against cached `loot_tables.json` keys. If the field is missing or empty, no loot table roll occurs.
+
 ---
 
 ## 6. POI Hex Tracking
@@ -323,7 +368,7 @@ Encounters are heavily weighted toward populated/ruins terrain. Hundreds of enco
 | Nuke Crater (10) | 0% | Impassable |
 | River Channel (11) | 0% | Impassable |
 
-The `poi` byte on HexCell stores a non-zero value as a boolean flag. The actual encounter file is selected randomly at runtime from the terrain's SD card pool (with used-encounter tracking to avoid repeats). Once a terrain's pool is exhausted, no more encounters fire for that terrain.
+The `poi` byte on HexCell stores a non-zero value as a boolean flag. The actual encounter file is selected randomly at runtime from the terrain's SD card pool (`random(0, encPoolCount[terrain])`).
 
 ### Vis-Disk Encoding
 Use **bit 7 of the DD byte** to signal POI presence to clients:
@@ -396,9 +441,9 @@ server.on("/enc", HTTP_GET, [](AsyncWebServerRequest* req) {
 });
 ```
 
-On `enc_start`, server picks a random unused file index for the hex's terrain type, sends the path to the client (and same-hex allies for spectator view). Client(s) fetch via HTTP GET.
+On `enc_start`, server picks a random file index for the hex's terrain type and sends the path to the active player's client. Client fetches via HTTP GET.
 
-**Loot tables endpoint**: Client fetches `/encounters/loot_tables.json` once at game start and caches in memory.
+**Loot tables**: Server reads and caches `/encounters/loot_tables.json` at boot (~1-2KB). No client endpoint needed — server rolls loot table drops during `enc_choice` handling.
 
 ---
 
@@ -407,13 +452,87 @@ On `enc_start`, server picks a random unused file index for the hex's terrain ty
 | System | Interaction |
 |--------|------------|
 | **Threat Clock** | Starting any encounter increments TC by 1 (all terrain types). Voluntary abort also increments TC by 1. Dawn abort does NOT increment TC. TC thresholds add +5/+10/+15/+20 to base_risk. |
-| **Day Cycle** | Dawn during active encounter -> forced abort (pending loot lost, no TC increment). Dawn abort consumes the POI (same as all entry paths). Player remains at the POI hex. Players cannot REST while in encounter. |
-| **Movement** | Blocked while `encounters[pid].active`. Entering a POI hex does NOT auto-start; player must choose "Enter" action. Entry is free (no MP cost). |
+| **Day Cycle** | See Dusk/Dawn details below. |
+| **Movement** | Blocked while `encounters[pid].active`. Entering a POI hex does NOT auto-start; player must choose "Enter" action. Entry is free (no MP cost). Block in `movePlayer()` (`survival_state.hpp:252`). |
 | **Survey** | Surveying reveals POI hexes within **half normal survey range** (rounded down). Eye icon becomes globally visible once any player surveys the hex. POIs are invisible until surveyed. |
 | **Conditions** | Hazard `status` field sets statusBits (bleeding, fever, etc.). Existing condition penalties affect subsequent encounter checks via `resolveCheck()`. Being Downed ends the encounter immediately with all pending loot lost. |
-| **Score** | Banking loot: +3 per individual resource unit (`sum(pendingLoot[0..4]) * 3`). Full clear bonus: +10 (awarded when `reachedTerminal` flag is set on `enc_bank`). |
-| **Save** | `SAVE_VERSION` bumps to 5. `poi` byte persists in map binary. Active encounters are transient — disconnecting mid-encounter immediately clears state, pending loot lost, POI consumed. |
-| **Action lock** | Player is fully locked during encounter — no trading, resting, crafting, or other actions. Only encounter choices, banking, aborting, and receiving assists. |
+| **Score** | Use existing `addScore(p, ev, pts)` from `survival_skills.hpp:92`. Banking loot: +3 per individual resource unit (`sum(pendingLoot[0..4]) * 3`). Full clear bonus: +10 (awarded when `reachedTerminal` flag is set on `enc_bank`). |
+| **Save** | See Save Format details below. |
+| **Action lock** | Player is **fully locked** during encounter. Block in `handleAction()` (`actions_game_loop.hpp:254`) — early return with `AO_BLOCKED` for all 6 action types. Block trades in `trade_offer` / `trade_accept` handlers (`network-handlers.hpp:620-747`). Only `enc_*` messages, banking, aborting, and receiving assists are allowed. |
+| **Ground items** | On `enc_bank`, if typed inventory is full, call existing `dropItem()` (`inventory_items.hpp:200`). If `groundItems[MAX_GROUND=32]` is also full, item is lost — acceptable edge case. |
+| **K10 display** | Add encounter events to Event Log (Screen 1) via `k10LogAdd()` (34-char max, uses `k10LogMux` spinlock). See K10 Log Messages below. |
+
+### Dusk/Dawn Encounter Handling
+
+In `tickGame()` (`actions_game_loop.hpp:29-36`), the day boundary sequence is:
+```
+G.dayCount++
+duskCheck()      // radiation Endure checks — can cause Downed
+dawnUpkeep()     // reset daily state, save game
+```
+
+**Encounter abort fires before duskCheck.** Insert encounter cleanup between the day-boundary check and `duskCheck()`:
+```cpp
+// --- Day boundary ---
+G.dayCount++;
+// Force-abort any active encounters BEFORE dusk radiation checks
+for (int i = 0; i < MAX_PLAYERS; i++) {
+  if (encounters[i].active) {
+    encounters[i] = {};  // clear all pending loot
+    enqEvt({ .type = EVT_ENC_END, .pid = i, ... });  // reason = "dawn"
+    // No TC increment for dawn abort
+  }
+}
+duskCheck();     // now safe — no player is in an encounter
+dawnUpkeep();
+```
+
+If dusk radiation causes Downed on a player who was already out of the encounter, standard downed rules apply at the POI hex. The encounter is already over — no interaction.
+
+### Save Format
+
+`SAVE_VERSION` bumps from 4 to 5. HexCell grows from 7 to 8 bytes (adding `poi`). This changes the binary layout of `map.bin`:
+
+**map.bin layout (v5):**
+1. `SaveHeader` (12 bytes) — magic, version=5, dayCount, threatClock, sharedFood, sharedWater, pad
+2. `G.map[MAP_ROWS][MAP_COLS]` — 19x25x**8** = 3800 bytes (was 3325 at 7 bytes/cell)
+3. `SaveGroundItem[MAX_GROUND]` — appended after map (8 bytes each)
+
+**players.bin** — unchanged (SavePlayer struct unaffected).
+
+**ActiveEncounter is NOT saved.** Encounters are transient — disconnecting mid-encounter immediately clears state, pending loot lost, POI consumed (already zeroed on `enc_start`). On load, all `encounters[]` slots start cleared.
+
+**POI state persists** via `HexCell.poi` in the map binary. POIs consumed during gameplay (`poi = 0`) are reflected in saved state. On new game / version mismatch, `generateMap()` places fresh POIs.
+
+**Migration**: Old v4 saves fail the version check and are rejected (fresh start). No automatic conversion.
+
+### Encounter Index Cache
+
+Server reads `index.json` once at boot and stores in a compact array:
+```cpp
+struct EncPoolInfo {
+  uint8_t count;       // number of encounter files for this terrain
+  char    path[12];    // folder name (e.g., "urban", "marsh")
+};
+static EncPoolInfo encPools[10];  // indexed by terrain type (0-9), ~130 bytes
+```
+
+### K10 Log Messages
+
+Encounter events added to Event Log (Screen 1) via `k10LogAdd()`:
+
+| Event | K10 Log Text (max 34 chars) |
+|-------|----------------------------|
+| `EVT_ENC_START` | `"P2 enters encounter"` |
+| `EVT_ENC_RESULT` (success) | `"P2 ENC: Scavenge OK"` |
+| `EVT_ENC_RESULT` (fail, terminal) | `"P2 ENC: HAZARD! Ejected"` |
+| `EVT_ENC_RESULT` (fail, non-terminal) | `"P2 ENC: HAZARD (cont.)"` |
+| `EVT_ENC_BANK` | `"P2 banked encounter loot"` |
+| `EVT_ENC_BANK` (full clear) | `"P2 FULL CLEAR! +10"` |
+| `EVT_ENC_END` (abort) | `"P2 aborted encounter"` |
+| `EVT_ENC_END` (dawn) | `"P2 enc ended (dawn)"` |
+| `EVT_ENC_END` (downed) | `"P2 DOWNED in encounter"` |
+| `EVT_ENC_ASSIST` | `"P3\xE2\x86\x92P2 assist (-4)"` |
 
 ---
 
@@ -486,8 +605,8 @@ Result is included in EVT_ENC_RESULT (`encItemType`, `encItemQty`). Client just 
   // The encounter is a linear chain of nodes (rooms/areas) the player pushes through.
   // Each node can have:
   //   - One "push deeper" choice (advances to next node in the chain)
-  //   - Zero or more "side room" choices (loop back to same node — ONE-SHOT, grays out after use)
   //   - A banking option to secure accumulated loot and exit
+  //   (Side rooms deferred to v2 — v1 encounters are purely linear)
   // Typical depth: 2-4 nodes. Deeper = riskier but more rewarding.
   // Loot on a node is granted AFTER a successful choice reaches it, not on arrival.
   "nodes": {
@@ -630,8 +749,8 @@ Result is included in EVT_ENC_RESULT (`encItemType`, `encItemQty`). Client just 
       // "ends_encounter": Whether this hazard terminates the encounter.
       //   true  = encounter over, all pending loot LOST, player ejected
       //   false = penalty applied but player stays at current node, can continue
-      // Non-terminal hazards are great for side rooms (small punishment, keep going).
-      // Terminal hazards should be reserved for main-path failures or severe dangers.
+      // Non-terminal hazards are useful for early nodes (small punishment, keep going).
+      // Terminal hazards should be reserved for deeper-node failures or severe dangers.
       "ends_encounter": false
     },
 
@@ -734,24 +853,26 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 ## 11. Implementation Phases
 
 ### Phase 1: Server Foundation
-- Add `poi` to `HexCell`, bump save version
+- Add `poi` to `HexCell`, bump SAVE_VERSION to 5 (HexCell 7→8 bytes, update `network-persistence.hpp`)
 - Add `ActiveEncounter` struct (no sideRoomUsed — v1 linear only)
+- Add `EncPoolInfo[10]` array, load `index.json` at boot
 - Add `EVT_ENC_*` event types and GameEvent encounter fields
 - `computeEncounterDN()` function (DN 2-12 range for existing 2d6 system)
+- `rollLootTable()` function, parse and cache `loot_tables.json` at boot (~1-2KB)
 - POI placement in `generateMap()`
-- Parse and cache `loot_tables.json` at boot (~1-2KB)
 
 ### Phase 2: Server Handlers
-- Load encounter index from SD at boot
 - HTTP `/enc` route for JSON serving
-- WebSocket handlers: `enc_start`, `enc_choice`, `enc_bank`, `enc_abort`, `enc_assist`
-- Server-side loot table rolling during `enc_choice` handling
-- Event serialization for encounter events
-- Blocking checks (movement, all actions, dawn abort)
+- WebSocket handlers: `enc_start`, `enc_choice`, `enc_bank`, `enc_abort`, `enc_assist` (exact JSON formats in §5)
+- Server-side loot table rolling during `enc_choice` (including `"lt"` string field parsing)
+- Event serialization for EVT_ENC_* events + k10LogAdd() calls
+- **Blocking**: early return in `handleAction()`, `movePlayer()`, `trade_offer`, `trade_accept`
+- **Dawn abort**: force-abort active encounters before `duskCheck()` in `tickGame()`
 - Disconnect cleanup (immediate ActiveEncounter clear)
 - POI claim rejection with specific "claimed" message
 - Random encounter selection (`random(0, count)` — no used-tracking in v1)
 - TC increment on entry and voluntary abort (not dawn abort)
+- Score via existing `addScore(p, ev, pts)`: +3 per resource banked, +10 full clear
 
 ### Phase 3: Client
 - POI hex rendering (bit 7 of DD, global visibility)
@@ -759,7 +880,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 - Encounter JSON fetch + text resolution (active player only)
 - Encounter UI panel (modal overlay, risk bar with effective risk)
 - Ally banner + assist buttons (minimal — no spectator narrative)
-- Event handlers for `enc_*` messages
+- Event handlers for `enc_*` messages (match JSON formats in §5)
 - "Claimed" rejection display
 
 ### Phase 4: Content
@@ -779,31 +900,40 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 ## Critical Files
 | File | Changes |
 |------|---------|
-| `Esp32HexMapCrawl.ino` | HexCell.poi, ActiveEncounter, EVT_ENC_*, GameEvent enc fields, loot table cache, SAVE_VERSION=5 |
-| `actions_game_loop.hpp` | Encounter blocking checks (all actions), dawn abort (no TC), disconnect cleanup |
-| `network-handlers.hpp` | WebSocket enc_* message handlers, POI claim rejection, TC increments, server-side loot table rolling |
-| `network-events.hpp` | EVT_ENC_* serialization (including encItemType/Qty from server loot roll) |
-| `hex-map.hpp` | POI placement in generateMap(), vis-disk bit 7 (global), half-range survey for POIs |
-| `data/ui.js` | Encounter panel, assist UI, spectator view, side room gray-out, effective risk bar |
-| `data/state-manager.js` | enc_* event reducer cases, loot table cache |
-| `data/engine.js` | POI hex rendering (per-player), loot_tables.json fetch at game start |
+| `Esp32HexMapCrawl.ino` | HexCell.poi, ActiveEncounter, EncPoolInfo[], EVT_ENC_*, GameEvent enc fields, loot table cache, SAVE_VERSION=5 |
+| `actions_game_loop.hpp` | Encounter blocking in `handleAction()`, dawn encounter abort before `duskCheck()`, disconnect cleanup |
+| `network-handlers.hpp` | WebSocket enc_* handlers, trade blocking, POI claim rejection, TC increments, server-side loot table rolling, `"lt"` string parsing |
+| `network-events.hpp` | EVT_ENC_* JSON serialization, k10LogAdd() calls for encounter events |
+| `network-persistence.hpp` | SAVE_VERSION=5, HexCell 8 bytes (poi field persists) |
+| `hex-map.hpp` | POI placement in generateMap(), vis-disk bit 7 (global from HexCell.poi), half-range survey for POIs |
+| `survival_state.hpp` | Encounter block in `movePlayer()` early return |
+| `survival_skills.hpp` | `computeEncounterDN()` (DN 2-12), `rollLootTable()` |
+| `data/ui.js` | Encounter panel, ally assist banner, effective risk bar |
+| `data/state-manager.js` | enc_* event reducer cases |
+| `data/engine.js` | POI hex rendering (global visibility, bit 7 of DD byte) |
 
 ## Verification
 1. Add 1 test encounter JSON to SD card, verify HTTP `/enc` serves it
 2. Verify server parses and caches `loot_tables.json` at boot (check serial log)
-3. Generate map, confirm POI hexes appear only after survey at half range (check via serial debug or vis-disk)
-4. Verify POI visibility is global (Player A surveys, Player B also sees the eye icon)
-5. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies
-6. Verify second player trying to enter same POI gets "claimed" rejection
-7. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events (including server-rolled loot table items)
-8. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score: +3 per resource, +10 full clear
-9. Test ally banner: ally on same hex sees "Player X is in an encounter" with assist buttons
-10. Test assist: second player on same hex spends 1 resource, verify -4 risk reduction (max -12 cap)
-11. Test dawn abort: start encounter, let dawn fire, verify forced end (no TC increment)
-12. Test voluntary abort: verify TC increments by 1 on abort
-13. Test hazard: fail a roll, verify penalties applied and loot lost (terminal hazard)
-14. Test non-terminal hazard: fail an early-node roll with `ends_encounter: false`, verify penalty applied but encounter continues
-15. Test downed: trigger hazard that would drop LL to 0, verify encounter ends with loot lost
-16. Test disconnect: disconnect mid-encounter, verify ActiveEncounter cleared immediately, POI consumed
-17. Test inventory overflow: bank with full typed inventory, verify items drop to ground at player position
-18. Verify 2d6 DN range produces reasonable pass/fail rates at various base_risk levels (spot-check: base_risk 20 should be easy, 60 should be hard)
+3. Verify `index.json` loads into `encPools[]` at boot (serial log: pool counts per terrain)
+4. Generate map, confirm POI hexes appear only after survey at half range (check via serial debug or vis-disk)
+5. Verify POI visibility is global (Player A surveys, Player B also sees the eye icon)
+6. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies
+7. Verify second player trying to enter same POI gets "claimed" rejection
+8. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events (including server-rolled loot table items)
+9. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score via `addScore`: +3 per resource, +10 full clear
+10. Test ally banner: ally on same hex sees "Player X is in an encounter" with assist buttons
+11. Test assist: second player on same hex spends 1 resource, verify -4 risk reduction (max -12 cap)
+12. Test **action blocking**: while in encounter, attempt move/forage/trade/rest — all should be blocked
+13. Test **dawn abort**: start encounter, let dawn fire, verify encounters force-abort BEFORE duskCheck runs (no TC increment)
+14. Test **dusk after dawn abort**: player with high radiation is force-aborted from encounter, then duskCheck runs — downed rules apply at POI hex normally (encounter already over)
+15. Test voluntary abort: verify TC increments by 1 on abort
+16. Test hazard: fail a roll, verify penalties applied and loot lost (terminal hazard)
+17. Test non-terminal hazard: fail an early-node roll with `ends_encounter: false`, verify penalty applied but encounter continues
+18. Test downed: trigger hazard that would drop LL to 0, verify encounter ends with loot lost
+19. Test disconnect: disconnect mid-encounter, verify ActiveEncounter cleared immediately, POI consumed
+20. Test inventory overflow: bank with full typed inventory, verify items drop to ground via `dropItem()`. If ground full (32 items), item is lost
+21. Verify 2d6 DN range produces reasonable pass/fail rates at various base_risk levels (spot-check: base_risk 20 should be easy, 60 should be hard)
+22. **Save/load round-trip**: start game, survey POIs, consume some encounters, save (dawn), reload — verify POI state persists correctly (consumed POIs stay gone, unconsumed POIs still present)
+23. **K10 event log**: verify encounter events appear on K10 Screen 1 (start, bank, hazard, abort, assist)
+24. **Version migration**: load a v4 save file, verify it's rejected cleanly and a fresh game starts
