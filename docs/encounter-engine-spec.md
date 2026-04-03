@@ -13,13 +13,13 @@ The game currently has a "not yet implemented" placeholder for encounters (see `
 - **Resources + typed items**: Encounters can drop both resource quantities and typed items (equipment, consumables, materials)
 - **Loot table references**: Encounter JSON references named per-biome loot tables defined in a separate SD file
 - **2-4 nodes typical**: Short encounters, 1-3 minutes. Quick push-your-luck decisions
-- **Linear with optional side rooms**: Main path is linear push-deeper, but some nodes offer one-shot side choices that return to the same depth
-- **Survey reveals POI**: POI hexes are invisible until Surveyed; surveying at half the normal survey range shows an eye icon on hexes that contain encounters. POI visibility is per-player — only the surveyor sees it
+- **Linear encounters**: Main path is a linear push-deeper chain, 2-4 nodes. *(Side rooms deferred to v2 — additive schema change)*
+- **Survey reveals POI**: POI hexes are invisible until Surveyed; surveying at half the normal survey range shows an eye icon. POI visibility is global — once any player surveys a POI hex, all players see the eye icon. This matches how shelter and footprints already work in the vis-disk
 - **Free entry**: No MP cost to enter an encounter; internal node costs handle resource drain
-- **Client-side loot tables**: Client fetches and caches `loot_tables.json` once at game start; client rolls loot table drops locally and reports the result (`item_id`, `item_qty`) in `enc_choice`
-- **Finite encounter pools**: Server tracks used encounter files per terrain type; once a terrain's pool is exhausted, no more POIs spawn for that terrain
+- **Server-side loot tables**: Server reads `loot_tables.json` at boot (~1-2KB) and resolves typed item drops during `enc_choice` handling. Client receives results in EVT_ENC_RESULT — no client-side loot table cache or rolling needed. Keeps full server authority
+- **Random encounter selection**: Server picks randomly from the full pool each time (`random(0, count)`). With 260+ files across biomes, repeats are rare in a single session. *(Used-encounter bitmask tracking deferred to v2 if needed)*
 - **Fully locked during encounter**: Player cannot perform any non-encounter actions (rest, trade, craft, move) while in an active encounter
-- **Spectator view**: Same-hex allies fetch the encounter JSON and see a read-only view of encounter progress with assist buttons
+- **Minimal ally view**: Same-hex allies see a "Player X is in an encounter" banner with assist buttons. No spectator narrative view — allies don't fetch the encounter JSON. *(Full spectator read-along deferred to v2)*
 
 ---
 
@@ -50,9 +50,8 @@ Adapted from the spec to use existing stat names and skill indices instead of na
           "cost": { "fatigue": 1 },
           "base_risk": 15,
           "skill": 2,
-          "success_node": "entrance",
-          "hazard_id": "cut_hands",
-          "side_room": true
+          "success_node": "platform",
+          "hazard_id": "cut_hands"
         }
       ]
     },
@@ -116,14 +115,14 @@ Adapted from the spec to use existing stat names and skill indices instead of na
 - **`loot.res`** uses resource indices 0-4 (Water, Food, Fuel, Medicine, Scrap)
 - **`loot_table`** references a named per-biome table in `/encounters/loot_tables.json` for typed item drops (e.g., `urban_common`, `marsh_rare`)
 - **`skill`** uses skill indices 0-5 (Navigate, Forage, Scavenge, Treat, Shelter, Endure)
-- **`side_room: true`** marks a choice whose `success_node` loops back to the current node (same depth). One-shot only — once taken, the choice grays out. Does not advance deeper
 - **`hazard.ends_encounter: false`** allows non-terminal hazards (penalty applied but encounter continues)
+- **`side_room: true`** *(v2, not implemented in v1)* — will mark one-shot choices that loop back to the current node. Additive schema field; v1 encounters are purely linear
 - **Terminal nodes**: Nodes with empty `choices: []` and `can_bank: true` are encounter endpoints (deepest room)
 - **Loot timing**: Node `loot` (resources) and `loot_table` (typed items) are granted after a successful choice that reaches the node, not on arrival. Pending until banked
 - **Downed in encounter**: If hazard penalties cause the player to become Downed (LL 0 or wound threshold), the encounter ends immediately, all pending loot is lost, and standard downed rules apply at the POI hex
 
 ### Loot Tables (`/encounters/loot_tables.json`)
-Separate file on SD card, fetched and cached by client once at game start. Defines weighted item drop pools per biome:
+Separate file on SD card, read and cached by the **server** at boot (~1-2KB). Defines weighted item drop pools per biome. Server resolves loot table rolls during `enc_choice` handling and reports results in EVT_ENC_RESULT:
 ```json
 {
   "urban_common": [
@@ -156,7 +155,7 @@ Separate file on SD card, fetched and cached by client once at game start. Defin
 ```
 - `item: 0` = nothing (empty drop)
 - `weight` = relative probability
-- **Client resolves** the loot table roll locally (fetched and cached at game start, ~1-2KB)
+- **Server resolves** the loot table roll at `enc_choice` time (parsed and cached in memory at boot)
 - Each biome has its own `_common` and `_rare` tables for thematic drops
 - If typed inventory is full, excess items drop to ground at the player's current position via existing `groundItems[]` system
 
@@ -175,7 +174,7 @@ struct HexCell {
 ```
 Memory impact: +475 bytes (19x25).
 
-**ActiveEncounter** -- per-player encounter tracking (~20 bytes x 6 = ~120 bytes):
+**ActiveEncounter** -- per-player encounter tracking (~18 bytes x 6 = ~108 bytes):
 ```cpp
 #define ENC_MAX_ITEMS 3   // max typed items pending per encounter
 struct ActiveEncounter {
@@ -188,21 +187,14 @@ struct ActiveEncounter {
   uint8_t  pendingItemCount;               // how many typed items accumulated
   int8_t   assistRisk;     // accumulated risk reduction from assists
   uint8_t  assistUsed;     // bitmask: which allies assisted this node
-  uint8_t  sideRoomUsed;   // bitmask: which side_room choices used at current node
+  // sideRoomUsed removed — v1 encounters are linear only (v2 addition)
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
 ```
 
-**Used encounter tracking** -- per terrain type bitmask to avoid repeats:
-```cpp
-// Track which encounter files have been used per terrain type
-// Largest pool = 100 (urban) = 13 bytes. 10 terrain types with encounters.
-#define ENC_MAX_POOL 100
-static uint8_t usedEncounters[10][(ENC_MAX_POOL + 7) / 8]; // ~130 bytes total
-```
-When pool is exhausted for a terrain type, no more encounters can fire for that terrain. This is by design — encounter content is finite and precious.
+**Encounter selection**: Server picks randomly from the full pool each time: `random(0, encPoolCount[terrain])`. No used-encounter tracking in v1. With 260+ files across biomes, repeats are rare in a single session. *(Used-encounter bitmask can be added in v2 if repeat avoidance becomes desirable.)*
 
-**POI discovery via Survey**: POI hexes are not visible on the map by default. When a player uses the Survey action, any hexes within **half the normal survey range** (rounded down) that have `poi != 0` are flagged with an eye icon on that player's client only. POI visibility is per-player — the DD byte's bit 7 (has POI) is only sent for hexes the specific player has surveyed. Unsurveyed POI hexes appear as normal terrain to all players.
+**POI discovery via Survey**: POI hexes are not visible on the map by default. When any player uses the Survey action, hexes within **half the normal survey range** (rounded down) that have `poi != 0` become globally visible — all players see the eye icon. This is encoded as bit 7 of the DD byte, set directly from `HexCell.poi` (no per-player conditional). Matches how shelter and footprints already work in the vis-disk. *(Per-player POI visibility deferred to v2 if strategic hiding becomes desirable.)*
 
 **Disconnect handling**: If a player disconnects mid-encounter, the `ActiveEncounter` is cleared immediately. Pending loot is lost. The POI is consumed (already set to 0 on `enc_start`).
 
@@ -228,8 +220,8 @@ uint8_t  encStatus;
 uint8_t  encEnds;
 uint8_t  encAssistRes;  // resource type for assist event
 int8_t   encRiskRed;    // risk reduction for assist event
-// NOTE: enc_path (encounter file path for spectator fetch) is NOT in GameEvent.
-// It is sent as a separate freeform WebSocket JSON message alongside EVT_ENC_START.
+uint8_t  encItemType;   // typed item dropped (server-rolled from loot table)
+uint8_t  encItemQty;    // typed item quantity
 ```
 
 ---
@@ -241,7 +233,7 @@ Uses existing stats and equipment (which modify stats at equip time):
 ```cpp
 static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t skill,
                                    int8_t assistMod) {
-  // Map base_risk (0-100) to raw DN (2-14)
+  // Map base_risk (0-100) to raw DN (2-12) — fits existing 2d6 resolution system
   int effectiveRisk = constrain((int)baseRisk + assistMod, 0, 100);
 
   // Threat Clock escalation: +5 risk per threshold crossed
@@ -251,7 +243,7 @@ static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t skill,
   if (G.threatClock >= TC_THRESHOLD_D) effectiveRisk += 5;
   effectiveRisk = constrain(effectiveRisk, 0, 100);
 
-  int rawDN = 2 + (effectiveRisk * 12) / 100;
+  int rawDN = 2 + (effectiveRisk * 10) / 100;  // DN 2-12 range for 2d6
 
   Player& p = G.players[pid];
   int bonus = 0;
@@ -260,7 +252,7 @@ static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t skill,
   if (p.fatigue > 4)   rawDN += (p.fatigue - 4);       // exhaustion penalty
   if (p.radiation > 3) rawDN += (p.radiation - 3) / 2; // sickness penalty
 
-  return (uint8_t)constrain(rawDN - bonus, 2, 14);
+  return (uint8_t)constrain(rawDN - bonus, 2, 12);
 }
 ```
 
@@ -270,18 +262,15 @@ Resolution uses existing `resolveCheck(pid, skill, dn, 0)` which handles wounds/
 
 ## 4. Assist Mechanic
 
-Same-hex allies can spend 1 resource each to reduce risk **before** the active player commits:
+Same-hex allies can spend 1 resource (any type) each to reduce risk **before** the active player commits:
 
-| Resource | Risk Reduction |
-|----------|---------------|
-| Medicine (3) | -5 |
-| Fuel (2) | -5 |
-| Food (1) | -3 |
-| Water (0) | -3 |
+| Any Resource | Risk Reduction |
+|-------------|---------------|
+| 1 unit of any resource (Water, Food, Fuel, Medicine) | -4 |
 
-- Max 1 assist per ally per node (tracked via `assistUsed` bitmask), regardless of resource type
-- Total assist reduction capped at -15 per node
-- On node advance: `assistUsed`, `assistRisk`, and `sideRoomUsed` all reset (same transition)
+- Max 1 assist per ally per node (tracked via `assistUsed` bitmask)
+- Total assist reduction capped at -12 per node (3 allies x -4)
+- On node advance: `assistUsed` and `assistRisk` reset
 
 ---
 
@@ -292,16 +281,16 @@ Same-hex allies can spend 1 resource each to reduce risk **before** the active p
 |---------|--------|---------|
 | `enc_start` | `q, r` | Enter POI encounter |
 | `enc_assist` | `target, res` | Ally spends resource to help |
-| `enc_choice` | `ci, cost_ll, cost_fat, cost_rad, cost_food, cost_water, cost_resolve, base_risk, skill, loot[5], item_id, item_qty, can_bank` | Player picks a choice |
+| `enc_choice` | `ci, cost_ll, cost_fat, cost_rad, cost_food, cost_water, cost_resolve, base_risk, skill, loot[5], loot_table, can_bank` | Player picks a choice (server rolls loot table) |
 | `enc_bank` | -- | Bank accumulated loot, end encounter |
 | `enc_abort` | -- | Leave encounter, lose pending loot, increment Threat Clock |
 
 ### Server -> Client (via event queue)
 | Event | Key Fields | Purpose |
 |-------|-----------|---------| 
-| `EVT_ENC_START` | `pid, q, r` | Notify same-hex allies: encounter begun. `enc_path` sent as a separate freeform WebSocket JSON message (not packed into GameEvent — keeps GameEvent compact/numeric) |
+| `EVT_ENC_START` | `pid, q, r` | Notify same-hex allies: encounter begun. Allies see minimal banner + assist buttons (no enc_path broadcast — spectator narrative deferred to v2) |
 | `EVT_ENC_ASSIST` | `pid (ally), target, res, riskRed` | Assist applied |
-| `EVT_ENC_RESULT` | `pid, out, skill, dn, total, loot[5], penalties, status, ends` | Choice resolved |
+| `EVT_ENC_RESULT` | `pid, out, skill, dn, total, loot[5], item_type, item_qty, penalties, status, ends` | Choice resolved (includes server-rolled loot table result) |
 | `EVT_ENC_BANK` | `pid, q, r, loot[5]` | Loot secured |
 | `EVT_ENC_END` | `pid, q, r, reason` | Encounter ended (hazard/abort/dawn/downed) |
 
@@ -341,7 +330,7 @@ Use **bit 7 of the DD byte** to signal POI presence to clients:
 ```
 DD byte: bits 0-5 = footprints, bit 6 = shelter, bit 7 = has POI
 ```
-No encoding format change needed. Bit 7 is only set in the vis-disk for hexes the specific player has surveyed — per-player visibility.
+No encoding format change needed. Bit 7 is set directly from `HexCell.poi` — global visibility, same as shelter/footprints. No per-player conditional in `buildVisDisk()`.
 
 ### POI Consumption
 The POI is consumed the moment `enc_start` fires: `G.map[r][q].poi = 0`. All players see the POI disappear on next vis update. The POI is consumed on any entry — failing a hazard, getting downed, aborting, or banking all result in the location being used up.
@@ -356,7 +345,7 @@ On bank: `pendingLoot[5]` added to `inv[5]`, `pendingItemType/Qty` added to type
 ```
 /encounters/
   index.json               <- terrain-to-count mapping
-  loot_tables.json         <- per-biome loot tables (cached by client at game start)
+  loot_tables.json         <- per-biome loot tables (cached by server at boot)
   urban/                   <- Broken Urban (terrain 4) — largest pool
     0.json ... 99.json     <- ~100+ encounter files
   settlement/              <- Settlement (terrain 9)
@@ -420,7 +409,7 @@ On `enc_start`, server picks a random unused file index for the hex's terrain ty
 | **Threat Clock** | Starting any encounter increments TC by 1 (all terrain types). Voluntary abort also increments TC by 1. Dawn abort does NOT increment TC. TC thresholds add +5/+10/+15/+20 to base_risk. |
 | **Day Cycle** | Dawn during active encounter -> forced abort (pending loot lost, no TC increment). Dawn abort consumes the POI (same as all entry paths). Player remains at the POI hex. Players cannot REST while in encounter. |
 | **Movement** | Blocked while `encounters[pid].active`. Entering a POI hex does NOT auto-start; player must choose "Enter" action. Entry is free (no MP cost). |
-| **Survey** | Surveying reveals POI hexes within **half normal survey range** (rounded down). Eye icon visible only to the surveying player (per-player visibility). POIs are invisible until surveyed. |
+| **Survey** | Surveying reveals POI hexes within **half normal survey range** (rounded down). Eye icon becomes globally visible once any player surveys the hex. POIs are invisible until surveyed. |
 | **Conditions** | Hazard `status` field sets statusBits (bleeding, fever, etc.). Existing condition penalties affect subsequent encounter checks via `resolveCheck()`. Being Downed ends the encounter immediately with all pending loot lost. |
 | **Score** | Banking loot: +3 per individual resource unit (`sum(pendingLoot[0..4]) * 3`). Full clear bonus: +10 (awarded when `reachedTerminal` flag is set on `enc_bank`). |
 | **Save** | `SAVE_VERSION` bumps to 5. `poi` byte persists in map binary. Active encounters are transient — disconnecting mid-encounter immediately clears state, pending loot lost, POI consumed. |
@@ -431,9 +420,9 @@ On `enc_start`, server picks a random unused file index for the hex's terrain ty
 ## 9. Client-Side Changes
 
 ### Files to Modify
-- **`data/ui.js`** -- Encounter panel UI, choice buttons, risk bar, loot display, bank button, assist controls, spectator view for allies
+- **`data/ui.js`** -- Encounter panel UI, choice buttons, risk bar, loot display, bank button, ally assist banner
 - **`data/state-manager.js`** -- Handle `enc_*` event types in reducer
-- **`data/engine.js`** -- POI hex rendering (read bit 7 of DD byte, draw POI marker per-player)
+- **`data/engine.js`** -- POI hex rendering (read bit 7 of DD byte, draw POI marker — global visibility)
 
 ### Text Resolution (client-side only)
 ```javascript
@@ -446,40 +435,30 @@ function resolveText(text, placeholders) {
 ```
 Placeholders are resolved independently per client — different players may see different narrative text variations. This does not affect gameplay.
 
-### Loot Table Resolution (client-side)
-```javascript
-function rollLootTable(tableName, lootTables) {
-  const table = lootTables[tableName];
-  if (!table) { console.warn(`rollLootTable: missing table "${tableName}"`); return null; }
-  const totalWeight = table.reduce((sum, e) => sum + e.weight, 0);
-  let roll = Math.floor(Math.random() * totalWeight);
-  for (const entry of table) {
-    roll -= entry.weight;
-    if (roll < 0) {
-      if (entry.item === 0) return null; // empty drop
-      const qty = entry.qty[0] + Math.floor(Math.random() * (entry.qty[1] - entry.qty[0] + 1));
-      return { item: entry.item, qty };
-    }
-  }
-  return null;
+### Loot Table Resolution (server-side)
+Server caches parsed `loot_tables.json` at boot. When `enc_choice` includes a `loot_table` reference, server rolls:
+```cpp
+// Called during enc_choice handling when node has loot_table
+static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQty) {
+  // Look up cached table by name, roll weighted random, set outItem/outQty
+  // item=0 means empty drop (no item granted)
 }
 ```
+Result is included in EVT_ENC_RESULT (`encItemType`, `encItemQty`). Client just displays what the server reports.
 
 ### Encounter UI
 - Modal overlay when encounter is active
 - Shows node text, choice buttons with cost/risk preview
-- Side room choices displayed distinctly (indented/dimmed), grayed out after one use
 - Risk bar (green->red) showing **effective risk after all modifiers** (stats, TC, assists) — full transparency
 - Accumulated loot display
 - Generic "Bank & Exit" button on `can_bank` nodes
 - Ally assist section: shows same-hex allies, resource spend buttons
 
-### Spectator View (same-hex allies)
-- Allies on the same hex see a read-only view of the active encounter
-- On `EVT_ENC_START`, allies receive the encounter file path and fetch the JSON via HTTP
-- Spectator panel shows: current node text, active player's accumulated loot, current risk level
-- Assist buttons are interactive; all other elements are read-only
-- Spectator panel dismisses when encounter ends (`EVT_ENC_END` or `EVT_ENC_BANK`)
+### Ally View (same-hex allies) — v1 Minimal
+- Allies on the same hex see a "Player X is in an encounter" banner (no narrative text)
+- Assist buttons are interactive (spend 1 resource for -4 risk reduction)
+- Banner dismisses when encounter ends (`EVT_ENC_END` or `EVT_ENC_BANK`)
+- *(Full spectator read-along with narrative text deferred to v2)*
 
 ---
 
@@ -532,7 +511,7 @@ function rollLootTable(tableName, lootTables) {
       //   Loot goes into pendingLoot — not banked until player explicitly banks.
 
       // "loot_table": Reference to a named per-biome loot table in /encounters/loot_tables.json.
-      //   Client rolls this table locally for a possible typed item drop (equipment, consumable, material).
+      //   Server rolls this table for a possible typed item drop (equipment, consumable, material).
       //   Omit if this node should not drop typed items.
       //   Use "{biome}_common" for mid-tier, "{biome}_rare" for deep/final nodes.
 
@@ -557,7 +536,7 @@ function rollLootTable(tableName, lootTables) {
           //   55  = risky (even skilled players can fail)
           //   70+ = dangerous (likely failure without good stats/gear/assists)
           //   Modified at runtime by: player stats, equipment, Threat Clock, ally assists.
-          //   Final value is converted to a Difficulty Number (DN 2-14) for a 2d10 skill check.
+          //   Final value is converted to a Difficulty Number (DN 2-12) for a 2d6 skill check.
           //   Client UI shows effective risk (after all modifiers) on the risk bar.
           "base_risk": 20,
 
@@ -574,34 +553,12 @@ function rollLootTable(tableName, lootTables) {
           "skill": 2,
 
           // "success_node": Key of the node to advance to on success.
-          //   For push-deeper choices: points to the next node in the chain.
-          //   For side_room choices: points back to the CURRENT node (same key as parent).
+          //   Points to the next node in the linear chain.
           "success_node": "exam_room",
 
           // "hazard_id": Key into the "hazards" dict. Triggered on a failed skill check.
           //   Every choice MUST have a hazard_id — there's always a consequence for failure.
           "hazard_id": "broken_glass"
-        },
-        {
-          // Side room: a quick optional grab that loops back to the same node.
-          // Lower risk, smaller reward. Does not advance depth.
-          // ONE-SHOT: can only be taken once per node. Button grays out after use.
-          "label": "Grab supplies from the waiting room shelves.",
-          "cost": { "fatigue": 1 },
-          "base_risk": 10,
-          "skill": 2,
-          "success_node": "entrance",
-          "hazard_id": "dust_inhalation",
-
-          // "side_room": true marks this choice as a side grab.
-          //   success_node MUST point back to the current node.
-          //   The client uses this flag to display the choice differently (indented/dimmed).
-          //   Grays out after one use. Optional field — omit for main-path choices.
-          //   NOTE: Side rooms that loop back to the current node do NOT re-trigger that node's loot
-          //   (loot is granted on first arrival only). If a side room should reward the player,
-          //   either point success_node to a small dedicated loot node, or use a future
-          //   optional "choice_loot" field on the choice itself.
-          "side_room": true
         }
       ]
     },
@@ -732,8 +689,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 - Nodes are a linear chain, 2-4 nodes deep. Each node has `text`, `can_bank`, and `choices`
 - First node: `can_bank: false`. Mid and final nodes: `can_bank: true`
 - Final node has `choices: []` (dead end — player must bank)
-- Each main-path choice pushes to the next node. Optional `side_room: true` choices loop back to the current node
-- Side rooms are ONE-SHOT — each can only be taken once per node visit
+- Each choice pushes to the next node in the linear chain (no side rooms in v1)
 - Every choice needs: `label`, `cost`, `base_risk`, `skill`, `success_node`, `hazard_id`
 - Node `loot` and `loot_table` are granted after a successful choice reaches the node, not on arrival
 
@@ -744,7 +700,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 0=Navigate, 1=Forage, 2=Scavenge, 3=Treat, 4=Shelter, 5=Endure
 
 **base_risk guidelines:**
-- 10-20: Easy (side rooms, simple grabs)
+- 10-20: Easy (early nodes, simple grabs)
 - 25-40: Moderate (standard push-deeper choices)
 - 45-60: Risky (deep rooms, valuable loot behind danger)
 - 65+: Dangerous (final rooms, high-value targets)
@@ -758,7 +714,7 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 - `status`: bitmask. 1=wounded, 2=radsick, 4=bleeding, 8=fevered, 16=downed, 64=panicked. 0 or omit for none
 - `wound`: `[type, count]` — 0=minor, 1=major, 2=critical. Omit if no wounds
 - `ends_encounter`: true = encounter over + pending loot LOST. false = penalty applied, player continues
-- Side room hazards should be non-terminal (ends_encounter: false). Main-path hazards at deeper nodes should usually be terminal
+- Early-node hazards can be non-terminal (ends_encounter: false). Deeper-node hazards should usually be terminal
 - If penalties would cause Downed state (LL 0), encounter ends immediately with all pending loot lost
 
 **Placeholders:**
@@ -779,73 +735,75 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 
 ### Phase 1: Server Foundation
 - Add `poi` to `HexCell`, bump save version
-- Add `ActiveEncounter` struct (including `sideRoomUsed` bitmask)
-- Add `usedEncounters` tracking array (~130 bytes)
-- Add `EVT_ENC_*` event types and GameEvent fields
-- `computeEncounterDN()` function
+- Add `ActiveEncounter` struct (no sideRoomUsed — v1 linear only)
+- Add `EVT_ENC_*` event types and GameEvent encounter fields
+- `computeEncounterDN()` function (DN 2-12 range for existing 2d6 system)
 - POI placement in `generateMap()`
+- Parse and cache `loot_tables.json` at boot (~1-2KB)
 
 ### Phase 2: Server Handlers
 - Load encounter index from SD at boot
 - HTTP `/enc` route for JSON serving
-- HTTP route for `loot_tables.json` (client caches at game start)
 - WebSocket handlers: `enc_start`, `enc_choice`, `enc_bank`, `enc_abort`, `enc_assist`
-- Event serialization for encounter events (include `enc_path` in `EVT_ENC_START` for spectators)
+- Server-side loot table rolling during `enc_choice` handling
+- Event serialization for encounter events
 - Blocking checks (movement, all actions, dawn abort)
 - Disconnect cleanup (immediate ActiveEncounter clear)
 - POI claim rejection with specific "claimed" message
-- Used encounter tracking per terrain type
+- Random encounter selection (`random(0, count)` — no used-tracking in v1)
 - TC increment on entry and voluntary abort (not dawn abort)
 
 ### Phase 3: Client
-- Fetch and cache `loot_tables.json` at game start
-- POI hex rendering (bit 7 of DD, per-player visibility)
+- POI hex rendering (bit 7 of DD, global visibility)
 - Survey range adjustment (half normal range for POI detection)
-- Encounter JSON fetch + text resolution (independent per client)
-- Client-side loot table rolling
-- Encounter UI panel (modal overlay, risk bar with effective risk, side rooms grayed after use)
-- Spectator view for same-hex allies (read-only encounter progress + assist buttons)
-- Assist UI
+- Encounter JSON fetch + text resolution (active player only)
+- Encounter UI panel (modal overlay, risk bar with effective risk)
+- Ally banner + assist buttons (minimal — no spectator narrative)
 - Event handlers for `enc_*` messages
 - "Claimed" rejection display
 
 ### Phase 4: Content
 - Per-biome loot tables in `loot_tables.json` — currently only `urban` and `marsh` are defined. **16 missing tables** to add: `scrub_common`, `scrub_rare`, `dunes_common`, `dunes_rare`, `forest_common`, `forest_rare`, `flooded_common`, `flooded_rare`, `glass_common`, `glass_rare`, `ridge_common`, `ridge_rare`, `mountain_common`, `mountain_rare`, `settlement_common`, `settlement_rare`
-- 3-5 starter encounter JSON files across terrain types
+- 3-5 starter encounter JSON files across terrain types (linear, no side rooms)
 - `index.json` encounter pool
 - Placeholder word lists in encounter files
+
+### v2 Additions (deferred)
+- Side rooms (`side_room: true` flag, `sideRoomUsed` bitmask, one-shot gray-out UI)
+- Spectator view (allies fetch encounter JSON, read-only narrative panel)
+- Per-player POI visibility (conditional bit 7 encoding in vis-disk per surveyor)
+- Used-encounter bitmask tracking (repeat avoidance, pool exhaustion)
 
 ---
 
 ## Critical Files
 | File | Changes |
 |------|---------|
-| `Esp32HexMapCrawl.ino` | HexCell.poi, ActiveEncounter (w/ sideRoomUsed), usedEncounters[], EVT_ENC_*, GameEvent fields, SAVE_VERSION=5 |
+| `Esp32HexMapCrawl.ino` | HexCell.poi, ActiveEncounter, EVT_ENC_*, GameEvent enc fields, loot table cache, SAVE_VERSION=5 |
 | `actions_game_loop.hpp` | Encounter blocking checks (all actions), dawn abort (no TC), disconnect cleanup |
-| `network-handlers.hpp` | WebSocket enc_* message handlers, POI claim rejection, TC increments |
-| `network-events.hpp` | EVT_ENC_* serialization, enc_path in START event |
-| `hex-map.hpp` | POI placement in generateMap(), vis-disk bit 7 (per-player), half-range survey for POIs, used encounter tracking |
+| `network-handlers.hpp` | WebSocket enc_* message handlers, POI claim rejection, TC increments, server-side loot table rolling |
+| `network-events.hpp` | EVT_ENC_* serialization (including encItemType/Qty from server loot roll) |
+| `hex-map.hpp` | POI placement in generateMap(), vis-disk bit 7 (global), half-range survey for POIs |
 | `data/ui.js` | Encounter panel, assist UI, spectator view, side room gray-out, effective risk bar |
 | `data/state-manager.js` | enc_* event reducer cases, loot table cache |
 | `data/engine.js` | POI hex rendering (per-player), loot_tables.json fetch at game start |
 
 ## Verification
 1. Add 1 test encounter JSON to SD card, verify HTTP `/enc` serves it
-2. Verify client fetches and caches `loot_tables.json` at game start
+2. Verify server parses and caches `loot_tables.json` at boot (check serial log)
 3. Generate map, confirm POI hexes appear only after survey at half range (check via serial debug or vis-disk)
-4. Verify POI visibility is per-player (Player A surveys, Player B doesn't see it)
-5. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies with file path
+4. Verify POI visibility is global (Player A surveys, Player B also sees the eye icon)
+5. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies
 6. Verify second player trying to enter same POI gets "claimed" rejection
-7. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events
-8. Test side room: take a side room choice, verify it grays out and can't be repeated
-9. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score: +3 per resource, +10 full clear
-10. Test spectator view: ally on same hex sees read-only encounter progress
-11. Test assist: second player on same hex spends resource, verify risk reduction (max -15 cap)
-12. Test dawn abort: start encounter, let dawn fire, verify forced end (no TC increment)
-13. Test voluntary abort: verify TC increments by 1 on abort
-14. Test hazard: fail a roll, verify penalties applied and loot lost (terminal hazard)
-15. Test non-terminal hazard: fail a side room roll, verify penalty applied but encounter continues
-16. Test downed: trigger hazard that would drop LL to 0, verify encounter ends with loot lost
-17. Test disconnect: disconnect mid-encounter, verify ActiveEncounter cleared immediately, POI consumed
-18. Test pool exhaustion: use all encounters for a terrain type, verify no more POIs fire for that terrain
-19. Test inventory overflow: bank with full typed inventory, verify items drop to ground at player position
+7. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events (including server-rolled loot table items)
+8. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score: +3 per resource, +10 full clear
+9. Test ally banner: ally on same hex sees "Player X is in an encounter" with assist buttons
+10. Test assist: second player on same hex spends 1 resource, verify -4 risk reduction (max -12 cap)
+11. Test dawn abort: start encounter, let dawn fire, verify forced end (no TC increment)
+12. Test voluntary abort: verify TC increments by 1 on abort
+13. Test hazard: fail a roll, verify penalties applied and loot lost (terminal hazard)
+14. Test non-terminal hazard: fail an early-node roll with `ends_encounter: false`, verify penalty applied but encounter continues
+15. Test downed: trigger hazard that would drop LL to 0, verify encounter ends with loot lost
+16. Test disconnect: disconnect mid-encounter, verify ActiveEncounter cleared immediately, POI consumed
+17. Test inventory overflow: bank with full typed inventory, verify items drop to ground at player position
+18. Verify 2d6 DN range produces reasonable pass/fail rates at various base_risk levels (spot-check: base_risk 20 should be easy, 60 should be hard)
