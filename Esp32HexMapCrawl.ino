@@ -279,6 +279,7 @@ struct HexCell {
   uint8_t shelter;
   uint8_t footprints;
   uint8_t variant;
+  uint8_t poi;  // 0 = none/looted, non-zero = has encounter
 };
 
 struct Player {
@@ -292,6 +293,7 @@ struct Player {
   uint8_t  inv[5];
   uint16_t score;
   uint16_t steps;
+  uint16_t encCount;
 
   uint8_t  ll;
   uint8_t  food;
@@ -358,7 +360,12 @@ enum EvtType : uint8_t {
   EVT_DOWNED       = 10,
   EVT_REGEN        = 11,
   EVT_TRADE_OFFER  = 12,
-  EVT_TRADE_RESULT = 13
+  EVT_TRADE_RESULT = 13,
+  EVT_ENC_START    = 14,
+  EVT_ENC_ASSIST   = 15,
+  EVT_ENC_RESULT   = 16,
+  EVT_ENC_BANK     = 17,
+  EVT_ENC_END      = 18
 };
 
 struct GameEvent {
@@ -395,6 +402,19 @@ struct GameEvent {
   uint8_t  tradeGive[5];
   uint8_t  tradeWant[5];
   uint8_t  tradeResult;
+  // ── Encounter fields (active when type is EVT_ENC_*) ───────────
+  uint8_t  encOut;       // 0=fail/reason-code, 1=success
+  uint8_t  encSkill;
+  uint8_t  encDN;
+  int8_t   encTotal;
+  uint8_t  encLoot[5];
+  int8_t   encPenLL, encPenFat, encPenRad;
+  uint8_t  encStatus;
+  uint8_t  encEnds;
+  uint8_t  encAssistRes;  // resource type for assist event
+  int8_t   encRiskRed;    // risk reduction for assist event
+  uint8_t  encItemType;   // typed item dropped (loot table roll)
+  uint8_t  encItemQty;
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
@@ -411,6 +431,49 @@ struct TradeOffer {
   uint32_t expiresMs;
 };
 
+// ── Encounter engine structs ───────────────────────────────────
+#define ENC_MAX_ITEMS 3
+struct ActiveEncounter {
+  uint8_t  active;          // bit 0 = in encounter, bit 7 = reachedTerminal
+  uint8_t  encIdx;          // encounter file index selected at enc_start
+  uint8_t  hexQ, hexR;
+  uint8_t  pendingLoot[5];  // unbanked resource loot [Water,Food,Fuel,Med,Scrap]
+  uint8_t  pendingItemType[ENC_MAX_ITEMS];
+  uint8_t  pendingItemQty[ENC_MAX_ITEMS];
+  uint8_t  pendingItemCount;
+  int8_t   assistRisk;  // accumulated risk reduction from assists (≥ -12)
+  uint8_t  assistUsed;  // bitmask: which ally pids assisted this node
+};
+static ActiveEncounter encounters[MAX_PLAYERS];
+
+struct EncPoolInfo {
+  uint8_t count;
+  char    path[12];  // e.g. "urban", "marsh"
+};
+static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
+
+// POI encounter probability per terrain type (0-100 %)
+static const uint8_t TERRAIN_POI_PCT[NUM_TERRAIN] = {
+  3,   // 0 Open Scrub
+  4,   // 1 Ash Dunes
+  7,   // 2 Rust Forest
+  4,   // 3 Marsh
+  28,  // 4 Broken Urban
+  18,  // 5 Flooded District
+  3,   // 6 Glass Fields
+  5,   // 7 Ridge
+  5,   // 8 Mountain
+  23,  // 9 Settlement
+  0,   // 10 Nuke Crater (impassable)
+  0    // 11 River Channel (impassable)
+};
+
+// ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
+struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
+struct LootTable  { char name[20]; LootEntry entries[8]; uint8_t count; };
+static LootTable  lootTables[20];
+static uint8_t    lootTableCount = 0;
+
 struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 
 struct GameState {
@@ -423,9 +486,6 @@ struct GameState {
   uint8_t  threatClock;
   bool     crisisState;
 
-  uint8_t  sharedFood;
-  uint8_t  sharedWater;
-
   uint32_t dayTick;
   uint16_t dayCount;
 };
@@ -436,7 +496,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 4;
+static constexpr uint8_t  SAVE_VERSION = 6;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -446,8 +506,6 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  version;
   uint16_t dayCount;
   uint8_t  threatClock;
-  uint8_t  sharedFood;
-  uint8_t  sharedWater;
   uint8_t  pad;
 };
 
@@ -489,7 +547,7 @@ static uint8_t  itemCount = 0;
 static GroundItem groundItems[MAX_GROUND];
 static unsigned long  lastStatusMs  = 0;
 static unsigned long  lastScreenMs  = 0;
-static constexpr uint32_t SCREEN_MS  = 2000;
+static constexpr uint32_t SCREEN_MS  = 10000;
 static UNIHIKER_K10   k10;
 static Music          k10Music;
 
@@ -501,24 +559,23 @@ static uint8_t      k10LogHead  = 0;
 static uint8_t      k10LogCount = 0;
 static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 
-static uint8_t  k10Screen   = 0;
-static uint8_t  k10GestCnt  = 0;
-static uint8_t  k10GestLast = GestureNone;
-static bool     k10BtnBLast = false;
+static uint8_t  k10Screen     = 0;
+static uint8_t  k10ScreenLast = 255;
+static bool     k10BtnBLast   = false;
+static volatile bool k10Dirty = true;  // set whenever game state changes
 
 static uint32_t k10TeamScore   = 0;
 static uint32_t k10LedPulse    = 0;
 static uint8_t  k10PulseR = 0, k10PulseG = 0, k10PulseB = 0;
 static uint8_t  k10PrevTCLevel = 0;
-static bool     k10ResCritPrev = false;
 
 static uint8_t  s_audioVol   = 5;
-static uint8_t  s_ledBright  = 5;
+static uint8_t  s_ledBright  = 4;
 
 static void loadK10Prefs() {
   Preferences p; p.begin("k10", true);
   s_audioVol  = p.getUChar("vol",    5);
-  s_ledBright = p.getUChar("bright", 5);
+  s_ledBright = p.getUChar("bright", 4);
   p.end();
 }
 static void saveK10Prefs() {
@@ -559,8 +616,8 @@ static int       imgCacheCount = 0;
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
-#include "ui-display.hpp"    // K10 screens, LED, audio
 #include "boot-assets.hpp"   // splash, asset loading, item registry, printStatus
+#include "ui-display.hpp"    // K10 screens, LED, audio
 
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
@@ -637,7 +694,6 @@ void setup() {
 
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
-  G.sharedFood  = 30; G.sharedWater = 30;
   G.dayTick = 0; G.dayCount = 0;
   memset(groundItems, 0, sizeof(groundItems));
 
@@ -718,6 +774,12 @@ void setup() {
   { char ib[30]; snprintf(ib, 30, "Items: %d loaded", (int)itemCount);
     splashAdd(ib, 0x60A040); }
 
+  splashAdd("Loading encounters...");
+  loadEncounterIndex();
+  loadLootTables();
+  { char eb[30]; snprintf(eb, 30, "Enc: %d tables", (int)lootTableCount);
+    splashAdd(eb, 0x60A040); }
+
   splashAdd("Generating map...");
   Serial.println("[SETUP] Loading or generating map...");
   if (!tryLoadSave()) {
@@ -743,9 +805,8 @@ void loop() {
       bootWifiPending = false;
       strlcpy(savedSsid, WiFi.SSID().c_str(), sizeof(savedSsid));
       strlcpy(savedPass, WiFi.psk().c_str(),  sizeof(savedPass));
-      char msg[48]; snprintf(msg, sizeof(msg), "WiFi: %s", WiFi.localIP().toString().c_str());
-      splashAdd(msg, 0x40C080);
       Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
+      k10ScreenLast = 255;  // force title redraw after WiFi splash would have disrupted it
       char buf[88];
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
@@ -761,13 +822,18 @@ void loop() {
   checkGestureSwitch();
   checkScoreAudio();
 
-  if (now - lastScreenMs >= SCREEN_MS) {
+  bool screenChanged = (k10Screen != k10ScreenLast);
+  k10ScreenLast = k10Screen;
+  if (screenChanged || k10Dirty || (k10Screen != 0 && now - lastScreenMs >= SCREEN_MS)) {
     lastScreenMs = now;
+    k10Dirty = false;
     switch (k10Screen) {
-      case 1:  drawEventLogScreen();  break;
-      case 2:  drawThreatScreen();    break;
-      case 3:  drawResourceScreen();  break;
-      default: drawPlayerScreen();    break;
+      case 0:  if (screenChanged) drawTitleScreen(); break;
+      case 2:  drawEventLogScreen();   break;
+      case 3:  drawResourceScreen();   break;
+      case 4:  drawEncounterScreen();  break;
+      case 5:  drawMapScreen();        break;
+      default: drawPlayerScreen();     break;  // case 1
     }
   }
 

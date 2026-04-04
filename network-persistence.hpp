@@ -18,8 +18,7 @@ void saveGame() {
     // Map file
     File f = SD.open(SAVE_MAP_F, FILE_WRITE);
     if (f) {
-      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount,
-                         G.threatClock, G.sharedFood, G.sharedWater, 0 };
+      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount, G.threatClock, 0 };
       f.write((uint8_t*)&hdr, sizeof(hdr));
       f.write((uint8_t*)G.map, sizeof(G.map));
       f.close();
@@ -89,8 +88,6 @@ bool tryLoadSave() {
   f.close();
   G.dayCount    = hdr.dayCount;
   G.threatClock = hdr.threatClock;
-  G.sharedFood  = hdr.sharedFood;
-  G.sharedWater = hdr.sharedWater;
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     for (int i = 0; i < MAX_PLAYERS; i++) {

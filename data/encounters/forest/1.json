@@ -1,0 +1,62 @@
+{
+  "id": "forest_hollow_01",
+  "title": "The {{tree_type}} Hollow",
+  "start_node": "approach",
+  "nodes": {
+    "approach": {
+      "text": "A massive {{tree_type}} has fallen, leaving a hollow at its root ball big enough to crawl into. Something {{smell}} drifts out from the dark.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Reach inside and feel around.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 25,
+          "skill": 1,
+          "success_node": "hollow_interior",
+          "hazard_id": "nest_disturbed"
+        }
+      ]
+    },
+    "hollow_interior": {
+      "text": "Inside the hollow, someone cached supplies here long ago. Rotted canvas wraps a few sealed tins and a hand-carved box.",
+      "can_bank": true,
+      "loot": [{ "res": 1, "qty": [1, 3] }],
+      "loot_table": "forest_common",
+      "choices": [
+        {
+          "label": "Crawl deeper in to check behind the root mass.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "root_cache",
+          "hazard_id": "root_collapse"
+        }
+      ]
+    },
+    "root_cache": {
+      "text": "Behind the root mass, a waterproof bag. Someone planned to come back. They didn't.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 1, "qty": [1, 2] }],
+      "loot_table": "forest_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "nest_disturbed": {
+      "text": "Your hand finds something warm and agitated. Bites pepper your arm before you pull back.",
+      "penalty": { "ll": -1, "fatigue": 1 },
+      "status": 8,
+      "ends_encounter": false
+    },
+    "root_collapse": {
+      "text": "The root mass shifts. You scramble back just as the hollow collapses inward.",
+      "penalty": { "ll": -2 },
+      "wound": [0, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "tree_type": ["oak", "pine", "ash", "sycamore"],
+    "smell": ["damp earth and something sweet", "rot and old smoke", "animal musk", "wet charcoal"]
+  }
+}

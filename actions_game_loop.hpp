@@ -31,6 +31,18 @@ static void tickGame() {
     G.dayCount++;
     dawnOccurred = true;
     Serial.printf("[DUSK]    ──── Dusk (end of Day %d) ────\n", (int)G.dayCount - 1);
+    // Force-abort any active encounters before dusk (no TC increment for dawn abort)
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+      if (!encounters[i].active) continue;
+      uint8_t hq = encounters[i].hexQ;
+      uint8_t hr = encounters[i].hexR;
+      encounters[i] = {};
+      GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)i;
+      eev.q = (int16_t)hq; eev.r = (int16_t)hr;
+      eev.encOut = 2;  // reason: dawn
+      enqEvt(eev);
+      Serial.printf("[ENC]     P%d encounter force-aborted (dawn)\n", i);
+    }
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
     Serial.printf("[DAWN]    ──── Day %d begins ────\n", (int)G.dayCount);
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
@@ -258,6 +270,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
   uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   if (terr >= NUM_TERRAIN) terr = 0;
   if (p.statusBits & ST_DOWNED) return;  // downed — no actions until respawn
+  if (encounters[pid].active)  return;  // locked during active encounter
 
   GameEvent ev = {};
   ev.type    = EVT_ACTION;

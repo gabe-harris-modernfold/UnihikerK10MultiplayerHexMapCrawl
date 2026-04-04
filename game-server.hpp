@@ -167,11 +167,9 @@ static void setupWiFiAndServer() {
       j += ",\"tc\":";          j += G.threatClock;
       j += ",\"crisis\":";      j += G.crisisState  ? "true" : "false";
       j += ",\"connected\":";   j += G.connectedCount;
-      j += ",\"sharedFood\":";  j += G.sharedFood;
-      j += ",\"sharedWater\":"; j += G.sharedWater;
       j += ",\"evtQueue\":";    j += pendingCount;
 
-      int shelters = 0, impShelters = 0;
+      int shelters = 0, impShelters = 0, poiCount = 0;
       int resCnt[6] = {0,0,0,0,0,0};
       int terrCnt[NUM_TERRAIN] = {};
       for (int row = 0; row < MAP_ROWS; row++) {
@@ -181,11 +179,13 @@ static void setupWiFiAndServer() {
           else if (c.shelter == 2) impShelters++;
           if (c.resource > 0 && c.resource < 6) resCnt[c.resource] += c.amount;
           if (c.terrain < NUM_TERRAIN) terrCnt[c.terrain]++;
+          if (c.poi) poiCount++;
         }
       }
       j += ",\"map\":{\"cells\":"; j += (MAP_ROWS * MAP_COLS);
       j += ",\"shelters\":";    j += shelters;
       j += ",\"impShelters\":"; j += impShelters;
+      j += ",\"pois\":";        j += poiCount;
       j += ",\"res\":{\"water\":";  j += resCnt[1];
       j += ",\"food\":";  j += resCnt[2];
       j += ",\"fuel\":";  j += resCnt[3];
@@ -236,6 +236,7 @@ static void setupWiFiAndServer() {
               j += ",\"resourceName\":\""; j += RES_NAME_L[res]; j += "\"";
               j += ",\"amount\":"; j += cell.amount;
               j += ",\"footprints\":"; j += cell.footprints;
+              j += ",\"poi\":";        j += cell.poi ? "true" : "false";
               j += "}";
             }
           }
@@ -289,6 +290,14 @@ static void setupWiFiAndServer() {
         j += "]";
         j += ",\"score\":";       j += p.score;
         j += ",\"steps\":";       j += p.steps;
+        j += ",\"encActive\":";   j += encounters[i].active ? "true" : "false";
+        if (encounters[i].active) {
+          j += ",\"encQ\":";      j += encounters[i].hexQ;
+          j += ",\"encR\":";      j += encounters[i].hexR;
+          j += ",\"encLoot\":[";
+          for (int s = 0; s < 5; s++) { if (s) j += ","; j += encounters[i].pendingLoot[s]; }
+          j += "]";
+        }
         j += "}";
       }
       j += "]";
@@ -303,6 +312,28 @@ static void setupWiFiAndServer() {
     req->send(resp);
   });
 
+  // /enc?biome=X&id=Y — serve encounter JSON from SD card
+  server.on("/enc", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!req->hasParam("biome") || !req->hasParam("id")) {
+      req->send(400, "text/plain", "Missing biome or id"); return;
+    }
+    String biome = req->getParam("biome")->value();
+    String id    = req->getParam("id")->value();
+    // Validate: only allow alphanumeric + underscore in both params (prevent path traversal)
+    for (unsigned i = 0; i < biome.length(); i++) {
+      char c = biome[i];
+      if (!isAlphaNumeric(c) && c != '_') { req->send(400, "text/plain", "Invalid biome"); return; }
+    }
+    for (unsigned i = 0; i < id.length(); i++) {
+      char c = id[i];
+      if (!isDigit(c)) { req->send(400, "text/plain", "Invalid id"); return; }
+    }
+    char path[56];
+    snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
+    if (!SD.exists(path)) { req->send(404, "text/plain", "Encounter not found"); return; }
+    req->send(SD, path, "application/json");
+  });
+
   // /img/*.png served from PSRAM imgCache
   server.onNotFound([](AsyncWebServerRequest* req) {
     String url = req->url();
@@ -310,8 +341,12 @@ static void setupWiFiAndServer() {
       String filename = url.substring(5);
       for (int i = 0; i < imgCacheCount; i++) {
         if (filename.equalsIgnoreCase(imgCache[i].name)) {
+          String mimeType = "image/png";
+          if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
+              filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
+            mimeType = "image/jpeg";
           AsyncWebServerResponse* resp = req->beginResponse(
-              200, "image/png", imgCache[i].buf, imgCache[i].len);
+              200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("Cache-Control", "public, max-age=86400");
           req->send(resp);
           return;

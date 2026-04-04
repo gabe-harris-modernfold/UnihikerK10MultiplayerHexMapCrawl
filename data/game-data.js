@@ -137,7 +137,7 @@ const ARCHETYPES = [
   {
     name: 'GUIDE',
     icon: '\u29BF',   // ⦿ crosshair
-    color: '#FF6644',
+    color: '#8B4513',
     trait: 'Companions entering your hex via your movement pay MC\u22121 (min\u00a01).',
     skills: [2, 1, 0, 0, 1, 1],
     invSlots: 8,
@@ -147,7 +147,7 @@ const ARCHETYPES = [
   {
     name: 'QUARTERMASTER',
     icon: '\u25A3',   // ▣ box
-    color: '#FFAA22',
+    color: '#C07818',
     trait: 'In a Camp (2+ Survivors), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
     skills: [0, 2, 1, 1, 1, 0],
     invSlots: 8,
@@ -157,7 +157,7 @@ const ARCHETYPES = [
   {
     name: 'MEDIC',
     icon: '\u2764',   // ♥ heart
-    color: '#44FF88',
+    color: '#6B5449',
     trait: 'May treat Major Wounds in the field at DN\u00a09. Each successful Treat\u00a0+1\u00a0Fatigue restored.',
     skills: [0, 0, 1, 2, 0, 2],
     invSlots: 8,
@@ -167,7 +167,7 @@ const ARCHETYPES = [
   {
     name: 'MULE',
     icon: '\u26BF',   // ⚿ key
-    color: '#AAAAFF',
+    color: '#A07828',
     trait: '12\u00a0inventory slots \u2014 hauls twice the standard load.',
     skills: [0, 1, 2, 0, 1, 1],
     invSlots: 12,
@@ -177,7 +177,7 @@ const ARCHETYPES = [
   {
     name: 'SCOUT',
     icon: '\u25CE',   // ◎ circle
-    color: '#44FFFF',
+    color: '#7A6055',
     trait: 'Survey costs 0\u00a0MP. May Survey before moving on the same turn without consuming the action slot.',
     skills: [2, 1, 1, 0, 0, 1],
     invSlots: 8,
@@ -187,7 +187,7 @@ const ARCHETYPES = [
   {
     name: 'ENDURER',
     icon: '\u25D9',   // ◙ inverse circle
-    color: '#FF44FF',
+    color: '#6A3008',
     trait: 'Endure skill treated as\u00a01\u00a0higher for all checks (does not affect Collective Endure).',
     skills: [1, 0, 0, 1, 2, 2],
     invSlots: 8,

@@ -1,0 +1,98 @@
+{
+  "id": "urban_parking_01",
+  "title": "{{name}} Parking Structure",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The parking structure is four levels of open-air concrete, its ramps choked with vehicles that have not moved in years. Rust bleeds down every pillar in long orange streaks. The lower deck smells of old fuel and standing water, and somewhere above you a metal sheet ticks rhythmically in the wind — the only sound in a city that has forgotten how to breathe.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Siphon fuel from the abandoned vehicles",
+          "cost": { "fatigue": 2 },
+          "base_risk": 20,
+          "skill": 1,
+          "success_node": "vehicle_deck",
+          "hazard_id": "fuel_ignition"
+        },
+        {
+          "label": "Climb to the roof level for a vantage point",
+          "cost": { "fatigue": 2 },
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "roof_level",
+          "hazard_id": "ramp_collapse"
+        }
+      ]
+    },
+    "vehicle_deck": {
+      "text": "The second deck is a graveyard of sedans and delivery vans, most on flat tires, a few tipped onto their sides. You work the siphon systematically. One van near the far wall has its sliding door cracked open — inside, someone has been using it as a shelter. Canned goods are stacked in the footwell, a sleeping bag is rolled in the back. Not old. Not abandoned.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [2, 4] },
+        { "res": 4, "qty": [1, 3] }
+      ],
+      "choices": [
+        {
+          "label": "Raid the van's supplies before they return",
+          "cost": { "fatigue": 1 },
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "roof_level",
+          "hazard_id": "owner_returns"
+        },
+        {
+          "label": "Leave the van and take the ramp up",
+          "cost": { "fatigue": 1 },
+          "base_risk": 30,
+          "skill": 5,
+          "success_node": "roof_level",
+          "hazard_id": "ambush_stairwell"
+        }
+      ]
+    },
+    "roof_level": {
+      "text": "The roof deck opens up under a {{sky}} sky, and the city spreads out below you in every direction — a grey and rusted maze with no movement that you can see. Someone used this level as an observation post: sandbag positions at the corners, empty shell casings rolled into the drainage channels, and a footlocker welded to a standpipe near the center. The locker has been forced open but not emptied.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 3] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "fuel_ignition": {
+      "text": "A spark from a corroded fitting catches fumes pooled under the vehicle. The flash is brief but brutal — your forearm takes the burn, and you spend the next ten minutes patting out your sleeve.",
+      "penalty": { "fatigue": 2, "ll": -10 },
+      "status": 1,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "ramp_collapse": {
+      "text": "The ramp surface gives way under your boot — a metre-wide section of concrete drops to the level below. You grab a support pillar and hang for a sickening moment before hauling yourself back to solid ground.",
+      "penalty": { "fatigue": 3, "ll": -8 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "owner_returns": {
+      "text": "They were only gone minutes. You hear boots on the ramp below before you finish and have to sprint for the upper level with a fraction of what you could have taken. They are screaming after you the entire way up.",
+      "penalty": { "fatigue": 3 },
+      "ends_encounter": false
+    },
+    "ambush_stairwell": {
+      "text": "Two figures step out of the stairwell door the moment you reach for it. They are not looking to talk. You take a blow across the kidneys before you manage to fight clear and reach the roof ramp instead.",
+      "penalty": { "fatigue": 3, "ll": -12 },
+      "status": 1,
+      "wound": [1, 1],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "name": ["Civic Center", "Eastside Plaza", "Market Row", "Ironworks", "Harbor Gate", "Transit Hub", "Crossroads"],
+    "sky": ["ash-white", "bruised orange", "flat grey", "dust-hazed", "radiation-yellow", "bone-pale", "smoke-smeared"]
+  }
+}

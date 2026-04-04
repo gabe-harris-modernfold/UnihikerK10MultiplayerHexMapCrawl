@@ -18,6 +18,7 @@ const uiCooldown    = van.state(0);
 const uiLL          = van.state(7);
 const uiFood        = van.state(6);
 const uiWater       = van.state(6);
+const uiFat         = van.state(0);
 const uiResolve     = van.state(3);
 const uiMP          = van.state(6);
 // §6.2 Radiation track
@@ -30,7 +31,7 @@ const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
-const uiLogVisible  = van.state(localStorage.getItem('logVisible') !== '0');
+const uiLogVisible  = van.state(localStorage.getItem('logVisible') === '1');
 // Overlay open states — toggled via .val; van.derive in ui.js handles class changes
 const uiHexInfoOpen = van.state(false);
 const uiCharOpen    = van.state(false);
@@ -57,7 +58,6 @@ const NIGHT_FADE_INIT        = 0.72;   // initial alpha when REST action complet
 const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn overlay
 const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
 const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
-const FOOTPRINT_FADE_MS      = 4000;   // ms to fully fade from bright tan to dark
 const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on the current player
 
 // Rendering dimensions
@@ -78,7 +78,7 @@ const RIVER_RIPPLE_W_SCALE   = 0.85;  // ellipse horizontal radius as fraction o
 const RIVER_RIPPLE_H_SCALE   = 0.38;  // ellipse vertical radius as fraction of hex size × wave scale
 
 // Footprint rendering
-const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint circle layout
+const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint icon layout
 
 // Fog of war & visibility
 const FOG_INNER_ALPHA        = 0.78;  // alpha for inner fog ring (more visible)
@@ -95,11 +95,6 @@ let restSent       = false; // guard against REST double-click before server ack
 
 // ── Smooth animation ─────────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 }));
-
-// ── Footprint timestamps ──────────────────────────────────────────
-// key: 'q_r_pid' → Date.now() when that player last stepped on that hex.
-// Used to drive the bright-red → black colour fade on canvas.
-const footprintTimestamps = new Map();
 
 // ── Name-tag width cache ──────────────────────────────────────────
 // Avoids a ctx.measureText() call every frame per visible player.
@@ -160,6 +155,7 @@ function loadTerrainVariants(vc) {
 // ── Forage animal images ──────────────────────────────────────────
 // Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
 let forrageAnimalImgs = [];
+const collectedCells = new Set(); // cells cleared by 'col' — guards against vis disk overwrite
 
 /**
  * Load forage animal images.
@@ -210,6 +206,8 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
   au: false, rest: false,
+  // §6 Encounter
+  enc: false,
 }));
 
 // Shared game state (Threat Clock, Day, shared stores)
@@ -304,25 +302,6 @@ function send(obj) {
     socket.send(JSON.stringify(obj));
 }
 
-// ── Rest bubbles & auto-rest ─────────────────────────────────────
-function updateRestBubbles() {
-  const bar = document.getElementById('rest-bubbles');
-  if (!bar) return;
-  bar.innerHTML = '';
-  const connected = players.filter(p => p.on);
-  if (connected.length === 0) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex';
-  for (const p of connected) {
-    const bubble = document.createElement('div');
-    bubble.className = 'rest-bubble' + (p.rest ? ' rest-bubble-on' : '');
-    bubble.style.setProperty('--pc', PLAYER_COLORS[p.id]);
-    const tag = (p.nm || `P${p.id}`).substring(0, 9).toUpperCase();
-    bubble.innerHTML = p.rest
-      ? `<span class="rb-zzz">REST</span><span class="rb-name">${tag}</span>`
-      : `<span class="rb-name">${tag}</span>`;
-    bar.appendChild(bubble);
-  }
-}
 
 function checkAutoRest() {
   if (myId < 0 || !players[myId]?.on) return;
@@ -408,7 +387,6 @@ function handleMsg(msg) {
       if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
       if (myId >= 0) displayMP = players[myId].mp ?? 6;
       updateTerrainCard();
-      updateRestBubbles();
       updateDirButtons();
       // Catch stale downed state on reconnect: if server synced us with ll:0 we are dead.
       // Close the socket so the server resets the slot (p.connected=false) and re-adds us
@@ -459,11 +437,11 @@ function handleMsg(msg) {
         if (pd.it) p.it = pd.it;   // typed inventory types
         if (pd.iq) p.iq = pd.iq;   // typed inventory quantities
         if (pd.eq) p.eq = pd.eq;   // equipment slots
+        if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
       });
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
       updateTerrainCard();
-      updateRestBubbles();
       updateDirButtons();
       // Catch missed downed event: if server state shows ll:0 we are dead.
       // Close the socket so the server resets the slot (p.connected=false) and re-adds us
@@ -501,6 +479,10 @@ function handleMsg(msg) {
           const _totalInv = (_me.inv ?? [0,0,0,0,0]).reduce((a, b) => a + (b || 0), 0);
           if (_totalInv >= (_me.sp ?? 6))
             showToast(`\u22a0 Inventory full \u2014 ${RES_NAMES[_cur.resource] ?? 'resource'} left behind`);
+        }
+        // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
+        if (_cur?.poi) {
+          send({ t: 'enc_start', q: _me.q, r: _me.r });
         }
       }
       updateTerrainCard();
@@ -541,6 +523,16 @@ function handleMsg(msg) {
         );
       }
       break;
+
+    case 'enc_path':
+      // Direct message: server sends encounter location to the active player
+      window._startEncounterFetch?.(msg.biome, msg.id);
+      break;
+
+    case 'err':
+      console.warn('[ENC/ERR] Server error:', msg);
+      showToast(`\u22a0 ${msg.msg ?? 'Server error'}`);
+      break;
   }
   buildAgentState();
 }
@@ -551,6 +543,7 @@ function handleEvent(ev) {
       // Clear resource unconditionally — null check handles fog cells
       if (gameMap[ev.r]?.[ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: 0, amount: 0 };
+      collectedCells.add(`${ev.q}_${ev.r}`);
       const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
       if (ev.pid === myId) {
@@ -566,6 +559,7 @@ function handleEvent(ev) {
     case 'rsp':
       if (gameMap[ev.r] && gameMap[ev.r][ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: ev.res, amount: ev.amt };
+      collectedCells.delete(`${ev.q}_${ev.r}`);
       break;
     case 'mv': {
       const pm = players[ev.pid];
@@ -581,13 +575,6 @@ function handleEvent(ev) {
       if (gameMap[ev.r]?.[ev.q]) {
         const c = gameMap[ev.r][ev.q];
         gameMap[ev.r][ev.q] = { ...c, footprints: (c.footprints || 0) | (1 << ev.pid) };
-      }
-      // Record timestamp for the red→black fade animation.
-      const _fpNow = Date.now();
-      footprintTimestamps.set(`${ev.q}_${ev.r}_${ev.pid}`, _fpNow);
-      // Prune expired entries so the Map doesn't grow unbounded over long sessions.
-      for (const [key, ts] of footprintTimestamps) {
-        if (_fpNow - ts > FOOTPRINT_FADE_MS) footprintTimestamps.delete(key);
       }
       if (ev.radd && ev.radd > 0) {
         pm.rad = ev.rad ?? pm.rad;
@@ -618,7 +605,6 @@ function handleEvent(ev) {
       if (ev.q !== undefined) { renderPos[ev.pid].q = ev.q; renderPos[ev.pid].r = ev.r; }
       else { renderPos[ev.pid].q = players[ev.pid].q; renderPos[ev.pid].r = players[ev.pid].r; }
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
-      updateRestBubbles();
       break;
     case 'regen':
       showToast('☠ Wasteland reborn. Survivors scattered.');
@@ -641,7 +627,6 @@ function handleEvent(ev) {
       players[ev.pid].on = false;
       players[ev.pid].rest = false;
       addLog(`<span class="log-mv">&#x25C4; Survivor ${ev.pid} gone dark</span>`);
-      updateRestBubbles();
       checkAutoRest();
       break;
     case 'nm':
@@ -677,8 +662,7 @@ function handleEvent(ev) {
           uiResting.val = false;  // clear resting at dawn
           restSent = false;
         }
-        updateRestBubbles();
-        if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
+          if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
         if (ev.wth !== undefined) players[ev.pid].wth = ev.wth;
         if (ev.rad !== undefined) players[ev.pid].rad = ev.rad;
         if (ev.fat !== undefined) players[ev.pid].fat = ev.fat;
@@ -686,6 +670,7 @@ function handleEvent(ev) {
       const who    = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const llTxt  = ev.dll < 0 ? ` \u25BC LL${ev.dll}` : ev.dll > 0 ? ` \u25B2 LL+${ev.dll}` : '';
       const cls    = ev.dll < 0 ? 'log-check-fail' : 'log-mv';
+      if (ev.day !== undefined) gameState.dc = ev.day;
       addLog(`<span class="${cls}">\u2600 Day ${ev.day}: ${escHtml(who)} F:${ev.f} W:${ev.w}${llTxt}</span>`);
       if (ev.pid === myId) {
         const llTxt = ev.dll < 0 ? ` LL${ev.dll}` : ev.dll > 0 ? ` LL+${ev.dll}` : '';
@@ -730,8 +715,7 @@ function handleEvent(ev) {
       if (ev.a === ACT_REST && ev.out === AO_SUCCESS) {
         players[ev.pid].rest = true;
         if (ev.pid === myId) uiResting.val = true;
-        updateRestBubbles();
-        checkAutoRest();
+          checkAutoRest();
         const msg = ev.pid === myId ? 'Resting — waiting for dawn' : `${escHtml(who)} is resting`;
         showToast(`\ud83d\ude34 ${msg}`);
         addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
@@ -865,23 +849,113 @@ function handleEvent(ev) {
       break;
     }
 
+    case 'enc_start': {
+      // POI consumed — clear it from local map so eye disappears immediately
+      if (gameMap[ev.r]?.[ev.q])
+        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      addLog(`<span class="log-col">\uD83D\uDC41 ${escHtml(who)} enters encounter (${ev.q},${ev.r})</span>`);
+      // Show ally banner to co-located players who are not in the encounter
+      if (ev.pid !== myId && players[myId]) {
+        const me = players[myId];
+        if (me.q === ev.q && me.r === ev.r) window._showAllyEncBanner?.(ev.pid);
+      }
+      updateSidebar();
+      break;
+    }
+
+    case 'enc_assist': {
+      const asName  = players[ev.pid]?.nm || `P${ev.pid}`;
+      const tgtName = players[ev.tgt]?.nm || `P${ev.tgt}`;
+      const RES_ASSIST_NAMES = ['Food','Water','Meds','Tools','Fuel'];
+      const resIdx  = (ev.res >= 0 && ev.res < 5) ? ev.res : -1;
+      const resName = resIdx >= 0 ? RES_ASSIST_NAMES[resIdx] : 'res';
+      // Deduct resource from assisting player client-side (optimistic; confirmed by next 's' broadcast)
+      if (resIdx >= 0 && ev.pid >= 0 && ev.pid < MAX_PLAYERS && players[ev.pid]?.inv)
+        players[ev.pid].inv[resIdx] = Math.max(0, (players[ev.pid].inv[resIdx] ?? 0) - 1);
+      addLog(`<span class="log-col">\u2194 ${escHtml(asName)} assists ${escHtml(tgtName)} (${resName} \u2192 \u2212${Math.abs(ev.rd)} DN)</span>`);
+      if (ev.pid === myId || ev.tgt === myId) {
+        showToast(`\u2194 Assist: \u2212${Math.abs(ev.rd)} DN`);
+        updateSidebar();
+      }
+      window._onEncAssist?.(ev);
+      break;
+    }
+
+    case 'enc_res': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const SKILL_NAMES_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
+      const skillName = SKILL_NAMES_ENC[ev.skill] ?? `Sk${ev.skill}`;
+      const outClass = ev.out ? 'log-col' : 'log-check-fail';
+      addLog(`<span class="${outClass}">\u2234 ${escHtml(who)} ${skillName} vs DN${ev.dn} \u2192 ${ev.tot}: ${ev.out ? 'SUCCESS' : 'FAIL'}</span>`);
+      if (ev.pid === myId) {
+        const p = players[myId];
+        if (p) {
+          if (ev.penLL)  p.ll  = Math.max(0, (p.ll  ?? 0) + ev.penLL);
+          if (ev.penFat) p.fat = Math.max(0, (p.fat ?? 0) + ev.penFat);
+          if (ev.penRad) p.rad = Math.max(0, (p.rad ?? 0) + ev.penRad);
+          if (ev.st) p.sb = ev.st;
+        }
+        updateSidebar();
+        if (!ev.out) {
+          const pen = [
+            ev.penLL  < 0 ? `${ev.penLL} LL`  : null,
+            ev.penFat < 0 ? `${ev.penFat} Fat` : null,
+            ev.penRad < 0 ? `${ev.penRad} Rad` : null,
+          ].filter(Boolean).join(', ');
+          showToast(`\u2297 Failed (${pen || 'hazard'})`);
+        }
+        window._onEncResult?.(ev);
+      }
+      break;
+    }
+
+    case 'enc_bank': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const lootSum = (ev.loot ?? []).reduce((a, b) => a + b, 0);
+      addLog(`<span class="log-col">\u25a0 ${escHtml(who)} secured loot (${lootSum} items, +${ev.scoreD} pts)</span>`);
+      if (ev.pid === myId) {
+        showToast(`\u25a0 Loot secured! +${ev.scoreD} pts`);
+        window._onEncBank?.(ev);
+        updateSidebar();
+      }
+      window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
+    case 'enc_end': {
+      const who = players[ev.pid]?.nm || `P${ev.pid}`;
+      const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected' };
+      const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
+      addLog(`<span class="log-check-fail">\u25a0 ${escHtml(who)} encounter ended (${reasonTxt})</span>`);
+      if (ev.pid === myId) {
+        showToast(`\u25a0 Encounter ended: ${reasonTxt}`);
+        window._onEncEnd?.(ev);
+        updateSidebar();
+      }
+      window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
   }
 }
 
 // ── Map decode ──────────────────────────────────────────────────
 // 3 bytes per cell (6 hex chars):
 //   TT = terrain byte (0x00-0x0B) or 0xFF (fog)
-//   DD = bits 0-5: footprint bitmask, bit 6: shelter level
+//   DD = bits 0-5: footprint bitmask, bit 6: has shelter (any), bit 7: has POI
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
-  return {
+  const cell = {
     terrain:    terrainByte,
-    footprints: dataByte & 0x3F,       // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 3,   // bits 6-7: 0=none, 1=shelter, 2=improved shelter
+    footprints: dataByte & 0x3F,           // bits 0-5: which players visited (bitmask)
+    shelter:    (dataByte >> 6) & 1,       // bit 6: 0=none, 1=has shelter
+    poi:        (dataByte >> 7) & 1,       // bit 7: 0=none, 1=has POI encounter
     resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
-    variant:    variantByte & 0xF,     // low nibble: terrain image variant (0-15)
+    variant:    variantByte & 0xF,        // low nibble: terrain image variant (0-15)
   };
+  return cell;
 }
 
 function parseMapFog(hexStr) {
@@ -906,8 +980,15 @@ function applyVisDisk(cells) {
     const tt = parseInt(cells.substr(i + 4, 2), 16);
     const dd = parseInt(cells.substr(i + 6, 2), 16);
     const vv = parseInt(cells.substr(i + 8, 2), 16);
-    if (r < MAP_ROWS && q < MAP_COLS)
-      gameMap[r][q] = decodeCell(tt, dd, vv);
+    if (r < MAP_ROWS && q < MAP_COLS) {
+      const cell = decodeCell(tt, dd, vv);
+      // Preserve locally-cleared resource — col event may arrive before vis disk
+      if (collectedCells.has(`${q}_${r}`) && cell && cell.resource > 0) {
+        cell.resource = 0;
+        cell.amount   = 0;
+      }
+      gameMap[r][q] = cell;
+    }
   }
 }
 
@@ -1264,42 +1345,26 @@ function render() {
       // Reset alpha — footprints/shelter always render at full opacity.
       ctx.globalAlpha = 1;
 
-      // Footprints: show which players have visited this hex.
-      // Fresh footprints glow bright red, fading to near-black over FOOTPRINT_FADE_MS.
-      // ctx.filter is used to tint the emoji (fillStyle has no effect on emoji colour).
+      // Footprints: dark brown 👣 icon per player that has visited this hex.
       if (cell.footprints > 0) {
         const footprintSize = Math.max(6, Math.round(HEX_SZ * 0.22));
-        let footprintCount  = 0;
+        let footprintCount = 0;
         for (let i = 0; i < 6; i++) if (cell.footprints & (1 << i)) footprintCount++;
-
         let footprintIdx = 0;
-        const now = Date.now();
         for (let fpid = 0; fpid < 6; fpid++) {
           if ((cell.footprints & (1 << fpid)) === 0) continue;
-
           const angle  = (footprintIdx * Math.PI * 2) / Math.max(1, footprintCount);
           const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
           const fx = cx + Math.cos(angle) * radius;
           const fy = cy + Math.sin(angle) * radius;
-
-          // t=0 → just stamped (light tan); t=1 → fully faded (invisible — skip draw)
-          const ts = footprintTimestamps.get(`${mapQ}_${mapR}_${fpid}`);
-          const t  = ts ? Math.min(1, (now - ts) / FOOTPRINT_FADE_MS) : 1;
-          if (t >= 1) { footprintIdx++; continue; }  // expired — nothing visible to draw
-
-          // sepia(1) keeps the warm tan hue naturally; brightness fades light→dark.
-          const bri = (1.5 * (1 - t) + 0.12).toFixed(2);  // 1.62 fresh → 0.12 old
-          const sat = (1.4 * (1 - t) + 0.2).toFixed(2);   // 1.6  fresh → 0.2  old
-
           ctx.save();
-          ctx.filter      = `sepia(1) saturate(${sat}) brightness(${bri})`;
-          ctx.globalAlpha = 0.82 * (1 - t) + 0.04;  // 0.86 fresh → 0.04 old
-          ctx.font        = `${footprintSize}px monospace`;
-          ctx.textAlign   = 'center';
+          ctx.filter       = 'sepia(1) saturate(0.5) brightness(0.35)';
+          ctx.globalAlpha  = 0.75;
+          ctx.font         = `${footprintSize}px monospace`;
+          ctx.textAlign    = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('👣', fx, fy);
-          ctx.restore();  // also resets ctx.filter to 'none'
-
+          ctx.restore();
           footprintIdx++;
         }
       }
@@ -1309,14 +1374,15 @@ function render() {
         const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
         const fImg = forrageAnimalImgs[v];
         if (fImg && fImg.loaded) {
-          const sz = HEX_SZ * 0.9;
+          const sz = HEX_SZ * 0.45;
           ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
         }
       }
 
-      // Shelter indicator: 1=basic, 2=improved — PNG centred on hex, emoji fallback
+
+      // Shelter indicator: 1=has shelter — PNG centred on hex, emoji fallback
       if (cell.shelter) {
-        const si   = cell.shelter - 1;  // 0=basic, 1=improved
+        const si   = 0;  // basic shelter (bit 6 is now boolean)
         const imgs = shelterImgs[si];
         const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
         const sImg = v >= 0 ? imgs[v] : null;
@@ -1338,7 +1404,7 @@ function render() {
 
   // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ──────────
   ctx.strokeStyle = 'rgba(50,50,50,0.5)';
-  ctx.lineWidth   = 2.0;
+  ctx.lineWidth   = 1.0;
   ctx.globalAlpha = 1;
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
@@ -1349,6 +1415,30 @@ function render() {
       const cy = px.y + oy;
       if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
       if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      ctx.stroke();
+    }
+  }
+
+  // ── POI hex outline (thicker, same colour as grid, visible cells only) ──
+  ctx.strokeStyle = 'rgba(50,50,50,0.9)';
+  ctx.lineWidth   = 3.0;
+  ctx.globalAlpha = 1;
+  for (let dr = -viewR; dr <= viewR; dr++) {
+    for (let dq = -viewQ; dq <= viewQ; dq++) {
+      const vq   = centreQ + dq;
+      const vr   = centreR + dr;
+      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
+      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      const px   = hexToPixel(vq, vr, HEX_SZ);
+      const cx   = px.x + ox;
+      const cy   = px.y + oy;
+      if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+      if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      const cell = gameMap[mapR]?.[mapQ];
+      if (!cell?.poi) continue;
+      const dist2 = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
+      if (dist2 > myVisionR && !surveyedCells.has(`${mapQ}_${mapR}`)) continue;
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
       ctx.stroke();
     }

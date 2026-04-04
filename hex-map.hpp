@@ -90,7 +90,7 @@ static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 10,  3,  2,  2,  0,  3,  2
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
   15,  // 0 Open Scrub
   40,  // 1 Ash Dunes
-  30,  // 2 Rust Forest
+  55,  // 2 Rust Forest
   45,  // 3 Marsh
   35,  // 4 Broken Urban
   50,  // 5 Flooded Ruins
@@ -137,7 +137,7 @@ static void generateMap() {
       int bRow    = (int)(esp_random() % MAP_ROWS);
       int bCol    = (int)(esp_random() % MAP_COLS);
       int ax      = (int)(esp_random() % 3);
-      int halfLen = 2 + (int)(esp_random() % 4);
+      int halfLen = 4 + (int)(esp_random() % 3);
       for (int side = 0; side < 2; side++) {
         int dir = (side == 0) ? AXIS_A[ax] : AXIS_B[ax];
         int cr = bRow, cc = bCol;
@@ -383,6 +383,18 @@ static void generateMap() {
       cell.variant  = (n > 0) ? pickVariant(n, esp_random()) : 0;
     }
 
+  // ── Phase 5: POI placement ────────────────────────────────────
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int c = 0; c < MAP_COLS; c++) {
+      G.map[r][c].poi = 0;
+      uint8_t t = G.map[r][c].terrain;
+      if (t >= NUM_TERRAIN || TERRAIN_POI_PCT[t] == 0) continue;
+      if ((esp_random() % 100) < TERRAIN_POI_PCT[t]) {
+        G.map[r][c].poi = 1;
+      }
+    }
+  }
+
   // ── Post-generation map stats ────────────────────────────────
   uint16_t tCount[NUM_TERRAIN] = {0};
   uint16_t rCount[6]           = {0};
@@ -425,7 +437,8 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
       if (hexDistWrap(pq, pr, c, r) <= visR) {
         HexCell& cell = G.map[r][c];
         tt = cell.terrain;
-        dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
+        dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+        if (cell.poi) dd |= (1 << 7);
         vv = (cell.resource << 4) | (cell.variant & 0x0F);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
@@ -454,7 +467,8 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       int      cr   = wrapR(pr + dr);
       HexCell& cell = G.map[cr][cq];
       uint8_t  tt   = cell.terrain;
-      uint8_t  dd   = (cell.footprints & 0x3F) | (cell.shelter << 6);
+      uint8_t  dd   = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+      if (cell.poi) dd |= (1 << 7);
       uint8_t  vv   = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
       if (pos + 10 < cap) {
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
@@ -483,7 +497,8 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       int cr = wrapR(pr + dr);
       if (pos + 10 < cap) {
         HexCell& cell = G.map[cr][cq];
-        uint8_t dd = (cell.footprints & 0x3F) | (cell.shelter << 6);
+        uint8_t dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
+        if (cell.poi) dd |= (1 << 7);
         uint8_t vv = (cell.resource << 4) | (cell.variant & 0x0F);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];

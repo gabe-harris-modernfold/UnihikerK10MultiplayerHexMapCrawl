@@ -1,0 +1,60 @@
+{
+  "id": "flooded_vehicle_01",
+  "title": "The {{vehicle}} in the Water",
+  "start_node": "surface",
+  "nodes": {
+    "surface": {
+      "text": "A {{vehicle}} sits half-submerged at the edge of a flooded street. The cargo hatch is just above the waterline, rusted but intact.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Pry open the cargo hatch.",
+          "cost": { "fatigue": 1 },
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "cargo_bay",
+          "hazard_id": "sharp_metal"
+        }
+      ]
+    },
+    "cargo_bay": {
+      "text": "Inside the tilted cargo bay, waterlogged crates line the walls. Most are ruined, but a sealed container in the corner looks promising.",
+      "can_bank": true,
+      "loot": [{ "res": 2, "qty": [1, 2] }],
+      "loot_table": "flooded_common",
+      "choices": [
+        {
+          "label": "Dive below the waterline to reach the driver's cab.",
+          "cost": { "fatigue": 2, "ll": 1 },
+          "base_risk": 60,
+          "skill": 5,
+          "success_node": "drivers_cab",
+          "hazard_id": "submersion"
+        }
+      ]
+    },
+    "drivers_cab": {
+      "text": "The cab is fully submerged but sealed. A locked glovebox and a portable radio mount sit undisturbed. Whoever drove this last didn't come back for their things.",
+      "can_bank": true,
+      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 0, "qty": [1, 1] }],
+      "loot_table": "flooded_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "sharp_metal": {
+      "text": "The hatch edge tears across your palm as it gives way.",
+      "penalty": { "ll": -1 },
+      "status": 4,
+      "ends_encounter": false
+    },
+    "submersion": {
+      "text": "You misjudge the depth. Water floods your lungs before you surface, coughing hard.",
+      "penalty": { "ll": -2, "fatigue": 2 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "vehicle": ["delivery truck", "armored van", "city bus", "utility truck"]
+  }
+}

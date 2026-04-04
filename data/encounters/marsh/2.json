@@ -1,0 +1,92 @@
+{
+  "id": "marsh_still_water_01",
+  "title": "{{crossing}} Crossing",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The path ahead disappears into a flat grey sheet of still water two hundred metres wide. On the far bank, the rusted skeleton of a pre-war relay tower catches the light — but what interests you more is the supply drum strapped to its base, still upright. No visible ford. No boat. Just the water and what lives in it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wade across, testing each step",
+          "cost": { "fatigue": 2, "water": 1 },
+          "base_risk": 25,
+          "skill": 5,
+          "success_node": "midwater",
+          "hazard_id": "current_drag"
+        },
+        {
+          "label": "Lash scrap-wood into a raft",
+          "cost": { "fatigue": 3 },
+          "base_risk": 18,
+          "skill": 4,
+          "success_node": "midwater",
+          "hazard_id": "raft_break"
+        }
+      ]
+    },
+    "midwater": {
+      "text": "The water deepens to your chest before it shallows again. Something large moves below the surface thirty metres to your left and doesn't surface. You reach the far bank and find the drum sealed — fuel, judging by the weight and the faint petroleum smell through the gasket.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [2, 4] }
+      ],
+      "choices": [
+        {
+          "label": "Climb the relay tower for what's stashed above",
+          "cost": { "fatigue": 2 },
+          "base_risk": 40,
+          "skill": 5,
+          "success_node": "tower_top",
+          "hazard_id": "tower_collapse"
+        },
+        {
+          "label": "Search the tower base for more caches",
+          "cost": { "fatigue": 1 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "tower_top",
+          "hazard_id": "nest_swarm"
+        }
+      ]
+    },
+    "tower_top": {
+      "text": "A canvas bag is lashed to the tower cross-arm with paracord — someone used this place as a dead drop. Inside: water-purification tabs, a tin of antibiotics, and enough scrap to make a half-decent trade. Below you, the grey water sits as still and opaque as before.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "current_drag": {
+      "text": "An invisible subsurface current catches your legs and pulls you sideways into deeper water. You fight back to the wading line but swallow a lungful of brackish marsh water.",
+      "penalty": { "fatigue": 3, "ll": -5 },
+      "status": 2,
+      "ends_encounter": false
+    },
+    "raft_break": {
+      "text": "A hidden snag tears the lashing free. The raft splits and dumps you into the water. You swim clear but your pack takes on water.",
+      "penalty": { "fatigue": 2, "food": -1 },
+      "ends_encounter": false
+    },
+    "tower_collapse": {
+      "text": "A corroded support brace snaps under your weight. The upper section swings free and you fall six feet into the shallows, hard.",
+      "penalty": { "fatigue": 3, "ll": -10 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "nest_swarm": {
+      "text": "Your hand breaks through the skin of a mud-wasp nest built into the tower base. The swarm is immediate and merciless.",
+      "penalty": { "fatigue": 2, "ll": -6 },
+      "status": 1,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "crossing": ["Stillwater", "Greyflat", "Deadpool", "Murk's", "Ashen", "Siltback", "Lostfeet", "Brackford"]
+  }
+}

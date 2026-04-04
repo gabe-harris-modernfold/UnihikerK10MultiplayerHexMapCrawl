@@ -16,7 +16,16 @@
       "Bash(git commit:*)",
       "Read(//c/Users/harrisg1/OneDrive - dormakaba Group/Documents/Arduino/Esp32HexMapCrawl/**)",
       "Bash(\"C:/SourceCode/Esp32HexMapCrawl/data/style.css\":*)",
-      "Bash(wc -l /c/SourceCode/Esp32HexMapCrawl/*.hpp /c/SourceCode/Esp32HexMapCrawl/*.ino)"
+      "Bash(wc -l /c/SourceCode/Esp32HexMapCrawl/*.hpp /c/SourceCode/Esp32HexMapCrawl/*.ino)",
+      "Bash(sort -t' ' -k2)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(open\\(''$f''\\)\\); print\\(''OK keys:'', list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(done)",
+      "Bash(find /c/SourceCode/Esp32HexMapCrawl -type f \\\\\\(-name *.hpp -o -name *.cpp \\\\\\))",
+      "Bash(grep -i \"\\\\.h$\\\\|\\\\.hpp$\")",
+      "Bash(grep \"\\\\.h$\")",
+      "Bash(grep -E \"\\\\.\\(js|json|txt\\)$\")"
     ]
   }
 }

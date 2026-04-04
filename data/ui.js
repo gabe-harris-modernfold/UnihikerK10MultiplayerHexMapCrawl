@@ -9,7 +9,6 @@ function updateTerrainCard() {
 
 function populateHexInfo(q, r, cell) {
   const t = TERRAIN[cell.terrain] || TERRAIN[0];
-  document.getElementById('hi-icon').textContent  = t.icon;
   document.getElementById('hi-title').textContent = t.name.toUpperCase();
 
   // Move cost
@@ -64,8 +63,7 @@ function populateHexInfo(q, r, cell) {
   renderHexGroundItems?.(q, r);
 }
 
-// Keep --hud-h in sync so #rest-bubbles always clears the real HUD height,
-// even when its flex items wrap onto a second row on narrow screens.
+// Keep --hud-h in sync for fixed elements that offset below the HUD.
 (function () {
   const hud = document.getElementById('hud');
   const update = () =>
@@ -87,6 +85,9 @@ document.getElementById('hex-close').addEventListener('click', e => {
   e.stopPropagation();
   uiHexInfoOpen.val = false;
 });
+document.getElementById('hex-close').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); uiHexInfoOpen.val = false; }
+});
 
 // ── Sidebar UI ──────────────────────────────────────────────────
 function updateSidebar() {
@@ -100,6 +101,7 @@ function updateSidebar() {
   uiLL.val      = me.ll   ?? 6;
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
+  uiFat.val     = me.fat  ?? 0;
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
@@ -110,9 +112,11 @@ function updateSidebar() {
     .map(({ p, i }) => ({ i, nm: p.nm || `P${i}`, sc: p.sc, color: PLAYER_COLORS[i], isMe: i === myId }))
     .sort((a, b) => b.sc - a.sc)
     .map((entry, rank) => ({ ...entry, rank: rank + 1 }));
+  const _dayEl = document.getElementById('hud-day');
+  if (_dayEl) _dayEl.textContent = gameState.dc > 0 ? `DAY ${gameState.dc}` : '';
   updateClock();
   // REST button turns dark green when any connected player is resting
-  const restBtn = document.getElementById('rest-hud-btn');
+  const restBtn = document.getElementById('fab-rest-btn');
   if (restBtn) {
     const anyResting = players.some(p => p.on && p.rest);
     restBtn.style.background = anyResting ? '#1a4a1a' : '';
@@ -123,11 +127,15 @@ function updateSidebar() {
 function updateDirButtons() {
   if (myId < 0) return;
   const me       = players[myId];
+  const inEnc    = !!me.enc;
   const resting  = me.rest || uiResting.val;
   const exhausted = (me.mp ?? 1) === 0;
-  // While resting or exhausted, show all 6 buttons dimmed (not hidden) with a helpful tooltip (BUG-12)
-  const vm = (resting || exhausted) ? 0 : (me.vm ?? 0x3F);
-  const blockMsg = resting ? 'Resting \u2014 waiting for dawn' : exhausted ? 'No MP \u2014 REST to recover' : 'Blocked (impassable)';
+  // While in encounter, resting, or exhausted, show all 6 buttons dimmed with a helpful tooltip (BUG-12)
+  const vm = (inEnc || resting || exhausted) ? 0 : (me.vm ?? 0x3F);
+  const blockMsg = inEnc ? 'Inside encounter \u2014 complete or bank first'
+    : resting ? 'Resting \u2014 waiting for dawn'
+    : exhausted ? 'No MP \u2014 REST to recover'
+    : 'Blocked (impassable)';
   for (let d = 0; d < 6; d++) {
     const btn = document.getElementById(`dir-btn-${d}`);
     if (!btn) continue;
@@ -152,12 +160,16 @@ function openCharSheet() {
   const me = players[myId];
   document.getElementById('cs-name-input').value = me.nm || '';
 
-  // Archetype banner
+  // Archetype banner + portrait
   const arch     = ARCHETYPES[me.arch] || ARCHETYPES[0];
   const archIcon = document.getElementById('cs-arch-icon');
   const archName = document.getElementById('cs-arch-name');
   if (archIcon) { archIcon.textContent = arch.icon; archIcon.style.color = arch.color; }
   if (archName) { archName.textContent = arch.name; archName.style.color = arch.color; }
+  document.getElementById('char-sheet')
+    .style.setProperty('--cs-portrait', `url('img/survivors/${arch.name.toLowerCase()}.jpg')`);
+  const archTrait = document.getElementById('cs-arch-trait');
+  if (archTrait) archTrait.textContent = arch.trait || '';
 
   // Skills grid
   const grid = document.getElementById('cs-skills-grid');
@@ -169,7 +181,7 @@ function openCharSheet() {
       row.className = 'cs-skill-row';
       const label = document.createElement('span');
       label.className = 'cs-skill-name';
-      label.textContent = SK_SHORT[i];
+      label.textContent = name;
       const dots = document.createElement('span');
       dots.className = 'cs-skill-dots';
       for (let d = 1; d <= 2; d++) {
@@ -222,10 +234,12 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
 
 // Char-overlay visibility — driven by uiCharOpen state
 van.derive(() => {
-  document.getElementById('char-overlay').classList.toggle('open', uiCharOpen.val);
+  const overlay = document.getElementById('char-overlay');
+  overlay.classList.toggle('open', uiCharOpen.val);
+  overlay.setAttribute('aria-hidden', uiCharOpen.val ? 'false' : 'true');
 });
-document.getElementById('char-btn').addEventListener('click', openCharSheet);
 document.getElementById('char-close').addEventListener('click', () => { uiCharOpen.val = false; });
+document.getElementById('char-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uiCharOpen.val = false; } });
 document.getElementById('char-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('char-overlay')) uiCharOpen.val = false;
 });
@@ -333,6 +347,10 @@ function move(dir) {
     addLog('<span class="log-check-fail">☠ Cannot move — you have been downed.</span>');
     return;
   }
+  if (myId >= 0 && players[myId]?.enc) {
+    showToast('\u26D4 Inside encounter \u2014 complete or bank first');
+    return;
+  }
   if (myId >= 0 && uiMP.val <= 0) {
     showToast('\u26A0 Exhausted \u2014 wait for dawn');
     return;
@@ -373,9 +391,9 @@ document.querySelectorAll('.dir-btn[data-dir]').forEach(btn => {
   btn.addEventListener('pointercancel', clearHold);
 });
 
-// Keyboard: Q=NW(3) W=N(2) E=NE(1)  A=SW(4) S=S(5) D=SE(0)
+// Keyboard: Q=NW(3) W=N(2) E=NE(1)  S=S(5) D=SE(0)  [A freed for ACTION shortcut]
 const keyMap = {
-  'KeyQ':'3','KeyW':'2','KeyE':'1','KeyA':'4','KeyS':'5','KeyD':'0',
+  'KeyQ':'3','KeyW':'2','KeyE':'1','KeyS':'5','KeyD':'0',
   'ArrowUp':'2','ArrowDown':'5','ArrowLeft':'3','ArrowRight':'0',
   'Numpad7':'3','Numpad8':'2','Numpad9':'1',
   'Numpad4':'4','Numpad6':'0','Numpad1':'4','Numpad2':'5','Numpad3':'0',
@@ -391,6 +409,10 @@ document.addEventListener('keydown', e => {
     uiHexInfoOpen.val = false;
     return;
   }
+  // FAB shortcuts: R=Rest, A=Action, C=Survivor
+  if (e.code === 'KeyR') { e.preventDefault(); document.getElementById('fab-rest-btn')?.click(); return; }
+  if (e.code === 'KeyA') { e.preventDefault(); document.getElementById('fab-action-btn')?.click(); return; }
+  if (e.code === 'KeyC') { e.preventDefault(); document.getElementById('fab-char-btn')?.click(); return; }
   // Block movement while character selection screen is showing
   if (document.getElementById('char-select-overlay')?.classList.contains('open')) return;
   const dir = keyMap[e.code];
@@ -436,6 +458,7 @@ function initHudBindings() {
     van.derive(() => {
       const conn = uiConn.val;
       connDot.style.color = (conn === 'Connected' ? 'var(--gold-hi)' : '#C06030');
+      connDot.setAttribute('aria-label', conn === 'Connected' ? 'connected' : conn === 'Connecting...' ? 'connecting' : 'disconnected');
     });
   }
 
@@ -493,10 +516,6 @@ function initHudBindings() {
   if (csScore)  { csScore.textContent  = ''; van.add(csScore,  () => String(uiScore.val)); }
   if (hudScore) { hudScore.textContent = ''; van.add(hudScore, () => String(uiScore.val)); }
 
-  // Position
-  const posEl = document.getElementById('pos-info');
-  posEl.textContent = '';
-  van.add(posEl, () => uiPos.val);
 }
 
 function initCharSheetBindings() {
@@ -530,6 +549,8 @@ function initCharSheetBindings() {
         (thr && !fired ? (filled ? ' thresh-filled'       : ' thresh')       : '') +
         (thr &&  fired ? (filled ? ' thresh-spent-filled' : ' thresh-spent') : '');
     }
+    el.setAttribute('aria-valuenow', value);
+    el.setAttribute('aria-valuemax', count);
   }
 
   // LL track (survivor)
@@ -610,6 +631,11 @@ function initCharSheetBindings() {
     }
   });
 
+  // Fatigue track (0–8, no thresholds)
+  van.derive(() => {
+    renderTrackBoxes('cs-fat-track', uiFat.val, [], 0, 8);
+  });
+
 }
 
 function initMapBindings() {
@@ -619,6 +645,10 @@ function initMapBindings() {
   van.derive(() => {
     hexInfo.classList.toggle('open', uiHexInfoOpen.val);
     terrainCard.classList.toggle('expanded', uiHexInfoOpen.val);
+    terrainCard.setAttribute('aria-expanded', uiHexInfoOpen.val ? 'true' : 'false');
+  });
+  terrainCard.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); terrainCard.click(); }
   });
 
   // Terrain card — reactive repaint from uiCurrentCell
@@ -627,8 +657,8 @@ function initMapBindings() {
     if (!cc) return;
     const t     = TERRAIN[cc.terrain] || TERRAIN[0];
     const mcStr = t.mc === 255 ? 'IMPASSABLE' : `MC:${t.mc}  SV:${t.sv}`;
-    document.getElementById('tc-icon').textContent = t.icon;
     document.getElementById('tc-name').textContent = t.name;
+    terrainCard.setAttribute('aria-label', `${t.name} — click for hex details`);
     document.getElementById('tc-sub').textContent  =
       (cc.resource > 0 && cc.amount > 0)
         ? `${RES_NAMES[cc.resource]} ×${cc.amount}`
@@ -756,6 +786,7 @@ function initActionPanel() {
   });
 
   function closeActionPanel() {
+    document.getElementById('fab-action-btn')?.focus();
     actionPanel.setAttribute('aria-hidden', 'true');
     actionPanel.classList.remove('open');
     actionBtnList.style.display = '';
@@ -770,6 +801,10 @@ function initActionPanel() {
     if (players[myId]?.ll === 0) {
       showToast('☠ You have been downed — select a new survivor');
       addLog('<span class="log-check-fail">☠ Cannot act — you have been downed.</span>');
+      return;
+    }
+    if (players[myId]?.enc) {
+      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
       return;
     }
     const me   = players[myId];
@@ -840,13 +875,14 @@ function initActionPanel() {
 
     // Fix: compute actual shelter MP cost dynamically — fall back to basic (1 MP) if not enough MP for improved
     const shelterMpCost = (scrap >= 2 && mp >= 2) ? 2 : 1;
+    const shelterLabel  = shelterLevel >= 1 ? 'UPGRADE SHELTER' : 'BUILD SHELTER';
 
     actionBtnList.innerHTML = '';
     const actionDefs = [
       { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
       { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_SHELTER, icon: '\u26FA', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
     ];
     // Scout-exclusive: SURVEY is hidden for non-Scouts
@@ -871,18 +907,23 @@ function initActionPanel() {
       const slotFree   = slotless || !actUsed;
       const canAct     = available && hasMP && hasScrap && slotFree;
 
-      // Dynamic desc: BUILD SHELTER shows actual cost (always 2 scrap for improved)
+      // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
       let desc = def.desc;
       if (def.id === ACT_SHELTER) {
-        desc = shelterMaxed  ? 'Improved shelter already here — nothing to build'
-             : scrap === 0   ? 'Needs scrap — none in pack'
-             : scrap === 1   ? '1 scrap → shelter ⛺ (1 MP, +4 pts)'
-             : mp < 2        ? '1 scrap → shelter ⛺ (1 MP, +4 pts) — not enough MP for improved'
-             :                 '2 scrap → improved shelter 🏠 (2 MP, +8 pts)';
+        desc = shelterMaxed                          ? 'Improved shelter already here — nothing to build'
+             : shelterLevel === 1 && scrap === 0     ? 'Shelter here — needs scrap to upgrade'
+             : shelterLevel === 1 && scrap >= 2 && mp >= 2 ? '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)'
+             : shelterLevel === 1                    ? '1 scrap → upgrade to improved \uD83C\uDFE0 (1 MP, +4 pts)'
+             : scrap === 0                           ? 'Needs scrap — none in pack'
+             : scrap === 1                           ? '1 scrap → shelter \u26FA (1 MP, +4 pts)'
+             : mp < 2                                ? '1 scrap → shelter \u26FA (1 MP, +4 pts) — not enough MP for improved'
+             :                                        '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = shelterMaxed ? 'Max shelter built here'
+      const blockReason = shelterMaxed                      ? 'Max shelter built here'
+                        : def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap
+                                                            ? 'Shelter here — need scrap to upgrade'
                         : !available   ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
                                         : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh \u00b7 Flooded District)'
                                         : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
@@ -937,14 +978,19 @@ function initActionPanel() {
   }
 
   actionPanel.addEventListener('click', e => { if (e.target === actionPanel) closeActionPanel(); });
-  document.getElementById('action-hud-btn').addEventListener('click', () => {
+  document.getElementById('fab-action-btn').addEventListener('click', () => {
     actionPanel.classList.contains('open') ? closeActionPanel() : openActionPanel();
   });
   document.getElementById('action-close').addEventListener('click', closeActionPanel);
+  document.getElementById('action-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeActionPanel(); } });
 
-  document.getElementById('rest-hud-btn').addEventListener('click', () => {
+  document.getElementById('fab-rest-btn').addEventListener('click', () => {
     if (myId >= 0 && players[myId]?.ll === 0) {
       showToast('☠ You have been downed — select a new survivor');
+      return;
+    }
+    if (myId >= 0 && players[myId]?.enc) {
+      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
       return;
     }
     if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
@@ -953,17 +999,18 @@ function initActionPanel() {
   });
 
   van.derive(() => {
-    const btn = document.getElementById('action-hud-btn');
+    const btn = document.getElementById('fab-action-btn');
     if (!btn) return;
     btn.classList.toggle('has-condition', uiHasCond.val);
   });
   van.derive(() => {
-    const btn = document.getElementById('rest-hud-btn');
+    const btn = document.getElementById('fab-rest-btn');
     if (!btn) return;
     btn.classList.toggle('rest-btn-used', uiResting.val);
     // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
     btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
+  document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
 }
 
 function initTradeOverlay() {
@@ -1088,6 +1135,7 @@ function initMenuSystem() {
       mb({ class: 'menu-item-btn', onclick: () => openMenu('settings') }, '\u25C9  SETTINGS'),
       mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  SURVIVOR'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('about')    }, '\u25A3  ABOUT'),
+      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); const ov = document.getElementById('help-overlay'); ov.classList.add('open'); ov.removeAttribute('aria-hidden'); } }, '\u2139  AGENT HELP'),
       mb({ class: 'menu-resume-btn', onclick: closeMenu }, '\u25B6 RESUME'),
     );
 
@@ -1337,7 +1385,7 @@ function initMenuSystem() {
         md({ class: 'ht-track-list' },
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Global'),
-            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, sharedFood, sharedWater, evtQueue')
+            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, evtQueue')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Map'),
@@ -1635,6 +1683,7 @@ function initCharSelect() {
       div({ class: 'arch-grid' },
         ...ARCHETYPES.map((arch, i) => {
           const taken = !availSet.has(i);
+          if (taken) return null;
           const color = arch.color;
 
           const skillDots = SK_NAMES.map((sk, si) => {
@@ -1647,49 +1696,34 @@ function initCharSelect() {
             );
           });
 
-          const selectBtn = taken
-            ? span({ class: 'arch-taken-stamp' }, '\u2612 TAKEN')
-            : button({
-                class: 'arch-select-btn' + (pending ? ' arch-btn-pending' : ''),
-                style: `--arch-color:${color}`,
-                disabled: pending || undefined,
-                onclick: () => {
-                  if (pending || taken) return;
-                  // If a survivor is already active, require confirmation before abandoning them
-                  if (myId >= 0 && players[myId]?.on) {
-                    if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
-                  }
-                  uiPickPending.val = true;
-                  send({ t: 'pick', arch: i });
-                  if (pickTimeoutId) clearTimeout(pickTimeoutId);
-                  pickTimeoutId = setTimeout(() => {
-                    if (uiPickPending.val) {
-                      uiPickPending.val = false;
-                      showToast('\u26A0 Server did not respond \u2014 please try selecting again.');
-                    }
-                    pickTimeoutId = null;
-                  }, 8000);
-                }
-              }, pending ? '\u2022\u2022\u2022' : `\u25B6 SELECT ${arch.name}`);
-
           return div({
-            class: `arch-card${taken ? ' arch-taken' : ''}`,
-            style: `--arch-color:${color}`
+            class: `arch-card${taken ? ' arch-taken' : ''}${pending ? ' arch-btn-pending' : ''}`,
+            style: `--arch-color:${color}; --arch-portrait:url('img/survivors/${arch.name.toLowerCase()}.jpg')`,
+            onclick: taken ? undefined : () => {
+              if (pending) return;
+              // If a survivor is already active, require confirmation before abandoning them
+              if (myId >= 0 && players[myId]?.on) {
+                if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
+              }
+              uiPickPending.val = true;
+              send({ t: 'pick', arch: i });
+              if (pickTimeoutId) clearTimeout(pickTimeoutId);
+              pickTimeoutId = setTimeout(() => {
+                if (uiPickPending.val) {
+                  uiPickPending.val = false;
+                  showToast('\u26A0 Server did not respond \u2014 please try selecting again.');
+                }
+                pickTimeoutId = null;
+              }, 8000);
+            }
           },
             div({ class: 'arch-header' },
-              span({ class: 'arch-icon' }, arch.icon),
               div({ class: 'arch-name-wrap' },
-                span({ class: 'arch-name' }, arch.name),
-                span({ class: 'arch-inv-label' }, `\u25A1 ${arch.invSlots} Inventory`)
+                span({ class: 'arch-name' }, arch.name)
               )
             ),
             div({ class: 'arch-skills' }, ...skillDots),
-            div({ class: 'arch-trait' },
-              span({ class: 'arch-trait-label' }, 'TRAIT \u2014 '),
-              span({ class: 'arch-trait-text' }, arch.trait)
-            ),
-            div({ class: 'arch-flavor' }, arch.flavor),
-            div({ class: 'arch-card-footer' }, selectBtn)
+            null
           );
         })
       )
@@ -1880,6 +1914,247 @@ function renderHexGroundItems(q, r) {
 document.getElementById('item-menu-close')?.addEventListener('click', closeItemMenu);
 document.getElementById('item-menu-backdrop')?.addEventListener('click', closeItemMenu);
 
+// ── Encounter overlay + ally banner ──────────────────────────────
+function initEncounterOverlay() {
+  const overlay    = document.getElementById('enc-overlay');
+  const nodeText   = document.getElementById('enc-node-text');
+  const dnLabel    = document.getElementById('enc-dn-label');
+  const riskFill   = document.getElementById('enc-risk-fill');
+  const lootDisp   = document.getElementById('enc-loot-display');
+  const choiceList = document.getElementById('enc-choice-list');
+  const bankRow    = document.getElementById('enc-bank-row');
+  const bankBtn    = document.getElementById('enc-bank-btn');
+  const abortBtn   = document.getElementById('enc-abort-btn');
+
+  const RES_NAMES_ENC = ['Food','Water','Meds','Tools','Fuel'];
+
+  // State for the active encounter
+  let currentEnc   = null;   // loaded encounter JSON
+  let currentNode  = null;   // current node object
+  let pendingLoot  = [0,0,0,0,0];
+  let canBank      = false;
+  let pendingNextKey = '';   // next node key sent in enc_choice, consumed by _onEncResult
+
+  function resolveText(text, placeholders) {
+    if (!placeholders) return text;
+    return text.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+      const opts = placeholders[key];
+      return (Array.isArray(opts) && opts.length) ? opts[Math.floor(Math.random() * opts.length)] : key;
+    });
+  }
+
+  function renderLoot() {
+    const parts = pendingLoot.map((v, i) => v > 0 ? `${RES_NAMES_ENC[i]}×${v}` : null).filter(Boolean);
+    lootDisp.textContent = parts.length ? `Pending: ${parts.join('  ')}` : '';
+  }
+
+  const SKILL_LABELS_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
+
+  function renderNode(node) {
+    currentNode = node;
+    nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
+
+    const baseRisk = Math.max(0, ...(node.choices ?? []).map(c => c.base_risk ?? 0));
+    dnLabel.textContent = baseRisk > 0 ? `BASE RISK ${baseRisk}%` : 'NO RISK';
+    riskFill.style.width = `${baseRisk}%`;
+
+    choiceList.innerHTML = '';
+    (node.choices ?? []).forEach(ch => {
+      const btn = document.createElement('button');
+      btn.className = 'enc-choice-btn';
+      const riskClass = ch.base_risk <= 30 ? 'enc-risk-low' : ch.base_risk <= 60 ? 'enc-risk-mid' : 'enc-risk-high';
+      const cost = ch.cost ?? {};
+      const costParts = [
+        cost.ll        ? `${cost.ll} LL`        : null,
+        cost.fatigue   ? `${cost.fatigue} Fat`   : null,
+        cost.radiation ? `${cost.radiation} Rad` : null,
+        cost.food      ? `${cost.food} Food`     : null,
+        cost.water     ? `${cost.water} Water`   : null,
+      ].filter(Boolean);
+      btn.innerHTML =
+        `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>` +
+        `<span class="enc-cost-tag">${costParts.length ? 'Cost: ' + costParts.join(' \u00b7 ') : 'No cost'}</span>` +
+        `<span class="enc-risk-tag ${riskClass}">Risk ${ch.base_risk}%  \u2014 ${SKILL_LABELS_ENC[ch.skill] ?? 'Skill'}</span>`;
+      btn.addEventListener('click', () => sendChoice(ch));
+      choiceList.appendChild(btn);
+    });
+
+    canBank = node.can_bank ?? false;
+    bankRow.style.display = canBank ? '' : 'none';
+    renderLoot();
+  }
+
+  function sendChoice(ch) {
+    const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
+    const hazPen = haz.penalty ?? {};
+    const wound  = Array.isArray(haz.wound) ? haz.wound : [0, 0];
+    const cost   = ch.cost ?? {};
+    const nextKey = ch.success_node ?? '';
+
+    // Loot is defined on the destination node, not on the choice.
+    // Roll qty client-side; server trusts the values (SD is not player-modifiable).
+    const nextNode = nextKey ? currentEnc?.nodes?.[nextKey] : null;
+    const nodeLoot = [0,0,0,0,0];
+    if (nextNode?.loot) {
+      nextNode.loot.forEach(entry => {
+        const res = entry.res;
+        if (res >= 0 && res < 5 && Array.isArray(entry.qty)) {
+          const mn = entry.qty[0], mx = entry.qty[1] ?? entry.qty[0];
+          nodeLoot[res] += mn + Math.floor(Math.random() * (mx - mn + 1));
+        }
+      });
+    }
+    const lootTable = nextNode?.loot_table ?? '';
+
+    send({
+      t:           'enc_choice',
+      base_risk:   ch.base_risk  ?? 50,
+      skill:       ch.skill      ?? 2,
+      loot:        nodeLoot,
+      lt:          lootTable,
+      can_bank:    nextNode?.can_bank ?? false,
+      ci:          nextKey,
+      cost_ll:     cost.ll        ?? 0,
+      cost_fat:    cost.fatigue   ?? 0,
+      cost_rad:    cost.radiation ?? 0,
+      cost_food:   cost.food      ?? 0,
+      cost_water:  cost.water     ?? 0,
+      haz_ll:      hazPen.ll        ?? 0,
+      haz_fat:     hazPen.fatigue   ?? 0,
+      haz_rad:     hazPen.radiation ?? 0,
+      haz_st:      haz.status       ?? 0,
+      haz_wt:      wound[0]         ?? 0,
+      haz_wc:      wound[1]         ?? 0,
+      haz_ends:    haz.ends_encounter ? 1 : 0,
+      is_terminal: nextKey === '' ? 1 : 0,
+    });
+    pendingNextKey = nextKey;
+    choiceList.querySelectorAll('.enc-choice-btn').forEach(b => b.disabled = true);
+  }
+
+  function openEncounter(enc) {
+    currentEnc  = enc;
+    pendingLoot = [0,0,0,0,0];
+    overlay.classList.add('open');
+    overlay.style.display = '';
+    const startNode = enc.nodes?.[enc.start_node] ?? Object.values(enc.nodes ?? {})[0];
+    if (startNode) renderNode(startNode);
+  }
+
+  function closeEncounter() {
+    overlay.classList.remove('open');
+    overlay.style.display = 'none';
+    currentEnc     = null;
+    currentNode    = null;
+    pendingLoot    = [0,0,0,0,0];
+    pendingNextKey = '';
+    canBank        = false;
+    lootDisp.textContent  = '';
+    bankRow.style.display = 'none';
+    choiceList.innerHTML  = '';
+  }
+
+  // Called from engine.js enc_path handler
+  window._startEncounterFetch = function(biome, id) {
+    fetch(`/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(enc => openEncounter(enc))
+      .catch(e => showToast(`\u2297 Encounter load failed: ${e.message}`));
+  };
+
+  // Called from engine.js enc_res handler — advance node or stay on failure
+  window._onEncResult = function(ev) {
+    if (ev.ends) { closeEncounter(); return; }
+    const nextKey = pendingNextKey;
+    pendingNextKey = '';
+    if (ev.out) {
+      // Success: accumulate loot and advance to next node
+      if (Array.isArray(ev.loot))
+        ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
+      if (nextKey && currentEnc?.nodes?.[nextKey]) {
+        renderNode(currentEnc.nodes[nextKey]);
+      } else {
+        // Terminal node reached — show bank button only
+        renderLoot();
+        choiceList.innerHTML = '';
+        canBank = true;
+        bankRow.style.display = '';
+      }
+    } else {
+      // Failure: stay on current node, re-enable choices
+      renderNode(currentNode);
+    }
+  };
+
+  window._onEncBank = function() { closeEncounter(); };
+  window._onEncEnd  = function() { closeEncounter(); };
+
+  bankBtn.addEventListener('click', () => {
+    send({ t: 'enc_bank' });
+    closeEncounter();
+  });
+
+  abortBtn.addEventListener('click', () => {
+    send({ t: 'enc_abort' });
+    closeEncounter();
+  });
+
+  // ── Ally encounter banner ────────────────────────────────────────
+  const allyBanner    = document.getElementById('ally-enc-banner');
+  const allyTitle     = document.getElementById('ally-enc-title');
+  const allySub       = document.getElementById('ally-enc-sub');
+  const allyAssistRow = document.getElementById('ally-enc-assist-row');
+  const allyDismiss   = document.getElementById('ally-enc-dismiss');
+  let allyEncPid = -1;
+
+  window._showAllyEncBanner = function(pid) {
+    allyEncPid = pid;
+    const nm = players[pid]?.nm || `P${pid}`;
+    allyTitle.textContent = `\uD83D\uDC41 ${nm.toUpperCase()} IS INSIDE`;
+    allySub.textContent   = 'Spend a resource to assist (reduces DN by 4)';
+    // Build assist buttons
+    allyAssistRow.innerHTML = '';
+    RES_NAMES_ENC.forEach((rn, ri) => {
+      const inv = players[myId]?.inv?.[ri] ?? 0;
+      const b = document.createElement('button');
+      b.className = 'enc-assist-btn';
+      b.textContent = `${rn} (${inv})`;
+      b.disabled = inv <= 0;
+      b.addEventListener('click', () => {
+        send({ t: 'enc_assist', tgt: allyEncPid, res: ri });
+        b.disabled = true;
+      });
+      allyAssistRow.appendChild(b);
+    });
+    allyBanner.classList.add('visible');
+    allyBanner.style.display = '';
+  };
+
+  // If pid is supplied, only hide if the banner is currently tracking that player.
+  window._hideAllyEncBanner = function(pid) {
+    if (pid !== undefined && pid !== allyEncPid) return;
+    allyEncPid = -1;
+    allyBanner.classList.remove('visible');
+    allyBanner.style.display = 'none';
+  };
+
+  window._onEncAssist = function() {
+    // Refresh assist button counts after any assist event
+    allyAssistRow.querySelectorAll('.enc-assist-btn').forEach((btn, ri) => {
+      const inv = players[myId]?.inv?.[ri] ?? 0;
+      btn.textContent = `${RES_NAMES_ENC[ri]} (${inv})`;
+      btn.disabled = inv <= 0;
+    });
+  };
+
+  allyDismiss.addEventListener('click', window._hideAllyEncBanner);
+
+  // Fatigue track in encounter overlay
+  van.derive(() => {
+    renderTrackBoxes('enc-fat-track', uiFat.val, [], 0, 8);
+  });
+}
+
 // ── VanJS entry point ─────────────────────────────────────────────
 function initVanJS() {
   initHudBindings();
@@ -1890,6 +2165,7 @@ function initVanJS() {
   initPlayerList();
   initMenuSystem();
   initCharSelect();
+  initEncounterOverlay();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────

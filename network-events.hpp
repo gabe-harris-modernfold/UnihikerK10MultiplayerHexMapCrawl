@@ -219,6 +219,91 @@ static void drainEvents() {
 
       case EVT_NAME:
         break; // name changes broadcast via broadcastState(); no dedicated event message needed
+
+      case EVT_ENC_START:
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
+          ev.pid, (int)ev.q, (int)ev.r);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d enters encounter", (int)ev.pid);
+          k10LogAdd(lb); }
+        break;
+
+      case EVT_ENC_ASSIST:
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_assist\",\"pid\":%d,\"tgt\":%d,\"res\":%d,\"rd\":%d}",
+          ev.pid, (int)ev.tradeTo, (int)ev.encAssistRes, (int)ev.encRiskRed);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d\xE2\x86\x92P%d assist (-4)",
+            (int)ev.pid, (int)ev.tradeTo);
+          k10LogAdd(lb); }
+        break;
+
+      case EVT_ENC_RESULT: {
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
+          "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
+          "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penFat\":%d,\"penRad\":%d,"
+          "\"st\":%d,\"ends\":%d}",
+          ev.pid, (int)ev.encOut, (int)ev.encSkill,
+          (int)ev.encDN, (int)ev.encTotal,
+          ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
+          (int)ev.encItemType, (int)ev.encItemQty,
+          (int)ev.encPenLL, (int)ev.encPenFat, (int)ev.encPenRad,
+          (int)ev.encStatus, (int)ev.encEnds);
+        ws.textAll(buf, len);
+        static const char* SK_SHORT[6] = {"NAV","FORAGE","SCAV","TREAT","SHELT","ENDURE"};
+        const char* sks = (ev.encSkill < 6) ? SK_SHORT[ev.encSkill] : "?";
+        if (ev.encOut) {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: %s OK", (int)ev.pid, sks);
+          k10LogAdd(lb);
+        } else if (ev.encEnds) {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD! Ejected", (int)ev.pid);
+          k10LogAdd(lb);
+        } else {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD (cont.)", (int)ev.pid);
+          k10LogAdd(lb);
+        }
+        break;
+      }
+
+      case EVT_ENC_BANK: {
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_bank\",\"pid\":%d,\"q\":%d,\"r\":%d,"
+          "\"loot\":[%d,%d,%d,%d,%d],\"scoreD\":%d}",
+          ev.pid, (int)ev.q, (int)ev.r,
+          ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
+          (int)ev.actScoreD);
+        ws.textAll(buf, len);
+        if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d FULL CLEAR! +%d", (int)ev.pid, (int)ev.actScoreD);
+          k10LogAdd(lb);
+        } else {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d banked enc loot", (int)ev.pid);
+          k10LogAdd(lb);
+        }
+        break;
+      }
+
+      case EVT_ENC_END: {
+        static const char* REASON[] = {"hazard","abort","dawn","downed","disconnect"};
+        const char* reason = (ev.encOut < 5) ? REASON[ev.encOut] : "?";
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_end\",\"pid\":%d,\"q\":%d,\"r\":%d,\"reason\":\"%s\"}",
+          ev.pid, (int)ev.q, (int)ev.r, reason);
+        ws.textAll(buf, len);
+        if (ev.encOut == 1) {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d aborted encounter", (int)ev.pid);
+          k10LogAdd(lb);
+        } else if (ev.encOut == 2) {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d enc ended (dawn)", (int)ev.pid);
+          k10LogAdd(lb);
+        } else if (ev.encOut == 3) {
+          char lb[34]; snprintf(lb, sizeof(lb), "P%d DOWNED in encounter", (int)ev.pid);
+          k10LogAdd(lb);
+        }
+        break;
+      }
     }
   }
   // pendingCount was already reset to 0 inside the spinlock snapshot above.

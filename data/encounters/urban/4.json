@@ -1,0 +1,94 @@
+{
+  "id": "urban_hardware_01",
+  "title": "{{brand}} Hardware & Supply",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The hardware store is a cathedral of rust and opportunity — thirty-foot shelving runs stretching into a gloom lit only by the holes in the roof, the floor a mosaic of burst paint cans, scattered fasteners, and the kind of heavy silence that suggests the place has been claimed. A hand-painted sign nailed to the entrance beam reads: LEAVE SOMETHING OR LEAVE FAST.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Leave a tin of food and browse openly",
+          "cost": { "food": 1 },
+          "base_risk": 10,
+          "skill": 5,
+          "success_node": "main_floor",
+          "hazard_id": "disrespect"
+        },
+        {
+          "label": "Slip in through the loading dock quietly",
+          "cost": { "fatigue": 1 },
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "main_floor",
+          "hazard_id": "caught_sneaking"
+        }
+      ]
+    },
+    "main_floor": {
+      "text": "The main floor has been sorted — not looted, sorted. Someone has organized the remaining stock into rough categories: fuel canisters, cable, pipe fittings, filters. It is the work of a careful, practical mind. Whatever they need this material for, it is ongoing. You have room to take what you can justify without triggering whoever left that sign.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 4] },
+        { "res": 2, "qty": [1, 2] }
+      ],
+      "choices": [
+        {
+          "label": "Check the locked tool crib at the back",
+          "cost": { "fatigue": 1 },
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "tool_crib",
+          "hazard_id": "alarm_rig"
+        },
+        {
+          "label": "Search the chemical storage aisle",
+          "cost": { "fatigue": 1, "radiation": 1 },
+          "base_risk": 35,
+          "skill": 1,
+          "success_node": "tool_crib",
+          "hazard_id": "chemical_spill"
+        }
+      ]
+    },
+    "tool_crib": {
+      "text": "The tool crib is a {{crib_state}}. Heavy gear — generators, compressors, welding rigs — sits on pallets under dust sheets, untouched, too bulky to carry. But the upper shelving holds smaller items in sealed cases: filters, seals, hand tools in factory packaging. You fill what space remains in your pack, moving quietly in case that sign's author is somewhere nearby listening.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [3, 5] },
+        { "res": 2, "qty": [1, 3] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "disrespect": {
+      "text": "You left nothing, and someone was watching. A slingshot bolt cracks the shelf beside your head — a warning shot, but barely. A gravel-deep voice from the rafters tells you to put down half your pack and get out. You do.",
+      "penalty": { "fatigue": 2 },
+      "ends_encounter": true
+    },
+    "caught_sneaking": {
+      "text": "A trip-wire attached to a stack of metal pipe sends the whole column crashing down behind you. Your ankle twists hard under the impact of a rolling section.",
+      "penalty": { "fatigue": 2, "ll": -8 },
+      "status": 1,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "alarm_rig": {
+      "text": "The tool crib door is wired to a car horn mounted on the ceiling. The blast goes on for thirty seconds — every living thing in the block knows your location. You have seconds to grab and move.",
+      "penalty": { "fatigue": 2 },
+      "ends_encounter": true
+    },
+    "chemical_spill": {
+      "text": "A shelf of unlabeled solvent drums has corroded through at the bottom. You step into a pooled slick and breathe the fumes before you can cover your face. Your lungs burn for the next hour.",
+      "penalty": { "fatigue": 2, "radiation": 2, "ll": -5 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "brand": ["Ironhold", "Graystone", "Dusty's", "Anchor", "Bulwark", "Crestline", "Hardway"],
+    "crib_state": ["preserved relic", "caretaker's pride", "methodically maintained stockroom", "careful curator's hoard", "orderly holdout", "working man's last stand"]
+  }
+}

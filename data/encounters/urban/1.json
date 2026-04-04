@@ -1,0 +1,96 @@
+{
+  "id": "urban_pharmacy_01",
+  "title": "The {{adjective}} Pharmacy",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The pharmacy's plate glass is long gone, replaced by a curtain of grime-stiff plastic sheeting. Inside, ransacked shelves cast long shadows across a floor slick with burst blister packs and broken glass. Something moves near the back counter — a shape too deliberate to be debris settling.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Push through the shelves to the dispensary",
+          "cost": { "fatigue": 1 },
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "dispensary",
+          "hazard_id": "shelf_collapse"
+        },
+        {
+          "label": "Circle around to the rear delivery door",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "dispensary",
+          "hazard_id": "ambush_outside"
+        }
+      ]
+    },
+    "dispensary": {
+      "text": "The dispensary cage is still padlocked — someone welded it shut after the fall, sealing whatever was left inside. A rusted bolt-cutter hangs on a hook nearby, almost like an invitation. The shape you heard earlier is gone, leaving only a smear of dark matter on the linoleum.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "choices": [
+        {
+          "label": "Force the cage with the bolt-cutter",
+          "cost": { "fatigue": 2 },
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "stockroom",
+          "hazard_id": "cage_trap"
+        },
+        {
+          "label": "Search the outer shelves carefully",
+          "cost": { "fatigue": 1 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "stockroom",
+          "hazard_id": "glass_cut"
+        }
+      ]
+    },
+    "stockroom": {
+      "text": "The stockroom is a {{find}} — sealed cases of expired medication, a cold-locker that somehow held its seal, and a handwritten inventory from someone who thought they'd return. They didn't. You work fast, packing what your body can carry before the silence starts feeling deliberate again.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "shelf_collapse": {
+      "text": "A metal shelving unit groans and topples as you push past it. It catches you across the shoulders, driving you into the broken glass below.",
+      "penalty": { "fatigue": 2, "ll": -5 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "ambush_outside": {
+      "text": "A feral dog pack was sheltering in the alley. You take a bad bite before you can drive them off with your pack.",
+      "penalty": { "fatigue": 2, "ll": -8 },
+      "status": 1,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "cage_trap": {
+      "text": "The bolt-cutter snaps a trip-wire someone rigged across the cage door. A battery-powered alarm screams to life — every scavenger within two blocks now knows you are here. You grab what you can and run.",
+      "penalty": { "fatigue": 3 },
+      "ends_encounter": true
+    },
+    "glass_cut": {
+      "text": "A carelessly stacked tray of ampoules tips and shatters. The shards open a deep gash across your forearm before you can pull back.",
+      "penalty": { "fatigue": 1, "ll": -6 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adjective": ["Gutted", "Looted", "Forsaken", "Bleached", "Crumbling", "Rusted"],
+    "find": ["minor miracle", "careful hoarder's cache", "forgotten stockpile", "dusty jackpot", "survivor's last gift", "sealed time capsule"]
+  }
+}

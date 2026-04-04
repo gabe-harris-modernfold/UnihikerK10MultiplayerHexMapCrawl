@@ -1,0 +1,89 @@
+{
+  "id": "flooded_apartment_01",
+  "title": "{{floor_desc}} Waterlogged Block",
+  "start_node": "lobby",
+  "nodes": {
+    "lobby": {
+      "text": "The apartment block's lobby is thigh-deep in black water. The elevator shaft is open and flooded to the ceiling. A concrete stairwell to your right is dark but passable — the water only reaches the second step. Something floats face-down near the mailboxes and you make yourself not look at it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the stairs to the upper floors.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 20,
+          "skill": 5,
+          "success_node": "upper_hall",
+          "hazard_id": "stair_collapse"
+        },
+        {
+          "label": "Search the ground-floor units.",
+          "cost": { "fatigue": 1, "radiation": 1 },
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "upper_hall",
+          "hazard_id": "waterborne_sickness"
+        }
+      ]
+    },
+    "upper_hall": {
+      "text": "The second floor is damp but above the flood line. Doors hang open on empty units, drawers pulled out and left. Someone else was here. You find a forgotten jacket hung on a hook and feel the pockets — a few fuel tabs and a foil pack of dried rations remain.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 1, "qty": [1, 1] }
+      ],
+      "loot_table": "flooded_common",
+      "choices": [
+        {
+          "label": "Check the roof access hatch.",
+          "cost": { "fatigue": 2 },
+          "base_risk": 55,
+          "skill": 5,
+          "success_node": "rooftop_cache",
+          "hazard_id": "hatch_fall"
+        }
+      ]
+    },
+    "rooftop_cache": {
+      "text": "The roof is clear and dry. A waterproof survival bag is lashed to the exhaust stack — whoever left it here planned to return. Inside: sealed medicine, a full water container, and scrap metal stripped from the AC unit. The view from up here is bleak in every direction.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [2, 3] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 3] }
+      ],
+      "loot_table": "flooded_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "stair_collapse": {
+      "text": "The third step gives way. You catch yourself on the rail but your ankle twists hard against the broken concrete.",
+      "penalty": { "ll": -1, "fatigue": 2 },
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "waterborne_sickness": {
+      "text": "You open a door and the backed-up sewage inside pours into the hallway. The smell alone makes you gag and you spend an hour leaning against the wall before you can continue.",
+      "penalty": { "fatigue": 3, "radiation": 1 },
+      "ends_encounter": false
+    },
+    "hatch_fall": {
+      "text": "The hatch springs open and the pull-down ladder telescopes violently, catching you across the jaw and knocking you back down the stairs. You land hard and stay down for a moment.",
+      "penalty": { "ll": -2, "fatigue": 2 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "floor_desc": [
+      "Third-Floor",
+      "Sunken",
+      "The Half-Drowned",
+      "Brackish",
+      "Deadrise",
+      "Saltline",
+      "The Dark",
+      "Greywater"
+    ]
+  }
+}

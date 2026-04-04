@@ -1,0 +1,96 @@
+{
+  "id": "scrub_buried_vehicle_01",
+  "title": "The {{vehicle}} Burial",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A roof rack and the top third of a vehicle cab jut from the grey scrubland soil at an angle, half-buried by decades of ash-fall and wind-scour. The windshield is still intact on the buried side and the doors are sealed tight. Whatever drove off the track here, it went nose-first and never came up.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Dig out the driver's door with your hands",
+          "cost": { "fatigue": 3 },
+          "base_risk": 18,
+          "skill": 5,
+          "success_node": "cab",
+          "hazard_id": "ash_cave"
+        },
+        {
+          "label": "Pry the roof hatch open from above",
+          "cost": { "fatigue": 2 },
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "cab",
+          "hazard_id": "hatch_edge"
+        }
+      ]
+    },
+    "cab": {
+      "text": "Inside the cab, the seat has mummified with something still in it — you don't look too long. The glove compartment holds a sealed road kit and the dashboard cargo net caught a half-full canteen, desiccated food bars, and a folded emergency poncho. The cargo bed is below you, fully buried.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [1, 2] },
+        { "res": 1, "qty": [1, 2] }
+      ],
+      "loot_table": "scrub_common",
+      "choices": [
+        {
+          "label": "Tunnel to the cargo bed through the rear seat",
+          "cost": { "fatigue": 3 },
+          "base_risk": 45,
+          "skill": 5,
+          "success_node": "cargo_bed",
+          "hazard_id": "full_collapse"
+        },
+        {
+          "label": "Check the undercarriage fuel tank",
+          "cost": { "fatigue": 2 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cargo_bed",
+          "hazard_id": "fuel_ignite"
+        }
+      ]
+    },
+    "cargo_bed": {
+      "text": "The cargo bed held a toolbox welded to the floor and three scrap-metal drums — two empty, one sealed with what sloshes like fuel. You drag everything out through the cab tunnel, filthy but satisfied. The vehicle settles another centimetre into the earth as you clear the last item, as if relieved to be rid of it.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 3] },
+        { "res": 4, "qty": [2, 4] }
+      ],
+      "loot_table": "scrub_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "ash_cave": {
+      "text": "The ash wall collapses inward as you clear the last foot of debris, burying your arms to the elbow. You wrench free but your lungs are full of fine particulate.",
+      "penalty": { "fatigue": 3, "ll": -4 },
+      "status": 2,
+      "ends_encounter": false
+    },
+    "hatch_edge": {
+      "text": "The hatch tears free suddenly and its ragged edge opens a sharp cut across your palm. Blood makes everything slippery for the next hour.",
+      "penalty": { "fatigue": 1, "ll": -5 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": false
+    },
+    "full_collapse": {
+      "text": "The tunnel compacts around your shoulders and the rear seat frame pins your torso. It takes twenty minutes of careful work to extract yourself — you leave the cab empty-handed.",
+      "penalty": { "fatigue": 4 },
+      "ends_encounter": true
+    },
+    "fuel_ignite": {
+      "text": "A spark from your prying tool catches residue vapour from the cracked tank. A small fireball singes your forearm and eyebrows. You roll back fast.",
+      "penalty": { "fatigue": 2, "ll": -8 },
+      "status": 1,
+      "wound": [0, 1],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "vehicle": ["Truck", "Panel Van", "Crawler", "Utility Rig", "Military Hauler", "Survey Truck", "Cargo Runner", "Flatbed"]
+  }
+}

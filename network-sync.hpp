@@ -117,14 +117,15 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
       "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"eq\":[%d,%d,%d,%d,%d]}",
+      "\"eq\":[%d,%d,%d,%d,%d],\"enc\":%d}",
       p.invType[0],  p.invType[1],  p.invType[2],  p.invType[3],
       p.invType[4],  p.invType[5],  p.invType[6],  p.invType[7],
       p.invType[8],  p.invType[9],  p.invType[10], p.invType[11],
       p.invQty[0],   p.invQty[1],   p.invQty[2],   p.invQty[3],
       p.invQty[4],   p.invQty[5],   p.invQty[6],   p.invQty[7],
       p.invQty[8],   p.invQty[9],   p.invQty[10],  p.invQty[11],
-      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4]);
+      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4],
+      encounters[i].active ? 1 : 0);
   }
   // Ground items visible to this player
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"gi\":[");
@@ -140,11 +141,11 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   }
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d},"
+    "],\"gs\":{\"tc\":%d,\"dc\":%d},"
     "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
     "\"sv\":[%d,%d],"
     "\"fa\":%d}",
-    G.threatClock, G.dayCount, G.sharedFood, G.sharedWater,
+    G.threatClock, G.dayCount,
     terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
     terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
     terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
@@ -178,7 +179,7 @@ static void broadcastState() {
       "\"wd\":[%d,%d,%d],"
       "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
       "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"eq\":[%d,%d,%d,%d,%d]}",
+      "\"eq\":[%d,%d,%d,%d,%d],\"enc\":%d}",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
@@ -192,11 +193,12 @@ static void broadcastState() {
       p.invQty[0],   p.invQty[1],   p.invQty[2],   p.invQty[3],
       p.invQty[4],   p.invQty[5],   p.invQty[6],   p.invQty[7],
       p.invQty[8],   p.invQty[9],   p.invQty[10],  p.invQty[11],
-      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4]);
+      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4],
+      encounters[i].active ? 1 : 0);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"sf\":%d,\"sw\":%d}}",
-    G.threatClock, G.dayCount, G.sharedFood, G.sharedWater);
+    "],\"gs\":{\"tc\":%d,\"dc\":%d}}",
+    G.threatClock, G.dayCount);
   xSemaphoreGive(G.mutex);
   ws.textAll(buf, (size_t)pos);
 }

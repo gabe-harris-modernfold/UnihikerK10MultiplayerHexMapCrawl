@@ -75,6 +75,64 @@ export function gameStateReducer(state, event) {
         shared: { ...state.shared, ...event.updates },
       };
 
+    case 'ENC_START':
+      return {
+        ...state,
+        map: state.map.map((row, r) =>
+          r === event.r
+            ? row.map((cell, q) => q === event.q ? { ...cell, poi: 0 } : cell)
+            : row
+        ),
+        encounters: {
+          ...state.encounters,
+          [event.pid]: { active: true, hexQ: event.q, hexR: event.r, pendingLoot: [0,0,0,0,0] },
+        },
+      };
+
+    case 'ENC_ASSIST':
+      return {
+        ...state,
+        players: state.players.map(p =>
+          p.id === event.pid
+            ? { ...p, inv: p.inv.map((v, i) => i === event.res ? Math.max(0, v - 1) : v) }
+            : p
+        ),
+      };
+
+    case 'ENC_RESULT': {
+      const enc = state.encounters?.[event.pid] ?? {};
+      const newLoot = (enc.pendingLoot ?? [0,0,0,0,0]).map((v, i) => v + (event.loot?.[i] ?? 0));
+      return {
+        ...state,
+        players: state.players.map(p =>
+          p.id === event.pid
+            ? {
+                ...p,
+                ll:  Math.max(0, (p.ll  ?? 0) + (event.penLL  ?? 0)),
+                fat: Math.max(0, (p.fat ?? 0) + (event.penFat ?? 0)),
+                rad: Math.max(0, (p.rad ?? 0) + (event.penRad ?? 0)),
+                ...(event.st ? { st: event.st } : {}),
+              }
+            : p
+        ),
+        encounters: event.ends
+          ? { ...state.encounters, [event.pid]: undefined }
+          : { ...state.encounters, [event.pid]: { ...enc, pendingLoot: newLoot } },
+      };
+    }
+
+    case 'ENC_BANK':
+      return {
+        ...state,
+        encounters: { ...state.encounters, [event.pid]: undefined },
+      };
+
+    case 'ENC_END':
+      return {
+        ...state,
+        encounters: { ...state.encounters, [event.pid]: undefined },
+      };
+
     default:
       return state;
   }
