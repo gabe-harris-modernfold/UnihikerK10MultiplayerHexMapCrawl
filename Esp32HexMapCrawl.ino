@@ -293,6 +293,7 @@ struct Player {
   uint8_t  inv[5];
   uint16_t score;
   uint16_t steps;
+  uint16_t encCount;
 
   uint8_t  ll;
   uint8_t  food;
@@ -485,9 +486,6 @@ struct GameState {
   uint8_t  threatClock;
   bool     crisisState;
 
-  uint8_t  sharedFood;
-  uint8_t  sharedWater;
-
   uint32_t dayTick;
   uint16_t dayCount;
 };
@@ -498,7 +496,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 5;
+static constexpr uint8_t  SAVE_VERSION = 6;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -508,8 +506,6 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  version;
   uint16_t dayCount;
   uint8_t  threatClock;
-  uint8_t  sharedFood;
-  uint8_t  sharedWater;
   uint8_t  pad;
 };
 
@@ -551,7 +547,7 @@ static uint8_t  itemCount = 0;
 static GroundItem groundItems[MAX_GROUND];
 static unsigned long  lastStatusMs  = 0;
 static unsigned long  lastScreenMs  = 0;
-static constexpr uint32_t SCREEN_MS  = 2000;
+static constexpr uint32_t SCREEN_MS  = 10000;
 static UNIHIKER_K10   k10;
 static Music          k10Music;
 
@@ -565,15 +561,13 @@ static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 
 static uint8_t  k10Screen     = 0;
 static uint8_t  k10ScreenLast = 255;
-static uint8_t  k10GestCnt  = 0;
-static uint8_t  k10GestLast = GestureNone;
-static bool     k10BtnBLast = false;
+static bool     k10BtnBLast   = false;
+static volatile bool k10Dirty = true;  // set whenever game state changes
 
 static uint32_t k10TeamScore   = 0;
 static uint32_t k10LedPulse    = 0;
 static uint8_t  k10PulseR = 0, k10PulseG = 0, k10PulseB = 0;
 static uint8_t  k10PrevTCLevel = 0;
-static bool     k10ResCritPrev = false;
 
 static uint8_t  s_audioVol   = 5;
 static uint8_t  s_ledBright  = 4;
@@ -622,8 +616,8 @@ static int       imgCacheCount = 0;
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
-#include "ui-display.hpp"    // K10 screens, LED, audio
 #include "boot-assets.hpp"   // splash, asset loading, item registry, printStatus
+#include "ui-display.hpp"    // K10 screens, LED, audio
 
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
@@ -700,7 +694,6 @@ void setup() {
 
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
-  G.sharedFood  = 30; G.sharedWater = 30;
   G.dayTick = 0; G.dayCount = 0;
   memset(groundItems, 0, sizeof(groundItems));
 
@@ -831,14 +824,16 @@ void loop() {
 
   bool screenChanged = (k10Screen != k10ScreenLast);
   k10ScreenLast = k10Screen;
-  if (screenChanged || (k10Screen != 0 && now - lastScreenMs >= SCREEN_MS)) {
+  if (screenChanged || k10Dirty || (k10Screen != 0 && now - lastScreenMs >= SCREEN_MS)) {
     lastScreenMs = now;
+    k10Dirty = false;
     switch (k10Screen) {
       case 0:  if (screenChanged) drawTitleScreen(); break;
-      case 2:  drawEventLogScreen();  break;
-      case 3:  drawThreatScreen();    break;
-      case 4:  drawResourceScreen();  break;
-      default: drawPlayerScreen();    break;  // case 1
+      case 2:  drawEventLogScreen();   break;
+      case 3:  drawResourceScreen();   break;
+      case 4:  drawEncounterScreen();  break;
+      case 5:  drawMapScreen();        break;
+      default: drawPlayerScreen();     break;  // case 1
     }
   }
 

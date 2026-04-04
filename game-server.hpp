@@ -167,8 +167,6 @@ static void setupWiFiAndServer() {
       j += ",\"tc\":";          j += G.threatClock;
       j += ",\"crisis\":";      j += G.crisisState  ? "true" : "false";
       j += ",\"connected\":";   j += G.connectedCount;
-      j += ",\"sharedFood\":";  j += G.sharedFood;
-      j += ",\"sharedWater\":"; j += G.sharedWater;
       j += ",\"evtQueue\":";    j += pendingCount;
 
       int shelters = 0, impShelters = 0, poiCount = 0;

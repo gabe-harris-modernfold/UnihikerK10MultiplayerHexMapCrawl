@@ -1284,6 +1284,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         ev.q = (int16_t)enc.hexQ; ev.r = (int16_t)enc.hexR;
         memcpy(ev.encLoot, enc.pendingLoot, 5);
         addScore(p, ev, scoreGain);
+        p.encCount++;
         enqEvt(ev);
         Serial.printf("[ENC] P%d banked (res:%d score+%d%s)\n",
           pid, totalRes, scoreGain, fullClear ? " FULLCLEAR" : "");

@@ -18,6 +18,7 @@ const uiCooldown    = van.state(0);
 const uiLL          = van.state(7);
 const uiFood        = van.state(6);
 const uiWater       = van.state(6);
+const uiFat         = van.state(0);
 const uiResolve     = van.state(3);
 const uiMP          = van.state(6);
 // §6.2 Radiation track
@@ -30,7 +31,7 @@ const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
-const uiLogVisible  = van.state(localStorage.getItem('logVisible') !== '0');
+const uiLogVisible  = van.state(localStorage.getItem('logVisible') === '1');
 // Overlay open states — toggled via .val; van.derive in ui.js handles class changes
 const uiHexInfoOpen = van.state(false);
 const uiCharOpen    = van.state(false);
@@ -57,7 +58,6 @@ const NIGHT_FADE_INIT        = 0.72;   // initial alpha when REST action complet
 const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn overlay
 const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
 const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
-const FOOTPRINT_FADE_MS      = 90000;  // ms to fully fade from bright tan to dark
 const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on the current player
 
 // Rendering dimensions
@@ -78,7 +78,7 @@ const RIVER_RIPPLE_W_SCALE   = 0.85;  // ellipse horizontal radius as fraction o
 const RIVER_RIPPLE_H_SCALE   = 0.38;  // ellipse vertical radius as fraction of hex size × wave scale
 
 // Footprint rendering
-const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint circle layout
+const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint icon layout
 
 // Fog of war & visibility
 const FOG_INNER_ALPHA        = 0.78;  // alpha for inner fog ring (more visible)
@@ -95,11 +95,6 @@ let restSent       = false; // guard against REST double-click before server ack
 
 // ── Smooth animation ─────────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0.0, r: 0.0 }));
-
-// ── Footprint timestamps ──────────────────────────────────────────
-// key: 'q_r_pid' → Date.now() when that player last stepped on that hex.
-// Used to drive the bright-red → black colour fade on canvas.
-const footprintTimestamps = new Map();
 
 // ── Name-tag width cache ──────────────────────────────────────────
 // Avoids a ctx.measureText() call every frame per visible player.
@@ -160,6 +155,7 @@ function loadTerrainVariants(vc) {
 // ── Forage animal images ──────────────────────────────────────────
 // Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
 let forrageAnimalImgs = [];
+const collectedCells = new Set(); // cells cleared by 'col' — guards against vis disk overwrite
 
 /**
  * Load forage animal images.
@@ -486,7 +482,6 @@ function handleMsg(msg) {
         }
         // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
         if (_cur?.poi) {
-          console.log(`[ENC] Auto-triggering enc_start @ (${_me.q},${_me.r}) terrain=${_cur.terrain} (${TERRAIN[_cur.terrain]?.name ?? '?'})`);
           send({ t: 'enc_start', q: _me.q, r: _me.r });
         }
       }
@@ -531,7 +526,6 @@ function handleMsg(msg) {
 
     case 'enc_path':
       // Direct message: server sends encounter location to the active player
-      console.log('[ENC] enc_path received:', msg);
       window._startEncounterFetch?.(msg.biome, msg.id);
       break;
 
@@ -549,6 +543,7 @@ function handleEvent(ev) {
       // Clear resource unconditionally — null check handles fog cells
       if (gameMap[ev.r]?.[ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: 0, amount: 0 };
+      collectedCells.add(`${ev.q}_${ev.r}`);
       const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
       if (ev.pid === myId) {
@@ -564,6 +559,7 @@ function handleEvent(ev) {
     case 'rsp':
       if (gameMap[ev.r] && gameMap[ev.r][ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: ev.res, amount: ev.amt };
+      collectedCells.delete(`${ev.q}_${ev.r}`);
       break;
     case 'mv': {
       const pm = players[ev.pid];
@@ -579,13 +575,6 @@ function handleEvent(ev) {
       if (gameMap[ev.r]?.[ev.q]) {
         const c = gameMap[ev.r][ev.q];
         gameMap[ev.r][ev.q] = { ...c, footprints: (c.footprints || 0) | (1 << ev.pid) };
-      }
-      // Record timestamp for the red→black fade animation.
-      const _fpNow = Date.now();
-      footprintTimestamps.set(`${ev.q}_${ev.r}_${ev.pid}`, _fpNow);
-      // Prune expired entries so the Map doesn't grow unbounded over long sessions.
-      for (const [key, ts] of footprintTimestamps) {
-        if (_fpNow - ts > FOOTPRINT_FADE_MS) footprintTimestamps.delete(key);
       }
       if (ev.radd && ev.radd > 0) {
         pm.rad = ev.rad ?? pm.rad;
@@ -681,6 +670,7 @@ function handleEvent(ev) {
       const who    = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const llTxt  = ev.dll < 0 ? ` \u25BC LL${ev.dll}` : ev.dll > 0 ? ` \u25B2 LL+${ev.dll}` : '';
       const cls    = ev.dll < 0 ? 'log-check-fail' : 'log-mv';
+      if (ev.day !== undefined) gameState.dc = ev.day;
       addLog(`<span class="${cls}">\u2600 Day ${ev.day}: ${escHtml(who)} F:${ev.f} W:${ev.w}${llTxt}</span>`);
       if (ev.pid === myId) {
         const llTxt = ev.dll < 0 ? ` LL${ev.dll}` : ev.dll > 0 ? ` LL+${ev.dll}` : '';
@@ -965,7 +955,6 @@ function decodeCell(terrainByte, dataByte, variantByte = 0) {
     resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
     variant:    variantByte & 0xF,        // low nibble: terrain image variant (0-15)
   };
-  if (cell.poi) console.log(`[ENC] POI cell decoded: terrain=${terrainByte} (${TERRAIN[terrainByte]?.name ?? '?'}) dd=0x${dataByte.toString(16)}`);
   return cell;
 }
 
@@ -985,8 +974,6 @@ function parseMapFog(hexStr) {
 // Format: "QQRRTTDDVV..." — 10 hex chars per cell (5 bytes)
 //   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
 function applyVisDisk(cells) {
-  const now = Date.now();
-  const poisRevealed = [];
   for (let i = 0; i < cells.length; i += 10) {
     const q  = parseInt(cells.substr(i,     2), 16);
     const r  = parseInt(cells.substr(i + 2, 2), 16);
@@ -995,19 +982,14 @@ function applyVisDisk(cells) {
     const vv = parseInt(cells.substr(i + 8, 2), 16);
     if (r < MAP_ROWS && q < MAP_COLS) {
       const cell = decodeCell(tt, dd, vv);
-      gameMap[r][q] = cell;
-      if (cell?.poi) poisRevealed.push({ q, r, tt });
-      const fp = dd & 0x3F;
-      for (let fpid = 0; fpid < 6; fpid++) {
-        if (fp & (1 << fpid)) {
-          const key = `${q}_${r}_${fpid}`;
-          if (!footprintTimestamps.has(key)) footprintTimestamps.set(key, now);
-        }
+      // Preserve locally-cleared resource — col event may arrive before vis disk
+      if (collectedCells.has(`${q}_${r}`) && cell && cell.resource > 0) {
+        cell.resource = 0;
+        cell.amount   = 0;
       }
+      gameMap[r][q] = cell;
     }
   }
-  if (poisRevealed.length)
-    console.log('[ENC] POIs in vis-disk:', poisRevealed.map(p => `(${p.q},${p.r}) ${TERRAIN[p.tt]?.name ?? p.tt}`).join(', '));
 }
 
 // ── Hex math (flat-top) ─────────────────────────────────────────
@@ -1363,42 +1345,26 @@ function render() {
       // Reset alpha — footprints/shelter always render at full opacity.
       ctx.globalAlpha = 1;
 
-      // Footprints: show which players have visited this hex.
-      // Fresh footprints glow bright red, fading to near-black over FOOTPRINT_FADE_MS.
-      // ctx.filter is used to tint the emoji (fillStyle has no effect on emoji colour).
+      // Footprints: dark brown 👣 icon per player that has visited this hex.
       if (cell.footprints > 0) {
         const footprintSize = Math.max(6, Math.round(HEX_SZ * 0.22));
-        let footprintCount  = 0;
+        let footprintCount = 0;
         for (let i = 0; i < 6; i++) if (cell.footprints & (1 << i)) footprintCount++;
-
         let footprintIdx = 0;
-        const now = Date.now();
         for (let fpid = 0; fpid < 6; fpid++) {
           if ((cell.footprints & (1 << fpid)) === 0) continue;
-
           const angle  = (footprintIdx * Math.PI * 2) / Math.max(1, footprintCount);
           const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
           const fx = cx + Math.cos(angle) * radius;
           const fy = cy + Math.sin(angle) * radius;
-
-          // t=0 → just stamped (light tan); t=1 → fully faded (invisible — skip draw)
-          const ts = footprintTimestamps.get(`${mapQ}_${mapR}_${fpid}`);
-          const t  = ts ? Math.min(1, (now - ts) / FOOTPRINT_FADE_MS) : 1;
-          if (t >= 1) { footprintIdx++; continue; }  // expired — nothing visible to draw
-
-          // sepia(1) keeps the warm tan hue naturally; brightness fades light→dark.
-          const bri = (1.5 * (1 - t) + 0.12).toFixed(2);  // 1.62 fresh → 0.12 old
-          const sat = (1.4 * (1 - t) + 0.2).toFixed(2);   // 1.6  fresh → 0.2  old
-
           ctx.save();
-          ctx.filter      = `sepia(1) saturate(${sat}) brightness(${bri})`;
-          ctx.globalAlpha = 0.82 * (1 - t) + 0.04;  // 0.86 fresh → 0.04 old
-          ctx.font        = `${footprintSize}px monospace`;
-          ctx.textAlign   = 'center';
+          ctx.filter       = 'sepia(1) saturate(0.5) brightness(0.35)';
+          ctx.globalAlpha  = 0.75;
+          ctx.font         = `${footprintSize}px monospace`;
+          ctx.textAlign    = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('👣', fx, fy);
-          ctx.restore();  // also resets ctx.filter to 'none'
-
+          ctx.restore();
           footprintIdx++;
         }
       }
@@ -1413,16 +1379,6 @@ function render() {
         }
       }
 
-      // POI encounter indicator — eye icon (bottom-right corner of hex)
-      if (cell.poi) {
-        ctx.save();
-        ctx.font         = `${Math.max(10, Math.round(HEX_SZ * 0.4))}px monospace`;
-        ctx.textAlign    = 'right';
-        ctx.textBaseline = 'bottom';
-        ctx.fillStyle    = '#FFD700';
-        ctx.fillText('\uD83D\uDC41', cx + HEX_SZ * 0.45, cy + HEX_SZ * 0.45);
-        ctx.restore();
-      }
 
       // Shelter indicator: 1=has shelter — PNG centred on hex, emoji fallback
       if (cell.shelter) {
@@ -1459,6 +1415,30 @@ function render() {
       const cy = px.y + oy;
       if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
       if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      ctx.stroke();
+    }
+  }
+
+  // ── POI hex outline (thicker, same colour as grid, visible cells only) ──
+  ctx.strokeStyle = 'rgba(50,50,50,0.9)';
+  ctx.lineWidth   = 3.0;
+  ctx.globalAlpha = 1;
+  for (let dr = -viewR; dr <= viewR; dr++) {
+    for (let dq = -viewQ; dq <= viewQ; dq++) {
+      const vq   = centreQ + dq;
+      const vr   = centreR + dr;
+      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
+      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      const px   = hexToPixel(vq, vr, HEX_SZ);
+      const cx   = px.x + ox;
+      const cy   = px.y + oy;
+      if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+      if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      const cell = gameMap[mapR]?.[mapQ];
+      if (!cell?.poi) continue;
+      const dist2 = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
+      if (dist2 > myVisionR && !surveyedCells.has(`${mapQ}_${mapR}`)) continue;
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
       ctx.stroke();
     }

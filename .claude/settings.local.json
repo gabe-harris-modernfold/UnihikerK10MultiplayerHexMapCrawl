@@ -24,7 +24,8 @@
       "Bash(done)",
       "Bash(find /c/SourceCode/Esp32HexMapCrawl -type f \\\\\\(-name *.hpp -o -name *.cpp \\\\\\))",
       "Bash(grep -i \"\\\\.h$\\\\|\\\\.hpp$\")",
-      "Bash(grep \"\\\\.h$\")"
+      "Bash(grep \"\\\\.h$\")",
+      "Bash(grep -E \"\\\\.\\(js|json|txt\\)$\")"
     ]
   }
 }

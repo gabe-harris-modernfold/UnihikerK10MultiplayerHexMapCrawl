@@ -15,8 +15,8 @@ static void splashAdd(const char* msg, uint32_t col = 0) {
   snprintf(_sLog[_sN++], 30, "%s", msg);
   k10.canvas->canvasRectangle(0, 0, 240, 320, 0x000000, 0x000000, true);
   for (uint8_t i = 0; i < _sN; i++)
-    k10.canvas->canvasText(_sLog[i], 4, 4 + i*22,
-                           0x40C060, Canvas::eCNAndENFont16, 50, false);
+    k10.canvas->canvasText(_sLog[i], 4, 4 + i*16,
+                           0xD06818, Canvas::eCNAndENFont16, 50, false);
   k10.canvas->updateCanvas();
 }
 
@@ -112,7 +112,7 @@ static void printStatus() {
     uint8_t  skills[NUM_SKILLS];
   } snap[MAX_PLAYERS];
   uint32_t tick = 0;
-  uint8_t  snapTC = 0, snapSF = 0, snapSW = 0;
+  uint8_t  snapTC = 0;
   uint16_t snapDay = 0;
   uint32_t nowMs = millis();
 
@@ -122,8 +122,6 @@ static void printStatus() {
   tick    = G.tickId;
   snapTC  = G.threatClock;
   snapDay = G.dayCount;
-  snapSF  = G.sharedFood;
-  snapSW  = G.sharedWater;
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p       = G.players[i];
     snap[i].on      = p.connected;
@@ -150,12 +148,12 @@ static void printStatus() {
   xSemaphoreGive(G.mutex);
 
   uint32_t upSec = nowMs / 1000;
-  Serial.printf("\n[STATUS] tick:%lu | heap:%lu | uptime:%lum%02lus | players:%d/%d | Day:%d TC:%d/20 | Shared F:%d W:%d\n",
+  Serial.printf("\n[STATUS] tick:%lu | heap:%lu | uptime:%lum%02lus | players:%d/%d | Day:%d TC:%d/20\n",
     (unsigned long)tick,
     (unsigned long)ESP.getFreeHeap(),
     (unsigned long)(upSec / 60), (unsigned long)(upSec % 60),
     G.connectedCount, MAX_PLAYERS,
-    snapDay, snapTC, snapSF, snapSW);
+    snapDay, snapTC);
 
   Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W  T   R Res Sb  Steps Score  Sk:Na Fo Sc Tr Sh En");
   Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- -- --- -- --- ----- ----- --------------------------------");

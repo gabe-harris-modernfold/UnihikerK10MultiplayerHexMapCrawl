@@ -9,7 +9,6 @@ function updateTerrainCard() {
 
 function populateHexInfo(q, r, cell) {
   const t = TERRAIN[cell.terrain] || TERRAIN[0];
-  document.getElementById('hi-icon').textContent  = t.icon;
   document.getElementById('hi-title').textContent = t.name.toUpperCase();
 
   // Move cost
@@ -102,6 +101,7 @@ function updateSidebar() {
   uiLL.val      = me.ll   ?? 6;
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
+  uiFat.val     = me.fat  ?? 0;
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
@@ -112,6 +112,8 @@ function updateSidebar() {
     .map(({ p, i }) => ({ i, nm: p.nm || `P${i}`, sc: p.sc, color: PLAYER_COLORS[i], isMe: i === myId }))
     .sort((a, b) => b.sc - a.sc)
     .map((entry, rank) => ({ ...entry, rank: rank + 1 }));
+  const _dayEl = document.getElementById('hud-day');
+  if (_dayEl) _dayEl.textContent = gameState.dc > 0 ? `DAY ${gameState.dc}` : '';
   updateClock();
   // REST button turns dark green when any connected player is resting
   const restBtn = document.getElementById('fab-rest-btn');
@@ -158,12 +160,16 @@ function openCharSheet() {
   const me = players[myId];
   document.getElementById('cs-name-input').value = me.nm || '';
 
-  // Archetype banner
+  // Archetype banner + portrait
   const arch     = ARCHETYPES[me.arch] || ARCHETYPES[0];
   const archIcon = document.getElementById('cs-arch-icon');
   const archName = document.getElementById('cs-arch-name');
   if (archIcon) { archIcon.textContent = arch.icon; archIcon.style.color = arch.color; }
   if (archName) { archName.textContent = arch.name; archName.style.color = arch.color; }
+  document.getElementById('char-sheet')
+    .style.setProperty('--cs-portrait', `url('img/survivors/${arch.name.toLowerCase()}.jpg')`);
+  const archTrait = document.getElementById('cs-arch-trait');
+  if (archTrait) archTrait.textContent = arch.trait || '';
 
   // Skills grid
   const grid = document.getElementById('cs-skills-grid');
@@ -175,7 +181,7 @@ function openCharSheet() {
       row.className = 'cs-skill-row';
       const label = document.createElement('span');
       label.className = 'cs-skill-name';
-      label.textContent = SK_SHORT[i];
+      label.textContent = name;
       const dots = document.createElement('span');
       dots.className = 'cs-skill-dots';
       for (let d = 1; d <= 2; d++) {
@@ -510,10 +516,6 @@ function initHudBindings() {
   if (csScore)  { csScore.textContent  = ''; van.add(csScore,  () => String(uiScore.val)); }
   if (hudScore) { hudScore.textContent = ''; van.add(hudScore, () => String(uiScore.val)); }
 
-  // Position
-  const posEl = document.getElementById('pos-info');
-  posEl.textContent = '';
-  van.add(posEl, () => uiPos.val);
 }
 
 function initCharSheetBindings() {
@@ -629,6 +631,11 @@ function initCharSheetBindings() {
     }
   });
 
+  // Fatigue track (0–8, no thresholds)
+  van.derive(() => {
+    renderTrackBoxes('cs-fat-track', uiFat.val, [], 0, 8);
+  });
+
 }
 
 function initMapBindings() {
@@ -650,7 +657,6 @@ function initMapBindings() {
     if (!cc) return;
     const t     = TERRAIN[cc.terrain] || TERRAIN[0];
     const mcStr = t.mc === 255 ? 'IMPASSABLE' : `MC:${t.mc}  SV:${t.sv}`;
-    document.getElementById('tc-icon').textContent = t.icon;
     document.getElementById('tc-name').textContent = t.name;
     terrainCard.setAttribute('aria-label', `${t.name} — click for hex details`);
     document.getElementById('tc-sub').textContent  =
@@ -780,6 +786,7 @@ function initActionPanel() {
   });
 
   function closeActionPanel() {
+    document.getElementById('fab-action-btn')?.focus();
     actionPanel.setAttribute('aria-hidden', 'true');
     actionPanel.classList.remove('open');
     actionBtnList.style.display = '';
@@ -868,13 +875,14 @@ function initActionPanel() {
 
     // Fix: compute actual shelter MP cost dynamically — fall back to basic (1 MP) if not enough MP for improved
     const shelterMpCost = (scrap >= 2 && mp >= 2) ? 2 : 1;
+    const shelterLabel  = shelterLevel >= 1 ? 'UPGRADE SHELTER' : 'BUILD SHELTER';
 
     actionBtnList.innerHTML = '';
     const actionDefs = [
       { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
       { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u26FA', label: 'BUILD SHELTER', mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_SHELTER, icon: '\u26FA', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
     ];
     // Scout-exclusive: SURVEY is hidden for non-Scouts
@@ -899,18 +907,23 @@ function initActionPanel() {
       const slotFree   = slotless || !actUsed;
       const canAct     = available && hasMP && hasScrap && slotFree;
 
-      // Dynamic desc: BUILD SHELTER shows actual cost (always 2 scrap for improved)
+      // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
       let desc = def.desc;
       if (def.id === ACT_SHELTER) {
-        desc = shelterMaxed  ? 'Improved shelter already here — nothing to build'
-             : scrap === 0   ? 'Needs scrap — none in pack'
-             : scrap === 1   ? '1 scrap → shelter ⛺ (1 MP, +4 pts)'
-             : mp < 2        ? '1 scrap → shelter ⛺ (1 MP, +4 pts) — not enough MP for improved'
-             :                 '2 scrap → improved shelter 🏠 (2 MP, +8 pts)';
+        desc = shelterMaxed                          ? 'Improved shelter already here — nothing to build'
+             : shelterLevel === 1 && scrap === 0     ? 'Shelter here — needs scrap to upgrade'
+             : shelterLevel === 1 && scrap >= 2 && mp >= 2 ? '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)'
+             : shelterLevel === 1                    ? '1 scrap → upgrade to improved \uD83C\uDFE0 (1 MP, +4 pts)'
+             : scrap === 0                           ? 'Needs scrap — none in pack'
+             : scrap === 1                           ? '1 scrap → shelter \u26FA (1 MP, +4 pts)'
+             : mp < 2                                ? '1 scrap → shelter \u26FA (1 MP, +4 pts) — not enough MP for improved'
+             :                                        '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = shelterMaxed ? 'Max shelter built here'
+      const blockReason = shelterMaxed                      ? 'Max shelter built here'
+                        : def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap
+                                                            ? 'Shelter here — need scrap to upgrade'
                         : !available   ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
                                         : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh \u00b7 Flooded District)'
                                         : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
@@ -1372,7 +1385,7 @@ function initMenuSystem() {
         md({ class: 'ht-track-list' },
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Global'),
-            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, sharedFood, sharedWater, evtQueue')
+            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, evtQueue')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Map'),
@@ -1710,11 +1723,6 @@ function initCharSelect() {
               )
             ),
             div({ class: 'arch-skills' }, ...skillDots),
-            div({ class: 'arch-trait' },
-              span({ class: 'arch-trait-label' }, 'TRAIT \u2014 '),
-              span({ class: 'arch-trait-text' }, arch.trait)
-            ),
-            div({ class: 'arch-flavor' }, arch.flavor),
             null
           );
         })
@@ -1946,7 +1954,7 @@ function initEncounterOverlay() {
     currentNode = node;
     nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
 
-    const baseRisk = node.choices?.[0]?.base_risk ?? 0;
+    const baseRisk = Math.max(0, ...(node.choices ?? []).map(c => c.base_risk ?? 0));
     dnLabel.textContent = baseRisk > 0 ? `BASE RISK ${baseRisk}%` : 'NO RISK';
     riskFill.style.width = `${baseRisk}%`;
 
@@ -2004,7 +2012,7 @@ function initEncounterOverlay() {
       skill:       ch.skill      ?? 2,
       loot:        nodeLoot,
       lt:          lootTable,
-      can_bank:    ch.can_bank   ?? false,
+      can_bank:    nextNode?.can_bank ?? false,
       ci:          nextKey,
       cost_ll:     cost.ll        ?? 0,
       cost_fat:    cost.fatigue   ?? 0,
@@ -2041,6 +2049,7 @@ function initEncounterOverlay() {
     pendingLoot    = [0,0,0,0,0];
     pendingNextKey = '';
     canBank        = false;
+    lootDisp.textContent  = '';
     bankRow.style.display = 'none';
     choiceList.innerHTML  = '';
   }
@@ -2139,6 +2148,11 @@ function initEncounterOverlay() {
   };
 
   allyDismiss.addEventListener('click', window._hideAllyEncBanner);
+
+  // Fatigue track in encounter overlay
+  van.derive(() => {
+    renderTrackBoxes('enc-fat-track', uiFat.val, [], 0, 8);
+  });
 }
 
 // ── VanJS entry point ─────────────────────────────────────────────

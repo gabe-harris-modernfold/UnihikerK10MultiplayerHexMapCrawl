@@ -15,6 +15,7 @@
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
+    <span id="hud-day" class="hud-day" aria-label="day count"></span>
     <span id="hud-clock" class="hud-clock"></span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
@@ -39,7 +40,6 @@
     <!-- Terrain card (upper-right of canvas) -->
     <div id="terrain-card" role="button" tabindex="0" title="Click for hex details" aria-label="current terrain — click for hex details" aria-expanded="false">
       <div id="tc-header">
-        <div id="tc-icon">&#x2620;</div>
         <div id="tc-text">
           <div id="tc-name">Unknown</div>
           <div id="tc-sub">Scanning...</div>
@@ -52,7 +52,7 @@
     <!-- Expanded hex info panel -->
     <div id="hex-info">
       <span id="hex-close" role="button" tabindex="0" aria-label="close hex info panel">&#x2715;</span>
-      <h2><span class="hi-icon" id="hi-icon">&#x2620;</span><span id="hi-title">HEX DATA</span></h2>
+      <h2><span id="hi-title">HEX DATA</span></h2>
       <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
       <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
       <div class="hi-row"><span class="hi-label">Vision</span><span class="hi-val" id="hi-vis">—</span></div>
@@ -71,6 +71,13 @@
 
   </div>
 
+  <!-- Fab actions (outside sidebar, bottom-aligned above controls) -->
+  <div id="fab-col">
+    <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">zzz</button>
+    <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">doit</button>
+    <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">you</button>
+  </div>
+
   <!-- Sidebar -->
   <div id="sidebar">
     <div class="side-panel">
@@ -84,14 +91,8 @@
     <div class="side-panel">
       <h3>Score</h3>
       <div id="score-wrap"><div id="my-score">0</div></div>
-      <div id="pos-info">Q:— R:—</div>
     </div>
     <div id="players-panel">
-      <div id="fab-col">
-        <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">&#x25BC;<br><span class="fab-key">R</span></button>
-        <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">&#x261E;<br><span class="fab-key">A</span></button>
-        <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">&#x2620;<br><span class="fab-key">C</span></button>
-      </div>
       <div id="players-content">
         <h3>Survivors</h3>
         <div id="player-list"></div>
@@ -220,6 +221,10 @@
       <div class="check-lbl" id="enc-dn-label">DN —</div>
       <div id="enc-risk-bar"><div id="enc-risk-fill"></div></div>
     </div>
+    <div id="enc-fat-bar-wrap">
+      <span class="check-lbl" style="font-size:11px">FATIGUE</span>
+      <div class="track-boxes" id="enc-fat-track" role="meter" aria-label="Fatigue" aria-valuemin="0" aria-valuemax="8" aria-valuenow="0"></div>
+    </div>
     <div id="enc-loot-display"></div>
     <div id="enc-choice-list"></div>
     <div id="enc-bank-row" style="display:none">
@@ -234,108 +239,116 @@
   <div id="ally-enc-title" class="check-lbl">&#x1F441; SURVIVOR INSIDE</div>
   <div id="ally-enc-sub"></div>
   <div id="ally-enc-assist-row"></div>
-  <button id="ally-enc-dismiss" class="chk-action-btn" style="margin-top:8px;font-size:10px">DISMISS</button>
+  <button id="ally-enc-dismiss" class="chk-action-btn" style="margin-top:8px;font-size:12px">DISMISS</button>
 </div>
 
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
 <div id="char-overlay" role="dialog" aria-modal="true" aria-labelledby="char-sheet-title" aria-hidden="true">
   <div id="char-sheet">
     <span id="char-close" role="button" tabindex="0" aria-label="close survivor sheet">&#x2715;</span>
-    <h2 id="char-sheet-title">&#x2620; SURVIVOR</h2>
 
-    <!-- Name input -->
-    <div class="cs-section">
-      <h3>Call Sign</h3>
-      <label for="cs-name-input" class="check-lbl" style="display:block;margin-bottom:4px">Call Sign</label>
-      <div class="cs-name-row">
-        <input id="cs-name-input" type="text" maxlength="11" placeholder="Enter call sign..." aria-describedby="cs-name-hint">
-        <button id="cs-name-btn">CONFIRM</button>
-      </div>
-      <span id="cs-name-hint" class="track-suffix" style="font-size:11px;display:block;margin-top:2px">Max 11 characters</span>
-    </div>
-
-    <!-- Survivor / archetype + skills -->
-    <div class="cs-section">
-      <h3>Survivor</h3>
-      <div id="cs-arch-banner">
-        <span id="cs-arch-icon"></span><span id="cs-arch-name">—</span>
-      </div>
-      <div id="cs-skills-grid"><!-- populated by JS --></div>
-      <div class="stat-grid" style="margin-top:10px">
-        <div class="stat-box"><div class="stat-val" id="cs-steps">—</div><div class="stat-label">HEXES WALKED</div></div>
-        <div class="stat-box"><div class="stat-val" id="cs-vision">1</div><div class="stat-label">VISION RANGE</div></div>
-      </div>
-    </div>
-
-    <!-- Survival Tracks (§4) -->
-    <div class="cs-section">
-      <h3>Survival Tracks</h3>
-      <!-- Life Level: 6 boxes -->
-      <div class="track-row">
-        <span class="track-label">LIFE LVL</span>
-        <div class="track-boxes" id="cs-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
-      </div>
-      <!-- Food track: thresholds at 4 and 2 -->
-      <div class="track-row">
-        <span class="track-label">FOOD</span>
-        <div class="track-boxes" id="cs-food-track" role="meter" aria-label="Food" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
-      </div>
-      <!-- Water track: thresholds at 5, 3, 1 -->
-      <div class="track-row">
-        <span class="track-label">WATER</span>
-        <div class="track-boxes" id="cs-water-track" role="meter" aria-label="Water" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
-      </div>
-      <!-- Radiation track: 10 boxes; thresholds at 4 (Rad-Sick) and 7 (Dusk check) -->
-      <div class="track-row">
-        <span class="track-label">RADS</span>
-        <div class="track-boxes rad-track" id="cs-rad-track" role="meter" aria-label="Radiation" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
-        <span class="track-suffix" id="cs-rad-status"></span>
-      </div>
-      <!-- Resolve tokens -->
-      <div class="track-row">
-        <span class="track-label">RESOLVE</span>
-        <div id="cs-resolve-tokens"></div>
-      </div>
-      <!-- Wounds & Conditions -->
-      <div class="track-row wounds-row">
-        <span class="track-label">WOUNDS</span>
-        <div class="wounds-grid" id="cs-wounds-grid">
-          <span class="wound-badge" id="cs-wd0" title="Minor Wounds">—</span>
-          <span class="wound-badge" id="cs-wd1" title="Major Wounds">—</span>
-          <span class="wound-badge" id="cs-wd2" title="Grievous Wounds">—</span>
+    <!-- Portrait column -->
+    <div id="cs-portrait-panel">
+      <div id="cs-portrait-identity">
+        <div id="cs-arch-banner">
+          <span id="cs-arch-icon"></span><span id="cs-arch-name">—</span>
         </div>
-        <span class="track-val wound-cond" id="cs-conditions"></span>
+        <div id="cs-arch-trait"></div>
       </div>
     </div>
 
-    <!-- Equipment Slots -->
-    <div class="cs-section">
-      <h3>Strapped On</h3>
-      <div id="cs-equip-grid"><!-- populated by renderEquipment() in ui.js --></div>
+    <!-- Stats column -->
+    <div id="cs-stats-panel">
+      <h2 id="char-sheet-title">&#x2620; SURVIVOR</h2>
+
+      <!-- Name input -->
+      <div class="cs-section">
+        <h3>Call Sign</h3>
+        <label for="cs-name-input" class="check-lbl" style="display:block;margin-bottom:4px">Call Sign</label>
+        <div class="cs-name-row">
+          <input id="cs-name-input" type="text" maxlength="11" placeholder="Enter call sign..." aria-describedby="cs-name-hint">
+          <button id="cs-name-btn">CONFIRM</button>
+        </div>
+        <span id="cs-name-hint" class="track-suffix" style="font-size:13px;display:block;margin-top:2px">Max 11 characters</span>
+      </div>
+
+      <!-- Skills -->
+      <div class="cs-section">
+        <h3>Skills</h3>
+        <div id="cs-skills-grid"><!-- populated by JS --></div>
+        <div class="stat-grid" style="margin-top:10px">
+          <div class="stat-box"><div class="stat-val" id="cs-steps">—</div><div class="stat-label">HEXES WALKED</div></div>
+          <div class="stat-box"><div class="stat-val" id="cs-vision">1</div><div class="stat-label">VISION RANGE</div></div>
+        </div>
+      </div>
+
+      <!-- Survival Tracks (§4) -->
+      <div class="cs-section">
+        <h3>Survival Tracks</h3>
+        <div class="track-row">
+          <span class="track-label">LIFE LEVEL</span>
+          <div class="track-boxes" id="cs-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
+        </div>
+        <div class="track-row">
+          <span class="track-label">FOOD</span>
+          <div class="track-boxes" id="cs-food-track" role="meter" aria-label="Food" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
+        </div>
+        <div class="track-row">
+          <span class="track-label">WATER</span>
+          <div class="track-boxes" id="cs-water-track" role="meter" aria-label="Water" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
+        </div>
+        <div class="track-row">
+          <span class="track-label">FATIGUE</span>
+          <div class="track-boxes" id="cs-fat-track" role="meter" aria-label="Fatigue" aria-valuemin="0" aria-valuemax="8" aria-valuenow="0"></div>
+        </div>
+        <div class="track-row">
+          <span class="track-label">RADIATION</span>
+          <div class="track-boxes rad-track" id="cs-rad-track" role="meter" aria-label="Radiation" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
+          <span class="track-suffix" id="cs-rad-status"></span>
+        </div>
+        <div class="track-row">
+          <span class="track-label">RESOLVE</span>
+          <div id="cs-resolve-tokens"></div>
+        </div>
+        <div class="track-row wounds-row">
+          <span class="track-label">WOUNDS</span>
+          <div class="wounds-grid" id="cs-wounds-grid">
+            <span class="wound-badge" id="cs-wd0" title="Minor Wounds">—</span>
+            <span class="wound-badge" id="cs-wd1" title="Major Wounds">—</span>
+            <span class="wound-badge" id="cs-wd2" title="Grievous Wounds">—</span>
+          </div>
+          <span class="track-val wound-cond" id="cs-conditions"></span>
+        </div>
+      </div>
+
+      <!-- Equipment Slots -->
+      <div class="cs-section">
+        <h3>Strapped On</h3>
+        <div id="cs-equip-grid"><!-- populated by renderEquipment() in ui.js --></div>
+      </div>
+
+      <!-- Inventory -->
+      <div class="cs-section">
+        <h3>Carried Misery</h3>
+        <div class="inv-grid">
+          <div class="inv-box"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
+          <div class="inv-box"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
+          <div class="inv-box"><div class="dot dot-fuel"></div><div class="qty" id="cs-inv2">0</div><div class="lbl">Fuel</div></div>
+          <div class="inv-box"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
+          <div class="inv-box"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
+        </div>
+        <div id="cs-item-grid" style="margin-top:10px"><!-- populated by renderInventory() --></div>
+      </div>
+
+      <!-- Score -->
+      <div class="cs-section">
+        <div class="total-score">
+          <div class="big" id="cs-score">0</div>
+          <div class="lbl">SURVIVAL SCORE</div>
+        </div>
+      </div>
     </div>
 
-    <!-- Inventory -->
-    <div class="cs-section">
-      <h3>Carried Misery</h3>
-      <!-- Legacy resources -->
-      <div class="inv-grid">
-        <div class="inv-box"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
-        <div class="inv-box"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
-        <div class="inv-box"><div class="dot dot-fuel"></div><div class="qty" id="cs-inv2">0</div><div class="lbl">Fuel</div></div>
-        <div class="inv-box"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
-        <div class="inv-box"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
-      </div>
-      <!-- Typed item inventory grid (populated by renderInventory()) -->
-      <div id="cs-item-grid" style="margin-top:10px"><!-- populated by renderInventory() --></div>
-    </div>
-
-    <!-- Score -->
-    <div class="cs-section">
-      <div class="total-score">
-        <div class="big" id="cs-score">0</div>
-        <div class="lbl">SURVIVAL SCORE</div>
-      </div>
-    </div>
   </div>
 </div>
 
