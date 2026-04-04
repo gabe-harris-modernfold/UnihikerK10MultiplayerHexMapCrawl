@@ -1,6 +1,11 @@
 // ── Vision radius (updated per vis/sync message from server) ─────
 let myVisionR = VISION_R;
 
+// ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem; updated from server gs.wp) ─
+let weatherPhase = 0;
+const weatherParticles = (typeof WeatherParticleSystem !== 'undefined')
+  ? new WeatherParticleSystem() : null;
+
 // ── VanJS reactive UI state ───────────────────────────────────────
 const uiConn        = van.state('Connecting...');
 const uiInv         = Array.from({length:5}, () => van.state(0));
@@ -379,7 +384,7 @@ function handleMsg(msg) {
       if (msg.vc) loadTerrainVariants(msg.vc);
       if (msg.sv) loadShelterVariants(msg.sv);
       if (msg.fa) loadForrageAnimalImgs(msg.fa);
-      if (msg.gs) Object.assign(gameState, msg.gs);
+      if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       if (Array.isArray(msg.gi)) groundItems = msg.gi;
       hideConnectOverlay();
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
@@ -439,7 +444,7 @@ function handleMsg(msg) {
         if (pd.eq) p.eq = pd.eq;   // equipment slots
         if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
       });
-      if (msg.gs) Object.assign(gameState, msg.gs);
+      if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       updateSidebar();
       updateTerrainCard();
       updateDirButtons();
@@ -934,6 +939,13 @@ function handleEvent(ev) {
         updateSidebar();
       }
       window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
+    case 'weather': {
+      weatherPhase = ev.phase ?? 0;
+      updateWeatherHUD();
+      addLog(`<span class="log-mv">Weather: ${WEATHER_PHASE_NAMES?.[ev.phase] ?? ev.phase}</span>`);
       break;
     }
 
@@ -1477,6 +1489,85 @@ function render() {
     if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
     drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId, players[i].nm);
+  }
+
+  // ── Pass 2.5: Weather overlay + particles ────────────────────
+  if (weatherPhase > 0) {
+    const wNow = Date.now();
+    // Helper: draw many short individual rain drops falling downward.
+    // Each drop is a short 1px line at a slight angle; opacity varies per drop
+    // using a golden-angle seed so the variation is distributed evenly, not banded.
+    function drawRainDrops(count, dropLen, sinA, color, speedMs) {
+      const cosA    = Math.sqrt(Math.max(0, 1 - sinA * sinA));
+      const cycle   = cssHeight + dropLen;
+      const scrollY = (wNow / speedMs * cycle) % cycle;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 1;
+      for (let i = 0; i < count; i++) {
+        const seed = i * 137.508;                           // golden-angle spread
+        const x    = seed % cssWidth;
+        const y    = ((seed * 0.618 + scrollY) % cycle) - dropLen;
+        ctx.globalAlpha = 0.18 + (i % 13) / 13 * 0.50;    // vary 0.18–0.68 per drop
+        ctx.beginPath();
+        ctx.moveTo(x,               y);
+        ctx.lineTo(x + dropLen * sinA, y + dropLen * cosA);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    if (weatherPhase === 1) {
+      // Light blue-gray wash
+      ctx.save(); ctx.globalAlpha = 0.09; ctx.fillStyle = '#667799';
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // 60 drops, 12px long, slight angle, 1.8s to cross the screen
+      drawRainDrops(60, 12, 0.18, '#AACCEE', 1800);
+      if (weatherParticles) weatherParticles.emit(2, 1, cssWidth, cssHeight);
+
+    } else if (weatherPhase === 2) {
+      // Heavier dark overlay
+      ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#334455';
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // 130 drops, 20px long, steeper angle, 1.0s to cross — heavier & faster
+      drawRainDrops(130, 20, 0.28, '#7799BB', 1000);
+      // Lightning (3 s cycle: 0–100ms flash, 100–150ms dark, 150–200ms secondary)
+      const lc = wNow % 3000;
+      if (lc < 100) {
+        ctx.save(); ctx.globalAlpha = Math.sin(lc / 100 * Math.PI) * 0.55;
+        ctx.fillStyle = '#DDEEFF'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      } else if (lc >= 150 && lc < 200) {
+        ctx.save(); ctx.globalAlpha = (1 - (lc - 150) / 50) * 0.25;
+        ctx.fillStyle = '#BBCCEE'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      }
+      if (weatherParticles) weatherParticles.emit(4, 2, cssWidth, cssHeight);
+
+    } else {
+      // Chem-Storm: sickly green radial gradient
+      const cx2 = cssWidth / 2, cy2 = cssHeight / 2;
+      const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2,
+        Math.max(cssWidth, cssHeight) * 0.8);
+      grad.addColorStop(0,   'rgba(60,120,20,0.18)');
+      grad.addColorStop(0.6, 'rgba(30,80,10,0.10)');
+      grad.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.save(); ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // Radiation pulse (4 s cycle)
+      const rc = wNow % 4000;
+      let pa = 0;
+      if      (rc < 100)  pa = (rc / 100)          * 0.12;
+      else if (rc < 150)  pa = ((150 - rc) / 50)   * 0.06;
+      else if (rc < 220)  pa = ((rc - 150) / 70)   * 0.12;
+      else if (rc < 2500) pa = 0;
+      else if (rc < 2650) pa = ((rc - 2500) / 150) * 0.20;
+      else                pa = ((4000 - rc) / 1350) * 0.20;
+      if (pa > 0) {
+        ctx.save(); ctx.globalAlpha = pa; ctx.fillStyle = '#44BB22';
+        ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      }
+      if (weatherParticles) weatherParticles.emit(6, 3, cssWidth, cssHeight);
+    }
+    if (weatherParticles) { weatherParticles.update(); weatherParticles.render(ctx); }
   }
 
   // ── Pass 3: Ash particle overlay ─────────────────────────────

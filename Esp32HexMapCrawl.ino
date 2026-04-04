@@ -145,6 +145,28 @@ static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 
 static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
 static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 0 };
 
+// ── Weather system constants ──────────────────────────────────────────────────
+static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
+                           WEATHER_STORM = 2, WEATHER_CHEM  = 3;
+// Weather counter decrements only once every WEATHER_TICK_DIVIDER game ticks.
+// At TICK_MS=100 (10 ticks/sec), divider=50 → 5 sec/weather-tick:
+//   Clear 60-100 weather-ticks = 5-8.3 min | Chem 15-30 = 1.25-2.5 min
+static constexpr uint32_t WEATHER_TICK_DIVIDER = 50;
+static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 2, 4, 6 };
+static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
+static const uint16_t WEATHER_DUR_MIN[4]     = { 60, 30, 20, 15 };
+static const uint16_t WEATHER_DUR_MAX[4]     = { 100, 50, 40, 30 };
+// Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
+// Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
+//           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
+//           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+static const float WEATHER_INTENSITY[4][12] = {
+  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.5f, 0.4f, 0.6f, 0.8f, 0.4f, 0.9f, 0.5f, 0.6f, 0.7f, 0.1f, 0.0f, 0.0f },
+  { 0.7f, 0.6f, 0.7f, 0.9f, 0.5f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.0f, 0.0f },
+  { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f },
+};
+
 // Status condition bitmask positions
 static constexpr uint8_t ST_WOUNDED  = (1 << 0);
 static constexpr uint8_t ST_RADSICK  = (1 << 1);
@@ -365,7 +387,8 @@ enum EvtType : uint8_t {
   EVT_ENC_ASSIST   = 15,
   EVT_ENC_RESULT   = 16,
   EVT_ENC_BANK     = 17,
-  EVT_ENC_END      = 18
+  EVT_ENC_END      = 18,
+  EVT_WEATHER      = 19
 };
 
 struct GameEvent {
@@ -488,6 +511,9 @@ struct GameState {
 
   uint32_t dayTick;
   uint16_t dayCount;
+
+  uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem
+  uint16_t weatherCounter;  // ticks remaining in current phase
 };
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
@@ -496,7 +522,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 6;
+static constexpr uint8_t  SAVE_VERSION = 7;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -506,7 +532,8 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  version;
   uint16_t dayCount;
   uint8_t  threatClock;
-  uint8_t  pad;
+  uint8_t  weatherPhase;    // was: pad
+  uint16_t weatherCounter;  // new (+2 bytes); total header: 11 bytes
 };
 
 struct __attribute__((packed)) SavePlayer {
@@ -695,6 +722,7 @@ void setup() {
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
   G.dayTick = 0; G.dayCount = 0;
+  G.weatherPhase = WEATHER_CLEAR; G.weatherCounter = 80;
   memset(groundItems, 0, sizeof(groundItems));
 
   for (int i = 0; i < MAX_PLAYERS; i++) {

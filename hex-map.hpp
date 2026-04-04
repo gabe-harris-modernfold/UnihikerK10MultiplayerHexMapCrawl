@@ -33,6 +33,8 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   else if (vl ==  1) { *outVisR = VISION_R + 1; *outMaskRes = false; }
   else               { *outVisR = VISION_R + 2; *outMaskRes = false; }
   if (G.players[pid].archetype == 4) *outVisR += 2;  // Scout: +2 vision radius
+  // ── Weather visibility penalty (applied after Scout bonus) ──────────────────
+  *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
 }
 
 // ── Slot management ────────────────────────────────────────────

@@ -358,3 +358,19 @@ function suggestDN(skill, terrain) {
   if (terrain == null || terrain > 11) return 7;
   return SK_DN[skill]?.[terrain] ?? 7;
 }
+
+// ── Weather system constants (must stay byte-for-byte identical to C++ tables) ─
+// Phase IDs: 0=Clear 1=Rain 2=Storm 3=Chem-Storm
+const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM'];
+// Visibility subtracted from server visR per phase (floored at 0)
+const WEATHER_VIS_PENALTY = [0, 2, 4, 6];
+// Terrain intensity [phase][terrain idx 0-11] — matches C++ WEATHER_INTENSITY exactly
+// Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
+//           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
+//           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+const WEATHER_INTENSITY = [
+  [0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0],
+  [0.5,  0.4,  0.6,  0.8,  0.4,  0.9,  0.5,  0.6,  0.7,  0.1,  0.0,  0.0],
+  [0.7,  0.6,  0.7,  0.9,  0.5,  1.0,  0.8,  0.9,  1.0,  0.2,  0.0,  0.0],
+  [0.95, 0.85, 0.75, 0.90, 0.6,  0.95, 0.90, 0.90, 0.85, 0.1,  0.0,  0.0],
+];

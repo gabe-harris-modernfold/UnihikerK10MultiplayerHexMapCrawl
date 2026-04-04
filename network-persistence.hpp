@@ -18,7 +18,8 @@ void saveGame() {
     // Map file
     File f = SD.open(SAVE_MAP_F, FILE_WRITE);
     if (f) {
-      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount, G.threatClock, 0 };
+      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount, G.threatClock,
+                         G.weatherPhase, G.weatherCounter };
       f.write((uint8_t*)&hdr, sizeof(hdr));
       f.write((uint8_t*)G.map, sizeof(G.map));
       f.close();
@@ -86,8 +87,10 @@ bool tryLoadSave() {
     groundItems[g] = { sgi.q, sgi.r, sgi.itemType, sgi.qty };
   }
   f.close();
-  G.dayCount    = hdr.dayCount;
-  G.threatClock = hdr.threatClock;
+  G.dayCount       = hdr.dayCount;
+  G.threatClock    = hdr.threatClock;
+  G.weatherPhase   = hdr.weatherPhase;
+  G.weatherCounter = hdr.weatherCounter;
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     for (int i = 0; i < MAX_PLAYERS; i++) {

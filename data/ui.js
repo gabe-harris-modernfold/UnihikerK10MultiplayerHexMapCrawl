@@ -89,6 +89,17 @@ document.getElementById('hex-close').addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); uiHexInfoOpen.val = false; }
 });
 
+// ── Weather HUD indicator ─────────────────────────────────────────────────────
+function updateWeatherHUD() {
+  const el = document.getElementById('hud-weather');
+  if (!el) return;
+  const icons   = ['\u2600', '\uD83C\uDF27', '\u26A1', '\u2623'];
+  const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem'];
+  const phase = (typeof weatherPhase !== 'undefined') ? weatherPhase : 0;
+  el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
+  el.className = 'hud-weather ' + (classes[phase] ?? '');
+}
+
 // ── Sidebar UI ──────────────────────────────────────────────────
 function updateSidebar() {
   if (myId < 0) return;

@@ -3,10 +3,34 @@
 // Included from Esp32HexMapCrawl.ino after survival_state.hpp.
 // Has access to all globals, constants, structs, and functions defined above it.
 
+// ── Weather phase state machine ───────────────────────────────────────────────
+// Called each tick while holding G.mutex.
+static void updateWeatherPhase() {
+  if (G.tickId % WEATHER_TICK_DIVIDER != 0) return;  // advance only every N ticks
+  if (G.weatherCounter > 0) { G.weatherCounter--; return; }
+  uint32_t roll = esp_random() % 100;
+  uint8_t next = G.weatherPhase;
+  switch (G.weatherPhase) {
+    case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
+    case WEATHER_RAIN:  next = (roll < 60) ? WEATHER_STORM : WEATHER_CLEAR; break;
+    case WEATHER_STORM:
+      next = (roll < 40) ? WEATHER_CHEM : (roll < 80) ? WEATHER_RAIN : WEATHER_CLEAR; break;
+    case WEATHER_CHEM:  next = (roll < 60) ? WEATHER_STORM : WEATHER_RAIN;  break;
+  }
+  G.weatherCounter = WEATHER_DUR_MIN[next] +
+    (uint16_t)(esp_random() % (WEATHER_DUR_MAX[next] - WEATHER_DUR_MIN[next] + 1));
+  G.weatherPhase = next;
+  GameEvent ev = {}; ev.type = EVT_WEATHER;
+  ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
+  enqEvt(ev);
+  Serial.printf("[WEATHER] Phase→%d counter→%d\n", (int)next, (int)G.weatherCounter);
+}
+
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────
 static void tickGame() {
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
   G.tickId++;
+  updateWeatherPhase();
 
   // ── Day cycle: advance dayTick; trigger Dawn when full day elapses ──────
   G.dayTick++;
@@ -71,6 +95,31 @@ static void tickGame() {
       }
     }
   }
+
+  // ── Chem-storm per-tick hazard ────────────────────────────────────────────
+  if (G.weatherPhase == WEATHER_CHEM) {
+    for (int pid = 0; pid < MAX_PLAYERS; pid++) {
+      Player& p = G.players[pid];
+      if (!p.connected || (p.statusBits & ST_DOWNED)) continue;
+      uint8_t t = G.map[p.r][p.q].terrain;
+      if (t >= NUM_TERRAIN) t = 0;
+      // Settlement (t==9) and Ruins terrain: fully immune to all weather hazards
+      if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
+      // Improved shelter (level 2): immune to all weather; basic shelter (level 1): no immunity
+      if (G.map[p.r][p.q].shelter >= 2) continue;
+      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.3f;
+      if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
+        if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); }
+        if (p.ll == 0) {
+          p.statusBits |= ST_DOWNED; p.movesLeft = 0;
+          GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.evWsId = p.wsClientId; enqEvt(dev);
+        }
+        Serial.printf("[CHEM]    P%d \"%s\" chem tick LL→%d\n", pid, p.name, (int)p.ll);
+      }
+    }
+  }
+
   xSemaphoreGive(G.mutex);
   if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
 }

@@ -304,6 +304,17 @@ static void drainEvents() {
         }
         break;
       }
+
+      case EVT_WEATHER: {
+        static const char* WX[4] = {"CLEAR","RAIN","STORM","CHEM"};
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
+          (int)ev.q, (int)ev.r);
+        ws.textAll(buf, len);
+        char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 4) ? WX[ev.q] : "?");
+        k10LogAdd(lb);
+        break;
+      }
     }
   }
   // pendingCount was already reset to 0 inside the spinlock snapshot above.

@@ -279,6 +279,9 @@ static void movePlayer(int pid, int dir) {
     Serial.printf("[ITEM]  P%d terrain unlock: %s traversal\n", pid, T_NAME[destTerrain]);
   }
 
+  // ── Weather movement penalty ─────────────────────────────────────────────
+  mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase]);
+
   // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
   if (p.movesLeft == 0) {
     Serial.printf("[EXHAUST] P%d \"%s\" → (%2d,%2d) MP=0 (LL:%d) — wait for Dawn\n",
