@@ -14,37 +14,30 @@
   <button class="hud-btn" id="menu-btn" aria-label="open menu">&#x2630; MENU</button>
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
-    <span id="hud-conn-dot" class="conn-dot">●</span>
+    <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
     <span id="hud-clock" class="hud-clock"></span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
-  <button class="hud-btn" id="char-btn" aria-label="open survivor">&#x1F5D9; SURVIVOR</button>
   <div id="hud-ll">
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">LL</span>
-      <div class="track-boxes" id="hud-ll-track"></div>
+      <div class="track-boxes" id="hud-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
     </div>
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">MP</span>
-      <div class="track-boxes" id="hud-mp-track"></div>
+      <div class="track-boxes" id="hud-mp-track" role="meter" aria-label="Movement Points" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
     </div>
   </div>
-  <button class="hud-btn" id="action-hud-btn" aria-label="open action menu">&#x261E; ACTION</button>
-  <button class="hud-btn" id="rest-hud-btn" aria-label="rest and recover">&#x25BC; REST</button>
-  <button class="hud-btn" id="help-btn" aria-label="open agent instructions">&#x2139; HELP</button>
 </div>
 
-<!-- Rest status bubbles -->
-<div id="rest-bubbles" style="display:none"></div>
-
 <!-- Main -->
-<div id="main">
+<main id="main" aria-label="game area">
   <!-- Hex canvas -->
   <div id="canvas-wrap" tabindex="0" aria-label="game map">
     <canvas id="hexCanvas"></canvas>
 
     <!-- Terrain card (upper-right of canvas) -->
-    <div id="terrain-card" title="Click for hex details">
+    <div id="terrain-card" role="button" tabindex="0" title="Click for hex details" aria-label="current terrain — click for hex details" aria-expanded="false">
       <div id="tc-header">
         <div id="tc-icon">&#x2620;</div>
         <div id="tc-text">
@@ -58,7 +51,7 @@
 
     <!-- Expanded hex info panel -->
     <div id="hex-info">
-      <span id="hex-close">&#x2715;</span>
+      <span id="hex-close" role="button" tabindex="0" aria-label="close hex info panel">&#x2715;</span>
       <h2><span class="hi-icon" id="hi-icon">&#x2620;</span><span id="hi-title">HEX DATA</span></h2>
       <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
       <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
@@ -94,22 +87,29 @@
       <div id="pos-info">Q:— R:—</div>
     </div>
     <div id="players-panel">
-      <h3>Survivors</h3>
-      <div id="player-list"></div>
+      <div id="fab-col">
+        <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">&#x25BC;<br><span class="fab-key">R</span></button>
+        <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">&#x261E;<br><span class="fab-key">A</span></button>
+        <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">&#x2620;<br><span class="fab-key">C</span></button>
+      </div>
+      <div id="players-content">
+        <h3>Survivors</h3>
+        <div id="player-list"></div>
+      </div>
     </div>
   </div>
 
   <!-- Event log -->
-  <div id="log-panel"><div id="log-inner"></div></div>
-</div>
+  <div id="log-panel" role="log" aria-label="event log" aria-live="polite" aria-atomic="false"><div id="log-inner"></div></div>
+</main>
 
 <!-- Controls -->
-<div id="controls">
+<div id="controls" role="group" aria-label="movement controls">
   <button class="dir-btn" data-dir="3" id="dir-btn-3" aria-label="move northwest">&#x2196;</button>
   <button class="dir-btn" data-dir="2" id="dir-btn-2" aria-label="move north">&#x2191;</button>
   <button class="dir-btn" data-dir="1" id="dir-btn-1" aria-label="move northeast">&#x2197;</button>
-  <div class="dir-btn empty" id="cd-center">
-    <svg viewBox="0 0 36 36" width="20" height="20">
+  <div class="dir-btn empty" id="cd-center" role="img" aria-label="movement cooldown" aria-hidden="true">
+    <svg viewBox="0 0 36 36" width="20" height="20" aria-hidden="true">
       <circle cx="18" cy="18" r="14" fill="none" stroke="#180C04" stroke-width="3.5"/>
       <circle id="cd-arc" cx="18" cy="18" r="14" fill="none"
               stroke="#6A3008" stroke-width="3.5"
@@ -125,7 +125,7 @@
 <!-- Action panel modal -->
 <div id="action-panel" role="dialog" aria-modal="true" aria-labelledby="action-panel-title" aria-hidden="true">
   <div id="action-box">
-    <span id="action-close">&#x2715;</span>
+    <span id="action-close" role="button" tabindex="0" aria-label="close action panel">&#x2715;</span>
     <h2 id="action-panel-title"><span class="act-title-line">&#x261E; ACTIONS</span><span class="act-title-sub" id="act-panel-terrain-sub"></span></h2>
     <div id="action-status-bar"></div>
     <div id="action-btn-list" role="list" aria-label="available actions"><!-- populated by JS --></div>
@@ -178,7 +178,7 @@
 </div>
 
 <!-- Toast stack -->
-<div id="toast-stack"></div>
+<div id="toast-stack" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Item action context menu (z-index 50, slide-up sheet) -->
 <div id="item-menu-backdrop"></div>
@@ -209,7 +209,7 @@
   </div>
 </div>
 <!-- Flavor banner (shelter warning etc.) -->
-<div id="flavor-banner"></div>
+<div id="flavor-banner" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
 <!-- ──────────────── Encounter Overlay (active player) ──────────────── -->
 <div id="enc-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="enc-title">
@@ -238,18 +238,20 @@
 </div>
 
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
-<div id="char-overlay">
+<div id="char-overlay" role="dialog" aria-modal="true" aria-labelledby="char-sheet-title" aria-hidden="true">
   <div id="char-sheet">
-    <span id="char-close">&#x2715;</span>
-    <h2>&#x2620; SURVIVOR</h2>
+    <span id="char-close" role="button" tabindex="0" aria-label="close survivor sheet">&#x2715;</span>
+    <h2 id="char-sheet-title">&#x2620; SURVIVOR</h2>
 
     <!-- Name input -->
     <div class="cs-section">
       <h3>Call Sign</h3>
+      <label for="cs-name-input" class="check-lbl" style="display:block;margin-bottom:4px">Call Sign</label>
       <div class="cs-name-row">
-        <input id="cs-name-input" type="text" maxlength="11" placeholder="Enter call sign...">
+        <input id="cs-name-input" type="text" maxlength="11" placeholder="Enter call sign..." aria-describedby="cs-name-hint">
         <button id="cs-name-btn">CONFIRM</button>
       </div>
+      <span id="cs-name-hint" class="track-suffix" style="font-size:11px;display:block;margin-top:2px">Max 11 characters</span>
     </div>
 
     <!-- Survivor / archetype + skills -->
@@ -271,22 +273,22 @@
       <!-- Life Level: 6 boxes -->
       <div class="track-row">
         <span class="track-label">LIFE LVL</span>
-        <div class="track-boxes" id="cs-ll-track"></div>
+        <div class="track-boxes" id="cs-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
       </div>
       <!-- Food track: thresholds at 4 and 2 -->
       <div class="track-row">
         <span class="track-label">FOOD</span>
-        <div class="track-boxes" id="cs-food-track"></div>
+        <div class="track-boxes" id="cs-food-track" role="meter" aria-label="Food" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
       </div>
       <!-- Water track: thresholds at 5, 3, 1 -->
       <div class="track-row">
         <span class="track-label">WATER</span>
-        <div class="track-boxes" id="cs-water-track"></div>
+        <div class="track-boxes" id="cs-water-track" role="meter" aria-label="Water" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
       </div>
       <!-- Radiation track: 10 boxes; thresholds at 4 (Rad-Sick) and 7 (Dusk check) -->
       <div class="track-row">
         <span class="track-label">RADS</span>
-        <div class="track-boxes rad-track" id="cs-rad-track"></div>
+        <div class="track-boxes rad-track" id="cs-rad-track" role="meter" aria-label="Radiation" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
         <span class="track-suffix" id="cs-rad-status"></span>
       </div>
       <!-- Resolve tokens -->
@@ -490,13 +492,10 @@
 <script type="text/javascript" src="/ui.js"></script>
 <script>
 (function(){
-  var btn   = document.getElementById('help-btn');
   var ov    = document.getElementById('help-overlay');
   var close = document.getElementById('help-close');
-  if (btn)   btn.addEventListener('click',  function(){ ov.classList.add('open'); ov.removeAttribute('aria-hidden'); });
   if (close) close.addEventListener('click', function(){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); });
-  // Close on backdrop click
-  if (ov) ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }});
+  if (ov)    ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }});
 })();
 </script>
 </body>

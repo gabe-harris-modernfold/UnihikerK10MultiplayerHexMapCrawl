@@ -45,7 +45,7 @@ static void k10PlaySeq(const ToneStep* seq) {
     xTaskCreate(toneTaskFn, "tone", 2048, (void*)seq, 1, &s_toneTask);
 }
 
-// ── K10 screen 0: player status dashboard ──────────────────────
+// ── K10 screen 1: player status dashboard ──────────────────────
 static void drawPlayerScreen() {
   struct {
     bool    on;
@@ -165,7 +165,14 @@ static void drawPlayerScreen() {
   k10.canvas->updateCanvas();
 }
 
-// ── K10 screen 1: event log ────────────────────────────────────
+// ── K10 screen 0: title ────────────────────────────────────────
+static void drawTitleScreen() {
+  k10.canvas->canvasClear();
+  k10.canvas->canvasDrawImage(0, 0, String("S:/data/img/wastelandTitle0.png"));
+  k10.canvas->updateCanvas();
+}
+
+// ── K10 screen 2: event log ────────────────────────────────────
 static void drawEventLogScreen() {
   static const uint32_t C_HDR  = 0xC89030;
   static const uint32_t C_INFO = 0x907050;
@@ -345,10 +352,10 @@ static void checkGestureSwitch() {
     if (g == k10GestLast) { if (k10GestCnt < 2) k10GestCnt++; }
     else                  { k10GestLast = g; k10GestCnt = 1; }
     if (k10GestCnt >= 2) {
-      if      (g == TiltForward) k10Screen = 1;
-      else if (g == TiltRight)   k10Screen = 2;
-      else if (g == TiltBack)    k10Screen = 3;
-      else if (g == ScreenUp)    k10Screen = 0;
+      if      (g == TiltForward) k10Screen = 2;
+      else if (g == TiltRight)   k10Screen = 3;
+      else if (g == TiltBack)    k10Screen = 4;
+      else if (g == ScreenUp)    k10Screen = 1;
     }
   } else {
     k10GestCnt  = 0;
@@ -356,7 +363,7 @@ static void checkGestureSwitch() {
   }
 
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
-  if (btnB && !k10BtnBLast) k10Screen = (k10Screen + 1) % 4;
+  if (btnB && !k10BtnBLast) k10Screen = (k10Screen + 1) % 5;
   k10BtnBLast = btnB;
 }
 

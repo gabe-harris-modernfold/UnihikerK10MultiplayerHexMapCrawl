@@ -563,7 +563,8 @@ static uint8_t      k10LogHead  = 0;
 static uint8_t      k10LogCount = 0;
 static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 
-static uint8_t  k10Screen   = 0;
+static uint8_t  k10Screen     = 0;
+static uint8_t  k10ScreenLast = 255;
 static uint8_t  k10GestCnt  = 0;
 static uint8_t  k10GestLast = GestureNone;
 static bool     k10BtnBLast = false;
@@ -575,12 +576,12 @@ static uint8_t  k10PrevTCLevel = 0;
 static bool     k10ResCritPrev = false;
 
 static uint8_t  s_audioVol   = 5;
-static uint8_t  s_ledBright  = 5;
+static uint8_t  s_ledBright  = 4;
 
 static void loadK10Prefs() {
   Preferences p; p.begin("k10", true);
   s_audioVol  = p.getUChar("vol",    5);
-  s_ledBright = p.getUChar("bright", 5);
+  s_ledBright = p.getUChar("bright", 4);
   p.end();
 }
 static void saveK10Prefs() {
@@ -811,9 +812,8 @@ void loop() {
       bootWifiPending = false;
       strlcpy(savedSsid, WiFi.SSID().c_str(), sizeof(savedSsid));
       strlcpy(savedPass, WiFi.psk().c_str(),  sizeof(savedPass));
-      char msg[48]; snprintf(msg, sizeof(msg), "WiFi: %s", WiFi.localIP().toString().c_str());
-      splashAdd(msg, 0x40C080);
       Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
+      k10ScreenLast = 255;  // force title redraw after WiFi splash would have disrupted it
       char buf[88];
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
@@ -829,13 +829,16 @@ void loop() {
   checkGestureSwitch();
   checkScoreAudio();
 
-  if (now - lastScreenMs >= SCREEN_MS) {
+  bool screenChanged = (k10Screen != k10ScreenLast);
+  k10ScreenLast = k10Screen;
+  if (screenChanged || (k10Screen != 0 && now - lastScreenMs >= SCREEN_MS)) {
     lastScreenMs = now;
     switch (k10Screen) {
-      case 1:  drawEventLogScreen();  break;
-      case 2:  drawThreatScreen();    break;
-      case 3:  drawResourceScreen();  break;
-      default: drawPlayerScreen();    break;
+      case 0:  if (screenChanged) drawTitleScreen(); break;
+      case 2:  drawEventLogScreen();  break;
+      case 3:  drawThreatScreen();    break;
+      case 4:  drawResourceScreen();  break;
+      default: drawPlayerScreen();    break;  // case 1
     }
   }
 

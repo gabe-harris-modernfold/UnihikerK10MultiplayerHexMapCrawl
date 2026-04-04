@@ -21,7 +21,10 @@
       "Bash(for f:*)",
       "Bash(do echo:*)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(open\\(''$f''\\)\\); print\\(''OK keys:'', list\\(d.keys\\(\\)\\)\\)\")",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(find /c/SourceCode/Esp32HexMapCrawl -type f \\\\\\(-name *.hpp -o -name *.cpp \\\\\\))",
+      "Bash(grep -i \"\\\\.h$\\\\|\\\\.hpp$\")",
+      "Bash(grep \"\\\\.h$\")"
     ]
   }
 }

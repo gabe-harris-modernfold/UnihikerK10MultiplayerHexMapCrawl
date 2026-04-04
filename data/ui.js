@@ -64,8 +64,7 @@ function populateHexInfo(q, r, cell) {
   renderHexGroundItems?.(q, r);
 }
 
-// Keep --hud-h in sync so #rest-bubbles always clears the real HUD height,
-// even when its flex items wrap onto a second row on narrow screens.
+// Keep --hud-h in sync for fixed elements that offset below the HUD.
 (function () {
   const hud = document.getElementById('hud');
   const update = () =>
@@ -86,6 +85,9 @@ document.getElementById('terrain-card').addEventListener('click', () => {
 document.getElementById('hex-close').addEventListener('click', e => {
   e.stopPropagation();
   uiHexInfoOpen.val = false;
+});
+document.getElementById('hex-close').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); uiHexInfoOpen.val = false; }
 });
 
 // ── Sidebar UI ──────────────────────────────────────────────────
@@ -112,7 +114,7 @@ function updateSidebar() {
     .map((entry, rank) => ({ ...entry, rank: rank + 1 }));
   updateClock();
   // REST button turns dark green when any connected player is resting
-  const restBtn = document.getElementById('rest-hud-btn');
+  const restBtn = document.getElementById('fab-rest-btn');
   if (restBtn) {
     const anyResting = players.some(p => p.on && p.rest);
     restBtn.style.background = anyResting ? '#1a4a1a' : '';
@@ -226,10 +228,12 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
 
 // Char-overlay visibility — driven by uiCharOpen state
 van.derive(() => {
-  document.getElementById('char-overlay').classList.toggle('open', uiCharOpen.val);
+  const overlay = document.getElementById('char-overlay');
+  overlay.classList.toggle('open', uiCharOpen.val);
+  overlay.setAttribute('aria-hidden', uiCharOpen.val ? 'false' : 'true');
 });
-document.getElementById('char-btn').addEventListener('click', openCharSheet);
 document.getElementById('char-close').addEventListener('click', () => { uiCharOpen.val = false; });
+document.getElementById('char-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uiCharOpen.val = false; } });
 document.getElementById('char-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('char-overlay')) uiCharOpen.val = false;
 });
@@ -381,9 +385,9 @@ document.querySelectorAll('.dir-btn[data-dir]').forEach(btn => {
   btn.addEventListener('pointercancel', clearHold);
 });
 
-// Keyboard: Q=NW(3) W=N(2) E=NE(1)  A=SW(4) S=S(5) D=SE(0)
+// Keyboard: Q=NW(3) W=N(2) E=NE(1)  S=S(5) D=SE(0)  [A freed for ACTION shortcut]
 const keyMap = {
-  'KeyQ':'3','KeyW':'2','KeyE':'1','KeyA':'4','KeyS':'5','KeyD':'0',
+  'KeyQ':'3','KeyW':'2','KeyE':'1','KeyS':'5','KeyD':'0',
   'ArrowUp':'2','ArrowDown':'5','ArrowLeft':'3','ArrowRight':'0',
   'Numpad7':'3','Numpad8':'2','Numpad9':'1',
   'Numpad4':'4','Numpad6':'0','Numpad1':'4','Numpad2':'5','Numpad3':'0',
@@ -399,6 +403,10 @@ document.addEventListener('keydown', e => {
     uiHexInfoOpen.val = false;
     return;
   }
+  // FAB shortcuts: R=Rest, A=Action, C=Survivor
+  if (e.code === 'KeyR') { e.preventDefault(); document.getElementById('fab-rest-btn')?.click(); return; }
+  if (e.code === 'KeyA') { e.preventDefault(); document.getElementById('fab-action-btn')?.click(); return; }
+  if (e.code === 'KeyC') { e.preventDefault(); document.getElementById('fab-char-btn')?.click(); return; }
   // Block movement while character selection screen is showing
   if (document.getElementById('char-select-overlay')?.classList.contains('open')) return;
   const dir = keyMap[e.code];
@@ -444,6 +452,7 @@ function initHudBindings() {
     van.derive(() => {
       const conn = uiConn.val;
       connDot.style.color = (conn === 'Connected' ? 'var(--gold-hi)' : '#C06030');
+      connDot.setAttribute('aria-label', conn === 'Connected' ? 'connected' : conn === 'Connecting...' ? 'connecting' : 'disconnected');
     });
   }
 
@@ -538,6 +547,8 @@ function initCharSheetBindings() {
         (thr && !fired ? (filled ? ' thresh-filled'       : ' thresh')       : '') +
         (thr &&  fired ? (filled ? ' thresh-spent-filled' : ' thresh-spent') : '');
     }
+    el.setAttribute('aria-valuenow', value);
+    el.setAttribute('aria-valuemax', count);
   }
 
   // LL track (survivor)
@@ -627,6 +638,10 @@ function initMapBindings() {
   van.derive(() => {
     hexInfo.classList.toggle('open', uiHexInfoOpen.val);
     terrainCard.classList.toggle('expanded', uiHexInfoOpen.val);
+    terrainCard.setAttribute('aria-expanded', uiHexInfoOpen.val ? 'true' : 'false');
+  });
+  terrainCard.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); terrainCard.click(); }
   });
 
   // Terrain card — reactive repaint from uiCurrentCell
@@ -637,6 +652,7 @@ function initMapBindings() {
     const mcStr = t.mc === 255 ? 'IMPASSABLE' : `MC:${t.mc}  SV:${t.sv}`;
     document.getElementById('tc-icon').textContent = t.icon;
     document.getElementById('tc-name').textContent = t.name;
+    terrainCard.setAttribute('aria-label', `${t.name} — click for hex details`);
     document.getElementById('tc-sub').textContent  =
       (cc.resource > 0 && cc.amount > 0)
         ? `${RES_NAMES[cc.resource]} ×${cc.amount}`
@@ -949,12 +965,13 @@ function initActionPanel() {
   }
 
   actionPanel.addEventListener('click', e => { if (e.target === actionPanel) closeActionPanel(); });
-  document.getElementById('action-hud-btn').addEventListener('click', () => {
+  document.getElementById('fab-action-btn').addEventListener('click', () => {
     actionPanel.classList.contains('open') ? closeActionPanel() : openActionPanel();
   });
   document.getElementById('action-close').addEventListener('click', closeActionPanel);
+  document.getElementById('action-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeActionPanel(); } });
 
-  document.getElementById('rest-hud-btn').addEventListener('click', () => {
+  document.getElementById('fab-rest-btn').addEventListener('click', () => {
     if (myId >= 0 && players[myId]?.ll === 0) {
       showToast('☠ You have been downed — select a new survivor');
       return;
@@ -969,17 +986,18 @@ function initActionPanel() {
   });
 
   van.derive(() => {
-    const btn = document.getElementById('action-hud-btn');
+    const btn = document.getElementById('fab-action-btn');
     if (!btn) return;
     btn.classList.toggle('has-condition', uiHasCond.val);
   });
   van.derive(() => {
-    const btn = document.getElementById('rest-hud-btn');
+    const btn = document.getElementById('fab-rest-btn');
     if (!btn) return;
     btn.classList.toggle('rest-btn-used', uiResting.val);
     // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
     btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
+  document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
 }
 
 function initTradeOverlay() {
@@ -1104,6 +1122,7 @@ function initMenuSystem() {
       mb({ class: 'menu-item-btn', onclick: () => openMenu('settings') }, '\u25C9  SETTINGS'),
       mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  SURVIVOR'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('about')    }, '\u25A3  ABOUT'),
+      mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); const ov = document.getElementById('help-overlay'); ov.classList.add('open'); ov.removeAttribute('aria-hidden'); } }, '\u2139  AGENT HELP'),
       mb({ class: 'menu-resume-btn', onclick: closeMenu }, '\u25B6 RESUME'),
     );
 
@@ -1651,6 +1670,7 @@ function initCharSelect() {
       div({ class: 'arch-grid' },
         ...ARCHETYPES.map((arch, i) => {
           const taken = !availSet.has(i);
+          if (taken) return null;
           const color = arch.color;
 
           const skillDots = SK_NAMES.map((sk, si) => {
@@ -1663,40 +1683,30 @@ function initCharSelect() {
             );
           });
 
-          const selectBtn = taken
-            ? span({ class: 'arch-taken-stamp' }, '\u2612 TAKEN')
-            : button({
-                class: 'arch-select-btn' + (pending ? ' arch-btn-pending' : ''),
-                style: `--arch-color:${color}`,
-                disabled: pending || undefined,
-                onclick: () => {
-                  if (pending || taken) return;
-                  // If a survivor is already active, require confirmation before abandoning them
-                  if (myId >= 0 && players[myId]?.on) {
-                    if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
-                  }
-                  uiPickPending.val = true;
-                  send({ t: 'pick', arch: i });
-                  if (pickTimeoutId) clearTimeout(pickTimeoutId);
-                  pickTimeoutId = setTimeout(() => {
-                    if (uiPickPending.val) {
-                      uiPickPending.val = false;
-                      showToast('\u26A0 Server did not respond \u2014 please try selecting again.');
-                    }
-                    pickTimeoutId = null;
-                  }, 8000);
-                }
-              }, pending ? '\u2022\u2022\u2022' : `\u25B6 SELECT ${arch.name}`);
-
           return div({
-            class: `arch-card${taken ? ' arch-taken' : ''}`,
-            style: `--arch-color:${color}`
+            class: `arch-card${taken ? ' arch-taken' : ''}${pending ? ' arch-btn-pending' : ''}`,
+            style: `--arch-color:${color}; --arch-portrait:url('img/survivors/${arch.name.toLowerCase()}.jpg')`,
+            onclick: taken ? undefined : () => {
+              if (pending) return;
+              // If a survivor is already active, require confirmation before abandoning them
+              if (myId >= 0 && players[myId]?.on) {
+                if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
+              }
+              uiPickPending.val = true;
+              send({ t: 'pick', arch: i });
+              if (pickTimeoutId) clearTimeout(pickTimeoutId);
+              pickTimeoutId = setTimeout(() => {
+                if (uiPickPending.val) {
+                  uiPickPending.val = false;
+                  showToast('\u26A0 Server did not respond \u2014 please try selecting again.');
+                }
+                pickTimeoutId = null;
+              }, 8000);
+            }
           },
             div({ class: 'arch-header' },
-              span({ class: 'arch-icon' }, arch.icon),
               div({ class: 'arch-name-wrap' },
-                span({ class: 'arch-name' }, arch.name),
-                span({ class: 'arch-inv-label' }, `\u25A1 ${arch.invSlots} Inventory`)
+                span({ class: 'arch-name' }, arch.name)
               )
             ),
             div({ class: 'arch-skills' }, ...skillDots),
@@ -1705,7 +1715,7 @@ function initCharSelect() {
               span({ class: 'arch-trait-text' }, arch.trait)
             ),
             div({ class: 'arch-flavor' }, arch.flavor),
-            div({ class: 'arch-card-footer' }, selectBtn)
+            null
           );
         })
       )

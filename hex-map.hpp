@@ -90,7 +90,7 @@ static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 10,  3,  2,  2,  0,  3,  2
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
   15,  // 0 Open Scrub
   40,  // 1 Ash Dunes
-  30,  // 2 Rust Forest
+  55,  // 2 Rust Forest
   45,  // 3 Marsh
   35,  // 4 Broken Urban
   50,  // 5 Flooded Ruins
@@ -137,7 +137,7 @@ static void generateMap() {
       int bRow    = (int)(esp_random() % MAP_ROWS);
       int bCol    = (int)(esp_random() % MAP_COLS);
       int ax      = (int)(esp_random() % 3);
-      int halfLen = 2 + (int)(esp_random() % 4);
+      int halfLen = 4 + (int)(esp_random() % 3);
       for (int side = 0; side < 2; side++) {
         int dir = (side == 0) ? AXIS_A[ax] : AXIS_B[ax];
         int cr = bRow, cc = bCol;

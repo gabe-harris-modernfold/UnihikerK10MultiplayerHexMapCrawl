@@ -331,7 +331,7 @@ static void setupWiFiAndServer() {
       if (!isDigit(c)) { req->send(400, "text/plain", "Invalid id"); return; }
     }
     char path[56];
-    snprintf(path, sizeof(path), "/encounters/%s/%s.json", biome.c_str(), id.c_str());
+    snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
     if (!SD.exists(path)) { req->send(404, "text/plain", "Encounter not found"); return; }
     req->send(SD, path, "application/json");
   });
@@ -343,8 +343,12 @@ static void setupWiFiAndServer() {
       String filename = url.substring(5);
       for (int i = 0; i < imgCacheCount; i++) {
         if (filename.equalsIgnoreCase(imgCache[i].name)) {
+          String mimeType = "image/png";
+          if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
+              filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
+            mimeType = "image/jpeg";
           AsyncWebServerResponse* resp = req->beginResponse(
-              200, "image/png", imgCache[i].buf, imgCache[i].len);
+              200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("Cache-Control", "public, max-age=86400");
           req->send(resp);
           return;

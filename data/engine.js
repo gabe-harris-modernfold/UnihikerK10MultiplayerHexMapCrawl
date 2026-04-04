@@ -57,7 +57,7 @@ const NIGHT_FADE_INIT        = 0.72;   // initial alpha when REST action complet
 const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn overlay
 const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
 const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
-const FOOTPRINT_FADE_MS      = 4000;   // ms to fully fade from bright tan to dark
+const FOOTPRINT_FADE_MS      = 90000;  // ms to fully fade from bright tan to dark
 const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on the current player
 
 // Rendering dimensions
@@ -306,25 +306,6 @@ function send(obj) {
     socket.send(JSON.stringify(obj));
 }
 
-// ── Rest bubbles & auto-rest ─────────────────────────────────────
-function updateRestBubbles() {
-  const bar = document.getElementById('rest-bubbles');
-  if (!bar) return;
-  bar.innerHTML = '';
-  const connected = players.filter(p => p.on);
-  if (connected.length === 0) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex';
-  for (const p of connected) {
-    const bubble = document.createElement('div');
-    bubble.className = 'rest-bubble' + (p.rest ? ' rest-bubble-on' : '');
-    bubble.style.setProperty('--pc', PLAYER_COLORS[p.id]);
-    const tag = (p.nm || `P${p.id}`).substring(0, 9).toUpperCase();
-    bubble.innerHTML = p.rest
-      ? `<span class="rb-zzz">REST</span><span class="rb-name">${tag}</span>`
-      : `<span class="rb-name">${tag}</span>`;
-    bar.appendChild(bubble);
-  }
-}
 
 function checkAutoRest() {
   if (myId < 0 || !players[myId]?.on) return;
@@ -410,7 +391,6 @@ function handleMsg(msg) {
       if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
       if (myId >= 0) displayMP = players[myId].mp ?? 6;
       updateTerrainCard();
-      updateRestBubbles();
       updateDirButtons();
       // Catch stale downed state on reconnect: if server synced us with ll:0 we are dead.
       // Close the socket so the server resets the slot (p.connected=false) and re-adds us
@@ -466,7 +446,6 @@ function handleMsg(msg) {
       if (msg.gs) Object.assign(gameState, msg.gs);
       updateSidebar();
       updateTerrainCard();
-      updateRestBubbles();
       updateDirButtons();
       // Catch missed downed event: if server state shows ll:0 we are dead.
       // Close the socket so the server resets the slot (p.connected=false) and re-adds us
@@ -504,6 +483,11 @@ function handleMsg(msg) {
           const _totalInv = (_me.inv ?? [0,0,0,0,0]).reduce((a, b) => a + (b || 0), 0);
           if (_totalInv >= (_me.sp ?? 6))
             showToast(`\u22a0 Inventory full \u2014 ${RES_NAMES[_cur.resource] ?? 'resource'} left behind`);
+        }
+        // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
+        if (_cur?.poi) {
+          console.log(`[ENC] Auto-triggering enc_start @ (${_me.q},${_me.r}) terrain=${_cur.terrain} (${TERRAIN[_cur.terrain]?.name ?? '?'})`);
+          send({ t: 'enc_start', q: _me.q, r: _me.r });
         }
       }
       updateTerrainCard();
@@ -547,7 +531,13 @@ function handleMsg(msg) {
 
     case 'enc_path':
       // Direct message: server sends encounter location to the active player
+      console.log('[ENC] enc_path received:', msg);
       window._startEncounterFetch?.(msg.biome, msg.id);
+      break;
+
+    case 'err':
+      console.warn('[ENC/ERR] Server error:', msg);
+      showToast(`\u22a0 ${msg.msg ?? 'Server error'}`);
       break;
   }
   buildAgentState();
@@ -626,7 +616,6 @@ function handleEvent(ev) {
       if (ev.q !== undefined) { renderPos[ev.pid].q = ev.q; renderPos[ev.pid].r = ev.r; }
       else { renderPos[ev.pid].q = players[ev.pid].q; renderPos[ev.pid].r = players[ev.pid].r; }
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
-      updateRestBubbles();
       break;
     case 'regen':
       showToast('☠ Wasteland reborn. Survivors scattered.');
@@ -649,7 +638,6 @@ function handleEvent(ev) {
       players[ev.pid].on = false;
       players[ev.pid].rest = false;
       addLog(`<span class="log-mv">&#x25C4; Survivor ${ev.pid} gone dark</span>`);
-      updateRestBubbles();
       checkAutoRest();
       break;
     case 'nm':
@@ -685,8 +673,7 @@ function handleEvent(ev) {
           uiResting.val = false;  // clear resting at dawn
           restSent = false;
         }
-        updateRestBubbles();
-        if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
+          if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
         if (ev.wth !== undefined) players[ev.pid].wth = ev.wth;
         if (ev.rad !== undefined) players[ev.pid].rad = ev.rad;
         if (ev.fat !== undefined) players[ev.pid].fat = ev.fat;
@@ -738,8 +725,7 @@ function handleEvent(ev) {
       if (ev.a === ACT_REST && ev.out === AO_SUCCESS) {
         players[ev.pid].rest = true;
         if (ev.pid === myId) uiResting.val = true;
-        updateRestBubbles();
-        checkAutoRest();
+          checkAutoRest();
         const msg = ev.pid === myId ? 'Resting — waiting for dawn' : `${escHtml(who)} is resting`;
         showToast(`\ud83d\ude34 ${msg}`);
         addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
@@ -971,7 +957,7 @@ function handleEvent(ev) {
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
-  return {
+  const cell = {
     terrain:    terrainByte,
     footprints: dataByte & 0x3F,           // bits 0-5: which players visited (bitmask)
     shelter:    (dataByte >> 6) & 1,       // bit 6: 0=none, 1=has shelter
@@ -979,6 +965,8 @@ function decodeCell(terrainByte, dataByte, variantByte = 0) {
     resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
     variant:    variantByte & 0xF,        // low nibble: terrain image variant (0-15)
   };
+  if (cell.poi) console.log(`[ENC] POI cell decoded: terrain=${terrainByte} (${TERRAIN[terrainByte]?.name ?? '?'}) dd=0x${dataByte.toString(16)}`);
+  return cell;
 }
 
 function parseMapFog(hexStr) {
@@ -997,15 +985,29 @@ function parseMapFog(hexStr) {
 // Format: "QQRRTTDDVV..." — 10 hex chars per cell (5 bytes)
 //   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
 function applyVisDisk(cells) {
+  const now = Date.now();
+  const poisRevealed = [];
   for (let i = 0; i < cells.length; i += 10) {
     const q  = parseInt(cells.substr(i,     2), 16);
     const r  = parseInt(cells.substr(i + 2, 2), 16);
     const tt = parseInt(cells.substr(i + 4, 2), 16);
     const dd = parseInt(cells.substr(i + 6, 2), 16);
     const vv = parseInt(cells.substr(i + 8, 2), 16);
-    if (r < MAP_ROWS && q < MAP_COLS)
-      gameMap[r][q] = decodeCell(tt, dd, vv);
+    if (r < MAP_ROWS && q < MAP_COLS) {
+      const cell = decodeCell(tt, dd, vv);
+      gameMap[r][q] = cell;
+      if (cell?.poi) poisRevealed.push({ q, r, tt });
+      const fp = dd & 0x3F;
+      for (let fpid = 0; fpid < 6; fpid++) {
+        if (fp & (1 << fpid)) {
+          const key = `${q}_${r}_${fpid}`;
+          if (!footprintTimestamps.has(key)) footprintTimestamps.set(key, now);
+        }
+      }
+    }
   }
+  if (poisRevealed.length)
+    console.log('[ENC] POIs in vis-disk:', poisRevealed.map(p => `(${p.q},${p.r}) ${TERRAIN[p.tt]?.name ?? p.tt}`).join(', '));
 }
 
 // ── Hex math (flat-top) ─────────────────────────────────────────
@@ -1406,7 +1408,7 @@ function render() {
         const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
         const fImg = forrageAnimalImgs[v];
         if (fImg && fImg.loaded) {
-          const sz = HEX_SZ * 0.9;
+          const sz = HEX_SZ * 0.45;
           ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
         }
       }
@@ -1446,7 +1448,7 @@ function render() {
 
   // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ──────────
   ctx.strokeStyle = 'rgba(50,50,50,0.5)';
-  ctx.lineWidth   = 2.0;
+  ctx.lineWidth   = 1.0;
   ctx.globalAlpha = 1;
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {

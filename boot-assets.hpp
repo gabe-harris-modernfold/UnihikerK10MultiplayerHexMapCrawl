@@ -4,20 +4,19 @@
 // Included by Esp32HexMapCrawl.ino before gameplay .hpp files.
 
 // ── Boot splash diagnostic log ─────────────────────────────────────────────
-static char     _sLog[14][30];
-static uint32_t _sCol[14];
-static uint8_t  _sN = 0;
-static void splashAdd(const char* msg, uint32_t col = 0x806040) {
+static char    _sLog[14][30];
+static uint8_t _sN = 0;
+static void splashAdd(const char* msg, uint32_t col = 0) {
+  (void)col;
   if (_sN == 14) {
-    for (int i = 0; i < 13; i++) { memcpy(_sLog[i], _sLog[i+1], 30); _sCol[i] = _sCol[i+1]; }
+    for (int i = 0; i < 13; i++) memcpy(_sLog[i], _sLog[i+1], 30);
     _sN = 13;
   }
-  snprintf(_sLog[_sN], 30, "%s", msg);
-  _sCol[_sN++] = col;
+  snprintf(_sLog[_sN++], 30, "%s", msg);
   k10.canvas->canvasRectangle(0, 0, 240, 320, 0x000000, 0x000000, true);
   for (uint8_t i = 0; i < _sN; i++)
     k10.canvas->canvasText(_sLog[i], 4, 4 + i*22,
-                           _sCol[i], Canvas::eCNAndENFont16, 50, false);
+                           0x40C060, Canvas::eCNAndENFont16, 50, false);
   k10.canvas->updateCanvas();
 }
 
@@ -32,7 +31,31 @@ static void loadWebFilesToRAM() {
     if (f.isDirectory() && fname.equalsIgnoreCase("img")) {
       File imgFile = f.openNextFile();
       while (imgFile && imgCacheCount < MAX_IMG_CACHE) {
-        if (!imgFile.isDirectory()) {
+        if (imgFile.isDirectory()) {
+          String subDirName = String(imgFile.name());
+          File subFile = imgFile.openNextFile();
+          while (subFile && imgCacheCount < MAX_IMG_CACHE) {
+            if (!subFile.isDirectory()) {
+              size_t sz = subFile.size();
+              uint8_t* buf = (uint8_t*)ps_malloc(sz);
+              if (buf) {
+                subFile.read(buf, sz);
+                char cacheName[40];
+                snprintf(cacheName, sizeof(cacheName), "%s/%s", subDirName.c_str(), subFile.name());
+                strncpy(imgCache[imgCacheCount].name, cacheName, 39);
+                imgCache[imgCacheCount].name[39] = 0;
+                imgCache[imgCacheCount].buf = buf;
+                imgCache[imgCacheCount].len = sz;
+                imgCacheCount++;
+                Serial.printf("[WEB]   img/%s: %u bytes -> PSRAM\n", cacheName, (unsigned)sz);
+              } else {
+                Serial.printf("[WEB]   img/%s/%s: ps_malloc FAILED\n", subDirName.c_str(), subFile.name());
+              }
+            }
+            subFile.close();
+            subFile = imgFile.openNextFile();
+          }
+        } else {
           size_t sz = imgFile.size();
           uint8_t* buf = (uint8_t*)ps_malloc(sz);
           if (buf) {
@@ -325,10 +348,11 @@ static bool  jsonStr(const char* p, char* buf, int bufLen) {
   return true;
 }
 
-// Load /encounters/index.json → encPools[0..9]
+// Load /data/encounters/index.json → encPools[0..9]
 static void loadEncounterIndex() {
-  File f = SD.open("/encounters/index.json");
-  if (!f) { Serial.println("[ENC] /encounters/index.json not found"); return; }
+  Serial.println("[ENC] Loading encounter index from /data/encounters/index.json ...");
+  File f = SD.open("/data/encounters/index.json");
+  if (!f) { Serial.println("[ENC] /data/encounters/index.json not found"); return; }
   size_t sz = min((size_t)f.size(), (size_t)512);
   char* buf = (char*)malloc(sz + 1);
   if (!buf) { f.close(); return; }
@@ -337,7 +361,7 @@ static void loadEncounterIndex() {
   f.close();
   memset(encPools, 0, sizeof(encPools));
   for (int t = 0; t <= 9; t++) {
-    char tKey[4]; snprintf(tKey, sizeof(tKey), "\"%d\"", t);
+    char tKey[5]; snprintf(tKey, sizeof(tKey), "\"%d\"", t);
     const char* entry = strstr(buf, tKey);
     if (!entry) continue;
     entry += strlen(tKey);
@@ -354,8 +378,8 @@ static void loadEncounterIndex() {
 
 // Load /encounters/loot_tables.json → lootTables[0..19]
 static void loadLootTables() {
-  File f = SD.open("/encounters/loot_tables.json");
-  if (!f) { Serial.println("[ENC] /encounters/loot_tables.json not found"); return; }
+  File f = SD.open("/data/encounters/loot_tables.json");
+  if (!f) { Serial.println("[ENC] /data/encounters/loot_tables.json not found"); return; }
   size_t sz = f.size();
   char* buf = (char*)ps_malloc(sz + 1);
   if (!buf) buf = (char*)malloc(sz + 1);

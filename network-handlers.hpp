@@ -1014,8 +1014,10 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         Player& p   = G.players[pid];
         HexCell& cell = G.map[hr][hq];
         if ((int)p.q != hq || (int)p.r != hr) {
+          Serial.printf("[ENC] REJECT 'Not at hex': player at (%d,%d), tried (%d,%d)\n", p.q, p.r, hq, hr);
           client->text("{\"t\":\"err\",\"msg\":\"Not at that hex\"}");
         } else if (cell.poi == 0) {
+          Serial.printf("[ENC] REJECT 'Already looted': cell.poi=0 at (%d,%d)\n", hq, hr);
           client->text("{\"t\":\"err\",\"msg\":\"Already looted\"}");
         } else {
           // Check if another player is already inside at this hex
@@ -1031,6 +1033,11 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           } else {
             uint8_t terrain = cell.terrain;
             if (terrain >= 10 || encPools[terrain].count == 0) {
+              Serial.printf("[ENC] REJECT 'No encounters here': terrain=%d (>=10:%s), pool count=%d, path='%s'\n",
+                terrain,
+                terrain >= 10 ? "YES" : "no",
+                terrain < 10 ? (int)encPools[terrain].count : -1,
+                terrain < 10 ? encPools[terrain].path : "N/A");
               client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
             } else {
               cell.poi = 0;  // consume POI immediately
@@ -1052,6 +1059,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
                 "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d}",
                 encPools[terrain].path, (int)idx);
               client->text(pathBuf, (size_t)pathLen);
+              Serial.printf("[ENC] Serving -> /data/encounters/%s/%d.json\n", encPools[terrain].path, (int)idx);
               // Broadcast EVT_ENC_START to allies
               GameEvent ev = {};
               ev.type = EVT_ENC_START; ev.pid = (uint8_t)pid;
@@ -1085,7 +1093,8 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     ENC_JP(hazWt,   "haz_wt")   ENC_JP(hazWc,  "haz_wc")
     ENC_JP(hazEnds, "haz_ends")
     #undef ENC_JP
-    // Parse loot array
+    // Parse loot array — indices map directly to p.inv[]: 0=Water 1=Food 2=Fuel 3=Medicine 4=Scrap.
+    // NOTE: encounter JSON uses 0-based res indices; map cell.resource uses 1-based. Different spaces.
     uint8_t lootArr[5] = {0};
     const char* lp = strstr(data, "\"loot\"");
     if (lp) { const char* lb = strchr(lp + 6, '['); if (lb) { lb++;
@@ -1164,7 +1173,9 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           ev.encPenRad = (int8_t)hazRad;
           ev.encStatus = (uint8_t)hazSt;
           ev.encEnds   = (uint8_t)(hazEnds ? 1 : 0);
-          if (hazLL < 0) {
+          if (hazLL > 0) {
+            Serial.printf("[ENC] WARNING: P%d haz_ll=%d is positive — LL penalties must be negative in JSON. Ignored.\n", pid, hazLL);
+          } else if (hazLL < 0) {
             int newLL = (int)p.ll + hazLL;
             p.ll = (uint8_t)max(0, newLL);
             if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; }
@@ -1183,6 +1194,8 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         }
         // Reset per-node assist state
         enc.assistRisk = 0; enc.assistUsed = 0;
+        // Result must be broadcast before EVT_ENC_END so allies see the outcome before the encounter clears.
+        enqEvt(ev);
         if (encounterEnded) {
           // End encounter — loot lost
           if (p.statusBits & ST_DOWNED) {
@@ -1197,7 +1210,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
             eev.encOut = (G.players[pid].statusBits & ST_DOWNED) ? 3 : 0; // 3=downed, 0=hazard
             enqEvt(eev); }
         }
-        enqEvt(ev);
         Serial.printf("[ENC] P%d choice: DN%d roll%d %s%s\n",
           pid, dn, cr.total, cr.success ? "OK" : "FAIL", encounterEnded ? " (end)" : "");
       }
@@ -1260,6 +1272,8 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
               groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
               groundItems[gslot].itemType = itemId;
               groundItems[gslot].qty = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
+            } else {
+              Serial.printf("[ENC] P%d bank item:%d x%d LOST — MAX_GROUND full\n", pid, (int)itemId, (int)qty);
             }
           }
         }
