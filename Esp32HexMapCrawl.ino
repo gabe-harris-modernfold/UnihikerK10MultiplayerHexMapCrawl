@@ -140,7 +140,7 @@ static constexpr uint8_t AO_PARTIAL = 2;
 static constexpr uint8_t AO_FAIL    = 3;
 
 static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 0 };
-static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,0,8,0,0,0,0, 0 };
+static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,7,8,0,0,0,0, 0 };
 static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 0 };
 static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
 static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 0 };
@@ -514,6 +514,7 @@ struct GameState {
 
   uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem
   uint16_t weatherCounter;  // ticks remaining in current phase
+  uint16_t badWeatherTicks; // consecutive weather-ticks in non-CLEAR phases
 };
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
@@ -722,7 +723,7 @@ void setup() {
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
   G.dayTick = 0; G.dayCount = 0;
-  G.weatherPhase = WEATHER_CLEAR; G.weatherCounter = 80;
+  G.weatherPhase = WEATHER_CLEAR; G.weatherCounter = 80; G.badWeatherTicks = 0;
   memset(groundItems, 0, sizeof(groundItems));
 
   for (int i = 0; i < MAX_PLAYERS; i++) {

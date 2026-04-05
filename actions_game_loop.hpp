@@ -7,23 +7,38 @@
 // Called each tick while holding G.mutex.
 static void updateWeatherPhase() {
   if (G.tickId % WEATHER_TICK_DIVIDER != 0) return;  // advance only every N ticks
+
+  // Accumulate bad-weather streak (non-CLEAR ticks)
+  if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
+
   if (G.weatherCounter > 0) { G.weatherCounter--; return; }
-  uint32_t roll = esp_random() % 100;
-  uint8_t next = G.weatherPhase;
-  switch (G.weatherPhase) {
-    case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
-    case WEATHER_RAIN:  next = (roll < 60) ? WEATHER_STORM : WEATHER_CLEAR; break;
-    case WEATHER_STORM:
-      next = (roll < 40) ? WEATHER_CHEM : (roll < 80) ? WEATHER_RAIN : WEATHER_CLEAR; break;
-    case WEATHER_CHEM:  next = (roll < 60) ? WEATHER_STORM : WEATHER_RAIN;  break;
+
+  static constexpr uint16_t BAD_WEATHER_CAP = 180; // 3 days × 60 weather-ticks/day
+  uint8_t next;
+  if (G.badWeatherTicks >= BAD_WEATHER_CAP) {
+    next = WEATHER_CLEAR;  // force clear after 3-day bad-weather streak
+  } else {
+    uint32_t roll = esp_random() % 100;
+    next = G.weatherPhase;
+    switch (G.weatherPhase) {
+      case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
+      case WEATHER_RAIN:  next = (roll < 60) ? WEATHER_STORM : WEATHER_CLEAR; break;
+      case WEATHER_STORM:
+        next = (roll < 40) ? WEATHER_CHEM : (roll < 80) ? WEATHER_RAIN : WEATHER_CLEAR; break;
+      case WEATHER_CHEM:  next = (roll < 60) ? WEATHER_STORM : WEATHER_RAIN;  break;
+    }
   }
+
+  if (next == WEATHER_CLEAR) G.badWeatherTicks = 0;
+
   G.weatherCounter = WEATHER_DUR_MIN[next] +
     (uint16_t)(esp_random() % (WEATHER_DUR_MAX[next] - WEATHER_DUR_MIN[next] + 1));
   G.weatherPhase = next;
   GameEvent ev = {}; ev.type = EVT_WEATHER;
   ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
   enqEvt(ev);
-  Serial.printf("[WEATHER] Phase→%d counter→%d\n", (int)next, (int)G.weatherCounter);
+  Serial.printf("[WEATHER] Phase→%d counter→%d badTicks→%d\n",
+                (int)next, (int)G.weatherCounter, (int)G.badWeatherTicks);
 }
 
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────

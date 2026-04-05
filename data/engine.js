@@ -157,6 +157,12 @@ function loadTerrainVariants(vc) {
   }
 }
 
+// ── Survivor pawn portrait images ────────────────────────────────
+// Indexed by archetype: 0=Guide 1=Quartermaster 2=Medic 3=Mule 4=Scout 5=Endurer
+const pawnImgs = ARCHETYPES.map(a =>
+  createImageWithLoadTracking(`img/survivors/${a.name.toLowerCase()}Pawn.jpg`)
+);
+
 // ── Forage animal images ──────────────────────────────────────────
 // Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
 let forrageAnimalImgs = [];
@@ -1097,106 +1103,86 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
  * @param {boolean} isMe - Whether this is the current player (affects glow)
  * @param {string} nm - Character name for label tooltip
  */
-function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
-  const scale  = hexSz * ICON_SIZE_SCALE;
-  const headR  = scale * 0.40;
-  const headCY = cy - scale * 0.32;
-  const torsoT = cy - scale * 0.00;
-  const torsoB = cy + scale * 0.75;
-  const torsoW = scale * 0.46;
+function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm, arch, sc) {
+  const scale     = hexSz * ICON_SIZE_SCALE;
+  const r         = Math.max(10, hexSz * 0.28);   // portrait circle radius
+  const portraitCY = cy - scale * 0.15;            // circle center, slightly above hex centre
 
-  // Ground shadow
+  // Ground shadow — fuzzy ellipse beneath the circle
   ctx.save();
+  ctx.filter = 'blur(3px)';
   ctx.beginPath();
-  ctx.ellipse(cx + 1, cy + scale * 1.0, scale * SHADOW_HORIZONTAL_SCALE, scale * SHADOW_VERTICAL_SCALE, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.40)';
+  ctx.ellipse(cx, cy + r * 0.85, r * 0.65, r * 0.18, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fill();
   ctx.restore();
 
-  if (isMe) {
+  // Portrait circle (clipped image, or fallback solid colour + number)
+  const img = pawnImgs[arch];
+  if (img?.loaded) {
     ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur  = 20;
-  }
-
-  // Torso
-  const tr = torsoW * 0.35;
-  ctx.beginPath();
-  ctx.moveTo(cx - torsoW + tr, torsoT);
-  ctx.lineTo(cx + torsoW - tr, torsoT);
-  ctx.arcTo(cx + torsoW, torsoT, cx + torsoW, torsoT + tr, tr);
-  ctx.lineTo(cx + torsoW, torsoB - tr);
-  ctx.arcTo(cx + torsoW, torsoB, cx + torsoW - tr, torsoB, tr);
-  ctx.lineTo(cx - torsoW + tr, torsoB);
-  ctx.arcTo(cx - torsoW, torsoB, cx - torsoW, torsoB - tr, tr);
-  ctx.lineTo(cx - torsoW, torsoT + tr);
-  ctx.arcTo(cx - torsoW, torsoT, cx - torsoW + tr, torsoT, tr);
-  ctx.closePath();
-  ctx.fillStyle = isMe ? color : color + 'AA';
-  ctx.fill();
-
-  // Head
-  ctx.beginPath();
-  ctx.arc(cx, headCY, headR, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-
-  if (isMe) {
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth   = 2.5;
-    ctx.stroke();
-    ctx.restore(); // end glow
-
-    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
-    const arrowBot = headCY - headR - 3;
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, cx - r, portraitCY - r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
     ctx.save();
-    ctx.fillStyle    = '#FFD700';
-    ctx.font         = `bold ${arrowSz}px monospace`;
+    ctx.fillStyle    = '#000';
+    ctx.font         = `bold ${Math.max(7, Math.round(r * 0.9))}px monospace`;
     ctx.textAlign    = 'center';
-    ctx.textBaseline = 'bottom';
-    const bounce = Math.sin(Date.now() / ARROW_BOUNCE_PERIOD_MS) * 2;
-    ctx.fillText('▼', cx, arrowBot + bounce);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, portraitCY + 0.5);
     ctx.restore();
   }
 
-  // Player number in head
-  ctx.save();
-  ctx.fillStyle    = isMe ? '#000' : '#EEE';
-  ctx.font         = `bold ${Math.max(7, Math.round(headR * HEAD_RADIUS_SCALE))}px monospace`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, cx, headCY + 0.5);
-  ctx.restore();
+  // Thin black outline
+  const outlineW = Math.max(1, r * 0.06);
+  ctx.beginPath();
+  ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth   = outlineW;
+  ctx.stroke();
 
-  // Call sign above icon
+  // Current player: thin gold ring just outside the black outline
+  if (isMe) {
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r + outlineW * 0.5 + 1, 0, Math.PI * 2);
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth   = Math.max(1.5, outlineW * 0.6);
+    ctx.stroke();
+  }
+
+  const nameSz = Math.max(8, Math.round(hexSz * 0.21));
+  // Call sign above circle
   if (nm) {
     const tag      = nm.substring(0, 8).toUpperCase();
-    const nameSz   = Math.max(8, Math.round(hexSz * 0.21));
-    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
-    // Position: above the ▼ arrow for self, above head for others
-    const topY     = isMe ? headCY - headR - arrowSz - 6 : headCY - headR - 4;
+    const topY     = portraitCY - r - 4;
     ctx.save();
-    ctx.font        = `${nameSz}px 'Courier New', monospace`;
-    ctx.textAlign   = 'center';
+    ctx.font         = `${nameSz}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
     ctx.textBaseline = 'bottom';
-    // Cache measureText result — recompute only when name or font size changes.
-    const _cacheKey = `${tag}|${nameSz}`;
-    if (!drawCharIcon._twCache) drawCharIcon._twCache = new Map();
-    let tw = drawCharIcon._twCache.get(_cacheKey);
-    if (tw === undefined) {
-      tw = ctx.measureText(tag).width;
-      drawCharIcon._twCache.set(_cacheKey, tw);
-    }
-    // Dark pill backdrop
-    const padX = 3, padY = 2;
-    ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA})`;
-    ctx.beginPath();
-    ctx.roundRect(cx - tw / 2 - padX, topY - nameSz - padY, tw + padX * 2, nameSz + padY * 2, 2);
-    ctx.fill();
-    // Text in player colour, slightly dimmed for others
-    ctx.fillStyle = isMe ? color : color + 'CC';
+    ctx.fillStyle    = '#000';
     ctx.letterSpacing = '1px';
     ctx.fillText(tag, cx, topY);
+    ctx.restore();
+  }
+
+  // Score below circle
+  if (sc !== undefined && sc !== null) {
+    const scoreStr = String(sc);
+    const botY     = portraitCY + r + nameSz + 6;
+    ctx.save();
+    ctx.font         = `${nameSz}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle    = '#000';
+    ctx.letterSpacing = '1px';
+    ctx.fillText(scoreStr, cx, botY);
     ctx.restore();
   }
 }
@@ -1488,7 +1474,8 @@ function render() {
     if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
     if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
-    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId, players[i].nm);
+    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId,
+                 players[i].nm, players[i].arch ?? 0, players[i].sc ?? 0);
   }
 
   // ── Pass 2.5: Weather overlay + particles ────────────────────

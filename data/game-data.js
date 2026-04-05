@@ -118,7 +118,7 @@ const ACT_MP    = [2, 1, 0, 2, 3, 0, 1, 0];  // default MP cost per action
 // Scavenge: Broken Urban(4) DN6, Glass Fields(6) DN8
 // Others: any terrain
 const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 0];
-const TERRAIN_SALVAGE_DN = [0,0,0,0,6,0,8,0,0,0,0, 0];
+const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0];
 const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 0];
 function actAvailable(actId, terrainIdx) {
   if (terrainIdx == null || terrainIdx > 11) return false;
