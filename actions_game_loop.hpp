@@ -122,7 +122,7 @@ static void tickGame() {
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
       // Improved shelter (level 2): immune to all weather; basic shelter (level 1): no immunity
       if (G.map[p.r][p.q].shelter >= 2) continue;
-      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.3f;
+      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.016f;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); }
         if (p.ll == 0) {
@@ -164,7 +164,7 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
     ev.actOut   = AO_PARTIAL;
   } else {
     if (p.fatigue < 8) p.fatigue++;
-    if (terr == 2 && p.wounds[0] < 5) {  // Rust Forest fail → Minor wound
+    if (terr == 2 && p.wounds[0] < 10) {  // Rust Forest fail → Minor wound
       p.wounds[0]++;
       Serial.printf("[WOUND]   P%d \"%s\" Minor wound from Rust Forest (wounds[0]=%d)\n", pid, p.name, p.wounds[0]);
     }
@@ -301,7 +301,7 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   // Improved shelter relaxes the fatigue threshold (fat<6 instead of fat<4)
   bool llOk  = (p.food >= 4 && p.water >= 3);
   bool fatOk = (p.fatigue < 4) || (hexShelt == 2 && p.fatigue < 6);
-  if (llOk && fatOk && p.ll < 7) {
+  if (llOk && fatOk && p.ll < (uint8_t)effectiveMaxLL(pid)) {
     p.ll++;
     ev.actLLD = 1;
   }

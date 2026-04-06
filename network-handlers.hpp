@@ -1127,7 +1127,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           xSemaphoreGive(G.mutex); return;
         }
         // Deduct costs
-        if (costLL)   { if (p.ll > (uint8_t)costLL) p.ll -= (uint8_t)costLL; else p.ll = 0; }
+        if (costLL)   { p.ll = (uint8_t)max(0, (int)p.ll - costLL); if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; } }
         p.fatigue  = (uint8_t)constrain((int)p.fatigue  + costFat, 0, 8);
         p.radiation= (uint8_t)constrain((int)p.radiation+ costRad, 0, 10);
         p.inv[1]   = (uint8_t)max(0, (int)p.inv[1] - costFood);
@@ -1191,6 +1191,18 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           }
           bool downed = (p.statusBits & ST_DOWNED) != 0;
           encounterEnded = downed || (hazEnds != 0);
+          // Auto-drain co-located allies: major hazard (LL loss or wound) costs 2, minor costs 1
+          bool isMajor = (hazLL < 0 || hazWc > 0);
+          int drainAmt = isMajor ? 2 : 1;
+          for (int ally = 0; ally < MAX_PLAYERS; ally++) {
+            if (ally == pid || !G.players[ally].connected) continue;
+            if ((int)G.players[ally].q != (int)p.q || (int)G.players[ally].r != (int)p.r) continue;
+            int drained = 0;
+            for (int ri = 0; ri < 5 && drained < drainAmt; ri++) {
+              if (G.players[ally].inv[ri] > 0) { G.players[ally].inv[ri]--; drained++; }
+            }
+            ev.encDrains[ally] = (uint8_t)drained;
+          }
         }
         // Reset per-node assist state
         enc.assistRisk = 0; enc.assistUsed = 0;
@@ -1309,38 +1321,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       xSemaphoreGive(G.mutex);
     }
 
-  // ── Encounter: ally assist ────────────────────────────────────────────────────
-  } else if (strncmp(tv, "enc_assist", (size_t)(te - tv)) == 0) {
-    // {"t":"enc_assist","target":2,"res":3}
-    const char* tgp = strstr(data, "\"target\""); if (!tgp) return;
-    const char* tgv = strchr(tgp + 8, ':');       if (!tgv) return;
-    int target = atoi(tgv + 1);
-    const char* rep = strstr(data, "\"res\""); if (!rep) return;
-    const char* rev = strchr(rep + 5, ':');    if (!rev) return;
-    int res = atoi(rev + 1);
-    if (target < 0 || target >= MAX_PLAYERS) return;
-    if (res < 0 || res > 4) return;
-
-    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      int pid = findSlot(client->id());
-      if (pid >= 0 && pid != target && encounters[target].active &&
-          G.players[target].connected &&
-          (int)G.players[pid].q == (int)G.players[target].q &&
-          (int)G.players[pid].r == (int)G.players[target].r &&
-          G.players[pid].inv[res] > 0 &&
-          !(encounters[target].assistUsed & (1 << pid))) {
-        G.players[pid].inv[res]--;
-        encounters[target].assistRisk = (int8_t)max(-12, (int)encounters[target].assistRisk - 4);
-        encounters[target].assistUsed |= (1 << pid);
-        GameEvent ev = {};
-        ev.type = EVT_ENC_ASSIST; ev.pid = (uint8_t)pid; ev.tradeTo = (uint8_t)target;
-        ev.encAssistRes = (uint8_t)res; ev.encRiskRed = -4;
-        enqEvt(ev);
-        Serial.printf("[ENC] P%d assists P%d (res:%d) assistRisk now %d\n",
-          pid, target, res, (int)encounters[target].assistRisk);
-      }
-      xSemaphoreGive(G.mutex);
-    }
   }
 }
 

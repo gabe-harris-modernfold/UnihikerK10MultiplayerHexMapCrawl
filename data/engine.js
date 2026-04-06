@@ -866,39 +866,14 @@ function handleEvent(ev) {
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
       const who = players[ev.pid]?.nm || `P${ev.pid}`;
       addLog(`<span class="log-col">\uD83D\uDC41 ${escHtml(who)} enters encounter (${ev.q},${ev.r})</span>`);
-      // Show ally banner to co-located players who are not in the encounter
-      if (ev.pid !== myId && players[myId]) {
-        const me = players[myId];
-        if (me.q === ev.q && me.r === ev.r) window._showAllyEncBanner?.(ev.pid);
-      }
       updateSidebar();
-      break;
-    }
-
-    case 'enc_assist': {
-      const asName  = players[ev.pid]?.nm || `P${ev.pid}`;
-      const tgtName = players[ev.tgt]?.nm || `P${ev.tgt}`;
-      const RES_ASSIST_NAMES = ['Food','Water','Meds','Tools','Fuel'];
-      const resIdx  = (ev.res >= 0 && ev.res < 5) ? ev.res : -1;
-      const resName = resIdx >= 0 ? RES_ASSIST_NAMES[resIdx] : 'res';
-      // Deduct resource from assisting player client-side (optimistic; confirmed by next 's' broadcast)
-      if (resIdx >= 0 && ev.pid >= 0 && ev.pid < MAX_PLAYERS && players[ev.pid]?.inv)
-        players[ev.pid].inv[resIdx] = Math.max(0, (players[ev.pid].inv[resIdx] ?? 0) - 1);
-      addLog(`<span class="log-col">\u2194 ${escHtml(asName)} assists ${escHtml(tgtName)} (${resName} \u2192 \u2212${Math.abs(ev.rd)} DN)</span>`);
-      if (ev.pid === myId || ev.tgt === myId) {
-        showToast(`\u2194 Assist: \u2212${Math.abs(ev.rd)} DN`);
-        updateSidebar();
-      }
-      window._onEncAssist?.(ev);
       break;
     }
 
     case 'enc_res': {
       const who = players[ev.pid]?.nm || `P${ev.pid}`;
-      const SKILL_NAMES_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
-      const skillName = SKILL_NAMES_ENC[ev.skill] ?? `Sk${ev.skill}`;
       const outClass = ev.out ? 'log-col' : 'log-check-fail';
-      addLog(`<span class="${outClass}">\u2234 ${escHtml(who)} ${skillName} vs DN${ev.dn} \u2192 ${ev.tot}: ${ev.out ? 'SUCCESS' : 'FAIL'}</span>`);
+      addLog(`<span class="${outClass}">\uD83D\uDC41 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}</span>`);
       if (ev.pid === myId) {
         const p = players[myId];
         if (p) {
@@ -908,15 +883,23 @@ function handleEvent(ev) {
           if (ev.st) p.sb = ev.st;
         }
         updateSidebar();
-        if (!ev.out) {
-          const pen = [
-            ev.penLL  < 0 ? `${ev.penLL} LL`  : null,
-            ev.penFat < 0 ? `${ev.penFat} Fat` : null,
-            ev.penRad < 0 ? `${ev.penRad} Rad` : null,
-          ].filter(Boolean).join(', ');
-          showToast(`\u2297 Failed (${pen || 'hazard'})`);
-        }
         window._onEncResult?.(ev);
+      }
+      // Apply auto-drain to co-located allies on failure
+      if (!ev.out && Array.isArray(ev.drains)) {
+        const ldrName = players[ev.pid]?.nm || `P${ev.pid}`;
+        ev.drains.forEach((d, apid) => {
+          if (d <= 0 || !players[apid]) return;
+          let toDeduct = d;
+          for (let ri = 0; ri < 5 && toDeduct > 0; ri++) {
+            const cur = players[apid].inv?.[ri] ?? 0;
+            if (cur > 0) { const take = Math.min(cur, toDeduct); players[apid].inv[ri] = cur - take; toDeduct -= take; }
+          }
+          if (apid === myId) {
+            showToast(`\uD83D\uDC41 You shared supplies with ${escHtml(ldrName)}.`);
+            updateSidebar();
+          }
+        });
       }
       break;
     }
@@ -930,7 +913,6 @@ function handleEvent(ev) {
         window._onEncBank?.(ev);
         updateSidebar();
       }
-      window._hideAllyEncBanner?.(ev.pid);
       break;
     }
 
@@ -944,7 +926,6 @@ function handleEvent(ev) {
         window._onEncEnd?.(ev);
         updateSidebar();
       }
-      window._hideAllyEncBanner?.(ev.pid);
       break;
     }
 

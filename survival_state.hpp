@@ -32,7 +32,7 @@ static void duskCheck() {
     }
 
     if (ev.actOut == AO_FAIL) {
-      p.wounds[1]++;                  // +1 Major Wound
+      p.wounds[1] = (uint8_t)min(10, (int)p.wounds[1] + 1);  // +1 Major Wound (cap 10)
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10PlaySeq(SEQ_DAMAGE); }  // red = LL lost
       if (p.ll == 0) {
         p.statusBits |= ST_DOWNED;

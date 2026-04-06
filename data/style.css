@@ -1440,25 +1440,18 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
 .enc-choice-btn .enc-risk-tag{font-size:14px}
 .enc-risk-low{color:#3a8}.enc-risk-mid{color:#fa0}.enc-risk-high{color:#e43}
 #enc-bank-row{margin-top:4px}
-
-/* ── Ally encounter banner ──────────────────────────────────────────── */
-#ally-enc-banner{
-  position:fixed;bottom:calc(var(--hud-h,36px) + 8px);left:50%;transform:translateX(-50%);
-  background:var(--bg-panel);border:1px solid var(--gold);
-  border-radius:2px;padding:10px 14px;
-  z-index:18;min-width:220px;max-width:min(340px,90vw);
-  display:none;flex-direction:column;gap:4px
+#enc-outcome{
+  display:none;flex-direction:column;gap:6px;
+  padding:10px 12px;margin-top:2px;
+  background:rgba(5,4,2,0.9);border:1px solid var(--bdr-hi);border-radius:2px
 }
-#ally-enc-banner.visible{display:flex}
-#ally-enc-sub{color:var(--txt-dim);font-size:var(--fs-d);margin-top:2px}
-#ally-enc-assist-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.enc-assist-btn{
-  padding:4px 8px;background:transparent;
-  border:1px solid var(--bdr-hi);color:var(--txt);
-  font-family:var(--stencil);font-size:14px;letter-spacing:1px;
-  border-radius:2px;cursor:pointer
+#enc-outcome.visible{display:flex}
+.enc-out-flavor{
+  color:var(--txt);font-size:16px;line-height:1.45;white-space:pre-wrap
 }
-.enc-assist-btn:hover{border-color:var(--gold);color:var(--gold-hi)}
+.enc-out-delta{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;font-size:var(--fs-d)}
+.enc-out-pos{color:#3a8}
+.enc-out-neg{color:#e43}
 
 /*──────────── Weather HUD indicator ────────────────────────────*/
 .hud-weather{

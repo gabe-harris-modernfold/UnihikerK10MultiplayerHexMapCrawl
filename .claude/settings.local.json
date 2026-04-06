@@ -25,7 +25,9 @@
       "Bash(find /c/SourceCode/Esp32HexMapCrawl -type f \\\\\\(-name *.hpp -o -name *.cpp \\\\\\))",
       "Bash(grep -i \"\\\\.h$\\\\|\\\\.hpp$\")",
       "Bash(grep \"\\\\.h$\")",
-      "Bash(grep -E \"\\\\.\\(js|json|txt\\)$\")"
+      "Bash(grep -E \"\\\\.\\(js|json|txt\\)$\")",
+      "Bash(ls -lh /c/SourceCode/Esp32HexMapCrawl/data/img/*.png /c/SourceCode/Esp32HexMapCrawl/data/img/*.jpg)",
+      "Bash(sort -k2)"
     ]
   }
 }

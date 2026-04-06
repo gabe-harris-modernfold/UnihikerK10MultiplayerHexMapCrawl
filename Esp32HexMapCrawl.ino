@@ -438,6 +438,7 @@ struct GameEvent {
   int8_t   encRiskRed;    // risk reduction for assist event
   uint8_t  encItemType;   // typed item dropped (loot table roll)
   uint8_t  encItemQty;
+  uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
@@ -624,14 +625,20 @@ AsyncWebSocket  ws("/ws");
 struct WebFile { const char* url; const char* mime; const char* sdName;
                  uint8_t* buf; size_t len; };
 static WebFile WEB_FILES[] = {
-  { "/",                       "text/html",       "index.html",            nullptr, 0 },
-  { "/engine.js",              "text/javascript", "engine.js",             nullptr, 0 },
-  { "/ash-particle-system.js", "text/javascript", "ash-particle-system.js",nullptr, 0 },
-  { "/game-data.js",           "text/javascript", "game-data.js",          nullptr, 0 },
-  { "/style.css",              "text/css",        "style.css",             nullptr, 0 },
-  { "/ui.js",                  "text/javascript", "ui.js",                 nullptr, 0 },
-  { "/van-ui.js",              "text/javascript", "van-ui.js",             nullptr, 0 },
-  { "/van.js",                 "text/javascript", "van.js",                nullptr, 0 },
+  { "/",                           "text/html",       "index.html",                nullptr, 0 },
+  { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0 },
+  { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0 },
+  { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0 },
+  { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0 },
+  { "/game-config.js",             "text/javascript", "game-config.js",            nullptr, 0 },
+  { "/state-manager.js",           "text/javascript", "state-manager.js",          nullptr, 0 },
+  { "/animation-manager.js",       "text/javascript", "animation-manager.js",      nullptr, 0 },
+  { "/event-handlers.js",          "text/javascript", "event-handlers.js",         nullptr, 0 },
+  { "/style.css",                  "text/css",        "style.css",                 nullptr, 0 },
+  { "/ui.js",                      "text/javascript", "ui.js",                     nullptr, 0 },
+  { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0 },
+  { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0 },
+  { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0 },
 };
 static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
 

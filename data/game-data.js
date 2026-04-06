@@ -30,7 +30,7 @@ const TERRAIN = [
     fill:'#081A10', stroke:'#183428',   /* very dark brackish green */
     tags:['Water','Treacherous'],
     hazard:'Quicksand, infection',
-    desc:'Brackish wetlands and salt flats. Water is abundant beneath the surface but heavily contaminated. Treacherous footing slows movement to a crawl. Avoid after dark.' },
+    desc:'Brackish wetlands and salt flats. Water is abundant beneath the surface but undrinkable. Treacherous footing slows movement to a crawl. Avoid after dark.' },
   { name:'Broken Urban',    mc:2,   sv:1, vis:-1, icon:'🏚',
     fill:'#1A1814', stroke:'#34302A',   /* cold concrete grey */
     tags:['Salvage','Blind Ground'],
