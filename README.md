@@ -15,7 +15,6 @@ The **Unihiker K10** is a dual-core ESP32-S3 microcontroller with:
 - **Processor:** ESP32-S3-N16R8 (dual-core Xtensa, 240 MHz)
 - **Display:** 2.8" ILI9341 TFT LCD (240×320 pixels, portrait)
 - **Connectivity:** WiFi 802.11 b/g/n, Bluetooth 5.0
-- **Built-in Gesture Recognition:** Capacitive touch with multi-touch support
 - **Arduino Ecosystem:** Full compatibility via UNIHIKER board package
 
 The K10's dual-core architecture enables:
