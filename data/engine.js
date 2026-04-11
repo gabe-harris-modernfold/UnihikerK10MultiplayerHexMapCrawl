@@ -625,6 +625,7 @@ function handleEvent(ev) {
       // Server has reset our slot — show death message then redirect to char selection
       myId = -1;
       pendingLobbyRedirect = true;
+      window._onEncEnd?.();  // close encounter overlay if open when player is downed
       addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
       showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
       setTimeout(() => {
@@ -1121,21 +1122,23 @@ function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm, arch, sc) {
     ctx.restore();
   }
 
-  // Thin black outline
-  const outlineW = Math.max(1, r * 0.06);
+  // Coloured outline — archetype ring (all players)
+  const outlineW = Math.max(1.5, r * 0.09);
   ctx.beginPath();
   ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
-  ctx.strokeStyle = '#000';
+  ctx.strokeStyle = color;
   ctx.lineWidth   = outlineW;
   ctx.stroke();
 
-  // Current player: thin gold ring just outside the black outline
+  // Current player: brighter/thicker second ring just outside
   if (isMe) {
     ctx.beginPath();
-    ctx.arc(cx, portraitCY, r + outlineW * 0.5 + 1, 0, Math.PI * 2);
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth   = Math.max(1.5, outlineW * 0.6);
+    ctx.arc(cx, portraitCY, r + outlineW + 1, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = Math.max(2, outlineW * 0.7);
+    ctx.globalAlpha = 0.7;
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   const nameSz = Math.max(8, Math.round(hexSz * 0.21));
@@ -1378,6 +1381,17 @@ function render() {
           ctx.restore();
         }
       }
+
+      // Weather icon — small 🌧 in upper-left corner of each visible hex
+      if (weatherPhase > 0) {
+        ctx.save();
+        ctx.font         = `${Math.max(8, Math.round(HEX_SZ * 0.28))}px serif`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'top';
+        ctx.globalAlpha  = 0.75;
+        ctx.fillText('🌧', cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48);
+        ctx.restore();
+      }
     }
   }
 
@@ -1399,8 +1413,9 @@ function render() {
     }
   }
 
-  // ── POI hex outline (thicker, same colour as grid, visible cells only) ──
-  ctx.strokeStyle = 'rgba(50,50,50,0.9)';
+  // ── POI hex outline (yellow, pulsing, visible cells only) ──
+  const _poiAlpha = 0.7 + 0.2 * Math.sin(performance.now() / 400);
+  ctx.strokeStyle = `rgba(255,210,0,${_poiAlpha})`;
   ctx.lineWidth   = 3.0;
   ctx.globalAlpha = 1;
   for (let dr = -viewR; dr <= viewR; dr++) {
@@ -1455,7 +1470,8 @@ function render() {
     if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
     if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
-    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId,
+    const _archColor = ARCHETYPE_COLORS[players[i].arch ?? 0] ?? PLAYER_COLORS[i];
+    drawCharIcon(ctx, pcx, pcy, HEX_SZ, _archColor, i, i === myId,
                  players[i].nm, players[i].arch ?? 0, players[i].sc ?? 0);
   }
 

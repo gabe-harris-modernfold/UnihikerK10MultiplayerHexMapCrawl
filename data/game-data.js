@@ -103,6 +103,16 @@ const PLAYER_COLORS = [
   '#44FFFF','#FF8844','#FF44AA','#AAFFAA','#AAAAFF'
 ];
 
+// Archetype ring colours (indexed 0-5, matching ARCHETYPES order)
+const ARCHETYPE_COLORS = [
+  '#00CED1',  // 0 Guide         — Teal
+  '#FFD700',  // 1 Quartermaster — Gold
+  '#00C86E',  // 2 Medic         — Green
+  '#FF8C00',  // 3 Mule          — Orange
+  '#9B59B6',  // 4 Scout         — Purple
+  '#E74C3C',  // 5 Endurer       — Red
+];
+
 // ── Action system constants (mirrors server ACT_* / AO_*) ────────
 const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_SCAV = 3;
 const ACT_SHELTER = 4, ACT_SURVEY = 6, ACT_REST = 7;

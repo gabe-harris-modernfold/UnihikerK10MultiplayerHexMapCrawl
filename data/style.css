@@ -741,6 +741,8 @@ canvas{display:block;width:100%;height:100%}
 /*──────────── Cooldown SVG ring ────────────────────────────────*/
 #cd-center{overflow:visible}
 #cd-center svg{display:block;overflow:visible}
+#cd-center.cd-disconnected svg{visibility:hidden}
+#cd-center.cd-disconnected::after{content:'⏳';font-size:16px;line-height:1;position:absolute}
 
 /*──────────────────────────── Responsive ───────────────────────*/
 /* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */

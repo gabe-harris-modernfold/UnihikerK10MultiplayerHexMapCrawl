@@ -248,9 +248,12 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Starting resources (all archetypes)
           p.inv[0] = 2;  // water tokens
           p.inv[1] = 1;  // food tokens
+          p.inv[2] = 3;  // fuel
+          p.inv[3] = 3;  // medicine
+          p.inv[4] = 3;  // scrap
           if (arch == 1) { p.inv[1] = 2; }           // Quartermaster: extra food
-          if (arch == 2) { p.inv[3] = 2; }           // Medic: medicine kit
-          if (arch == 3) { p.inv[1]=2; p.inv[3]=1; p.inv[4]=1; }  // Mule
+          if (arch == 2) { p.inv[3] = 5; }           // Medic: extra medicine (base 3 +2)
+          if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }  // Mule
           snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
           p.archetype    = (uint8_t)arch;
           p.ll           = 7;
@@ -293,9 +296,12 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Starting resources (all archetypes)
           p.inv[0] = 2;  // water tokens
           p.inv[1] = 1;  // food tokens
+          p.inv[2] = 3;  // fuel
+          p.inv[3] = 3;  // medicine
+          p.inv[4] = 3;  // scrap
           if (arch == 1) { p.inv[1] = 2; }           // Quartermaster: extra food
-          if (arch == 2) { p.inv[3] = 2; }           // Medic: medicine kit
-          if (arch == 3) { p.inv[1]=2; p.inv[3]=1; p.inv[4]=1; }  // Mule
+          if (arch == 2) { p.inv[3] = 5; }           // Medic: extra medicine (base 3 +2)
+          if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }  // Mule
           snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
           // Survivor initialisation
           p.archetype    = (uint8_t)arch;

@@ -473,6 +473,14 @@ function initHudBindings() {
     });
   }
 
+  // Hourglass on #cd-center when disconnected
+  const cdCenter = document.getElementById('cd-center');
+  if (cdCenter) {
+    van.derive(() => {
+      cdCenter.classList.toggle('cd-disconnected', uiConn.val !== 'Connected');
+    });
+  }
+
   // Movement points — rendered as track boxes in #hud-mp-track (see #hud-ll)
 
   // Inventory: sidebar + mobile HUD + char sheet; bump animation on increase
@@ -902,8 +910,10 @@ function initActionPanel() {
     actionDefs.forEach(def => {
       // Fix: shelter unavailable if improved shelter already built here
       const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
+      // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
+      // allow terrain-dependent actions optimistically; the server validates.
       const available   = def.id === ACT_TRADE  ? tradeAvail
-                        : (!shelterMaxed && actAvailable(def.id, terr));
+                        : (terr === null ? true : (!shelterMaxed && actAvailable(def.id, terr)));
       const hasMP      = mp >= def.mpCost;
       const needsScrap = def.id === ACT_SHELTER;
       const hasScrap   = !needsScrap || scrap > 0;
@@ -1531,6 +1541,11 @@ function initMenuSystem() {
       md({ class: 'settings-row' },
         mp({ class: 'settings-label' }, 'Position'),
         mp({ class: 'settings-val' }, () => uiPos.val)
+      ),
+
+      md({ class: 'settings-row' },
+        mp({ class: 'settings-label' }, 'Server IP'),
+        mp({ class: 'settings-val' }, () => uiConn.val === 'Connected' ? (window.location.hostname || 'unknown') : 'unknown')
       ),
 
       md({ class: 'settings-row' },

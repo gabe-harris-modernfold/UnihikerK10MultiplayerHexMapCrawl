@@ -308,7 +308,7 @@ static bool hasPassTerrainBit(int pid, uint8_t terrainBit) {
 // Called while holding G.mutex.
 static int effectiveMP(int pid) {
   Player& p  = G.players[pid];
-  int     mp = (int)p.ll + 2;
+  int     mp = (int)p.ll + 3;
   mp -= min((int)p.wounds[1], 2);          // major wounds: −1 each, max −2
   // Encumbrance: count legacy inv slots used
   int used = 0;

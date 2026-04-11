@@ -151,14 +151,14 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_FORAGE, cr);
   if (cr.total >= (int)dn) {
-    uint8_t yield = (terr == 0 || terr == 2) ? 2 : 1;  // Open Scrub + Rust Forest → 2 food
+    uint8_t yield = (terr == 0 || terr == 2) ? 3 : 2;  // Open Scrub + Rust Forest → 3 food, others → 2
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + yield, 99);
     ev.actFoodD = (int8_t)yield;
     addScore(p, ev, 3);
     ev.actOut   = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
-    p.inv[1]    = (uint8_t)min((int)p.inv[1] + 1, 99);
-    ev.actFoodD = 1;
+    p.inv[1]    = (uint8_t)min((int)p.inv[1] + 2, 99);
+    ev.actFoodD = 2;
     if (p.fatigue < 8) p.fatigue++;
     addScore(p, ev, 1);
     ev.actOut   = AO_PARTIAL;
@@ -202,14 +202,14 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_SCAVENGE, cr);
   if (cr.total >= (int)dn) {
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 1, 99);
-    ev.actScrapD = 1;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 2, 99);
+    ev.actScrapD = 2;
     addScore(p, ev, 5);
     ev.actOut    = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
     // Partial: item + Encounter (Encounter not yet implemented)
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 1, 99);
-    ev.actScrapD = 1;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 2, 99);
+    ev.actScrapD = 2;
     addScore(p, ev, 2);
     ev.actOut    = AO_PARTIAL;
   } else {

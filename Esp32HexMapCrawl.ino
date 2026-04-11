@@ -81,7 +81,10 @@
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
+#pragma GCC diagnostic pop
 #include "usb_drive.h"
 
 static const char* AP_SSID = "WASTELAND";
@@ -152,10 +155,10 @@ static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
 // At TICK_MS=100 (10 ticks/sec), divider=50 → 5 sec/weather-tick:
 //   Clear 60-100 weather-ticks = 5-8.3 min | Chem 15-30 = 1.25-2.5 min
 static constexpr uint32_t WEATHER_TICK_DIVIDER = 50;
-static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 2, 4, 6 };
+static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 1, 3, 5 };
 static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
-static const uint16_t WEATHER_DUR_MIN[4]     = { 60, 30, 20, 15 };
-static const uint16_t WEATHER_DUR_MAX[4]     = { 100, 50, 40, 30 };
+static const uint16_t WEATHER_DUR_MIN[4]     = { 180, 30, 20, 15 };
+static const uint16_t WEATHER_DUR_MAX[4]     = { 300, 50, 40, 30 };
 // Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
