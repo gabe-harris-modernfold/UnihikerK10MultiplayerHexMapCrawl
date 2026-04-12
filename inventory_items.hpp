@@ -30,9 +30,46 @@ static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
   Serial.printf("[ITEM]  P%d efxCureStatus item:%d cleared 0x%02X\n", pid, itemId, (int)param);
 }
 
+// EFX_NARRATIVE — server-side handler for params requiring server action.
+// param==10: teleport_random (Rambling Drifter, Slippery Cave)
+// All other params (11=UI scramble, 12=reverse keys, 20-32=misc) are client-side;
+// the server just broadcasts the item-use event with the param for the client to handle.
+static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
+  Serial.printf("[ITEM]  P%d efxNarrative item:%d param:%d\n", pid, itemId, (int)param);
+  if (param == 10) {
+    // teleport_random — move player to a random surveyed hex
+    // surveyedMap bitmask: bit (r*MAP_COLS+q) => q = idx%MAP_COLS, r = idx/MAP_COLS
+    static constexpr int totalCells = MAP_ROWS * MAP_COLS;
+    uint16_t surveyed[totalCells];
+    int count = 0;
+    const Player& pl = G.players[pid];
+    for (int idx = 0; idx < totalCells; idx++) {
+      if ((pl.surveyedMap[idx / 8] >> (idx % 8)) & 1) {
+        surveyed[count++] = (uint16_t)idx;
+      }
+    }
+    if (count > 1) {
+      int pick = random(0, count);
+      int attempts = 0;
+      int16_t tq = (int16_t)(surveyed[pick] % MAP_COLS);
+      int16_t tr = (int16_t)(surveyed[pick] / MAP_COLS);
+      while (tq == G.players[pid].q && tr == G.players[pid].r && attempts++ < 10) {
+        pick = random(0, count);
+        tq   = (int16_t)(surveyed[pick] % MAP_COLS);
+        tr   = (int16_t)(surveyed[pick] / MAP_COLS);
+      }
+      G.players[pid].q = tq;
+      G.players[pid].r = tr;
+      Serial.printf("[ITEM]  P%d teleported to (%d,%d)\n",
+        pid, (int)G.players[pid].q, (int)G.players[pid].r);
+    }
+  }
+}
+
 static void initEffectTable() {
   effectTable[EFX_THREAT_MOD]  = efxThreatMod;
   effectTable[EFX_CURE_STATUS] = efxCureStatus;
+  effectTable[EFX_NARRATIVE]   = efxNarrative;
 }
 
 static void dispatchEffect(int pid, const ItemDef& item) {

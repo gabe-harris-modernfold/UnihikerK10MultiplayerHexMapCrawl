@@ -1,0 +1,38 @@
+{
+  "id": "scrub_jack_return_01",
+  "title": "The Return to Jack",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Jack is still at the helicopter when you find him again, forearms deep in an engine housing, humming to himself — something that might be a song or might just be the sound a person makes when they've found a problem they know how to fix. He looks up when you approach. His eyes go straight to the mask. Something in his face relaxes that you didn't notice was tense.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Hand over the Intimidating Mask",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "mask_delivered",
+          "hazard_id": "minor_complication"
+        }
+      ]
+    },
+    "mask_delivered": {
+      "text": "'There she is.' He puts it on immediately, over the romper, and the effect is — genuinely unsettling, actually. The mask is doing a lot of work. He nods, rolls his shoulders, and something in his posture changes. Then he gets back to the helicopter with a renewed intensity. Forty minutes of clanging and swearing later, he wheels a motorcycle out from behind the wreck — rusted, patched, re-fitted with components from the helicopter's systems. It starts on the second kick. He looks unreasonably proud. 'She's yours,' he says. 'You earned her.'",
+      "can_bank": true,
+      "loot_table": "drop_motorbike",
+      "loot": [
+        { "res": 2, "qty": [2, 3] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "minor_complication": {
+      "text": "Jack gets the mask tangled in the romper's neck drawstring trying to put it on. You wait. It takes a while. No one speaks of it.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

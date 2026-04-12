@@ -75,6 +75,14 @@ body::after{
 .hud-clock.phase-dark{color:#6070A0}
 .hud-day{padding:0 5px;font-size:var(--fs-l);font-family:var(--stencil);color:var(--gold);letter-spacing:var(--ls-l);white-space:nowrap}
 @media(max-width:440px){.hud-clock{display:none}.hud-day{display:none}}
+/* ── Rest state indicator ──────────────────────────────────────── */
+.hud-rest{padding:0 5px;font-size:var(--fs-l);font-family:var(--stencil);letter-spacing:var(--ls-l);white-space:nowrap;display:none}
+.hud-rest.rest-wait {display:inline;color:#CC9933;animation:rest-blink 0.8s step-end infinite}
+.hud-rest.rest-on   {display:inline;color:#44AA66}
+.hud-rest.rest-all  {display:inline;color:#88FFAA;animation:rest-pulse 1.2s ease-in-out infinite}
+@keyframes rest-blink{0%,100%{opacity:1}50%{opacity:0.3}}
+@keyframes rest-pulse{0%,100%{opacity:0.7}50%{opacity:1;text-shadow:0 0 8px rgba(100,255,160,0.7)}}
+@media(max-width:440px){.hud-rest{display:none!important}}
 .hr-item{display:flex;align-items:center;gap:3px}
 .hr-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .hr-val{font-size:var(--fs-v);color:var(--gold-hi);font-weight:bold;min-width:14px;text-align:right}
@@ -1477,3 +1485,6 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   63%{color:#CCEE88;text-shadow:0 0 14px rgba(140,220,60,0.9)}
   65%{color:#88CC44;text-shadow:none}
 }
+
+/* ── Narrative item effects ─────────────────────────────────── */
+body.trippy{filter:hue-rotate(180deg) saturate(3) invert(0.08);transition:filter 0.4s ease}

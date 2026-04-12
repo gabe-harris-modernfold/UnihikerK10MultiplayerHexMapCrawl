@@ -1,0 +1,52 @@
+{
+  "id": "urban_outhouse_01",
+  "title": "The Booby-Trapped Outhouse",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "An undamaged portable toilet standing alone in a cleared alley, slightly incongruous, slightly too present. The pre-war branded livery is intact, the door closed but unlatched, no visible damage. Someone has placed it here. Someone has placed it here deliberately and left it looking exactly like something it is tempting to open. You reach for the handle anyway, because the waste collection urgency has been building for the last two hours and you are a person who makes pragmatic decisions.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Open the door",
+          "cost": { "fatigue": 1 },
+          "base_risk": 100,
+          "skill": 0,
+          "success_node": "also_explodes",
+          "hazard_id": "methane_blast"
+        },
+        {
+          "label": "Check the seams first — something seems off",
+          "cost": { "fatigue": 1 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "trap_disarmed",
+          "hazard_id": "methane_blast"
+        }
+      ]
+    },
+    "trap_disarmed": {
+      "text": "There it is: a pressure-release valve welded to the inside of the door frame, connected to a tank of compressed methane and an igniter from a pre-war grill lighter. Crudely done but effective. You disarm it, ventilate the interior, and use the facility unmolested. Small victory. Important victory.",
+      "can_bank": false,
+      "loot": [
+        { "res": 2, "qty": [1, 2] }
+      ],
+      "choices": []
+    },
+    "also_explodes": {
+      "text": "The door opens and the methane plume meets the igniter and you are briefly and comprehensively on fire and then you are one hex away from the outhouse, flat on your back, covered in the contents of a pre-war portable toilet that has been sealed for an indeterminate period. You are not badly hurt. You are, however, extremely unpleasant to be near.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "methane_blast": {
+      "text": "The door opens and the methane plume meets the igniter and you exit this situation backward, on fire, briefly airborne. The Stink status is the least of your immediate concerns but it will be the most lasting.",
+      "penalty": { "fatigue": 3, "ll": -4 },
+      "status": 128,
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

@@ -1,0 +1,78 @@
+{
+  "id": "urban_arcade_01",
+  "title": "The Broken Arcade",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "One arcade cabinet, standing alone in the middle of a cleared rubble field, connected to nothing visible, displaying an attract screen for a pre-war game about a line that eats itself. It is powered. How it is powered is unclear. A coin slot on the front has a hand-painted sign taped above it that reads 'STILL WORKS. 1 CREDIT.' A second, smaller sign below it reads 'SERIOUSLY'. Below that: 'please'. The screen changes to display your approach angle.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Insert a Pre-War Coin and play",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "game_starts",
+          "hazard_id": "coin_rejected"
+        },
+        {
+          "label": "Try to open the cabinet and strip the components",
+          "cost": { "fatigue": 2 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cabinet_stripped",
+          "hazard_id": "cabinet_defends_itself"
+        }
+      ]
+    },
+    "game_starts": {
+      "text": "The game starts. It is Snake. Classic Snake. The controller is original and functional and you are playing Snake on a standalone cabinet in the middle of the wasteland. The rules are the same as they ever were. The score to beat is 10. There is something profoundly meditative about this. You either achieve meditative competence or you don't.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Play for high score — aim for 10+",
+          "cost": { "fatigue": 2 },
+          "base_risk": 40,
+          "skill": 5,
+          "success_node": "high_score",
+          "hazard_id": "low_score"
+        }
+      ]
+    },
+    "high_score": {
+      "text": "You reach 10. The cabinet makes a sound like celebration — not a jingle, a real crowd sound, pre-recorded and somehow warm. A panel at the base opens and reveals a small locked compartment. Inside: whoever stocked this was planning for a very specific type of survivor.",
+      "can_bank": true,
+      "loot_table": "urban_rare",
+      "choices": []
+    },
+    "cabinet_stripped": {
+      "text": "The components are good — power board, display unit, original control chips. Whatever was keeping this running had decent engineering behind it.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 4] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "coin_rejected": {
+      "text": "The coin slot takes your coin, considers it for a moment, and returns it with the energy of something that has standards. The screen continues displaying its attract loop.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "low_score": {
+      "text": "You reach 7. The cabinet makes a sound like a disappointed sigh — a specific, designed sound, deliberately engineered to make you feel that. Then it shocks you through the controls. Not severely. Just enough. The panel stays shut.",
+      "penalty": { "fatigue": 1, "ll": -5 },
+      "status": 2,
+      "ends_encounter": true
+    },
+    "cabinet_defends_itself": {
+      "text": "The cabinet detects the attempted disassembly and discharges its full power reserve through the chassis. You let go fast but not fast enough. The shock is significant and the components are now locked behind a magnetic shutter that was not there before.",
+      "penalty": { "fatigue": 2, "ll": -5 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

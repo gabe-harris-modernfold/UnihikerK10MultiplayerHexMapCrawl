@@ -11,7 +11,7 @@
  * @param {Object} event - Event to apply
  * @returns {Object} New state after applying event
  */
-export function gameStateReducer(state, event) {
+function gameStateReducer(state, event) {
   switch (event.type) {
     case 'SYNC':
       return {
@@ -145,7 +145,7 @@ export function gameStateReducer(state, event) {
  * @param {number} mapCols - Map column count
  * @returns {Object} Initial state
  */
-export function createInitialState(maxPlayers = 6, mapRows = 19, mapCols = 25) {
+function createInitialState(maxPlayers = 6, mapRows = 19, mapCols = 25) {
   return {
     myId: -1,
     players: Array.from({ length: maxPlayers }, (_, i) => ({
@@ -175,7 +175,7 @@ export function createInitialState(maxPlayers = 6, mapRows = 19, mapCols = 25) {
  * GameState class using event sourcing pattern.
  * Maintains complete event history and allows state reconstruction from any point.
  */
-export class GameState {
+class GameState {
   constructor(initialState = null) {
     this.events = [];
     this.state = initialState || createInitialState();

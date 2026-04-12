@@ -66,10 +66,21 @@ static void tickGame() {
 
   bool dawnOccurred = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
+    bool earlyDawn = (connCount > 0 && allResting && G.dayTick < DAY_TICKS);
+    uint32_t savedTick = G.dayTick;
     G.dayTick = 0;
     G.dayCount++;
     dawnOccurred = true;
-    Serial.printf("[DUSK]    ──── Dusk (end of Day %d) ────\n", (int)G.dayCount - 1);
+    if (earlyDawn) {
+      Serial.printf("[DUSK]    ──── Day %d ends EARLY (all %d resting) | tick %lu/%lu (%.0f%%, %lus saved) ────\n",
+        (int)G.dayCount - 1, connCount,
+        (unsigned long)savedTick, (unsigned long)DAY_TICKS,
+        100.0f * savedTick / DAY_TICKS,
+        (unsigned long)((DAY_TICKS - savedTick) * TICK_MS / 1000));
+    } else {
+      Serial.printf("[DUSK]    ──── Day %d ends (natural) | tick %lu/%lu ────\n",
+        (int)G.dayCount - 1, (unsigned long)savedTick, (unsigned long)DAY_TICKS);
+    }
     // Force-abort any active encounters before dusk (no TC increment for dawn abort)
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (!encounters[i].active) continue;
@@ -83,7 +94,10 @@ static void tickGame() {
       Serial.printf("[ENC]     P%d encounter force-aborted (dawn)\n", i);
     }
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
-    Serial.printf("[DAWN]    ──── Day %d begins ────\n", (int)G.dayCount);
+    Serial.printf("[DAWN]    ──── Day %d begins | cycle %lus/day (%lu ticks @ %lums) ────\n",
+      (int)G.dayCount,
+      (unsigned long)(DAY_TICKS * TICK_MS / 1000),
+      (unsigned long)DAY_TICKS, (unsigned long)TICK_MS);
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
   }
@@ -152,6 +166,10 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   broadcastCheck(pid, SK_FORAGE, cr);
   if (cr.total >= (int)dn) {
     uint8_t yield = (terr == 0 || terr == 2) ? 3 : 2;  // Open Scrub + Rust Forest → 3 food, others → 2
+    // Compound Bow (id:29) doubles food yield on land hexes
+    if (p.equip[EQUIP_HAND - 1] == 29) yield = (uint8_t)min((int)yield * 2, 99);
+    // Fishing Pole (id:28) doubles yield on River Channel (terr==11)
+    if (p.equip[EQUIP_HAND - 1] == 28 && terr == 11) yield = (uint8_t)min((int)yield * 2, 99);
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + yield, 99);
     ev.actFoodD = (int8_t)yield;
     addScore(p, ev, 3);
@@ -202,14 +220,19 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_SCAVENGE, cr);
   if (cr.total >= (int)dn) {
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 2, 99);
-    ev.actScrapD = 2;
+    uint8_t scrapYield = 2;
+    // Portable Forge (id:27) doubles scrap yield on scavenge
+    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
+    ev.actScrapD = scrapYield;
     addScore(p, ev, 5);
     ev.actOut    = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
     // Partial: item + Encounter (Encounter not yet implemented)
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 2, 99);
-    ev.actScrapD = 2;
+    uint8_t scrapYield = 2;
+    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
+    ev.actScrapD = scrapYield;
     addScore(p, ev, 2);
     ev.actOut    = AO_PARTIAL;
   } else {
@@ -318,9 +341,19 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
     }
   }
   ev.actOut = AO_SUCCESS;
-  Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d (waiting for dawn)\n",
+  uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
+  // Count how many connected players are now resting (including this one)
+  int restCount = 0, totalConn = 0;
+  for (int k = 0; k < MAX_PLAYERS; k++) {
+    if (G.players[k].connected) { totalConn++; if (G.players[k].resting) restCount++; }
+  }
+  Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d"
+                " | tick %lu/%lu ~%lus remain | resting %d/%d\n",
     pid, p.name, prevFat, p.fatigue, fatRed, hexShelt, campCount,
-    p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve);
+    p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve,
+    (unsigned long)G.dayTick, (unsigned long)DAY_TICKS,
+    (unsigned long)(ticksLeft * TICK_MS / 1000),
+    restCount, totalConn);
 }
 
 // ── §5 Action dispatcher ──────────────────────────────────────────────────────

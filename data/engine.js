@@ -50,6 +50,37 @@ function narrateState(msg) {
   const el = document.getElementById('game-narrator');
   if (el) el.textContent = msg;
 }
+
+// ── Narrative effect system (EFX_NARRATIVE item params) ──────────────────
+let _trippyTurns = 0;       // turns remaining with .trippy class active
+let invertedInputTurns = 0; // turns remaining with reversed WASD
+function handleNarrativeEffect(param) {
+  if (!param || param === 0) return;
+  switch (param) {
+    case 11: // Trippy Juice — UI hue-scramble for 3 turns
+      document.body.classList.add('trippy');
+      _trippyTurns = 3;
+      showToast('\uD83C\uDF00 Reality bends. The map will look... different for a while.');
+      break;
+    case 12: // Cursed Device — reverse movement keys for 5 turns
+      invertedInputTurns = 5;
+      showToast('\u26A0\uFE0F Movement keys reversed for 5 turns.');
+      break;
+    case 27: // Jar of Sweats — vomit, lose turn
+      showToast('\uD83E\uDD22 Your body rejects the experience. You lose your next turn.');
+      break;
+    case 29: // Uranium Hard Candy — warn about LL ceiling
+      showToast('\u2622\uFE0F The radiation settles in permanently. Your maximum health has decreased.');
+      break;
+    default:
+      break;
+  }
+}
+// Clear trippy effect when a new day starts (called on dawn event)
+function _tickNarrativeEffects() {
+  if (_trippyTurns > 0) { _trippyTurns--; if (_trippyTurns === 0) document.body.classList.remove('trippy'); }
+  if (invertedInputTurns > 0) invertedInputTurns--;
+}
 // Lobby / character selection
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
 const uiPickPending = van.state(false); // true while waiting for server pick response
@@ -670,6 +701,7 @@ function handleEvent(ev) {
         players[ev.pid].rest = false;
         players[ev.pid].au   = 0;  // reset action slot at dawn
         if (ev.pid === myId) {
+          _tickNarrativeEffects();
           if (uiResting.val && ev.expd < 0) showShelterWarning();
           uiResting.val = false;  // clear resting at dawn
           restSent = false;
@@ -843,6 +875,8 @@ function handleEvent(ev) {
       // Server ack for use_item / equip_item / unequip_item
       if (ev.ok) {
         if (ev.msg) showToast(ev.msg);
+        // Dispatch client-side narrative effects
+        if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
         // Apply inventory/equip deltas if included
         if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
           const p = players[ev.pid];

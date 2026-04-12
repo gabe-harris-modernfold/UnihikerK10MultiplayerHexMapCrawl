@@ -8,7 +8,7 @@
  * Manages all animation state for the game client.
  * Encapsulates nightFade, displayMP, footprint animations, and related logic.
  */
-export class AnimationManager {
+class AnimationManager {
   constructor(config = {}) {
     // Time-of-day overlay fade (post-dawn rest effect)
     this.nightFade = 0;
@@ -148,4 +148,4 @@ export class AnimationManager {
  * Global singleton instance (if needed).
  * Alternatively, pass instance to engine as dependency.
  */
-export const animationManager = new AnimationManager();
+const animationManager = new AnimationManager();

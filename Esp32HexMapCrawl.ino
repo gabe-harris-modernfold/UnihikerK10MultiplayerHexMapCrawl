@@ -178,6 +178,7 @@ static constexpr uint8_t ST_FEVERED  = (1 << 3);
 static constexpr uint8_t ST_DOWNED   = (1 << 4);
 static constexpr uint8_t ST_STABLE   = (1 << 5);
 static constexpr uint8_t ST_PANICKED = (1 << 6);
+static constexpr uint8_t ST_STINK   = (1 << 7);   // Applied by methane/sewage encounters; blocks stealth for 2 turns
 
 // ── Item system ─────────────────────────────────────────────────
 static constexpr uint8_t  MAX_ITEMS  = 128;
@@ -479,21 +480,9 @@ struct EncPoolInfo {
 };
 static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
 
-// POI encounter probability per terrain type (0-100 %)
-static const uint8_t TERRAIN_POI_PCT[NUM_TERRAIN] = {
-  3,   // 0 Open Scrub
-  4,   // 1 Ash Dunes
-  7,   // 2 Rust Forest
-  4,   // 3 Marsh
-  28,  // 4 Broken Urban
-  18,  // 5 Flooded District
-  3,   // 6 Glass Fields
-  5,   // 7 Ridge
-  5,   // 8 Mountain
-  23,  // 9 Settlement
-  0,   // 10 Nuke Crater (impassable)
-  0    // 11 River Channel (impassable)
-};
+// POI encounter probability removed — encounters are now pre-placed
+// at map generation time (one hex per encounter ID, guaranteed).
+// See hex-map.hpp Phase 5.
 
 // ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
 struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
@@ -626,7 +615,7 @@ AsyncWebSocket  ws("/ws");
 
 // ── PSRAM web-file cache ────────────────────────────────────────────────────
 struct WebFile { const char* url; const char* mime; const char* sdName;
-                 uint8_t* buf; size_t len; };
+                 uint8_t* buf; size_t len; char etag[26]; };
 static WebFile WEB_FILES[] = {
   { "/",                           "text/html",       "index.html",                nullptr, 0 },
   { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0 },
@@ -646,10 +635,11 @@ static WebFile WEB_FILES[] = {
 static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
 
 // ── PSRAM image cache ──────────────────────────────────────────────────────
-struct ImgFile { char name[40]; uint8_t* buf; size_t len; };
+struct ImgFile { char name[40]; uint8_t* buf; size_t len; char etag[26]; };
 static const int MAX_IMG_CACHE = 100;
 static ImgFile   imgCache[MAX_IMG_CACHE];
 static int       imgCacheCount = 0;
+static uint32_t  g_bootNonce   = 0;
 
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
@@ -794,6 +784,11 @@ void setup() {
   }
 
   loadWebFilesToRAM();
+  g_bootNonce = esp_random();
+  for (int i = 0; i < WEB_FILE_COUNT; i++)
+    snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
+  for (int i = 0; i < imgCacheCount; i++)
+    snprintf(imgCache[i].etag, sizeof(imgCache[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, imgCache[i].len);
   { char hb[36]; snprintf(hb, 36, "Web: %ukB in PSRAM", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd(hb, 0x406030); }
 

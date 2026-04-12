@@ -1,0 +1,43 @@
+{
+  "id": "scrub_drifter_01",
+  "title": "The Rambling Drifter",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "He has a fire going when you find him — small, efficient, with a pot of something that smells edible. He waves you over before you've decided whether to approach. 'Sit, sit! Cold out. I'm going to tell you about the time I tracked the Wasteland Sasquatch.' You try to follow his route: east past the collapsed overpass, north through the fog bank, left at the 'funny smelling rocks', across a river he's not sure was there, back south until the compass started disagreeing with itself. His logic is airtight in the way that things are sometimes airtight — no gaps, but completely pressurised with wrongness.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Try to follow his directions — they might mean something",
+          "cost": { "fatigue": 2, "resolve": -1 },
+          "base_risk": 60,
+          "skill": 0,
+          "success_node": "totally_lost",
+          "hazard_id": "totally_lost_worse"
+        },
+        {
+          "label": "Nod politely, eat something, and then wander off into the scrub",
+          "cost": { "fatigue": 1 },
+          "base_risk": 70,
+          "skill": 0,
+          "success_node": "totally_lost",
+          "hazard_id": "totally_lost_worse"
+        }
+      ]
+    },
+    "totally_lost": {
+      "text": "You come to your senses standing in a part of the scrub you have never seen before. Your compass is technically working. You have no idea how you got here. Behind you, distantly, you can hear someone explaining something to a fire. You are somewhere else entirely now. The map is going to need reconsidering.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "totally_lost_worse": {
+      "text": "You come to your senses somewhere even less familiar than before, with a mild headache and the distinct sensation of having made a wrong turn at a conceptual level. The drifter's voice has faded entirely. Where are you? Excellent question.",
+      "penalty": { "fatigue": 3, "ll": -2 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

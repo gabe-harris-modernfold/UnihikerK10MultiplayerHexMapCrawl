@@ -1,0 +1,55 @@
+{
+  "id": "urban_trippy_juice_01",
+  "title": "The {{adj}} Bottle",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "It shouldn't be intact. The alley has been picked over, the rubble sorted, everything of value extracted by whoever worked this block before you. But under a collapsed shelf unit, sealed behind a pane of intact glass that must have come down just right and never been disturbed: a bottle. Heavy. Pristine. Filled to the shoulder with a liquid that is an unreasonable shade of orange — not amber, not rust, orange, the colour of something actively deciding to be noticed. It glows, faintly, on its own.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take it carefully — this could be valuable",
+          "cost": { "fatigue": 2 },
+          "base_risk": 15,
+          "skill": 2,
+          "success_node": "bottle_retrieved",
+          "hazard_id": "glass_shelf_collapse"
+        },
+        {
+          "label": "Open it immediately and take a sip — curiosity wins",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "bottle_sampled",
+          "hazard_id": "glass_shelf_collapse"
+        }
+      ]
+    },
+    "bottle_retrieved": {
+      "text": "The glass pane comes away cleanly. The bottle is heavier than it looks and the seal is original — a glass stopper with a wax ring that has survived everything. Whatever this is, it was made to last. The orange light pulses once, faintly, as it settles into your pack.",
+      "can_bank": true,
+      "loot_table": "drop_trippy_juice",
+      "choices": []
+    },
+    "bottle_sampled": {
+      "text": "A single sip is enough to understand what you're dealing with. Your vision fills instantly with butterflies — vivid, luminescent, erupting from the edges of your sight in cascading impossible colours. You are, for about twenty seconds, the most well-rested and also most confused person in the wasteland. Then it passes. You pocket the rest of the bottle very carefully.",
+      "can_bank": true,
+      "loot_table": "drop_trippy_juice",
+      "loot": [
+        { "res": 0, "qty": [1, 1] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "glass_shelf_collapse": {
+      "text": "The shelf unit chose this moment to finish falling. The glass pane shatters and you pull back fast but catch a long shallow cut across your palm from the leading edge.",
+      "penalty": { "fatigue": 1, "ll": -3 },
+      "status": 4,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adj": ["Glowing", "Intact", "Sealed", "Pristine", "Impossible"]
+  }
+}

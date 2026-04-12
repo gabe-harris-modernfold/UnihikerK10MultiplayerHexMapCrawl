@@ -116,7 +116,7 @@ function updateSidebar() {
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x0C) !== 0);
+  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x8C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => p.on)
@@ -132,6 +132,35 @@ function updateSidebar() {
     const anyResting = players.some(p => p.on && p.rest);
     restBtn.style.background = anyResting ? '#1a4a1a' : '';
   }
+  updateRestIndicator();
+}
+
+// ── Rest state indicator ──────────────────────────────────────────
+function updateRestIndicator() {
+  const el = document.getElementById('hud-rest');
+  if (!el) return;
+  const connectedPlayers = players.filter(p => p.on);
+  const restingPlayers   = connectedPlayers.filter(p => p.rest);
+  const n = restingPlayers.length;
+  const m = connectedPlayers.length;
+  const allResting = m > 0 && n === m;
+
+  el.classList.remove('rest-wait', 'rest-on', 'rest-all');
+
+  if (typeof restSent !== 'undefined' && restSent && !uiResting.val) {
+    // Request sent, awaiting server ack
+    el.classList.add('rest-wait');
+    el.textContent = 'WAIT';
+  } else if (allResting) {
+    // All connected players resting — early dawn imminent
+    el.classList.add('rest-all');
+    el.textContent = `REST ${n}/${m}`;
+  } else if (uiResting.val) {
+    // This player confirmed resting
+    el.classList.add('rest-on');
+    el.textContent = n > 0 ? `REST ${n}/${m}` : 'REST';
+  }
+  // else: no rest active — element hidden via CSS (no class, display:none)
 }
 
 // ── Direction button blocked state ──────────────────────────────
@@ -228,6 +257,7 @@ function openCharSheet() {
     const conds = [];
     if (me.sb & 0x04) conds.push('BLEED');
     if (me.sb & 0x08) conds.push('FEVER');
+    if (me.sb & 0x80) conds.push('STINK');
     wdCond.textContent = conds.join(' ');
     wdCond.style.color = conds.length ? '#CC4422' : '';
   }
@@ -353,6 +383,7 @@ function setStatus(s) { uiConn.val = s; }
 
 // ── Movement ──────────────────────────────────────────────────────
 function move(dir) {
+  if (typeof invertedInputTurns !== 'undefined' && invertedInputTurns > 0) dir = (dir + 3) % 6;
   if (myId >= 0 && players[myId]?.ll === 0) {
     showToast('☠ You have been downed — select a new survivor');
     addLog('<span class="log-check-fail">☠ Cannot move — you have been downed.</span>');
@@ -1011,6 +1042,7 @@ function initActionPanel() {
     }
     if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
     restSent = true;
+    updateRestIndicator();
     send({ t: 'act', a: ACT_REST });
   });
 

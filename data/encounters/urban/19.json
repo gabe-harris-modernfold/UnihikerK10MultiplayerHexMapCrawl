@@ -1,0 +1,50 @@
+{
+  "id": "urban_gas_station_01",
+  "title": "The Infested Gas Station",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The gas station's canopy is still standing — barely — and the forecourt is carpeted in a luminescent blue-green fungus that has eaten through the concrete and is working on everything else. Spores drift visibly in the still air. The pump housings are wrapped in it. The service bay window is green from the inside. Somewhere in there, Jack said, is the Intimidating Mask — left behind on the counter when things went wrong. The smell is chemical and sweet in a way that isn't right at all. You can already feel something in the back of your sinuses.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Move fast, hold your breath — get in and out",
+          "cost": { "fatigue": 3 },
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "mask_found",
+          "hazard_id": "spore_exposure"
+        },
+        {
+          "label": "Cover your face and search systematically",
+          "cost": { "fatigue": 2 },
+          "base_risk": 30,
+          "skill": 1,
+          "success_node": "mask_found",
+          "hazard_id": "prolonged_exposure"
+        }
+      ]
+    },
+    "mask_found": {
+      "text": "It's on the counter, exactly where Jack said — face up, fungus growing around but not over it, as if the mask's intimidating properties extend to saprophytic organisms. You grab it, back out fast, and spend two minutes coughing in the forecourt. The spores are already doing something in your sinuses. If you have Sour Cream Tub in your pack, now would be an excellent time to consider that option.",
+      "can_bank": true,
+      "loot_table": "drop_intimidate_mask",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "spore_exposure": {
+      "text": "You don't hold your breath long enough. The spores are already in the air at threshold concentrations when you push through the door and you breathe before you mean to. The fever starts within minutes — a specific, fungal fever, different from the usual kind. The Sour Cream Tub, if you have one, knows what to do about this.",
+      "penalty": { "fatigue": 3, "ll": -4 },
+      "status": 8,
+      "ends_encounter": false
+    },
+    "prolonged_exposure": {
+      "text": "The systematic search takes longer than the fast approach. More exposure time means more spore uptake. By the time you find the mask, you're already symptomatic. The fever is there. The Sour Cream Tub, if you have one, is what you want right now.",
+      "penalty": { "fatigue": 4, "ll": -5 },
+      "status": 8,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

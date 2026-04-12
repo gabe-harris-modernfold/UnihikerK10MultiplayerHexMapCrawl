@@ -1,0 +1,52 @@
+{
+  "id": "scrub_rat_swarm_01",
+  "title": "The Rat Tide",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "You hear them before you see them — a sound like static, like rainfall on tin. Then the scrub erupts. A literal tide of squeaking, diseased rats surges over the ground in front of you, breaking around your feet like brown, pulsating water. At the centre of the swarm, a mound of writhing bodies marks their nest. Half-buried in it, sealed and somehow pristine: a white plastic tub. The label reads 'SOUR CREAM'. The best before date is meaningless. The seal is perfect.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Dig bare-handed into the nest to reach the tub",
+          "cost": { "fatigue": 3 },
+          "base_risk": 35,
+          "skill": 1,
+          "success_node": "sour_cream_retrieved",
+          "hazard_id": "rat_swarm_overwhelm"
+        },
+        {
+          "label": "Stomp a clear path and grab it quickly",
+          "cost": { "fatigue": 2 },
+          "base_risk": 50,
+          "skill": 5,
+          "success_node": "sour_cream_retrieved",
+          "hazard_id": "bitten_up"
+        }
+      ]
+    },
+    "sour_cream_retrieved": {
+      "text": "You surface from the nest with the tub clutched to your chest, covered in rat-debris and small bites, but the seal is unbroken. Something about finding this specific item in the middle of a rat swarm makes it feel like the wasteland was trying to be helpful for once. Don't read too much into it.",
+      "can_bank": true,
+      "loot_table": "drop_sour_cream",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "rat_swarm_overwhelm": {
+      "text": "The nest collapses around your arms and the rats interpret your presence as an attack. Hundreds of small, diseased mouths find purchase. You retreat covered in bites, trailing blood, without the tub.",
+      "penalty": { "fatigue": 3, "ll": -4 },
+      "status": 4,
+      "wound": [1, 0],
+      "ends_encounter": true
+    },
+    "bitten_up": {
+      "text": "They don't scatter — they escalate. The swarm climbs your legs and you go down hard, arms shielding your face. By the time you're back on your feet the tub has been subsumed back into the nest and the swarm is dispersing like it never happened.",
+      "penalty": { "fatigue": 4, "ll": -5 },
+      "status": 4,
+      "wound": [1, 0],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

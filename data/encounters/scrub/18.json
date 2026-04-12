@@ -1,0 +1,53 @@
+{
+  "id": "scrub_desk_jockey_01",
+  "title": "The Fossilised Desk Jockey",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The chair is ergonomic — or was, once. Now it has sunk eighteen inches into the scrub and grown into it, wheels locked in dried earth, armrests fused to its occupant. The figure in it is leathery and very still, dressed in what was once office-casual, a laminated badge still clipped to what remains of a shirt pocket. One hand rests on a keyboard that no longer exists. The other holds a coffee mug in a grip that has outlasted everything. On the desk that has dissolved to almost nothing: a sticky note, under a paperweight, somehow perfectly preserved.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Carefully retrieve the note from under the paperweight",
+          "cost": { "fatigue": 2 },
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "note_retrieved",
+          "hazard_id": "chair_collapses"
+        },
+        {
+          "label": "Check the figure's pockets while you're here",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 2,
+          "success_node": "note_retrieved",
+          "hazard_id": "disturbed_badly"
+        }
+      ]
+    },
+    "note_retrieved": {
+      "text": "The note is faded yellow, written in careful ballpoint. Two words. 'admin / admin'. Below it, in smaller writing: 'do not lose this'. Whoever this was, they were clearly the last line of defence for some network somewhere. The handwriting is precise. Whatever they were guarding, they took it seriously. You pocket the note. The figure in the chair seems, if anything, relieved.",
+      "can_bank": true,
+      "loot_table": "drop_sticky_note",
+      "loot": [
+        { "res": 4, "qty": [1, 3] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "chair_collapses": {
+      "text": "The ecosystem supporting the chair has more give than expected. Your weight on the desk-surface causes the entire arrangement to shift and partially collapse, and the figure tilts toward you at a speed that seems deliberate. You scramble back covered in decades of particulate and emerge with what you need but not what you wanted.",
+      "penalty": { "fatigue": 2, "ll": -2 },
+      "status": 2,
+      "ends_encounter": false
+    },
+    "disturbed_badly": {
+      "text": "Something falls from the pocket that doesn't bear examination. You have the note. You're moving on and not looking back.",
+      "penalty": { "fatigue": 1 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

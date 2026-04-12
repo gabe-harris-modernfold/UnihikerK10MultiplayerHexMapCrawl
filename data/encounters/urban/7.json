@@ -1,0 +1,55 @@
+{
+  "id": "urban_chem_dump_01",
+  "title": "The Weird Chem Dump",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The dump fills a city block and smells like a chemical plant that's been running an unchecked reaction for twenty years. Pools of luminescent sludge sit in craters and spread in thin sheets across what used to be pavement. Playing in it, with the unbothered energy of children who know no better, are three mutated kids — glowing faintly, coated in the muck, hurling caustic mudballs at each other and occasionally at the corroded chain-link fence that separates them from the outside. There's something in the dump worth taking. Getting to it means going through the yard.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sneak along the fence line to the inner section",
+          "cost": { "fatigue": 2 },
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "dump_interior",
+          "hazard_id": "mudball_hit"
+        },
+        {
+          "label": "Charge through before they react",
+          "cost": { "fatigue": 3 },
+          "base_risk": 45,
+          "skill": 5,
+          "success_node": "dump_interior",
+          "hazard_id": "full_chemical_bath"
+        }
+      ]
+    },
+    "dump_interior": {
+      "text": "The interior of the dump has been accumulating runoff from whatever facility was here for decades. The sediment layers include things that don't occur naturally but do occur valuably. You work fast, skimming the top material and checking the corroded barrels for anything sealed. The kids have lost interest in you — they've started building something out of the sludge. You don't want to know what.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 3] },
+        { "res": 4, "qty": [2, 4] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "mudball_hit": {
+      "text": "A mudball the size of a grapefruit catches you in the side of the neck from a range of approximately four metres. The chemical burn starts immediately. You don't know which one threw it. They're all smiling.",
+      "penalty": { "fatigue": 2, "ll": -4 },
+      "status": 8,
+      "ends_encounter": false
+    },
+    "full_chemical_bath": {
+      "text": "They target you the moment you move. The barrage is sustained, accurate, and deeply unpleasant. You reach the other side looking like something that crawled out of the dump itself. The radiation reading in your immediate vicinity has gone up.",
+      "penalty": { "fatigue": 4, "ll": -5 },
+      "status": 8,
+      "rad": 3,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

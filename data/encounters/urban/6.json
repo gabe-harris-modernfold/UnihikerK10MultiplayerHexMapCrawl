@@ -1,0 +1,56 @@
+{
+  "id": "urban_playground_01",
+  "title": "The {{adj}} Playground",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The playground equipment is still standing — swings, a climbing frame, a roundabout that keeps moving despite no wind. The swings creak back and forth in a rhythm that doesn't match anything. The chains are original, rusted to a deep brown-red that could be several things. Whatever paints were once bright are gone to grey. Nothing about the motion of the swings is explicable. You hear something from the chem dump adjacent — small, quick feet in the undergrowth.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Search the playground equipment carefully",
+          "cost": { "fatigue": 2 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "playground_loot",
+          "hazard_id": "mutant_kid_ambush"
+        },
+        {
+          "label": "Circle the perimeter and check the maintenance shed",
+          "cost": { "fatigue": 2 },
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "playground_loot",
+          "hazard_id": "mud_traps"
+        }
+      ]
+    },
+    "playground_loot": {
+      "text": "The old maintenance locker under the slide is still padlocked — but the hasp has corroded through. Inside: a sealed tool kit, safety equipment with its original packaging, and a bag of pre-war playground hardware. Dense, useful, valuable. The swings are still moving when you leave. You don't look back to check if they still are.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [3, 5] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "mutant_kid_ambush": {
+      "text": "They come out of the chem dump at knee height — six or seven of them, throwing hardened lumps of caustic mud with the accuracy of children who grew up practicing. One lands on your forearm and burns through immediately. The screaming is high-pitched and genuinely alarming. You retreat.",
+      "penalty": { "fatigue": 3, "ll": -5 },
+      "status": 8,
+      "wound": [1, 0],
+      "ends_encounter": true
+    },
+    "mud_traps": {
+      "text": "The far corner of the playground has dissolved into a shallow pit of acidic mud that looks like solid ground until you're in it. You get out fast but the chemical burn starts immediately.",
+      "penalty": { "fatigue": 2, "ll": -3 },
+      "status": 1,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adj": ["Rusted", "Creaking", "Forsaken", "Silent", "Still"]
+  }
+}

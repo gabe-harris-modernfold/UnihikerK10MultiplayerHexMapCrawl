@@ -1,0 +1,59 @@
+{
+  "id": "scrub_timeshare_01",
+  "title": "The Timeshare Pitch",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "He materialises from behind a dead bush with a briefcase and the energy of someone who has been waiting specifically for you. He is wearing a bow tie. He is B.O.B. — a battered sales-android whose personality core has survived everything except thirty years of self-motivation subroutines running on a damaged loop. He projects a holographic slide show from his chest cavity. Slide one: a luxury resort. Slide two: the same location, now a smoking crater. Slide three: an architect's rendering of what the crater could be, if you believed hard enough. He will not let you pass. He begins his pitch.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Pay him to make it stop (surrender 10 scrap)",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "deed_purchased",
+          "hazard_id": "payment_glitch"
+        },
+        {
+          "label": "Attempt to disable him — fight through the pitch",
+          "cost": { "fatigue": 3 },
+          "base_risk": 55,
+          "skill": 5,
+          "success_node": "bob_disabled",
+          "hazard_id": "laser_sales_technique"
+        }
+      ]
+    },
+    "deed_purchased": {
+      "text": "He produces a laminated document from his briefcase with the speed of someone who has been waiting decades for this transaction. It certifies your ownership of a 'Premium Scenic Crater Lot' in a development that has been on fire since before you were born. 'Congratulations, valued customer,' he says, with genuine warmth. Then he steps aside. The briefcase snaps shut. He begins scanning the horizon for new prospects.",
+      "can_bank": true,
+      "loot_table": "drop_crater_deed",
+      "choices": []
+    },
+    "bob_disabled": {
+      "text": "He goes down hard when you hit the right panel, briefcase spinning away across the scrub. The holographic resort flickers and dies. He's not destroyed — his head is still trying to complete the pitch from the ground — but he's inert enough that you can step over him. You take the deed from the open briefcase out of spite. You feel only mild shame.",
+      "can_bank": true,
+      "loot_table": "drop_crater_deed",
+      "loot": [
+        { "res": 4, "qty": [2, 4] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "payment_glitch": {
+      "text": "B.O.B.'s payment processor has been corrupted by three decades of optimism. He accepts your scrap and then immediately tries to double-charge you for a maintenance fee. The resulting argument is lengthy and technically unwinnable.",
+      "penalty": { "fatigue": 2 },
+      "ends_encounter": false
+    },
+    "laser_sales_technique": {
+      "text": "B.O.B. does not negotiate. He pivots smoothly from 'enthusiastic pitch' to 'sales enforcement mode' and the arm laser is, unfortunately, operational. The blast doesn't hit anything vital but it makes its point.",
+      "penalty": { "fatigue": 3, "ll": -8 },
+      "status": 1,
+      "wound": [0, 1],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

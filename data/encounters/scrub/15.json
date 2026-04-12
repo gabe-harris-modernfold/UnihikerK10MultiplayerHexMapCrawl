@@ -1,0 +1,44 @@
+{
+  "id": "scrub_tumbleweave_01",
+  "title": "The Tumble-Weave",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "You hear it before you see it — a wet, bristling sound, like a broom dragged across a tile floor but much larger and moving fast. Then it rounds the ridge: a tumbleweed the size of a compact car, assembled entirely from human hair, loose teeth, and what appears to be a significant quantity of dried bone. It is moving with purpose. It is moving toward you. It is snapping. It rolls in an arc and corrects course and it is absolutely, specifically, targeting you.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sprint sideways and let it roll past",
+          "cost": { "fatigue": 3 },
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "dodged_weave",
+          "hazard_id": "tangled_and_stripped"
+        },
+        {
+          "label": "Jump over it as it passes",
+          "cost": { "fatigue": 2 },
+          "base_risk": 45,
+          "skill": 5,
+          "success_node": "dodged_weave",
+          "hazard_id": "tangled_and_stripped"
+        }
+      ]
+    },
+    "dodged_weave": {
+      "text": "It rolls past close enough that you can feel the wind of it — close enough to smell it, which you wish you hadn't. It continues across the scrub without slowing and disappears over the next rise, still snapping. You stand and breathe for a moment. You are intact. You remain intact. That's the whole story.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "tangled_and_stripped": {
+      "text": "It takes you off your feet and rolls over you in a dense, matted embrace. The teeth catch on your pack straps. By the time you've wrenched yourself free and sat up gasping, it has carried something away with it — something from your pack, gone into the scrub with the Weave, unrecoverable. You check your inventory with the quiet dread of someone who already knows.",
+      "penalty": { "fatigue": 4, "ll": -3 },
+      "status": 4,
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}
