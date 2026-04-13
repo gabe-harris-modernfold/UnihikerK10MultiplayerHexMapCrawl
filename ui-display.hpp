@@ -167,7 +167,22 @@ static void drawPlayerScreen() {
 // ── K10 screen 0: title ────────────────────────────────────────
 static void drawTitleScreen() {
   k10.canvas->canvasClear();
-  k10.canvas->canvasDrawImage(0, 0, String("S:/data/img/wastelandTitle0.png"));
+  k10.canvas->canvasSetLineWidth(1);
+  // Background
+  k10.canvas->canvasRectangle(0,   0, 240, 320, 0x0D0400, 0x0D0400, true);
+  // Decorative border lines
+  k10.canvas->canvasRectangle(8,   8, 232, 312, 0x3A1808, 0x3A1808, false);
+  k10.canvas->canvasRectangle(12, 12, 228, 308, 0x502010, 0x502010, false);
+  // Title
+  k10.canvas->canvasText("WASTELAND",   22, 100, 0xD06818, Canvas::eCNAndENFont24, 50, false);
+  k10.canvas->canvasText("HEX  CRAWL",  18, 132, 0xD06818, Canvas::eCNAndENFont24, 50, false);
+  // Dividers
+  k10.canvas->canvasLine(20, 96,  220, 96,  0x502010);
+  k10.canvas->canvasLine(20, 164, 220, 164, 0x502010);
+  // Subtitle
+  k10.canvas->canvasText("v3.0  6-Survivor Co-op", 8, 172, 0x904030, Canvas::eCNAndENFont16, 50, false);
+  // Indicator
+  k10.canvas->canvasText("[B] next screen", 52, 290, 0x3A1808, Canvas::eCNAndENFont16, 50, false);
   k10.canvas->updateCanvas();
 }
 

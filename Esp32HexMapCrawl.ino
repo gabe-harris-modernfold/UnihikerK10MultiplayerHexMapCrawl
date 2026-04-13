@@ -153,12 +153,12 @@ static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
                            WEATHER_STORM = 2, WEATHER_CHEM  = 3;
 // Weather counter decrements only once every WEATHER_TICK_DIVIDER game ticks.
 // At TICK_MS=100 (10 ticks/sec), divider=50 → 5 sec/weather-tick:
-//   Clear 60-100 weather-ticks = 5-8.3 min | Chem 15-30 = 1.25-2.5 min
+//   Clear 240-400 weather-ticks = 20-33 min | Chem 15-30 = 1.25-2.5 min
 static constexpr uint32_t WEATHER_TICK_DIVIDER = 50;
 static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 1, 3, 5 };
 static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
-static const uint16_t WEATHER_DUR_MIN[4]     = { 180, 30, 20, 15 };
-static const uint16_t WEATHER_DUR_MAX[4]     = { 300, 50, 40, 30 };
+static const uint16_t WEATHER_DUR_MIN[4]     = { 240, 30, 20, 15 };
+static const uint16_t WEATHER_DUR_MAX[4]     = { 400, 50, 40, 30 };
 // Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
@@ -641,6 +641,11 @@ static ImgFile   imgCache[MAX_IMG_CACHE];
 static int       imgCacheCount = 0;
 static uint32_t  g_bootNonce   = 0;
 
+// ── Decoded title bitmap (TRUE_COLOR_ALPHA, PSRAM) ─────────────────────────
+static uint8_t*     g_titlePixels = nullptr;   // 3 bytes/px: lv_color_t + alpha
+static lv_img_dsc_t g_titleImgDsc;
+static uint16_t     g_titleW = 0, g_titleH = 0;
+
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
@@ -674,12 +679,31 @@ void setup() {
   Serial.println("╚══════════════════════════════════════════════╝");
   Serial.printf("[SETUP] Free heap at boot: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
 
+  // ── Reset reason ─────────────────────────────────────────────
+  { esp_reset_reason_t rr = esp_reset_reason();
+    const char* rs;
+    switch(rr) {
+      case ESP_RST_POWERON:  rs = "POWER_ON";  break;
+      case ESP_RST_EXT:      rs = "EXT_PIN";   break;
+      case ESP_RST_SW:       rs = "SW_RESET";  break;
+      case ESP_RST_PANIC:    rs = "PANIC";      break;
+      case ESP_RST_INT_WDT:  rs = "INT_WDT";   break;
+      case ESP_RST_TASK_WDT: rs = "TASK_WDT";  break;
+      case ESP_RST_WDT:      rs = "WDT";        break;
+      case ESP_RST_BROWNOUT: rs = "BROWNOUT";  break;
+      case ESP_RST_DEEPSLEEP:rs = "DEEPSLEEP"; break;
+      default:               rs = "UNKNOWN";   break;
+    }
+    Serial.printf("[RESET] Reason: %s (%d)\n", rs, (int)rr);
+  }
+
   // ── K10 screen init ───────────────────────────────────────────
   k10.begin();
   loadK10Prefs();
   k10.initScreen(2, 0);
   k10.creatCanvas();
   k10.setScreenBackground(0x000000);
+  digital_write(eLCD_BLK, 0);  // screen off until display issue resolved
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
   Serial.printf("[SETUP] Map: %dx%d=%d cells | VISION_R:%d | MOVE_CD:%lums | RESPAWN:%ds\n",
@@ -784,6 +808,7 @@ void setup() {
   }
 
   loadWebFilesToRAM();
+  decodeTitleImage();
   g_bootNonce = esp_random();
   for (int i = 0; i < WEB_FILE_COUNT; i++)
     snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
@@ -825,7 +850,7 @@ void setup() {
 
   setupWiFiAndServer();
 
-  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 8192, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 24576, NULL, 2, NULL, 1);
 }
 
 void loop() {

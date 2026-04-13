@@ -424,6 +424,7 @@ function handleMsg(msg) {
       if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       if (Array.isArray(msg.gi)) groundItems = msg.gi;
       hideConnectOverlay();
+      if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
       updateSidebar();
       if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
@@ -877,21 +878,20 @@ function handleEvent(ev) {
         if (ev.msg) showToast(ev.msg);
         // Dispatch client-side narrative effects
         if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
-        // Apply inventory/equip deltas if included
-        if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
-          const p = players[ev.pid];
-          if (ev.it) p.it = ev.it;
-          if (ev.iq) p.iq = ev.iq;
-          if (ev.eq) p.eq = ev.eq;
-        }
       } else {
         showToast('\u2297 ' + (ev.msg || 'Action failed'));
       }
-      // Refresh char-sheet inventory/equipment if open
-      if (document.getElementById('char-overlay')?.classList.contains('open')) {
-        renderInventory?.();
-        renderEquipment?.();
+      // Always apply server ground-truth state (server sends current state regardless of ok/fail)
+      if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
+        const p = players[ev.pid];
+        if (ev.it) p.it = ev.it;
+        if (ev.iq) p.iq = ev.iq;
+        if (ev.eq) p.eq = ev.eq;
       }
+      // Always refresh char-sheet inventory/equipment — ghost-tap on mobile can close
+      // char-overlay between item-menu dismiss and server ack, causing the open-check to fail
+      renderInventory?.();
+      renderEquipment?.();
       break;
     }
 

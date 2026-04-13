@@ -500,7 +500,7 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       uint8_t  dd   = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
       if (cell.poi) dd |= (1 << 7);
       uint8_t  vv   = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
-      if (pos + 10 < cap) {
+      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
@@ -525,7 +525,7 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       if ((abs(dq) + abs(dr) + abs(s)) / 2 != ring) continue;
       int cq = wrapQ(pq + dq);
       int cr = wrapR(pr + dr);
-      if (pos + 10 < cap) {
+      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         HexCell& cell = G.map[cr][cq];
         uint8_t dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
         if (cell.poi) dd |= (1 << 7);

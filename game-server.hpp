@@ -7,8 +7,15 @@
 static void gameLoopTask(void* param) {
   Serial.printf("[SETUP] Game loop on Core %d\n", xPortGetCoreID());
   TickType_t lastWake = xTaskGetTickCount();
+  uint32_t lastWatermarkMs = 0;
   for (;;) {
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(TICK_MS));
+    uint32_t loopMs = millis();
+    if (loopMs - lastWatermarkMs >= 5000) {
+      lastWatermarkMs = loopMs;
+      Serial.printf("[STACK] GameLoop HWM: %u bytes free\n",
+        uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+    }
     tickGame();
     drainEvents();
     // ── Trade offer expiry sweep ──────────────────────────────────
@@ -350,7 +357,13 @@ static void setupWiFiAndServer() {
     }
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
-    if (!SD.exists(path)) { req->send(404, "text/plain", "Encounter not found"); return; }
+    Serial.printf("[ENC] Request: %s  core=%d  heap=%u\n", path, xPortGetCoreID(), (unsigned)ESP.getFreeHeap());
+    Serial.flush();
+    if (!SD.exists(path)) {
+      Serial.printf("[ENC] 404: %s\n", path); Serial.flush();
+      req->send(404, "text/plain", "Encounter not found"); return;
+    }
+    Serial.printf("[ENC] streaming %s\n", path); Serial.flush();
     req->send(SD, path, "application/json");
   });
 

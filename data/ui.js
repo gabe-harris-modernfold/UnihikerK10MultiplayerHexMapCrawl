@@ -277,6 +277,10 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
 van.derive(() => {
   const overlay = document.getElementById('char-overlay');
   overlay.classList.toggle('open', uiCharOpen.val);
+  // Move focus out before hiding so aria-hidden never traps a focused descendant
+  if (!uiCharOpen.val && overlay.contains(document.activeElement)) {
+    document.getElementById('menu-btn')?.focus();
+  }
   overlay.setAttribute('aria-hidden', uiCharOpen.val ? 'false' : 'true');
 });
 document.getElementById('char-close').addEventListener('click', () => { uiCharOpen.val = false; });
@@ -302,6 +306,7 @@ function addLog(html) {
   logLines.push(html);
   if (logLines.length > 40) logLines.shift();
   const inner = document.getElementById('log-inner');
+  if (!inner) return;  // guard: element missing during init or layout race
   inner.innerHTML = logLines.slice(-14).map(l => `<div class="log-line">${l}</div>`).join('');
 }
 function escHtml(s) {
@@ -1059,6 +1064,8 @@ function initActionPanel() {
     btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
   document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
+  // Expose for engine.js (dawn event re-renders the panel if it's open)
+  window.openActionPanel = openActionPanel;
 }
 
 function initTradeOverlay() {
@@ -1729,7 +1736,7 @@ function initCharSelect() {
     const availSet = new Set(avail);
 
     return div({ class: 'cs-page' },
-      h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR WAYFARER'),
+      h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),
       p({ class: 'cs-sel-sub' },
         'Each role has a unique trait. Select carefully \u2014 you cannot change once the wasteland claims you.'
       ),

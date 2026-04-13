@@ -27,7 +27,13 @@
       "Bash(grep \"\\\\.h$\")",
       "Bash(grep -E \"\\\\.\\(js|json|txt\\)$\")",
       "Bash(ls -lh /c/SourceCode/Esp32HexMapCrawl/data/img/*.png /c/SourceCode/Esp32HexMapCrawl/data/img/*.jpg)",
-      "Bash(sort -k2)"
+      "Bash(sort -k2)",
+      "Bash(nm \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/liblvgl.a\")",
+      "Bash(xtensa-esp32s3-elf-nm \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/liblvgl.a\")",
+      "Bash(xtensa-esp32s3-elf-nm \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/libunihiker_k10.a\")",
+      "Bash(\"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/tools/xtensa-esp32s3-elf-gcc/esp-2021r2-patch5-8.4.0/bin/xtensa-esp32s3-elf-nm.exe\" \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/liblvgl.a\")",
+      "Bash(xargs -I{} bash -c '\"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/tools/xtensa-esp32s3-elf-gcc/esp-2021r2-patch5-8.4.0/bin/xtensa-esp32s3-elf-nm.exe\" \"{}\" 2>/dev/null | grep -q \"f_open\" && echo \"{}\"')",
+      "Bash(node -e ':*)"
     ]
   }
 }

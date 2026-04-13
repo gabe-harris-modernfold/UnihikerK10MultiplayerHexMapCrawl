@@ -106,7 +106,7 @@ body::after{
 .hud-ll-lbl{
   font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d);
   font-family:'Courier New',monospace;text-transform:uppercase;
-  width:14px;flex-shrink:0
+  width:14px;flex-shrink:0;margin-right:4px
 }
 .hud-ll-val{
   font-size:var(--fs-d);color:var(--gold-hi);min-width:10px;

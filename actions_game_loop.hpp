@@ -22,10 +22,10 @@ static void updateWeatherPhase() {
     next = G.weatherPhase;
     switch (G.weatherPhase) {
       case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
-      case WEATHER_RAIN:  next = (roll < 60) ? WEATHER_STORM : WEATHER_CLEAR; break;
+      case WEATHER_RAIN:  next = (roll < 50) ? WEATHER_STORM : WEATHER_CLEAR; break;
       case WEATHER_STORM:
-        next = (roll < 40) ? WEATHER_CHEM : (roll < 80) ? WEATHER_RAIN : WEATHER_CLEAR; break;
-      case WEATHER_CHEM:  next = (roll < 60) ? WEATHER_STORM : WEATHER_RAIN;  break;
+        next = (roll < 30) ? WEATHER_CHEM : (roll < 65) ? WEATHER_RAIN : WEATHER_CLEAR; break;
+      case WEATHER_CHEM:  next = (roll < 20) ? WEATHER_CLEAR : (roll < 60) ? WEATHER_STORM : WEATHER_RAIN; break;
     }
   }
 
