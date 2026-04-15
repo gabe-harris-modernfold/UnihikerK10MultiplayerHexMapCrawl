@@ -1,7 +1,7 @@
-# WASTELAND CRAWL
-## ESP32-S3 WebSocket Hex-Crawl Game that is ported to the DfRobot UniHiker K10 ESP32 SBC.
+# WASTELAND A SURVIVAL HEX MAP ROGUE
+## ESP32-S3 WebSocket Hex-Crawl Game that is ported to the DfRobot UniHiker K10 ESP32 S3 SBC.
 
-A 6-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization. Does not require an internet connection to play. You can play by connecting directly to the wifi network "WASTELAND" on your phone or laptop.
+A 6-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization. Does not require an internet connection to play. You can play by connecting directly to the wifi network access point "WASTELAND" on your phone or laptop.
 
 ---
 
@@ -53,7 +53,7 @@ Players connect via WiFi and open a browser to `http://192.168.4.1/` to join the
 - **WebSocket Protocol:** JSON messages broadcast position, actions, and game state changes
 - **Low-Latency Updates:** 100ms game tick ensures responsive gameplay across 6 players
 - **Conflict Resolution:** Server is authority; all decisions validated server-side
-- **Player Names & Colors:** Customizable per-session; visible on hex grid and in party roster
+- **Player Names:** Customizable per-session; visible on hex grid and in party roster
 
 ---
 
@@ -90,10 +90,7 @@ Players connect via WiFi and open a browser to `http://192.168.4.1/` to join the
 
 ### Data Encoding
 
-To minimize bandwidth, hex cells are encoded as 2-byte pairs:
-- **Byte 0:** Terrain type (0–10)
-- **Byte 1:** Resource amount, shelter flag, contamination
-
+To minimize bandwidth, hex cells are encoded as byte pairs.
 This allows a 25×19 grid to be transmitted in ~1 KB.
 
 ### Dual-Core Execution
@@ -142,7 +139,7 @@ Esp32HexMapCrawl/
 - **Offline Play:** Self-contained; no internet or external servers required
 - **Accessibility:** Simple web interface; no client installation
 - **Emergent Gameplay:** Procedural generation and player cooperation create unique stories each session
-
+- 
 ---
 
 ## Credits & License
