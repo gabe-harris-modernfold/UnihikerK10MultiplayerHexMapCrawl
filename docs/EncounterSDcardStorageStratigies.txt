@@ -1,0 +1,26 @@
+When storing hundreds of small JSON files on an SD card for an ESP32-S3 device like the UNIHIKER K10, the primary concerns are read overhead, RAM fragmentation during JSON parsing, and FAT32 file system limitations.
+
+Here are the specific architectural concerns for your hex-grid game encounters and how to mitigate them:
+
+File System Overhead and Cluster Sizes
+Because SD cards are formatted as FAT32 (or exFAT, though FAT32 is required for the K10), every file occupies at least one "cluster" of space, regardless of how small it is. A typical FAT32 cluster size is 32KB. If you have 500 JSON files that are only 1KB each, they will still consume 16MB of space. This isn't a huge capacity issue for a 32GB card, but it significantly slows down directory traversal.
+
+When the ESP32 tries to find a specific encounter file, it has to scan through the FAT (File Allocation Table). Having hundreds of small files in a single root directory forces the ESP32 to do sequential reads just to locate the target file, which is painfully slow over the SPI bus.
+
+Solution: Do not put all the files in the root directory. Group them into subdirectories (e.g., /encounters/wasteland/, /encounters/forest/, or by hex-region ID). FAT32 handles directory traversal much faster when there are fewer than 100 items per directory.
+
+JSON Parsing and SRAM Fragmentation
+The ESP32-S3 on the K10 only has 512KB of internal SRAM. When you read a JSON file using a library like ArduinoJson, it typically loads the entire file into a memory document. If you are repeatedly opening different encounter files, allocating memory for the JSON document, and destroying it, you will rapidly fragment your SRAM. Over time, the heap RAM will keep getting smaller until the K10 crashes with a stack canary error or a failed memory allocation.
+
+Solution:
+
+Use PSRAM: Ensure your JSON library is configured to allocate its document memory in the K10's 8MB PSRAM (SPIRAM) rather than internal SRAM.
+
+Stream the JSON: Instead of reading the entire file into memory before parsing, use a streaming parser (like ArduinoJson's stream capabilities or a custom pull parser). This reads the file chunk-by-chunk over the SPI bus, taking up very little RAM.
+
+File Descriptors and Caching
+Opening and closing files on an SD card via the ESP32's VFS (Virtual File System) has a high overhead. If an encounter triggers and you open the file, read the text, and close it, the read speed might be as low as a few hundred KB/s.
+
+Solution: Increase the file buffer size. By default, the reading functions (fread) use a 128-byte buffer. You can increase this to 4096 bytes globally using setvbuf or the CONFIG_FATFS_VFS_FSTAT_BLKSIZE setting, which drastically speeds up reading small JSON files off the SD card, provided you have the RAM to spare for the buffer.
+
+Alternatively, have you considered packing all these JSON encounters into a single binary file or a lightweight SQLite database so you only have to keep one file open and can seek directly to the specific byte offset of the encounter?
