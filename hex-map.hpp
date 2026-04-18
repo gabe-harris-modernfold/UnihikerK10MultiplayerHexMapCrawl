@@ -33,6 +33,8 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   else if (vl ==  1) { *outVisR = VISION_R + 1; *outMaskRes = false; }
   else               { *outVisR = VISION_R + 2; *outMaskRes = false; }
   if (G.players[pid].archetype == 4) *outVisR += 2;  // Scout: +2 vision radius
+  // ── Weather visibility penalty (applied after Scout bonus) ──────────────────
+  *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
 }
 
 // ── Slot management ────────────────────────────────────────────
@@ -383,15 +385,43 @@ static void generateMap() {
       cell.variant  = (n > 0) ? pickVariant(n, esp_random()) : 0;
     }
 
-  // ── Phase 5: POI placement ────────────────────────────────────
-  for (int r = 0; r < MAP_ROWS; r++) {
-    for (int c = 0; c < MAP_COLS; c++) {
-      G.map[r][c].poi = 0;
-      uint8_t t = G.map[r][c].terrain;
-      if (t >= NUM_TERRAIN || TERRAIN_POI_PCT[t] == 0) continue;
-      if ((esp_random() % 100) < TERRAIN_POI_PCT[t]) {
-        G.map[r][c].poi = 1;
+  // ── Phase 5: Guaranteed encounter pre-placement ──────────────
+  // poi stores the specific encounter ID (1..N) for each hex.
+  // Every encounter file is placed at least once on a shuffled hex
+  // of the matching terrain.  If the terrain has fewer hexes than
+  // encounter files, IDs cycle (highest IDs take priority — lower
+  // ones are overwritten and will never appear naturally).
+  for (int r2 = 0; r2 < MAP_ROWS; r2++)
+    for (int c2 = 0; c2 < MAP_COLS; c2++)
+      G.map[r2][c2].poi = 0;
+
+  {
+    static uint16_t hexBuf[MAP_ROWS * MAP_COLS];  // scratch, static to save stack
+    for (int t = 0; t <= 9; t++) {
+      if (encPools[t].count == 0) continue;
+      uint8_t n = encPools[t].count;
+      // Collect passable hexes of this terrain
+      int hexCount = 0;
+      for (int r3 = 0; r3 < MAP_ROWS; r3++)
+        for (int c3 = 0; c3 < MAP_COLS; c3++)
+          if (G.map[r3][c3].terrain == (uint8_t)t)
+            hexBuf[hexCount++] = (uint16_t)(r3 * MAP_COLS + c3);
+      if (hexCount == 0) {
+        Serial.printf("[POI] terrain %d: 0 hexes, skipping %d encounters\n", t, (int)n);
+        continue;
       }
+      // Fisher-Yates shuffle
+      for (int i = hexCount - 1; i > 0; i--) {
+        int j = (int)(esp_random() % (uint32_t)(i + 1));
+        uint16_t tmp = hexBuf[i]; hexBuf[i] = hexBuf[j]; hexBuf[j] = tmp;
+      }
+      // Assign encounter IDs 1..n to shuffled hexes (wrap if hexes < n)
+      for (int i = 0; i < (int)n; i++) {
+        uint16_t hIdx = hexBuf[i % hexCount];
+        G.map[hIdx / MAP_COLS][hIdx % MAP_COLS].poi = (uint8_t)(i + 1);
+      }
+      Serial.printf("[POI] terrain %d: placed %d encounters across %d hexes\n",
+        t, (int)n, hexCount);
     }
   }
 
@@ -470,7 +500,7 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       uint8_t  dd   = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
       if (cell.poi) dd |= (1 << 7);
       uint8_t  vv   = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
-      if (pos + 10 < cap) {
+      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
@@ -495,7 +525,7 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       if ((abs(dq) + abs(dr) + abs(s)) / 2 != ring) continue;
       int cq = wrapQ(pq + dq);
       int cr = wrapR(pr + dr);
-      if (pos + 10 < cap) {
+      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         HexCell& cell = G.map[cr][cq];
         uint8_t dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
         if (cell.poi) dd |= (1 << 7);

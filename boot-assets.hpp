@@ -101,6 +101,68 @@ static void loadWebFilesToRAM() {
   Serial.printf("[WEB] Done. Free heap: %u bytes\n", (unsigned)ESP.getFreeHeap());
 }
 
+// ── Title image decoder ────────────────────────────────────────────────────
+// lodepng is compiled into liblvgl.a — declare the function we need directly.
+extern "C" unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned* h,
+                                     const unsigned char* in, size_t insize);
+
+static void decodeTitleImage() {
+  Serial.println("[TITLE] decodeTitleImage() called");
+  Serial.printf("[TITLE] imgCacheCount=%d  heap=%u  psram=%u\n",
+    imgCacheCount, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
+
+  uint8_t* pngBuf = nullptr;
+  size_t   pngLen = 0;
+  for (int i = 0; i < imgCacheCount; i++) {
+    Serial.printf("[TITLE]   cache[%d] = \"%s\"\n", i, imgCache[i].name);
+    if (strcmp(imgCache[i].name, "wastelandTitle0.png") == 0) {
+      pngBuf = imgCache[i].buf;
+      pngLen = imgCache[i].len;
+      Serial.printf("[TITLE] Found at index %d  buf=%p  len=%u\n", i, pngBuf, (unsigned)pngLen);
+    }
+  }
+  if (!pngBuf) { Serial.println("[TITLE] ERROR: wastelandTitle0.png not in imgCache"); return; }
+
+  Serial.println("[TITLE] Calling lodepng_decode32...");
+  unsigned char* rgba = nullptr;
+  unsigned w = 0, h = 0;
+  unsigned err = lodepng_decode32(&rgba, &w, &h, pngBuf, pngLen);
+  Serial.printf("[TITLE] lodepng result: err=%u  w=%u  h=%u  rgba=%p\n", err, w, h, rgba);
+  if (err || !rgba) {
+    Serial.printf("[TITLE] ERROR: lodepng failed (err=%u)\n", err);
+    return;
+  }
+
+  // Allocate LV_IMG_CF_TRUE_COLOR_ALPHA: sizeof(lv_color_t) + 1 byte alpha per pixel
+  const size_t bpp = sizeof(lv_color_t) + 1;  // 3 bytes on 16-bit builds
+  Serial.printf("[TITLE] Allocating %u bytes in PSRAM for pixels (bpp=%u)\n",
+    (unsigned)(w * h * bpp), (unsigned)bpp);
+  uint8_t* pixels = (uint8_t*)ps_malloc(w * h * bpp);
+  Serial.printf("[TITLE] pixels=%p\n", pixels);
+  if (!pixels) { Serial.println("[TITLE] ERROR: ps_malloc failed"); free(rgba); return; }
+
+  for (uint32_t i = 0; i < w * h; i++) {
+    lv_color_t c = lv_color_make(rgba[i*4], rgba[i*4+1], rgba[i*4+2]);
+    memcpy(pixels + i * bpp, &c, sizeof(lv_color_t));
+    pixels[i * bpp + sizeof(lv_color_t)] = 0xFF;  // fully opaque alpha
+  }
+  free(rgba);
+
+  memset(&g_titleImgDsc, 0, sizeof(g_titleImgDsc));
+  g_titleImgDsc.header.always_zero = 0;
+  g_titleImgDsc.header.cf          = LV_IMG_CF_TRUE_COLOR_ALPHA;
+  g_titleImgDsc.header.w           = w;
+  g_titleImgDsc.header.h           = h;
+  g_titleImgDsc.data_size          = w * h * bpp;
+  g_titleImgDsc.data               = pixels;
+
+  g_titlePixels = pixels;
+  g_titleW = (uint16_t)w;
+  g_titleH = (uint16_t)h;
+  Serial.printf("[TITLE] OK: g_titlePixels=%p  %ux%u  cf=TRUE_COLOR_ALPHA  (%u bytes PSRAM)\n",
+    g_titlePixels, w, h, (unsigned)(w * h * bpp));
+}
+
 // ── Periodic player status table ───────────────────────────────
 static void printStatus() {
   struct Snap {

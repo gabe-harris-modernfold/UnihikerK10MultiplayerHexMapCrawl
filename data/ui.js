@@ -89,6 +89,17 @@ document.getElementById('hex-close').addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); uiHexInfoOpen.val = false; }
 });
 
+// ── Weather HUD indicator ─────────────────────────────────────────────────────
+function updateWeatherHUD() {
+  const el = document.getElementById('hud-weather');
+  if (!el) return;
+  const icons   = ['\u2600', '\uD83C\uDF27', '\u26A1', '\u2623'];
+  const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem'];
+  const phase = (typeof weatherPhase !== 'undefined') ? weatherPhase : 0;
+  el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
+  el.className = 'hud-weather ' + (classes[phase] ?? '');
+}
+
 // ── Sidebar UI ──────────────────────────────────────────────────
 function updateSidebar() {
   if (myId < 0) return;
@@ -105,7 +116,7 @@ function updateSidebar() {
   uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x0C) !== 0);
+  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x8C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => p.on)
@@ -121,6 +132,35 @@ function updateSidebar() {
     const anyResting = players.some(p => p.on && p.rest);
     restBtn.style.background = anyResting ? '#1a4a1a' : '';
   }
+  updateRestIndicator();
+}
+
+// ── Rest state indicator ──────────────────────────────────────────
+function updateRestIndicator() {
+  const el = document.getElementById('hud-rest');
+  if (!el) return;
+  const connectedPlayers = players.filter(p => p.on);
+  const restingPlayers   = connectedPlayers.filter(p => p.rest);
+  const n = restingPlayers.length;
+  const m = connectedPlayers.length;
+  const allResting = m > 0 && n === m;
+
+  el.classList.remove('rest-wait', 'rest-on', 'rest-all');
+
+  if (typeof restSent !== 'undefined' && restSent && !uiResting.val) {
+    // Request sent, awaiting server ack
+    el.classList.add('rest-wait');
+    el.textContent = 'WAIT';
+  } else if (allResting) {
+    // All connected players resting — early dawn imminent
+    el.classList.add('rest-all');
+    el.textContent = `REST ${n}/${m}`;
+  } else if (uiResting.val) {
+    // This player confirmed resting
+    el.classList.add('rest-on');
+    el.textContent = n > 0 ? `REST ${n}/${m}` : 'REST';
+  }
+  // else: no rest active — element hidden via CSS (no class, display:none)
 }
 
 // ── Direction button blocked state ──────────────────────────────
@@ -217,6 +257,7 @@ function openCharSheet() {
     const conds = [];
     if (me.sb & 0x04) conds.push('BLEED');
     if (me.sb & 0x08) conds.push('FEVER');
+    if (me.sb & 0x80) conds.push('STINK');
     wdCond.textContent = conds.join(' ');
     wdCond.style.color = conds.length ? '#CC4422' : '';
   }
@@ -236,6 +277,10 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
 van.derive(() => {
   const overlay = document.getElementById('char-overlay');
   overlay.classList.toggle('open', uiCharOpen.val);
+  // Move focus out before hiding so aria-hidden never traps a focused descendant
+  if (!uiCharOpen.val && overlay.contains(document.activeElement)) {
+    document.getElementById('menu-btn')?.focus();
+  }
   overlay.setAttribute('aria-hidden', uiCharOpen.val ? 'false' : 'true');
 });
 document.getElementById('char-close').addEventListener('click', () => { uiCharOpen.val = false; });
@@ -261,6 +306,7 @@ function addLog(html) {
   logLines.push(html);
   if (logLines.length > 40) logLines.shift();
   const inner = document.getElementById('log-inner');
+  if (!inner) return;  // guard: element missing during init or layout race
   inner.innerHTML = logLines.slice(-14).map(l => `<div class="log-line">${l}</div>`).join('');
 }
 function escHtml(s) {
@@ -342,6 +388,7 @@ function setStatus(s) { uiConn.val = s; }
 
 // ── Movement ──────────────────────────────────────────────────────
 function move(dir) {
+  if (typeof invertedInputTurns !== 'undefined' && invertedInputTurns > 0) dir = (dir + 3) % 6;
   if (myId >= 0 && players[myId]?.ll === 0) {
     showToast('☠ You have been downed — select a new survivor');
     addLog('<span class="log-check-fail">☠ Cannot move — you have been downed.</span>');
@@ -462,6 +509,14 @@ function initHudBindings() {
     });
   }
 
+  // Hourglass on #cd-center when disconnected
+  const cdCenter = document.getElementById('cd-center');
+  if (cdCenter) {
+    van.derive(() => {
+      cdCenter.classList.toggle('cd-disconnected', uiConn.val !== 'Connected');
+    });
+  }
+
   // Movement points — rendered as track boxes in #hud-mp-track (see #hud-ll)
 
   // Inventory: sidebar + mobile HUD + char sheet; bump animation on increase
@@ -518,6 +573,33 @@ function initHudBindings() {
 
 }
 
+// Track box renderer — builds/updates N child divs inside containerId.
+// thresholds: [{box, bit}]; firedMask: server bitmask (fth/wth).
+//   armed (bit=0): orange arrow; spent (bit=1): dim arrow.
+function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count = 6) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  // Trim excess boxes when count decreases (e.g. maxMP changes between days)
+  while (el.children.length > count) el.removeChild(el.lastChild);
+  while (el.children.length < count) {
+    const b = document.createElement('div');
+    b.className = 'track-box';
+    el.appendChild(b);
+  }
+  for (let i = 1; i <= count; i++) {
+    const b      = el.children[count - i];
+    const filled = i <= value;
+    const thr    = thresholds.find(t => t.box === i);
+    const fired  = thr ? !!(firedMask & thr.bit) : false;
+    b.className  = 'track-box' +
+      (filled ? ' filled' : '') +
+      (thr && !fired ? (filled ? ' thresh-filled'       : ' thresh')       : '') +
+      (thr &&  fired ? (filled ? ' thresh-spent-filled' : ' thresh-spent') : '');
+  }
+  el.setAttribute('aria-valuenow', value);
+  el.setAttribute('aria-valuemax', count);
+}
+
 function initCharSheetBindings() {
   // Live stat elements
   const stepsEl   = document.getElementById('cs-steps');
@@ -525,33 +607,6 @@ function initCharSheetBindings() {
 
   if (stepsEl)  { stepsEl.textContent  = ''; van.add(stepsEl,  () => String(uiSteps.val));  }
   if (visionEl) { visionEl.textContent = ''; van.add(visionEl, () => String(uiVision.val)); }
-
-  // Track box renderer — builds/updates N child divs inside containerId.
-  // thresholds: [{box, bit}]; firedMask: server bitmask (fth/wth).
-  //   armed (bit=0): orange arrow; spent (bit=1): dim arrow.
-  function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count = 6) {
-    const el = document.getElementById(containerId);
-    if (!el) return;
-    // Trim excess boxes when count decreases (e.g. maxMP changes between days)
-    while (el.children.length > count) el.removeChild(el.lastChild);
-    while (el.children.length < count) {
-      const b = document.createElement('div');
-      b.className = 'track-box';
-      el.appendChild(b);
-    }
-    for (let i = 1; i <= count; i++) {
-      const b      = el.children[count - i];
-      const filled = i <= value;
-      const thr    = thresholds.find(t => t.box === i);
-      const fired  = thr ? !!(firedMask & thr.bit) : false;
-      b.className  = 'track-box' +
-        (filled ? ' filled' : '') +
-        (thr && !fired ? (filled ? ' thresh-filled'       : ' thresh')       : '') +
-        (thr &&  fired ? (filled ? ' thresh-spent-filled' : ' thresh-spent') : '');
-    }
-    el.setAttribute('aria-valuenow', value);
-    el.setAttribute('aria-valuemax', count);
-  }
 
   // LL track (survivor)
   van.derive(() => {
@@ -582,12 +637,7 @@ function initCharSheetBindings() {
     const wth = (myId >= 0 ? players[myId] : null)?.wth ?? 0;
     renderTrackBoxes('cs-water-track', uiWater.val,
       [{ box: 5, bit: 1 }, { box: 3, bit: 2 }, { box: 1, bit: 4 }], wth);
-    const cCnt = document.getElementById('cs-contam-count');
-    if (cCnt) {
-      const cw = (myId >= 0 ? players[myId] : null)?.cw ?? 0;
-      cCnt.textContent = cw > 0 ? `\u2623${cw}` : '';
-      cCnt.title = cw > 0 ? `${cw} contaminated token${cw > 1 ? 's' : ''} — consumes +1 R each` : '';
-    }
+
   });
 
   // Resolve tokens (max 5)
@@ -896,8 +946,10 @@ function initActionPanel() {
     actionDefs.forEach(def => {
       // Fix: shelter unavailable if improved shelter already built here
       const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
+      // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
+      // allow terrain-dependent actions optimistically; the server validates.
       const available   = def.id === ACT_TRADE  ? tradeAvail
-                        : (!shelterMaxed && actAvailable(def.id, terr));
+                        : (terr === null ? true : (!shelterMaxed && actAvailable(def.id, terr)));
       const hasMP      = mp >= def.mpCost;
       const needsScrap = def.id === ACT_SHELTER;
       const hasScrap   = !needsScrap || scrap > 0;
@@ -995,6 +1047,7 @@ function initActionPanel() {
     }
     if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
     restSent = true;
+    updateRestIndicator();
     send({ t: 'act', a: ACT_REST });
   });
 
@@ -1011,6 +1064,8 @@ function initActionPanel() {
     btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
   document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
+  // Expose for engine.js (dawn event re-renders the panel if it's open)
+  window.openActionPanel = openActionPanel;
 }
 
 function initTradeOverlay() {
@@ -1528,6 +1583,11 @@ function initMenuSystem() {
       ),
 
       md({ class: 'settings-row' },
+        mp({ class: 'settings-label' }, 'Server IP'),
+        mp({ class: 'settings-val' }, () => uiConn.val === 'Connected' ? (window.location.hostname || 'unknown') : 'unknown')
+      ),
+
+      md({ class: 'settings-row' },
         mp({ class: 'settings-label' }, 'Connection'),
         mp({ class: 'settings-val' }, () => uiConn.val)
       ),
@@ -1676,7 +1736,7 @@ function initCharSelect() {
     const availSet = new Set(avail);
 
     return div({ class: 'cs-page' },
-      h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR WAYFARER'),
+      h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),
       p({ class: 'cs-sel-sub' },
         'Each role has a unique trait. Select carefully \u2014 you cannot change once the wasteland claims you.'
       ),
@@ -1921,19 +1981,21 @@ function initEncounterOverlay() {
   const dnLabel    = document.getElementById('enc-dn-label');
   const riskFill   = document.getElementById('enc-risk-fill');
   const lootDisp   = document.getElementById('enc-loot-display');
+  const outcomeDiv = document.getElementById('enc-outcome');
   const choiceList = document.getElementById('enc-choice-list');
   const bankRow    = document.getElementById('enc-bank-row');
   const bankBtn    = document.getElementById('enc-bank-btn');
   const abortBtn   = document.getElementById('enc-abort-btn');
 
-  const RES_NAMES_ENC = ['Food','Water','Meds','Tools','Fuel'];
+  const RES_NAMES_ENC = ['Water','Food','Fuel','Meds','Scrap'];
 
   // State for the active encounter
-  let currentEnc   = null;   // loaded encounter JSON
-  let currentNode  = null;   // current node object
-  let pendingLoot  = [0,0,0,0,0];
-  let canBank      = false;
-  let pendingNextKey = '';   // next node key sent in enc_choice, consumed by _onEncResult
+  let currentEnc      = null;   // loaded encounter JSON
+  let currentNode     = null;   // current node object
+  let pendingLoot     = [0,0,0,0,0];
+  let canBank         = false;
+  let pendingNextKey  = '';     // next node key sent in enc_choice, consumed by _onEncResult
+  let pendingHazText  = '';     // resolved hazard narration, shown on failure
 
   function resolveText(text, placeholders) {
     if (!placeholders) return text;
@@ -1949,13 +2011,21 @@ function initEncounterOverlay() {
   }
 
   const SKILL_LABELS_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
+  const RISK_LABELS_ENC  = ['', 'CAUTIOUS', 'CAUTIOUS', 'RISKY', 'DANGEROUS', 'DESPERATE'];
+  function riskLabel(pct) {
+    if (pct <= 0)  return '';
+    if (pct <= 25) return 'CAUTIOUS';
+    if (pct <= 50) return 'RISKY';
+    if (pct <= 75) return 'DANGEROUS';
+    return 'DESPERATE';
+  }
 
   function renderNode(node) {
     currentNode = node;
     nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
 
     const baseRisk = Math.max(0, ...(node.choices ?? []).map(c => c.base_risk ?? 0));
-    dnLabel.textContent = baseRisk > 0 ? `BASE RISK ${baseRisk}%` : 'NO RISK';
+    dnLabel.textContent = riskLabel(baseRisk);
     riskFill.style.width = `${baseRisk}%`;
 
     choiceList.innerHTML = '';
@@ -1974,7 +2044,7 @@ function initEncounterOverlay() {
       btn.innerHTML =
         `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>` +
         `<span class="enc-cost-tag">${costParts.length ? 'Cost: ' + costParts.join(' \u00b7 ') : 'No cost'}</span>` +
-        `<span class="enc-risk-tag ${riskClass}">Risk ${ch.base_risk}%  \u2014 ${SKILL_LABELS_ENC[ch.skill] ?? 'Skill'}</span>`;
+        `<span class="enc-risk-tag ${riskClass}">${SKILL_LABELS_ENC[ch.skill] ?? 'Skill'}</span>`;
       btn.addEventListener('click', () => sendChoice(ch));
       choiceList.appendChild(btn);
     });
@@ -1986,6 +2056,7 @@ function initEncounterOverlay() {
 
   function sendChoice(ch) {
     const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
+    pendingHazText = haz.text ? resolveText(haz.text, currentEnc.placeholders) : '';
     const hazPen = haz.penalty ?? {};
     const wound  = Array.isArray(haz.wound) ? haz.wound : [0, 0];
     const cost   = ch.cost ?? {};
@@ -2048,8 +2119,11 @@ function initEncounterOverlay() {
     currentNode    = null;
     pendingLoot    = [0,0,0,0,0];
     pendingNextKey = '';
+    pendingHazText = '';
     canBank        = false;
     lootDisp.textContent  = '';
+    outcomeDiv.classList.remove('visible');
+    outcomeDiv.innerHTML  = '';
     bankRow.style.display = 'none';
     choiceList.innerHTML  = '';
   }
@@ -2062,28 +2136,60 @@ function initEncounterOverlay() {
       .catch(e => showToast(`\u2297 Encounter load failed: ${e.message}`));
   };
 
-  // Called from engine.js enc_res handler — advance node or stay on failure
+  const SUCCESS_PHRASES = [
+    'You push through.', 'Barely.', 'Fortune holds.', 'Against the odds.',
+    'Clean exit.', 'You manage.', 'Just in time.', 'Through.'
+  ];
+
+  // Called from engine.js enc_res handler — show outcome then advance or stay
   window._onEncResult = function(ev) {
     if (ev.ends) { closeEncounter(); return; }
+
     const nextKey = pendingNextKey;
     pendingNextKey = '';
-    if (ev.out) {
-      // Success: accumulate loot and advance to next node
-      if (Array.isArray(ev.loot))
-        ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
-      if (nextKey && currentEnc?.nodes?.[nextKey]) {
-        renderNode(currentEnc.nodes[nextKey]);
-      } else {
-        // Terminal node reached — show bank button only
-        renderLoot();
-        choiceList.innerHTML = '';
-        canBank = true;
-        bankRow.style.display = '';
-      }
+
+    // Build delta line
+    const deltaItems = [];
+    if (ev.out && Array.isArray(ev.loot)) {
+      ev.loot.forEach((v, i) => { if (v > 0) deltaItems.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true }); });
     } else {
-      // Failure: stay on current node, re-enable choices
-      renderNode(currentNode);
+      if (ev.penLL  < 0) deltaItems.push({ txt: `${ev.penLL} Life`,         pos: false });
+      if (ev.penFat > 0) deltaItems.push({ txt: `+${ev.penFat} Fatigue`,    pos: false });
+      if (ev.penRad > 0) deltaItems.push({ txt: `+${ev.penRad} Radiation`,  pos: false });
     }
+    const deltaHtml = deltaItems.map(d =>
+      `<span class="${d.pos ? 'enc-out-pos' : 'enc-out-neg'}">${escHtml(d.txt)}</span>`
+    ).join('  ');
+
+    // Flavor text: use authored hazard narration on failure, generic phrase on success
+    const flavor = ev.out
+      ? SUCCESS_PHRASES[Math.floor(Math.random() * SUCCESS_PHRASES.length)]
+      : (pendingHazText || 'The wasteland takes its toll.');
+    pendingHazText = '';
+
+    outcomeDiv.innerHTML =
+      `<span class="enc-out-flavor">${escHtml(flavor)}</span>` +
+      (deltaHtml ? `<span class="enc-out-delta">${deltaHtml}</span>` : '');
+    outcomeDiv.classList.add('visible');
+
+    setTimeout(() => {
+      outcomeDiv.classList.remove('visible');
+      outcomeDiv.innerHTML = '';
+      if (ev.out) {
+        if (Array.isArray(ev.loot))
+          ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
+        if (nextKey && currentEnc?.nodes?.[nextKey]) {
+          renderNode(currentEnc.nodes[nextKey]);
+        } else {
+          renderLoot();
+          choiceList.innerHTML = '';
+          canBank = true;
+          bankRow.style.display = '';
+        }
+      } else {
+        renderNode(currentNode);
+      }
+    }, 2200);
   };
 
   window._onEncBank = function() { closeEncounter(); };
@@ -2098,56 +2204,6 @@ function initEncounterOverlay() {
     send({ t: 'enc_abort' });
     closeEncounter();
   });
-
-  // ── Ally encounter banner ────────────────────────────────────────
-  const allyBanner    = document.getElementById('ally-enc-banner');
-  const allyTitle     = document.getElementById('ally-enc-title');
-  const allySub       = document.getElementById('ally-enc-sub');
-  const allyAssistRow = document.getElementById('ally-enc-assist-row');
-  const allyDismiss   = document.getElementById('ally-enc-dismiss');
-  let allyEncPid = -1;
-
-  window._showAllyEncBanner = function(pid) {
-    allyEncPid = pid;
-    const nm = players[pid]?.nm || `P${pid}`;
-    allyTitle.textContent = `\uD83D\uDC41 ${nm.toUpperCase()} IS INSIDE`;
-    allySub.textContent   = 'Spend a resource to assist (reduces DN by 4)';
-    // Build assist buttons
-    allyAssistRow.innerHTML = '';
-    RES_NAMES_ENC.forEach((rn, ri) => {
-      const inv = players[myId]?.inv?.[ri] ?? 0;
-      const b = document.createElement('button');
-      b.className = 'enc-assist-btn';
-      b.textContent = `${rn} (${inv})`;
-      b.disabled = inv <= 0;
-      b.addEventListener('click', () => {
-        send({ t: 'enc_assist', tgt: allyEncPid, res: ri });
-        b.disabled = true;
-      });
-      allyAssistRow.appendChild(b);
-    });
-    allyBanner.classList.add('visible');
-    allyBanner.style.display = '';
-  };
-
-  // If pid is supplied, only hide if the banner is currently tracking that player.
-  window._hideAllyEncBanner = function(pid) {
-    if (pid !== undefined && pid !== allyEncPid) return;
-    allyEncPid = -1;
-    allyBanner.classList.remove('visible');
-    allyBanner.style.display = 'none';
-  };
-
-  window._onEncAssist = function() {
-    // Refresh assist button counts after any assist event
-    allyAssistRow.querySelectorAll('.enc-assist-btn').forEach((btn, ri) => {
-      const inv = players[myId]?.inv?.[ri] ?? 0;
-      btn.textContent = `${RES_NAMES_ENC[ri]} (${inv})`;
-      btn.disabled = inv <= 0;
-    });
-  };
-
-  allyDismiss.addEventListener('click', window._hideAllyEncBanner);
 
   // Fatigue track in encounter overlay
   van.derive(() => {

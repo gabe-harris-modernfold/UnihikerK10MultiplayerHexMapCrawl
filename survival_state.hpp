@@ -32,7 +32,7 @@ static void duskCheck() {
     }
 
     if (ev.actOut == AO_FAIL) {
-      p.wounds[1]++;                  // +1 Major Wound
+      p.wounds[1] = (uint8_t)min(10, (int)p.wounds[1] + 1);  // +1 Major Wound (cap 10)
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10PlaySeq(SEQ_DAMAGE); }  // red = LL lost
       if (p.ll == 0) {
         p.statusBits |= ST_DOWNED;
@@ -278,6 +278,9 @@ static void movePlayer(int pid, int dir) {
     mc = 2;
     Serial.printf("[ITEM]  P%d terrain unlock: %s traversal\n", pid, T_NAME[destTerrain]);
   }
+
+  // ── Weather movement penalty ─────────────────────────────────────────────
+  mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase]);
 
   // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
   if (p.movesLeft == 0) {

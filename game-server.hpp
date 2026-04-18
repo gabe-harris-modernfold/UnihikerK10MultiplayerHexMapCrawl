@@ -7,8 +7,15 @@
 static void gameLoopTask(void* param) {
   Serial.printf("[SETUP] Game loop on Core %d\n", xPortGetCoreID());
   TickType_t lastWake = xTaskGetTickCount();
+  uint32_t lastWatermarkMs = 0;
   for (;;) {
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(TICK_MS));
+    uint32_t loopMs = millis();
+    if (loopMs - lastWatermarkMs >= 5000) {
+      lastWatermarkMs = loopMs;
+      Serial.printf("[STACK] GameLoop HWM: %u bytes free\n",
+        uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+    }
     tickGame();
     drainEvents();
     // ── Trade offer expiry sweep ──────────────────────────────────
@@ -104,6 +111,13 @@ static void setupVariantCounts() {
   Serial.println();
 }
 
+// ── Cache-Control policy per asset ──────────────────────────────
+static const char* cacheControlFor(const char* url, const char* mime) {
+  if (strcmp(mime, "text/html") == 0)  return "no-cache";
+  if (strstr(url, "sw.js") != nullptr) return "no-cache";
+  return "public, max-age=31536000, immutable";
+}
+
 // ── WiFi, HTTP routes, and WebSocket setup ──────────────────────
 // Extracted from setup() to keep that function concise.
 static void setupWiFiAndServer() {
@@ -132,11 +146,24 @@ static void setupWiFiAndServer() {
   // Static web assets served from PSRAM
   for (int i = 0; i < WEB_FILE_COUNT; i++) {
     server.on(WEB_FILES[i].url, HTTP_GET, [i](AsyncWebServerRequest* req) {
-      if (WEB_FILES[i].buf) {
-        req->send(200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
-      } else {
+      if (!WEB_FILES[i].buf) {
         req->send(503, "text/plain", "Web file not cached - check SD & reboot");
+        return;
       }
+      const char* cc = cacheControlFor(WEB_FILES[i].url, WEB_FILES[i].mime);
+      if (req->hasHeader("If-None-Match") &&
+          req->getHeader("If-None-Match")->value() == WEB_FILES[i].etag) {
+        AsyncWebServerResponse* r = req->beginResponse(304);
+        r->addHeader("ETag", WEB_FILES[i].etag);
+        r->addHeader("Cache-Control", cc);
+        req->send(r);
+        return;
+      }
+      AsyncWebServerResponse* resp = req->beginResponse(
+          200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
+      resp->addHeader("ETag", WEB_FILES[i].etag);
+      resp->addHeader("Cache-Control", cc);
+      req->send(resp);
     });
   }
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
@@ -330,7 +357,13 @@ static void setupWiFiAndServer() {
     }
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
-    if (!SD.exists(path)) { req->send(404, "text/plain", "Encounter not found"); return; }
+    Serial.printf("[ENC] Request: %s  core=%d  heap=%u\n", path, xPortGetCoreID(), (unsigned)ESP.getFreeHeap());
+    Serial.flush();
+    if (!SD.exists(path)) {
+      Serial.printf("[ENC] 404: %s\n", path); Serial.flush();
+      req->send(404, "text/plain", "Encounter not found"); return;
+    }
+    Serial.printf("[ENC] streaming %s\n", path); Serial.flush();
     req->send(SD, path, "application/json");
   });
 
@@ -345,9 +378,18 @@ static void setupWiFiAndServer() {
           if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
               filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
             mimeType = "image/jpeg";
+          if (req->hasHeader("If-None-Match") &&
+              req->getHeader("If-None-Match")->value() == imgCache[i].etag) {
+            AsyncWebServerResponse* r = req->beginResponse(304);
+            r->addHeader("ETag", imgCache[i].etag);
+            r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+            req->send(r);
+            return;
+          }
           AsyncWebServerResponse* resp = req->beginResponse(
               200, mimeType, imgCache[i].buf, imgCache[i].len);
-          resp->addHeader("Cache-Control", "public, max-age=86400");
+          resp->addHeader("ETag", imgCache[i].etag);
+          resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
           req->send(resp);
           return;
         }

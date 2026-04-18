@@ -1,0 +1,59 @@
+{
+  "id": "urban_bakesale_01",
+  "title": "Granny Shrapnel's Bake Sale",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "She has a folding table set up in a gap between two collapsed walls, a checked tablecloth, and a handwritten sign that reads FRESH BAKED GOODS in the steady hand of someone who bakes regularly and aggressively. She is very old, very small, and wearing an apron with what might be a sun or might be an explosion on it. Behind her, under the table: a large canvas bag that clinks when she moves. The muffins are wrapped in cling film. They are perfectly shaped. They smell like nothing you've encountered before in a way that is troubling on several levels.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Buy a muffin — two food items, firm price",
+          "cost": { "food": 2, "fatigue": 1 },
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "muffin_purchased",
+          "hazard_id": "granny_overcharge"
+        },
+        {
+          "label": "Decline politely and move on",
+          "cost": { "fatigue": 1 },
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "declined_safely",
+          "hazard_id": "walker_thrown"
+        }
+      ]
+    },
+    "muffin_purchased": {
+      "text": "She wraps it with a ribbon. 'Don't squeeze it,' she says. Her eyes are kind and very sharp. 'And don't heat it. And if you drop it, walk away quickly.' She pats your hand and wishes you well. The muffin sits in your pack with the specific weight of something that has a detonator. You carry it with appropriate respect.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_junk",
+      "choices": []
+    },
+    "declined_safely": {
+      "text": "She watches you go with the expression of someone filing your face away for future reference. You make it around the corner before you hear her packing up the table. This feels like the right outcome.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "granny_overcharge": {
+      "text": "She recounts the transaction and determines you underpaid by one food item. Her position on this is firm, documented, and supported by a laminated pricing chart she produces from her apron pocket.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "walker_thrown": {
+      "text": "The walker travels farther and faster than walkers are supposed to travel. It connects with your upper arm and the impact is genuine — she's been loading those wheels with something. 'Next time,' she calls, pleasantly, 'buy a muffin.'",
+      "penalty": { "fatigue": 2, "ll": -5 },
+      "status": 4,
+      "wound": [1, 0],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

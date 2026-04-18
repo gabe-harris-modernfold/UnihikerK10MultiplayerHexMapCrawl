@@ -1,0 +1,44 @@
+{
+  "id": "scrub_skyfall_01",
+  "title": "Skyfall",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A sound like the sky tearing at the seams. Then a double sonic boom that vibrates your back teeth. A trail of black smoke arcs overhead in a parabola that ends approximately twenty metres in front of you with a concussive thud and a spray of displaced earth. The impact crater is small — whatever fell was dense, not large. The smoke is not fire-smoke. You approach cautiously. Something sits in the centre of the crater, still ticking with heat: a black box covered in symbols you don't recognise. It fits in a hand. It is warm. It is not damaged.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Pick it up and pocket it immediately",
+          "cost": { "fatigue": 1 },
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "device_retrieved",
+          "hazard_id": "device_shock"
+        },
+        {
+          "label": "Nudge it with a stick first, then pick it up",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 2,
+          "success_node": "device_retrieved",
+          "hazard_id": "device_shock"
+        }
+      ]
+    },
+    "device_retrieved": {
+      "text": "It sits in your pack, ticking quietly. It smells faintly of ozone and something else you can't place — something almost floral. The symbols on its surface shift slightly when you're not looking directly at it. You are probably overthinking this. You are probably not.",
+      "can_bank": true,
+      "loot_table": "drop_cursed_device",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "device_shock": {
+      "text": "The moment you touch it, a brief pulse of energy fires up your arm. Not enough to do real damage — more like a warning. Your fingers tingle for the next hour. The device sits in your pack perfectly still.",
+      "penalty": { "fatigue": 1, "ll": -2 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

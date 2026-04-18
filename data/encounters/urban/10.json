@@ -1,0 +1,45 @@
+{
+  "id": "urban_slippery_cave_01",
+  "title": "The Slippery Cave",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The cave entrance is barely visible — a gap in the basement wall of a collapsed building, partially blocked by rubble, dark enough to seem uninteresting. You squeeze through anyway. Inside, the floor slopes away sharply and the surface is what you would describe, generously, as extremely lubricated. The smell confirms the source immediately. A massive accumulation of bat guano, layered over years, polished by moisture to the approximate friction coefficient of ice. Your boot finds the edge of it at exactly the wrong angle.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Catch yourself on the wall and ease down carefully",
+          "cost": { "fatigue": 2 },
+          "base_risk": 50,
+          "skill": 0,
+          "success_node": "fell_anyway",
+          "hazard_id": "fell_anyway_hard"
+        },
+        {
+          "label": "Commit to it — controlled slide, tuck and roll at the bottom",
+          "cost": { "fatigue": 1 },
+          "base_risk": 35,
+          "skill": 5,
+          "success_node": "fell_anyway",
+          "hazard_id": "fell_anyway_hard"
+        }
+      ]
+    },
+    "fell_anyway": {
+      "text": "The chute is longer than caves have any right to be. You emerge into a section of the city you have never seen before — a low, wide space under a collapsed district, dry and quiet. There's daylight somewhere ahead. The bat population responsible for this situation is thankfully absent. You have absolutely no idea where you are. This is a fresh start, of a kind.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "fell_anyway_hard": {
+      "text": "The chute terminates more abruptly than expected. You arrive at the bottom in a way that prioritises momentum over dignity and exit the situation covered in guano and substantially bruised. Still lost. Still relocated. Just louder about it.",
+      "penalty": { "fatigue": 3, "ll": -5 },
+      "status": 2,
+      "wound": [1, 0],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

@@ -1,0 +1,82 @@
+{
+  "id": "scrub_jack_chopper_01",
+  "title": "Jack's Chopper",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The wreck has been here long enough to rust orange — a pre-war military helicopter, nose-down in the scrub, tail rotor still attached and bent at an angle that suggests one final, spectacular argument with the ground. Sitting next to it, wearing a very pink romper, is Jack the Romper. He is crying, but trying to hide it, which means he's doing an enormous amount of pointed not-crying at the helicopter. He has a small toolkit. He looks up when he hears you.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask what's wrong — try to help",
+          "cost": { "fatigue": 1 },
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "jack_explains",
+          "hazard_id": "jack_offended"
+        },
+        {
+          "label": "Ignore Jack and strip the helicopter yourself",
+          "cost": { "fatigue": 4 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "solo_strip",
+          "hazard_id": "rotor_injury"
+        }
+      ]
+    },
+    "jack_explains": {
+      "text": "'It's my mask,' he says, trying to sound casual and failing completely. 'Intimidating Mask. Left it at the gas station. The old one, with the fungus. I go back for it and those things — they get near me. Every time.' He gestures vaguely at his romper. 'This doesn't exactly project menace on its own.' He looks at you with the focused hope of someone who has very few options. 'You don't happen to be going anywhere near the old gas station?'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Agree to help — go get his mask from the gas station",
+          "cost": { "fatigue": 1 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "quest_accepted",
+          "hazard_id": "jack_offended"
+        },
+        {
+          "label": "Decline — help strip the helicopter instead",
+          "cost": { "fatigue": 3 },
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "solo_strip",
+          "hazard_id": "rotor_injury"
+        }
+      ]
+    },
+    "quest_accepted": {
+      "text": "'You're a good person,' Jack says, with a sincerity that is somehow more uncomfortable than the crying was. 'Gas station's east — half a mile, maybe. Big fungus problem. You'll know it. Don't touch anything blue.' He opens his toolkit and gets to work on something under the fuselage while you head out. He is still wearing the romper. He has committed to the romper.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    },
+    "solo_strip": {
+      "text": "Jack watches you work with the quiet dignity of someone choosing not to comment. The helicopter yields a solid haul — rotor components, fuselage scrap, a sealed maintenance kit under the seats. Not the Motorbike he would have built you, but useful.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [3, 6] },
+        { "res": 2, "qty": [1, 3] }
+      ],
+      "loot_table": "scrub_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "jack_offended": {
+      "text": "Jack stands up, retrieves his toolkit, and walks around to the other side of the helicopter without a word. You have made a grown man in a pink romper feel dismissed, and somehow that lands.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "rotor_injury": {
+      "text": "A blade section catches on the fuselage as you drag it free and swings back at low height. You get the forearm up in time to protect your face. The forearm suffers for its sacrifice.",
+      "penalty": { "fatigue": 2, "ll": -5 },
+      "status": 4,
+      "wound": [1, 0],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

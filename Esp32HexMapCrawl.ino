@@ -81,7 +81,10 @@
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
+#pragma GCC diagnostic pop
 #include "usb_drive.h"
 
 static const char* AP_SSID = "WASTELAND";
@@ -140,10 +143,32 @@ static constexpr uint8_t AO_PARTIAL = 2;
 static constexpr uint8_t AO_FAIL    = 3;
 
 static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 0 };
-static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,0,8,0,0,0,0, 0 };
+static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,7,8,0,0,0,0, 0 };
 static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 0 };
 static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
 static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 0 };
+
+// ── Weather system constants ──────────────────────────────────────────────────
+static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
+                           WEATHER_STORM = 2, WEATHER_CHEM  = 3;
+// Weather counter decrements only once every WEATHER_TICK_DIVIDER game ticks.
+// At TICK_MS=100 (10 ticks/sec), divider=50 → 5 sec/weather-tick:
+//   Clear 240-400 weather-ticks = 20-33 min | Chem 15-30 = 1.25-2.5 min
+static constexpr uint32_t WEATHER_TICK_DIVIDER = 50;
+static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 1, 3, 5 };
+static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
+static const uint16_t WEATHER_DUR_MIN[4]     = { 240, 30, 20, 15 };
+static const uint16_t WEATHER_DUR_MAX[4]     = { 400, 50, 40, 30 };
+// Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
+// Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
+//           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
+//           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+static const float WEATHER_INTENSITY[4][12] = {
+  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.5f, 0.4f, 0.6f, 0.8f, 0.4f, 0.9f, 0.5f, 0.6f, 0.7f, 0.1f, 0.0f, 0.0f },
+  { 0.7f, 0.6f, 0.7f, 0.9f, 0.5f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.0f, 0.0f },
+  { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f },
+};
 
 // Status condition bitmask positions
 static constexpr uint8_t ST_WOUNDED  = (1 << 0);
@@ -153,6 +178,7 @@ static constexpr uint8_t ST_FEVERED  = (1 << 3);
 static constexpr uint8_t ST_DOWNED   = (1 << 4);
 static constexpr uint8_t ST_STABLE   = (1 << 5);
 static constexpr uint8_t ST_PANICKED = (1 << 6);
+static constexpr uint8_t ST_STINK   = (1 << 7);   // Applied by methane/sewage encounters; blocks stealth for 2 turns
 
 // ── Item system ─────────────────────────────────────────────────
 static constexpr uint8_t  MAX_ITEMS  = 128;
@@ -365,7 +391,8 @@ enum EvtType : uint8_t {
   EVT_ENC_ASSIST   = 15,
   EVT_ENC_RESULT   = 16,
   EVT_ENC_BANK     = 17,
-  EVT_ENC_END      = 18
+  EVT_ENC_END      = 18,
+  EVT_WEATHER      = 19
 };
 
 struct GameEvent {
@@ -415,6 +442,7 @@ struct GameEvent {
   int8_t   encRiskRed;    // risk reduction for assist event
   uint8_t  encItemType;   // typed item dropped (loot table roll)
   uint8_t  encItemQty;
+  uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
@@ -452,21 +480,9 @@ struct EncPoolInfo {
 };
 static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
 
-// POI encounter probability per terrain type (0-100 %)
-static const uint8_t TERRAIN_POI_PCT[NUM_TERRAIN] = {
-  3,   // 0 Open Scrub
-  4,   // 1 Ash Dunes
-  7,   // 2 Rust Forest
-  4,   // 3 Marsh
-  28,  // 4 Broken Urban
-  18,  // 5 Flooded District
-  3,   // 6 Glass Fields
-  5,   // 7 Ridge
-  5,   // 8 Mountain
-  23,  // 9 Settlement
-  0,   // 10 Nuke Crater (impassable)
-  0    // 11 River Channel (impassable)
-};
+// POI encounter probability removed — encounters are now pre-placed
+// at map generation time (one hex per encounter ID, guaranteed).
+// See hex-map.hpp Phase 5.
 
 // ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
 struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
@@ -488,6 +504,10 @@ struct GameState {
 
   uint32_t dayTick;
   uint16_t dayCount;
+
+  uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem
+  uint16_t weatherCounter;  // ticks remaining in current phase
+  uint16_t badWeatherTicks; // consecutive weather-ticks in non-CLEAR phases
 };
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
@@ -496,7 +516,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 6;
+static constexpr uint8_t  SAVE_VERSION = 7;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -506,7 +526,8 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  version;
   uint16_t dayCount;
   uint8_t  threatClock;
-  uint8_t  pad;
+  uint8_t  weatherPhase;    // was: pad
+  uint16_t weatherCounter;  // new (+2 bytes); total header: 11 bytes
 };
 
 struct __attribute__((packed)) SavePlayer {
@@ -594,24 +615,36 @@ AsyncWebSocket  ws("/ws");
 
 // ── PSRAM web-file cache ────────────────────────────────────────────────────
 struct WebFile { const char* url; const char* mime; const char* sdName;
-                 uint8_t* buf; size_t len; };
+                 uint8_t* buf; size_t len; char etag[26]; };
 static WebFile WEB_FILES[] = {
-  { "/",                       "text/html",       "index.html",            nullptr, 0 },
-  { "/engine.js",              "text/javascript", "engine.js",             nullptr, 0 },
-  { "/ash-particle-system.js", "text/javascript", "ash-particle-system.js",nullptr, 0 },
-  { "/game-data.js",           "text/javascript", "game-data.js",          nullptr, 0 },
-  { "/style.css",              "text/css",        "style.css",             nullptr, 0 },
-  { "/ui.js",                  "text/javascript", "ui.js",                 nullptr, 0 },
-  { "/van-ui.js",              "text/javascript", "van-ui.js",             nullptr, 0 },
-  { "/van.js",                 "text/javascript", "van.js",                nullptr, 0 },
+  { "/",                           "text/html",       "index.html",                nullptr, 0 },
+  { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0 },
+  { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0 },
+  { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0 },
+  { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0 },
+  { "/game-config.js",             "text/javascript", "game-config.js",            nullptr, 0 },
+  { "/state-manager.js",           "text/javascript", "state-manager.js",          nullptr, 0 },
+  { "/animation-manager.js",       "text/javascript", "animation-manager.js",      nullptr, 0 },
+  { "/event-handlers.js",          "text/javascript", "event-handlers.js",         nullptr, 0 },
+  { "/style.css",                  "text/css",        "style.css",                 nullptr, 0 },
+  { "/ui.js",                      "text/javascript", "ui.js",                     nullptr, 0 },
+  { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0 },
+  { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0 },
+  { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0 },
 };
 static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
 
 // ── PSRAM image cache ──────────────────────────────────────────────────────
-struct ImgFile { char name[40]; uint8_t* buf; size_t len; };
+struct ImgFile { char name[40]; uint8_t* buf; size_t len; char etag[26]; };
 static const int MAX_IMG_CACHE = 100;
 static ImgFile   imgCache[MAX_IMG_CACHE];
 static int       imgCacheCount = 0;
+static uint32_t  g_bootNonce   = 0;
+
+// ── Decoded title bitmap (TRUE_COLOR_ALPHA, PSRAM) ─────────────────────────
+static uint8_t*     g_titlePixels = nullptr;   // 3 bytes/px: lv_color_t + alpha
+static lv_img_dsc_t g_titleImgDsc;
+static uint16_t     g_titleW = 0, g_titleH = 0;
 
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
@@ -646,12 +679,31 @@ void setup() {
   Serial.println("╚══════════════════════════════════════════════╝");
   Serial.printf("[SETUP] Free heap at boot: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
 
+  // ── Reset reason ─────────────────────────────────────────────
+  { esp_reset_reason_t rr = esp_reset_reason();
+    const char* rs;
+    switch(rr) {
+      case ESP_RST_POWERON:  rs = "POWER_ON";  break;
+      case ESP_RST_EXT:      rs = "EXT_PIN";   break;
+      case ESP_RST_SW:       rs = "SW_RESET";  break;
+      case ESP_RST_PANIC:    rs = "PANIC";      break;
+      case ESP_RST_INT_WDT:  rs = "INT_WDT";   break;
+      case ESP_RST_TASK_WDT: rs = "TASK_WDT";  break;
+      case ESP_RST_WDT:      rs = "WDT";        break;
+      case ESP_RST_BROWNOUT: rs = "BROWNOUT";  break;
+      case ESP_RST_DEEPSLEEP:rs = "DEEPSLEEP"; break;
+      default:               rs = "UNKNOWN";   break;
+    }
+    Serial.printf("[RESET] Reason: %s (%d)\n", rs, (int)rr);
+  }
+
   // ── K10 screen init ───────────────────────────────────────────
   k10.begin();
   loadK10Prefs();
   k10.initScreen(2, 0);
   k10.creatCanvas();
   k10.setScreenBackground(0x000000);
+  digital_write(eLCD_BLK, 0);  // screen off until display issue resolved
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
   Serial.printf("[SETUP] Map: %dx%d=%d cells | VISION_R:%d | MOVE_CD:%lums | RESPAWN:%ds\n",
@@ -695,6 +747,7 @@ void setup() {
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
   G.dayTick = 0; G.dayCount = 0;
+  G.weatherPhase = WEATHER_CLEAR; G.weatherCounter = 80; G.badWeatherTicks = 0;
   memset(groundItems, 0, sizeof(groundItems));
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -755,6 +808,12 @@ void setup() {
   }
 
   loadWebFilesToRAM();
+  decodeTitleImage();
+  g_bootNonce = esp_random();
+  for (int i = 0; i < WEB_FILE_COUNT; i++)
+    snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
+  for (int i = 0; i < imgCacheCount; i++)
+    snprintf(imgCache[i].etag, sizeof(imgCache[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, imgCache[i].len);
   { char hb[36]; snprintf(hb, 36, "Web: %ukB in PSRAM", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd(hb, 0x406030); }
 
@@ -791,7 +850,7 @@ void setup() {
 
   setupWiFiAndServer();
 
-  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 8192, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 24576, NULL, 2, NULL, 1);
 }
 
 void loop() {

@@ -7,7 +7,7 @@
 // ────────────────────────────────────────────────────────────────
 // MAP & WORLD CONFIGURATION
 // ────────────────────────────────────────────────────────────────
-export const GAME_CONFIG = {
+const GAME_CONFIG = {
   map: {
     cols: 25,
     rows: 19,
@@ -83,7 +83,7 @@ export const GAME_CONFIG = {
  * Merges server config with local defaults.
  * @param {Object} serverConfig - Configuration object from server
  */
-export function applyServerConfig(serverConfig) {
+function applyServerConfig(serverConfig) {
   if (!serverConfig) return;
   // Deep merge server values into GAME_CONFIG
   Object.keys(serverConfig).forEach(key => {
@@ -99,7 +99,7 @@ export function applyServerConfig(serverConfig) {
 // CONVENIENCE GETTERS (for easy access in render loops)
 // ────────────────────────────────────────────────────────────────
 
-export const getConfig = (path) => {
+const getConfig = (path) => {
   // Dot-notation accessor: getConfig('rendering.hexSize.min') → 36
   return path.split('.').reduce((obj, key) => obj?.[key], GAME_CONFIG);
 };

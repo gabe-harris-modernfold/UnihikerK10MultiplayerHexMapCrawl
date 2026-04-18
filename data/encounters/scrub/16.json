@@ -1,0 +1,58 @@
+{
+  "id": "scrub_nukecola_01",
+  "title": "Nuke-Cola Oasis",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The light finds it before you do — a glowing blue pond sitting in a natural bowl in the scrub, catching the low sun and throwing it back doubled. From this distance, it could be water. Clean water. The kind you forgot existed. Closer, the glow is less reassuring: it pulses, faintly, with a rhythm that doesn't match the wind. The smell hits at twenty metres: sweet, carbonated, and underneath that, something corrosive enough to make your eyes water.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Drink from it — it's the only water you've seen in hours",
+          "cost": { "water": -2 },
+          "base_risk": 60,
+          "skill": 5,
+          "success_node": "survived_drink",
+          "hazard_id": "internal_burns"
+        },
+        {
+          "label": "Bottle it carefully — this stuff could be weaponised",
+          "cost": { "fatigue": 2 },
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "bottled_syrup",
+          "hazard_id": "spill_burns"
+        }
+      ]
+    },
+    "survived_drink": {
+      "text": "Your throat does not enjoy this. Your stomach lodges an immediate formal complaint. But you're upright, technically. The corrosive properties are real but not immediately lethal at a sip volume. You will think about this experience for some time.",
+      "can_bank": false,
+      "loot": [
+        { "res": 0, "qty": [1, 1] }
+      ],
+      "choices": []
+    },
+    "bottled_syrup": {
+      "text": "You fill a container carefully, keeping your skin well clear of the surface. The syrup settles into a dense, glowing layer at the bottom, separated from nothing because there is nothing else in the bottle. It eats through the standard cap seal slightly. You reinforce it with whatever's available. Handle with intent.",
+      "can_bank": true,
+      "loot_table": "drop_corrosive_syrup",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "internal_burns": {
+      "text": "The syrup is, in fact, highly corrosive soft drink concentrate at approximately four hundred percent concentration. Your mouth, throat, and oesophagus lodge their complaints in sequence. You are not dead but you are made aware of every centimetre of your digestive system.",
+      "penalty": { "fatigue": 3, "ll": -10 },
+      "status": 8,
+      "ends_encounter": true
+    },
+    "spill_burns": {
+      "text": "A small amount of syrup splashes onto the back of your hand during bottling. The sensation is immediate, precise, and instructive. The skin there will look interesting for a while.",
+      "penalty": { "fatigue": 1, "ll": -3 },
+      "status": 1,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

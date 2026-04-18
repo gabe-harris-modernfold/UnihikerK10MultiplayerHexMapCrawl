@@ -1,0 +1,78 @@
+{
+  "id": "urban_dialup_cult_01",
+  "title": "The Dial-Up Cult",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "In the basement of a partially standing office block, robed figures kneel in a circle around a humming server rack. The rack is large, old, and warm — a pre-war enterprise system running on a dedicated generator that sounds like it will never stop. From two speakers mounted near the top, a 56k dial-up tone plays on a continuous loop, rising and falling with the liturgical rhythm of something sacred. The high priest looks up when you approach. 'The Great Connection has not yet been made,' he says. 'The Sacred Password is lost. Without it, we cannot reach the other side.' He gestures at the server.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Offer scrap as tribute — sacrifice to the altar",
+          "cost": { "fatigue": 2 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "sacrifice_accepted",
+          "hazard_id": "sacrifice_insufficient"
+        },
+        {
+          "label": "Present the Sticky Note — you have the Sacred Password",
+          "cost": { "fatigue": 1 },
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "password_entered",
+          "hazard_id": "password_rejected"
+        }
+      ]
+    },
+    "sacrifice_accepted": {
+      "text": "The high priest accepts your offering and performs the Ritual of Input — a sustained typing sequence on the server's original keyboard that takes four minutes and produces a sound like something very large clearing its throat. The fog of ignorance lifts from your immediate surroundings, at least directionally. The connection is not made. It is never made. But something was revealed.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 3] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    },
+    "password_entered": {
+      "text": "The high priest reads the Sticky Note. He reads it again. He reads it a third time with the focus of someone encountering a theological document. He moves to the keyboard with trembling hands. 'admin,' he whispers. He types. 'admin.' He types again. The server rack makes a sound you've never heard before — a system handshake negotiating across a connection that should not exist. Then it transforms. The server rack folds outward on pneumatic arms, assembles itself into eight feet of angular chassis, and stands up. The cult scatters in absolute terror. The Router has awakened.",
+      "can_bank": false,
+      "loot": [],
+      "choices": [
+        {
+          "label": "Fight The Router — this ends here",
+          "cost": { "fatigue": 3 },
+          "base_risk": 60,
+          "skill": 5,
+          "success_node": "router_defeated",
+          "hazard_id": "dial_up_blast"
+        }
+      ]
+    },
+    "router_defeated": {
+      "text": "The Router goes down hard when you find the right panel — a maintenance access port under its left shoulder that was never armoured because no one anticipated this use case. The dial-up tone crescendos and then cuts to silence. In its core, still warm: a compressed pre-war network uplink card, loaded with every access point in the original city grid. A full map. Everyone's location. Everything active. The cult will not be returning.",
+      "can_bank": true,
+      "loot_table": "drop_prewarmapmap",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "sacrifice_insufficient": {
+      "text": "The high priest weighs your offering against the spiritual debt outstanding and finds it lacking. He returns two thirds of what you brought with the energy of someone managing a disappointment they have managed many times before.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "password_rejected": {
+      "text": "The high priest inputs the password with shaking hands. The server makes a sound. The sound is not a handshake. It is an error tone — long, flat, and deeply familiar. 'INVALID CREDENTIALS' displays on the ancient monitor. The high priest sags. Perhaps this isn't the right server. Perhaps this isn't the right password. Perhaps some sacred connections cannot be made.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "dial_up_blast": {
+      "text": "The Router's primary attack is a focused beam of amplified 56k modem noise played at structural volumes. The sound enters through your ears and exits through your resolve. It does not do clean damage — it does loud, disorienting, deeply unpleasant damage.",
+      "penalty": { "fatigue": 3, "ll": -8 },
+      "status": 2,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

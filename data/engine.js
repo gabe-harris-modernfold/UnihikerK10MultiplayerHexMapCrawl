@@ -1,6 +1,11 @@
 // ── Vision radius (updated per vis/sync message from server) ─────
 let myVisionR = VISION_R;
 
+// ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem; updated from server gs.wp) ─
+let weatherPhase = 0;
+const weatherParticles = (typeof WeatherParticleSystem !== 'undefined')
+  ? new WeatherParticleSystem() : null;
+
 // ── VanJS reactive UI state ───────────────────────────────────────
 const uiConn        = van.state('Connecting...');
 const uiInv         = Array.from({length:5}, () => van.state(0));
@@ -44,6 +49,37 @@ function closeMenu()             { uiMenuPage.val = null; }
 function narrateState(msg) {
   const el = document.getElementById('game-narrator');
   if (el) el.textContent = msg;
+}
+
+// ── Narrative effect system (EFX_NARRATIVE item params) ──────────────────
+let _trippyTurns = 0;       // turns remaining with .trippy class active
+let invertedInputTurns = 0; // turns remaining with reversed WASD
+function handleNarrativeEffect(param) {
+  if (!param || param === 0) return;
+  switch (param) {
+    case 11: // Trippy Juice — UI hue-scramble for 3 turns
+      document.body.classList.add('trippy');
+      _trippyTurns = 3;
+      showToast('\uD83C\uDF00 Reality bends. The map will look... different for a while.');
+      break;
+    case 12: // Cursed Device — reverse movement keys for 5 turns
+      invertedInputTurns = 5;
+      showToast('\u26A0\uFE0F Movement keys reversed for 5 turns.');
+      break;
+    case 27: // Jar of Sweats — vomit, lose turn
+      showToast('\uD83E\uDD22 Your body rejects the experience. You lose your next turn.');
+      break;
+    case 29: // Uranium Hard Candy — warn about LL ceiling
+      showToast('\u2622\uFE0F The radiation settles in permanently. Your maximum health has decreased.');
+      break;
+    default:
+      break;
+  }
+}
+// Clear trippy effect when a new day starts (called on dawn event)
+function _tickNarrativeEffects() {
+  if (_trippyTurns > 0) { _trippyTurns--; if (_trippyTurns === 0) document.body.classList.remove('trippy'); }
+  if (invertedInputTurns > 0) invertedInputTurns--;
 }
 // Lobby / character selection
 const lobbyAvail    = van.state([]);    // archetype indices currently available to pick
@@ -151,6 +187,12 @@ function loadTerrainVariants(vc) {
     );
   }
 }
+
+// ── Survivor pawn portrait images ────────────────────────────────
+// Indexed by archetype: 0=Guide 1=Quartermaster 2=Medic 3=Mule 4=Scout 5=Endurer
+const pawnImgs = ARCHETYPES.map(a =>
+  createImageWithLoadTracking(`img/survivors/${a.name.toLowerCase()}Pawn.jpg`)
+);
 
 // ── Forage animal images ──────────────────────────────────────────
 // Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
@@ -379,9 +421,10 @@ function handleMsg(msg) {
       if (msg.vc) loadTerrainVariants(msg.vc);
       if (msg.sv) loadShelterVariants(msg.sv);
       if (msg.fa) loadForrageAnimalImgs(msg.fa);
-      if (msg.gs) Object.assign(gameState, msg.gs);
+      if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       if (Array.isArray(msg.gi)) groundItems = msg.gi;
       hideConnectOverlay();
+      if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
       if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
       updateSidebar();
       if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
@@ -439,7 +482,7 @@ function handleMsg(msg) {
         if (pd.eq) p.eq = pd.eq;   // equipment slots
         if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
       });
-      if (msg.gs) Object.assign(gameState, msg.gs);
+      if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       updateSidebar();
       updateTerrainCard();
       updateDirButtons();
@@ -614,6 +657,7 @@ function handleEvent(ev) {
       // Server has reset our slot — show death message then redirect to char selection
       myId = -1;
       pendingLobbyRedirect = true;
+      window._onEncEnd?.();  // close encounter overlay if open when player is downed
       addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
       showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
       setTimeout(() => {
@@ -658,6 +702,7 @@ function handleEvent(ev) {
         players[ev.pid].rest = false;
         players[ev.pid].au   = 0;  // reset action slot at dawn
         if (ev.pid === myId) {
+          _tickNarrativeEffects();
           if (uiResting.val && ev.expd < 0) showShelterWarning();
           uiResting.val = false;  // clear resting at dawn
           restSent = false;
@@ -831,21 +876,22 @@ function handleEvent(ev) {
       // Server ack for use_item / equip_item / unequip_item
       if (ev.ok) {
         if (ev.msg) showToast(ev.msg);
-        // Apply inventory/equip deltas if included
-        if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
-          const p = players[ev.pid];
-          if (ev.it) p.it = ev.it;
-          if (ev.iq) p.iq = ev.iq;
-          if (ev.eq) p.eq = ev.eq;
-        }
+        // Dispatch client-side narrative effects
+        if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
       } else {
         showToast('\u2297 ' + (ev.msg || 'Action failed'));
       }
-      // Refresh char-sheet inventory/equipment if open
-      if (document.getElementById('char-overlay')?.classList.contains('open')) {
-        renderInventory?.();
-        renderEquipment?.();
+      // Always apply server ground-truth state (server sends current state regardless of ok/fail)
+      if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
+        const p = players[ev.pid];
+        if (ev.it) p.it = ev.it;
+        if (ev.iq) p.iq = ev.iq;
+        if (ev.eq) p.eq = ev.eq;
       }
+      // Always refresh char-sheet inventory/equipment — ghost-tap on mobile can close
+      // char-overlay between item-menu dismiss and server ack, causing the open-check to fail
+      renderInventory?.();
+      renderEquipment?.();
       break;
     }
 
@@ -855,39 +901,14 @@ function handleEvent(ev) {
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
       const who = players[ev.pid]?.nm || `P${ev.pid}`;
       addLog(`<span class="log-col">\uD83D\uDC41 ${escHtml(who)} enters encounter (${ev.q},${ev.r})</span>`);
-      // Show ally banner to co-located players who are not in the encounter
-      if (ev.pid !== myId && players[myId]) {
-        const me = players[myId];
-        if (me.q === ev.q && me.r === ev.r) window._showAllyEncBanner?.(ev.pid);
-      }
       updateSidebar();
-      break;
-    }
-
-    case 'enc_assist': {
-      const asName  = players[ev.pid]?.nm || `P${ev.pid}`;
-      const tgtName = players[ev.tgt]?.nm || `P${ev.tgt}`;
-      const RES_ASSIST_NAMES = ['Food','Water','Meds','Tools','Fuel'];
-      const resIdx  = (ev.res >= 0 && ev.res < 5) ? ev.res : -1;
-      const resName = resIdx >= 0 ? RES_ASSIST_NAMES[resIdx] : 'res';
-      // Deduct resource from assisting player client-side (optimistic; confirmed by next 's' broadcast)
-      if (resIdx >= 0 && ev.pid >= 0 && ev.pid < MAX_PLAYERS && players[ev.pid]?.inv)
-        players[ev.pid].inv[resIdx] = Math.max(0, (players[ev.pid].inv[resIdx] ?? 0) - 1);
-      addLog(`<span class="log-col">\u2194 ${escHtml(asName)} assists ${escHtml(tgtName)} (${resName} \u2192 \u2212${Math.abs(ev.rd)} DN)</span>`);
-      if (ev.pid === myId || ev.tgt === myId) {
-        showToast(`\u2194 Assist: \u2212${Math.abs(ev.rd)} DN`);
-        updateSidebar();
-      }
-      window._onEncAssist?.(ev);
       break;
     }
 
     case 'enc_res': {
       const who = players[ev.pid]?.nm || `P${ev.pid}`;
-      const SKILL_NAMES_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
-      const skillName = SKILL_NAMES_ENC[ev.skill] ?? `Sk${ev.skill}`;
       const outClass = ev.out ? 'log-col' : 'log-check-fail';
-      addLog(`<span class="${outClass}">\u2234 ${escHtml(who)} ${skillName} vs DN${ev.dn} \u2192 ${ev.tot}: ${ev.out ? 'SUCCESS' : 'FAIL'}</span>`);
+      addLog(`<span class="${outClass}">\uD83D\uDC41 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}</span>`);
       if (ev.pid === myId) {
         const p = players[myId];
         if (p) {
@@ -897,15 +918,23 @@ function handleEvent(ev) {
           if (ev.st) p.sb = ev.st;
         }
         updateSidebar();
-        if (!ev.out) {
-          const pen = [
-            ev.penLL  < 0 ? `${ev.penLL} LL`  : null,
-            ev.penFat < 0 ? `${ev.penFat} Fat` : null,
-            ev.penRad < 0 ? `${ev.penRad} Rad` : null,
-          ].filter(Boolean).join(', ');
-          showToast(`\u2297 Failed (${pen || 'hazard'})`);
-        }
         window._onEncResult?.(ev);
+      }
+      // Apply auto-drain to co-located allies on failure
+      if (!ev.out && Array.isArray(ev.drains)) {
+        const ldrName = players[ev.pid]?.nm || `P${ev.pid}`;
+        ev.drains.forEach((d, apid) => {
+          if (d <= 0 || !players[apid]) return;
+          let toDeduct = d;
+          for (let ri = 0; ri < 5 && toDeduct > 0; ri++) {
+            const cur = players[apid].inv?.[ri] ?? 0;
+            if (cur > 0) { const take = Math.min(cur, toDeduct); players[apid].inv[ri] = cur - take; toDeduct -= take; }
+          }
+          if (apid === myId) {
+            showToast(`\uD83D\uDC41 You shared supplies with ${escHtml(ldrName)}.`);
+            updateSidebar();
+          }
+        });
       }
       break;
     }
@@ -919,7 +948,6 @@ function handleEvent(ev) {
         window._onEncBank?.(ev);
         updateSidebar();
       }
-      window._hideAllyEncBanner?.(ev.pid);
       break;
     }
 
@@ -933,7 +961,13 @@ function handleEvent(ev) {
         window._onEncEnd?.(ev);
         updateSidebar();
       }
-      window._hideAllyEncBanner?.(ev.pid);
+      break;
+    }
+
+    case 'weather': {
+      weatherPhase = ev.phase ?? 0;
+      updateWeatherHUD();
+      addLog(`<span class="log-mv">Weather: ${WEATHER_PHASE_NAMES?.[ev.phase] ?? ev.phase}</span>`);
       break;
     }
 
@@ -1085,106 +1119,88 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
  * @param {boolean} isMe - Whether this is the current player (affects glow)
  * @param {string} nm - Character name for label tooltip
  */
-function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm) {
-  const scale  = hexSz * ICON_SIZE_SCALE;
-  const headR  = scale * 0.40;
-  const headCY = cy - scale * 0.32;
-  const torsoT = cy - scale * 0.00;
-  const torsoB = cy + scale * 0.75;
-  const torsoW = scale * 0.46;
+function drawCharIcon(ctx, cx, cy, hexSz, color, label, isMe, nm, arch, sc) {
+  const scale     = hexSz * ICON_SIZE_SCALE;
+  const r         = Math.max(10, hexSz * 0.28);   // portrait circle radius
+  const portraitCY = cy - scale * 0.15;            // circle center, slightly above hex centre
 
-  // Ground shadow
+  // Ground shadow — fuzzy ellipse beneath the circle
   ctx.save();
+  ctx.filter = 'blur(3px)';
   ctx.beginPath();
-  ctx.ellipse(cx + 1, cy + scale * 1.0, scale * SHADOW_HORIZONTAL_SCALE, scale * SHADOW_VERTICAL_SCALE, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.40)';
+  ctx.ellipse(cx, cy + r * 0.85, r * 0.65, r * 0.18, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fill();
   ctx.restore();
 
-  if (isMe) {
+  // Portrait circle (clipped image, or fallback solid colour + number)
+  const img = pawnImgs[arch];
+  if (img?.loaded) {
     ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur  = 20;
-  }
-
-  // Torso
-  const tr = torsoW * 0.35;
-  ctx.beginPath();
-  ctx.moveTo(cx - torsoW + tr, torsoT);
-  ctx.lineTo(cx + torsoW - tr, torsoT);
-  ctx.arcTo(cx + torsoW, torsoT, cx + torsoW, torsoT + tr, tr);
-  ctx.lineTo(cx + torsoW, torsoB - tr);
-  ctx.arcTo(cx + torsoW, torsoB, cx + torsoW - tr, torsoB, tr);
-  ctx.lineTo(cx - torsoW + tr, torsoB);
-  ctx.arcTo(cx - torsoW, torsoB, cx - torsoW, torsoB - tr, tr);
-  ctx.lineTo(cx - torsoW, torsoT + tr);
-  ctx.arcTo(cx - torsoW, torsoT, cx - torsoW + tr, torsoT, tr);
-  ctx.closePath();
-  ctx.fillStyle = isMe ? color : color + 'AA';
-  ctx.fill();
-
-  // Head
-  ctx.beginPath();
-  ctx.arc(cx, headCY, headR, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-
-  if (isMe) {
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth   = 2.5;
-    ctx.stroke();
-    ctx.restore(); // end glow
-
-    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
-    const arrowBot = headCY - headR - 3;
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, cx - r, portraitCY - r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
     ctx.save();
-    ctx.fillStyle    = '#FFD700';
-    ctx.font         = `bold ${arrowSz}px monospace`;
+    ctx.fillStyle    = '#000';
+    ctx.font         = `bold ${Math.max(7, Math.round(r * 0.9))}px monospace`;
     ctx.textAlign    = 'center';
-    ctx.textBaseline = 'bottom';
-    const bounce = Math.sin(Date.now() / ARROW_BOUNCE_PERIOD_MS) * 2;
-    ctx.fillText('▼', cx, arrowBot + bounce);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, portraitCY + 0.5);
     ctx.restore();
   }
 
-  // Player number in head
-  ctx.save();
-  ctx.fillStyle    = isMe ? '#000' : '#EEE';
-  ctx.font         = `bold ${Math.max(7, Math.round(headR * HEAD_RADIUS_SCALE))}px monospace`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, cx, headCY + 0.5);
-  ctx.restore();
+  // Coloured outline — archetype ring (all players)
+  const outlineW = Math.max(1.5, r * 0.09);
+  ctx.beginPath();
+  ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = outlineW;
+  ctx.stroke();
 
-  // Call sign above icon
+  // Current player: brighter/thicker second ring just outside
+  if (isMe) {
+    ctx.beginPath();
+    ctx.arc(cx, portraitCY, r + outlineW + 1, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = Math.max(2, outlineW * 0.7);
+    ctx.globalAlpha = 0.7;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  const nameSz = Math.max(8, Math.round(hexSz * 0.21));
+  // Call sign above circle
   if (nm) {
     const tag      = nm.substring(0, 8).toUpperCase();
-    const nameSz   = Math.max(8, Math.round(hexSz * 0.21));
-    const arrowSz  = Math.max(10, scale * ARROW_SIZE_SCALE);
-    // Position: above the ▼ arrow for self, above head for others
-    const topY     = isMe ? headCY - headR - arrowSz - 6 : headCY - headR - 4;
+    const topY     = portraitCY - r - 4;
     ctx.save();
-    ctx.font        = `${nameSz}px 'Courier New', monospace`;
-    ctx.textAlign   = 'center';
+    ctx.font         = `${nameSz}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
     ctx.textBaseline = 'bottom';
-    // Cache measureText result — recompute only when name or font size changes.
-    const _cacheKey = `${tag}|${nameSz}`;
-    if (!drawCharIcon._twCache) drawCharIcon._twCache = new Map();
-    let tw = drawCharIcon._twCache.get(_cacheKey);
-    if (tw === undefined) {
-      tw = ctx.measureText(tag).width;
-      drawCharIcon._twCache.set(_cacheKey, tw);
-    }
-    // Dark pill backdrop
-    const padX = 3, padY = 2;
-    ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA})`;
-    ctx.beginPath();
-    ctx.roundRect(cx - tw / 2 - padX, topY - nameSz - padY, tw + padX * 2, nameSz + padY * 2, 2);
-    ctx.fill();
-    // Text in player colour, slightly dimmed for others
-    ctx.fillStyle = isMe ? color : color + 'CC';
+    ctx.fillStyle    = '#000';
     ctx.letterSpacing = '1px';
     ctx.fillText(tag, cx, topY);
+    ctx.restore();
+  }
+
+  // Score below circle
+  if (sc !== undefined && sc !== null) {
+    const scoreStr = String(sc);
+    const botY     = portraitCY + r + nameSz + 6;
+    ctx.save();
+    ctx.font         = `${nameSz}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle    = '#000';
+    ctx.letterSpacing = '1px';
+    ctx.fillText(scoreStr, cx, botY);
     ctx.restore();
   }
 }
@@ -1399,6 +1415,17 @@ function render() {
           ctx.restore();
         }
       }
+
+      // Weather icon — small 🌧 in upper-left corner of each visible hex
+      if (weatherPhase > 0) {
+        ctx.save();
+        ctx.font         = `${Math.max(8, Math.round(HEX_SZ * 0.28))}px serif`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'top';
+        ctx.globalAlpha  = 0.75;
+        ctx.fillText('🌧', cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48);
+        ctx.restore();
+      }
     }
   }
 
@@ -1420,8 +1447,9 @@ function render() {
     }
   }
 
-  // ── POI hex outline (thicker, same colour as grid, visible cells only) ──
-  ctx.strokeStyle = 'rgba(50,50,50,0.9)';
+  // ── POI hex outline (yellow, pulsing, visible cells only) ──
+  const _poiAlpha = 0.7 + 0.2 * Math.sin(performance.now() / 400);
+  ctx.strokeStyle = `rgba(255,210,0,${_poiAlpha})`;
   ctx.lineWidth   = 3.0;
   ctx.globalAlpha = 1;
   for (let dr = -viewR; dr <= viewR; dr++) {
@@ -1476,7 +1504,88 @@ function render() {
     if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
     if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
-    drawCharIcon(ctx, pcx, pcy, HEX_SZ, PLAYER_COLORS[i], i, i === myId, players[i].nm);
+    const _archColor = ARCHETYPE_COLORS[players[i].arch ?? 0] ?? PLAYER_COLORS[i];
+    drawCharIcon(ctx, pcx, pcy, HEX_SZ, _archColor, i, i === myId,
+                 players[i].nm, players[i].arch ?? 0, players[i].sc ?? 0);
+  }
+
+  // ── Pass 2.5: Weather overlay + particles ────────────────────
+  if (weatherPhase > 0) {
+    const wNow = Date.now();
+    // Helper: draw many short individual rain drops falling downward.
+    // Each drop is a short 1px line at a slight angle; opacity varies per drop
+    // using a golden-angle seed so the variation is distributed evenly, not banded.
+    function drawRainDrops(count, dropLen, sinA, color, speedMs) {
+      const cosA    = Math.sqrt(Math.max(0, 1 - sinA * sinA));
+      const cycle   = cssHeight + dropLen;
+      const scrollY = (wNow / speedMs * cycle) % cycle;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 1;
+      for (let i = 0; i < count; i++) {
+        const seed = i * 137.508;                           // golden-angle spread
+        const x    = seed % cssWidth;
+        const y    = ((seed * 0.618 + scrollY) % cycle) - dropLen;
+        ctx.globalAlpha = 0.18 + (i % 13) / 13 * 0.50;    // vary 0.18–0.68 per drop
+        ctx.beginPath();
+        ctx.moveTo(x,               y);
+        ctx.lineTo(x + dropLen * sinA, y + dropLen * cosA);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    if (weatherPhase === 1) {
+      // Light blue-gray wash
+      ctx.save(); ctx.globalAlpha = 0.09; ctx.fillStyle = '#667799';
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // 60 drops, 12px long, slight angle, 1.8s to cross the screen
+      drawRainDrops(60, 12, 0.18, '#AACCEE', 1800);
+      if (weatherParticles) weatherParticles.emit(2, 1, cssWidth, cssHeight);
+
+    } else if (weatherPhase === 2) {
+      // Heavier dark overlay
+      ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#334455';
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // 130 drops, 20px long, steeper angle, 1.0s to cross — heavier & faster
+      drawRainDrops(130, 20, 0.28, '#7799BB', 1000);
+      // Lightning (3 s cycle: 0–100ms flash, 100–150ms dark, 150–200ms secondary)
+      const lc = wNow % 3000;
+      if (lc < 100) {
+        ctx.save(); ctx.globalAlpha = Math.sin(lc / 100 * Math.PI) * 0.55;
+        ctx.fillStyle = '#DDEEFF'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      } else if (lc >= 150 && lc < 200) {
+        ctx.save(); ctx.globalAlpha = (1 - (lc - 150) / 50) * 0.25;
+        ctx.fillStyle = '#BBCCEE'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      }
+      if (weatherParticles) weatherParticles.emit(4, 2, cssWidth, cssHeight);
+
+    } else {
+      // Chem-Storm: sickly green radial gradient
+      const cx2 = cssWidth / 2, cy2 = cssHeight / 2;
+      const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2,
+        Math.max(cssWidth, cssHeight) * 0.8);
+      grad.addColorStop(0,   'rgba(60,120,20,0.18)');
+      grad.addColorStop(0.6, 'rgba(30,80,10,0.10)');
+      grad.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.save(); ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      // Radiation pulse (4 s cycle)
+      const rc = wNow % 4000;
+      let pa = 0;
+      if      (rc < 100)  pa = (rc / 100)          * 0.12;
+      else if (rc < 150)  pa = ((150 - rc) / 50)   * 0.06;
+      else if (rc < 220)  pa = ((rc - 150) / 70)   * 0.12;
+      else if (rc < 2500) pa = 0;
+      else if (rc < 2650) pa = ((rc - 2500) / 150) * 0.20;
+      else                pa = ((4000 - rc) / 1350) * 0.20;
+      if (pa > 0) {
+        ctx.save(); ctx.globalAlpha = pa; ctx.fillStyle = '#44BB22';
+        ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+      }
+      if (weatherParticles) weatherParticles.emit(6, 3, cssWidth, cssHeight);
+    }
+    if (weatherParticles) { weatherParticles.update(); weatherParticles.render(ctx); }
   }
 
   // ── Pass 3: Ash particle overlay ─────────────────────────────

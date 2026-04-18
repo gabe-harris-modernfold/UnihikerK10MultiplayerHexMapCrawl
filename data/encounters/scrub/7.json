@@ -1,0 +1,53 @@
+{
+  "id": "scrub_wraith_01",
+  "title": "The Wasteland Wraith",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The scrub goes silent all at once — no wind, no insects, no distant gunfire. Then it appears at the edge of your vision: a tall, translucent shape moving between the dead bushes without disturbing them. It has no face you can identify, but it is watching you. The temperature drops three degrees. Your legs want to leave immediately and your brain is still catching up.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Hold your ground and stare it down",
+          "cost": { "fatigue": 2, "resolve": -1 },
+          "base_risk": 40,
+          "skill": 5,
+          "success_node": "wraith_retreats",
+          "hazard_id": "resolve_shattered"
+        },
+        {
+          "label": "Back away slowly without breaking eye contact",
+          "cost": { "fatigue": 1 },
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "wraith_retreats",
+          "hazard_id": "panic_sprint"
+        }
+      ]
+    },
+    "wraith_retreats": {
+      "text": "It holds. You hold. Something passes between you that you will never be able to explain to anyone. Then it is simply gone — not moving away, just absent. In the place it stood, the scrub has been pushed flat in a perfect circle. At the centre: a small, dense cache of scrap that wasn't there before.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 4] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "resolve_shattered": {
+      "text": "It moves toward you faster than anything that shape should move. Your nerve breaks completely. You run until your legs stop working and find yourself sitting in the scrub half a kilometre away with no memory of the distance between. You lost serious ground getting here.",
+      "penalty": { "fatigue": 5, "ll": -3 },
+      "status": 6,
+      "ends_encounter": true
+    },
+    "panic_sprint": {
+      "text": "Your body decides this is a running situation and executes before you can weigh in on the decision. You cover the next four hundred metres at a sprint you didn't know you had. You've put real distance between yourself and wherever you wanted to be.",
+      "penalty": { "fatigue": 4, "ll": -3 },
+      "status": 2,
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

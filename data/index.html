@@ -17,6 +17,8 @@
     <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
     <span id="hud-day" class="hud-day" aria-label="day count"></span>
     <span id="hud-clock" class="hud-clock"></span>
+    <span id="hud-weather" class="hud-weather" aria-label="weather" aria-live="polite"></span>
+    <span id="hud-rest" class="hud-rest" aria-label="rest state" aria-live="polite"></span>
   </div>
   <span id="hud-score-wrap"><span class="hr-lbl">SCR</span><span id="hud-score"></span></span>
   <div id="hud-ll">
@@ -73,9 +75,9 @@
 
   <!-- Fab actions (outside sidebar, bottom-aligned above controls) -->
   <div id="fab-col">
-    <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">zzz</button>
-    <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">doit</button>
-    <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">you</button>
+    <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">REST</button>
+    <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">ACTION</button>
+    <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">SHEET</button>
   </div>
 
   <!-- Sidebar -->
@@ -226,6 +228,7 @@
       <div class="track-boxes" id="enc-fat-track" role="meter" aria-label="Fatigue" aria-valuemin="0" aria-valuemax="8" aria-valuenow="0"></div>
     </div>
     <div id="enc-loot-display"></div>
+    <div id="enc-outcome"></div>
     <div id="enc-choice-list"></div>
     <div id="enc-bank-row" style="display:none">
       <button id="enc-bank-btn" class="chk-action-btn">&#x25A0; BANK &amp; EXIT</button>
@@ -234,13 +237,6 @@
   </div>
 </div>
 
-<!-- ──────────────── Ally Encounter Banner (same-hex observers) ──────── -->
-<div id="ally-enc-banner" style="display:none">
-  <div id="ally-enc-title" class="check-lbl">&#x1F441; SURVIVOR INSIDE</div>
-  <div id="ally-enc-sub"></div>
-  <div id="ally-enc-assist-row"></div>
-  <button id="ally-enc-dismiss" class="chk-action-btn" style="margin-top:8px;font-size:12px">DISMISS</button>
-</div>
 
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
 <div id="char-overlay" role="dialog" aria-modal="true" aria-labelledby="char-sheet-title" aria-hidden="true">
@@ -501,6 +497,11 @@
 <script type="text/javascript" src="/van-ui.js"></script>
 <script type="text/javascript" src="/game-data.js"></script>
 <script type="text/javascript" src="/ash-particle-system.js"></script>
+<script type="text/javascript" src="/weather-particle-system.js"></script>
+<script type="text/javascript" src="/game-config.js"></script>
+<script type="text/javascript" src="/state-manager.js"></script>
+<script type="text/javascript" src="/animation-manager.js"></script>
+<script type="text/javascript" src="/event-handlers.js"></script>
 <script type="text/javascript" src="/engine.js"></script>
 <script type="text/javascript" src="/ui.js"></script>
 <script>
@@ -510,6 +511,7 @@
   if (close) close.addEventListener('click', function(){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); });
   if (ov)    ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }});
 })();
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }
 </script>
 </body>
 </html>

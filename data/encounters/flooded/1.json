@@ -57,7 +57,7 @@
   },
   "hazards": {
     "submerged_cut": {
-      "text": "Something sharp under the water opens a gash along your forearm. The contaminated water gets into it immediately.",
+      "text": "Something sharp under the water opens a gash along your forearm. The stagnant water gets into it immediately.",
       "penalty": { "ll": -1, "radiation": 1 },
       "wound": [0, 1],
       "ends_encounter": false

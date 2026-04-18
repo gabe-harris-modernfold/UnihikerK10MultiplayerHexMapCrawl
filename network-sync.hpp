@@ -141,11 +141,11 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   }
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d},"
+    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
     "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
     "\"sv\":[%d,%d],"
     "\"fa\":%d}",
-    G.threatClock, G.dayCount,
+    G.threatClock, G.dayCount, (int)G.weatherPhase,
     terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
     terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
     terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
@@ -197,8 +197,8 @@ static void broadcastState() {
       encounters[i].active ? 1 : 0);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d}}",
-    G.threatClock, G.dayCount);
+    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d}}",
+    G.threatClock, G.dayCount, (int)G.weatherPhase);
   xSemaphoreGive(G.mutex);
   ws.textAll(buf, (size_t)pos);
 }

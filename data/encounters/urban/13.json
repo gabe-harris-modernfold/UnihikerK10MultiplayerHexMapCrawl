@@ -1,0 +1,78 @@
+{
+  "id": "urban_dmv_01",
+  "title": "The Abandoned DMV",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The sign above the door still reads DEPARTMENT OF MOTOR VEHICLES. The door is open. Inside, the fluorescent lights are still on — exactly two of them, flickering with the rhythmic persistence of something that refuses to give up. The ghouls are still in the queue. Dozens of them, seated, clutching faded paper tickets in various states of decay, staring at a number board that stopped counting at forty-seven years ago. The number called at the window was forty-three. Several of them turn to look at you. They have been waiting a long time. They are prepared to continue waiting.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take a number and join the queue — do this the right way",
+          "cost": { "fatigue": 1 },
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "queue_step_1",
+          "hazard_id": "impatience_error"
+        },
+        {
+          "label": "Walk straight to the front — cut the line",
+          "cost": { "fatigue": 2 },
+          "base_risk": 70,
+          "skill": 5,
+          "success_node": "license_obtained",
+          "hazard_id": "ghoul_frenzy"
+        }
+      ]
+    },
+    "queue_step_1": {
+      "text": "You take a number from the dispenser — ticket 394. The board shows 44. You sit. The ghouls acknowledge you with the practiced indifference of people who have been in this room for a very long time. Nothing happens for a while. Then, with the profound inevitability of bureaucracy, the number board clicks to 45.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Keep waiting",
+          "cost": { "fatigue": 2 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "queue_step_2",
+          "hazard_id": "impatience_error"
+        }
+      ]
+    },
+    "queue_step_2": {
+      "text": "Numbers 46. Then 47. Then a long pause. Then 48. The ghouls do not speak to each other. You begin to understand the shape of eternity. One of them, closer to the front, turns and gives you a slow nod. It might be encouragement. It might be an assessment. The board clicks forward.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Continue to wait — you're this close",
+          "cost": { "fatigue": 2 },
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "license_obtained",
+          "hazard_id": "impatience_error"
+        }
+      ]
+    },
+    "license_obtained": {
+      "text": "The window opens. The ghoul behind the counter processes your documentation with the professional detachment of someone for whom time has stopped meaning anything. You produce whatever you have. They type something into a keyboard attached to a monitor running on a dedicated backup power supply that has been running for forty-seven years without interruption. A printer activates. A laminated card emerges. It is a Valid License. It is completely legitimate. You leave before the queue starts wondering why you got served so fast.",
+      "can_bank": true,
+      "loot_table": "drop_valid_license",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "impatience_error": {
+      "text": "You shift in your seat. You check the time. You look at the board. The ghoul nearest to you makes a sound that is not quite a warning but is not nothing. The queue is watching. Patience. Just patience.",
+      "penalty": { "fatigue": 1 },
+      "ends_encounter": false
+    },
+    "ghoul_frenzy": {
+      "text": "They come up from their seats with the momentum of something that has been wound up for forty-seven years and finally released. There are more of them than you counted. They are very upset about the queue. You survive but you do not get the license and you do not go back.",
+      "penalty": { "fatigue": 5, "ll": -10 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

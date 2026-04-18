@@ -3,10 +3,49 @@
 // Included from Esp32HexMapCrawl.ino after survival_state.hpp.
 // Has access to all globals, constants, structs, and functions defined above it.
 
+// ── Weather phase state machine ───────────────────────────────────────────────
+// Called each tick while holding G.mutex.
+static void updateWeatherPhase() {
+  if (G.tickId % WEATHER_TICK_DIVIDER != 0) return;  // advance only every N ticks
+
+  // Accumulate bad-weather streak (non-CLEAR ticks)
+  if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
+
+  if (G.weatherCounter > 0) { G.weatherCounter--; return; }
+
+  static constexpr uint16_t BAD_WEATHER_CAP = 180; // 3 days × 60 weather-ticks/day
+  uint8_t next;
+  if (G.badWeatherTicks >= BAD_WEATHER_CAP) {
+    next = WEATHER_CLEAR;  // force clear after 3-day bad-weather streak
+  } else {
+    uint32_t roll = esp_random() % 100;
+    next = G.weatherPhase;
+    switch (G.weatherPhase) {
+      case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
+      case WEATHER_RAIN:  next = (roll < 50) ? WEATHER_STORM : WEATHER_CLEAR; break;
+      case WEATHER_STORM:
+        next = (roll < 30) ? WEATHER_CHEM : (roll < 65) ? WEATHER_RAIN : WEATHER_CLEAR; break;
+      case WEATHER_CHEM:  next = (roll < 20) ? WEATHER_CLEAR : (roll < 60) ? WEATHER_STORM : WEATHER_RAIN; break;
+    }
+  }
+
+  if (next == WEATHER_CLEAR) G.badWeatherTicks = 0;
+
+  G.weatherCounter = WEATHER_DUR_MIN[next] +
+    (uint16_t)(esp_random() % (WEATHER_DUR_MAX[next] - WEATHER_DUR_MIN[next] + 1));
+  G.weatherPhase = next;
+  GameEvent ev = {}; ev.type = EVT_WEATHER;
+  ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
+  enqEvt(ev);
+  Serial.printf("[WEATHER] Phase→%d counter→%d badTicks→%d\n",
+                (int)next, (int)G.weatherCounter, (int)G.badWeatherTicks);
+}
+
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────
 static void tickGame() {
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
   G.tickId++;
+  updateWeatherPhase();
 
   // ── Day cycle: advance dayTick; trigger Dawn when full day elapses ──────
   G.dayTick++;
@@ -27,10 +66,21 @@ static void tickGame() {
 
   bool dawnOccurred = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
+    bool earlyDawn = (connCount > 0 && allResting && G.dayTick < DAY_TICKS);
+    uint32_t savedTick = G.dayTick;
     G.dayTick = 0;
     G.dayCount++;
     dawnOccurred = true;
-    Serial.printf("[DUSK]    ──── Dusk (end of Day %d) ────\n", (int)G.dayCount - 1);
+    if (earlyDawn) {
+      Serial.printf("[DUSK]    ──── Day %d ends EARLY (all %d resting) | tick %lu/%lu (%.0f%%, %lus saved) ────\n",
+        (int)G.dayCount - 1, connCount,
+        (unsigned long)savedTick, (unsigned long)DAY_TICKS,
+        100.0f * savedTick / DAY_TICKS,
+        (unsigned long)((DAY_TICKS - savedTick) * TICK_MS / 1000));
+    } else {
+      Serial.printf("[DUSK]    ──── Day %d ends (natural) | tick %lu/%lu ────\n",
+        (int)G.dayCount - 1, (unsigned long)savedTick, (unsigned long)DAY_TICKS);
+    }
     // Force-abort any active encounters before dusk (no TC increment for dawn abort)
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (!encounters[i].active) continue;
@@ -44,7 +94,10 @@ static void tickGame() {
       Serial.printf("[ENC]     P%d encounter force-aborted (dawn)\n", i);
     }
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
-    Serial.printf("[DAWN]    ──── Day %d begins ────\n", (int)G.dayCount);
+    Serial.printf("[DAWN]    ──── Day %d begins | cycle %lus/day (%lu ticks @ %lums) ────\n",
+      (int)G.dayCount,
+      (unsigned long)(DAY_TICKS * TICK_MS / 1000),
+      (unsigned long)DAY_TICKS, (unsigned long)TICK_MS);
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
   }
@@ -71,6 +124,31 @@ static void tickGame() {
       }
     }
   }
+
+  // ── Chem-storm per-tick hazard ────────────────────────────────────────────
+  if (G.weatherPhase == WEATHER_CHEM) {
+    for (int pid = 0; pid < MAX_PLAYERS; pid++) {
+      Player& p = G.players[pid];
+      if (!p.connected || (p.statusBits & ST_DOWNED)) continue;
+      uint8_t t = G.map[p.r][p.q].terrain;
+      if (t >= NUM_TERRAIN) t = 0;
+      // Settlement (t==9) and Ruins terrain: fully immune to all weather hazards
+      if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
+      // Improved shelter (level 2): immune to all weather; basic shelter (level 1): no immunity
+      if (G.map[p.r][p.q].shelter >= 2) continue;
+      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.016f;
+      if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
+        if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); }
+        if (p.ll == 0) {
+          p.statusBits |= ST_DOWNED; p.movesLeft = 0;
+          GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.evWsId = p.wsClientId; enqEvt(dev);
+        }
+        Serial.printf("[CHEM]    P%d \"%s\" chem tick LL→%d\n", pid, p.name, (int)p.ll);
+      }
+    }
+  }
+
   xSemaphoreGive(G.mutex);
   if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
 }
@@ -87,20 +165,24 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_FORAGE, cr);
   if (cr.total >= (int)dn) {
-    uint8_t yield = (terr == 0 || terr == 2) ? 2 : 1;  // Open Scrub + Rust Forest → 2 food
+    uint8_t yield = (terr == 0 || terr == 2) ? 3 : 2;  // Open Scrub + Rust Forest → 3 food, others → 2
+    // Compound Bow (id:29) doubles food yield on land hexes
+    if (p.equip[EQUIP_HAND - 1] == 29) yield = (uint8_t)min((int)yield * 2, 99);
+    // Fishing Pole (id:28) doubles yield on River Channel (terr==11)
+    if (p.equip[EQUIP_HAND - 1] == 28 && terr == 11) yield = (uint8_t)min((int)yield * 2, 99);
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + yield, 99);
     ev.actFoodD = (int8_t)yield;
     addScore(p, ev, 3);
     ev.actOut   = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
-    p.inv[1]    = (uint8_t)min((int)p.inv[1] + 1, 99);
-    ev.actFoodD = 1;
+    p.inv[1]    = (uint8_t)min((int)p.inv[1] + 2, 99);
+    ev.actFoodD = 2;
     if (p.fatigue < 8) p.fatigue++;
     addScore(p, ev, 1);
     ev.actOut   = AO_PARTIAL;
   } else {
     if (p.fatigue < 8) p.fatigue++;
-    if (terr == 2 && p.wounds[0] < 5) {  // Rust Forest fail → Minor wound
+    if (terr == 2 && p.wounds[0] < 10) {  // Rust Forest fail → Minor wound
       p.wounds[0]++;
       Serial.printf("[WOUND]   P%d \"%s\" Minor wound from Rust Forest (wounds[0]=%d)\n", pid, p.name, p.wounds[0]);
     }
@@ -138,14 +220,19 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_SCAVENGE, cr);
   if (cr.total >= (int)dn) {
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 1, 99);
-    ev.actScrapD = 1;
+    uint8_t scrapYield = 2;
+    // Portable Forge (id:27) doubles scrap yield on scavenge
+    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
+    ev.actScrapD = scrapYield;
     addScore(p, ev, 5);
     ev.actOut    = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
     // Partial: item + Encounter (Encounter not yet implemented)
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + 1, 99);
-    ev.actScrapD = 1;
+    uint8_t scrapYield = 2;
+    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
+    p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
+    ev.actScrapD = scrapYield;
     addScore(p, ev, 2);
     ev.actOut    = AO_PARTIAL;
   } else {
@@ -237,7 +324,7 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   // Improved shelter relaxes the fatigue threshold (fat<6 instead of fat<4)
   bool llOk  = (p.food >= 4 && p.water >= 3);
   bool fatOk = (p.fatigue < 4) || (hexShelt == 2 && p.fatigue < 6);
-  if (llOk && fatOk && p.ll < 7) {
+  if (llOk && fatOk && p.ll < (uint8_t)effectiveMaxLL(pid)) {
     p.ll++;
     ev.actLLD = 1;
   }
@@ -254,9 +341,19 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
     }
   }
   ev.actOut = AO_SUCCESS;
-  Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d (waiting for dawn)\n",
+  uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
+  // Count how many connected players are now resting (including this one)
+  int restCount = 0, totalConn = 0;
+  for (int k = 0; k < MAX_PLAYERS; k++) {
+    if (G.players[k].connected) { totalConn++; if (G.players[k].resting) restCount++; }
+  }
+  Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d"
+                " | tick %lu/%lu ~%lus remain | resting %d/%d\n",
     pid, p.name, prevFat, p.fatigue, fatRed, hexShelt, campCount,
-    p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve);
+    p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve,
+    (unsigned long)G.dayTick, (unsigned long)DAY_TICKS,
+    (unsigned long)(ticksLeft * TICK_MS / 1000),
+    restCount, totalConn);
 }
 
 // ── §5 Action dispatcher ──────────────────────────────────────────────────────

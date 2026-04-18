@@ -39,7 +39,7 @@ static void drainEvents() {
   pendingCount = 0;
   taskEXIT_CRITICAL(&evtMux);
 
-  char buf[160];
+  char buf[256];
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
@@ -244,13 +244,15 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penFat\":%d,\"penRad\":%d,"
-          "\"st\":%d,\"ends\":%d}",
+          "\"st\":%d,\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.encItemType, (int)ev.encItemQty,
           (int)ev.encPenLL, (int)ev.encPenFat, (int)ev.encPenRad,
-          (int)ev.encStatus, (int)ev.encEnds);
+          (int)ev.encStatus, (int)ev.encEnds,
+          (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
+          (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);
         ws.textAll(buf, len);
         static const char* SK_SHORT[6] = {"NAV","FORAGE","SCAV","TREAT","SHELT","ENDURE"};
         const char* sks = (ev.encSkill < 6) ? SK_SHORT[ev.encSkill] : "?";
@@ -302,6 +304,17 @@ static void drainEvents() {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d DOWNED in encounter", (int)ev.pid);
           k10LogAdd(lb);
         }
+        break;
+      }
+
+      case EVT_WEATHER: {
+        static const char* WX[4] = {"CLEAR","RAIN","STORM","CHEM"};
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
+          (int)ev.q, (int)ev.r);
+        ws.textAll(buf, len);
+        char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 4) ? WX[ev.q] : "?");
+        k10LogAdd(lb);
         break;
       }
     }

@@ -1,9 +1,9 @@
 {
-  "0": { "count": 3,  "path": "scrub"      },
+  "0": { "count": 20, "path": "scrub"      },
   "1": { "count": 2,  "path": "dunes"      },
   "2": { "count": 3,  "path": "forest"     },
   "3": { "count": 3,  "path": "marsh"      },
-  "4": { "count": 5,  "path": "urban"      },
+  "4": { "count": 19, "path": "urban"      },
   "5": { "count": 4,  "path": "flooded"    },
   "6": { "count": 2,  "path": "glass"      },
   "7": { "count": 2,  "path": "ridge"      },

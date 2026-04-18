@@ -75,6 +75,14 @@ body::after{
 .hud-clock.phase-dark{color:#6070A0}
 .hud-day{padding:0 5px;font-size:var(--fs-l);font-family:var(--stencil);color:var(--gold);letter-spacing:var(--ls-l);white-space:nowrap}
 @media(max-width:440px){.hud-clock{display:none}.hud-day{display:none}}
+/* ── Rest state indicator ──────────────────────────────────────── */
+.hud-rest{padding:0 5px;font-size:var(--fs-l);font-family:var(--stencil);letter-spacing:var(--ls-l);white-space:nowrap;display:none}
+.hud-rest.rest-wait {display:inline;color:#CC9933;animation:rest-blink 0.8s step-end infinite}
+.hud-rest.rest-on   {display:inline;color:#44AA66}
+.hud-rest.rest-all  {display:inline;color:#88FFAA;animation:rest-pulse 1.2s ease-in-out infinite}
+@keyframes rest-blink{0%,100%{opacity:1}50%{opacity:0.3}}
+@keyframes rest-pulse{0%,100%{opacity:0.7}50%{opacity:1;text-shadow:0 0 8px rgba(100,255,160,0.7)}}
+@media(max-width:440px){.hud-rest{display:none!important}}
 .hr-item{display:flex;align-items:center;gap:3px}
 .hr-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .hr-val{font-size:var(--fs-v);color:var(--gold-hi);font-weight:bold;min-width:14px;text-align:right}
@@ -98,7 +106,7 @@ body::after{
 .hud-ll-lbl{
   font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d);
   font-family:'Courier New',monospace;text-transform:uppercase;
-  width:14px;flex-shrink:0
+  width:14px;flex-shrink:0;margin-right:4px
 }
 .hud-ll-val{
   font-size:var(--fs-d);color:var(--gold-hi);min-width:10px;
@@ -486,10 +494,10 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────── Floating Action Buttons ──────────────────*/
 .fab-btn{
-  width:44px;height:44px;border-radius:50%;
+  width:48px;height:28px;border-radius:999px;
   background:var(--bg-panel);border:2px solid var(--bdr-mid);
-  color:var(--gold);font-size:12px;line-height:1.2;cursor:pointer;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--gold);font-size:10px;letter-spacing:0.5px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
   touch-action:manipulation;flex-shrink:0;
   box-shadow:0 2px 8px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.04);
   transition:border-color 0.15s,color 0.15s,background 0.15s
@@ -741,6 +749,8 @@ canvas{display:block;width:100%;height:100%}
 /*──────────── Cooldown SVG ring ────────────────────────────────*/
 #cd-center{overflow:visible}
 #cd-center svg{display:block;overflow:visible}
+#cd-center.cd-disconnected svg{visibility:hidden}
+#cd-center.cd-disconnected::after{content:'⏳';font-size:16px;line-height:1;position:absolute}
 
 /*──────────────────────────── Responsive ───────────────────────*/
 /* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */
@@ -762,7 +772,7 @@ canvas{display:block;width:100%;height:100%}
   #hud-score-wrap{display:inline-flex}
   #hud-score{display:block}
   .dir-btn{width:40px;height:40px;font-size:20px}
-  .fab-btn{width:38px;height:38px;font-size:10px;padding:2px}
+  .fab-btn{width:44px;height:26px;font-size:9px;padding:0}
   #terrain-card{width:min(170px,calc(100vw - 16px))}
   #hex-info{width:min(170px,calc(100vw - 16px))}
   #action-box{width:min(400px,90vw)}
@@ -1440,22 +1450,41 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
 .enc-choice-btn .enc-risk-tag{font-size:14px}
 .enc-risk-low{color:#3a8}.enc-risk-mid{color:#fa0}.enc-risk-high{color:#e43}
 #enc-bank-row{margin-top:4px}
+#enc-outcome{
+  display:none;flex-direction:column;gap:6px;
+  padding:10px 12px;margin-top:2px;
+  background:rgba(5,4,2,0.9);border:1px solid var(--bdr-hi);border-radius:2px
+}
+#enc-outcome.visible{display:flex}
+.enc-out-flavor{
+  color:var(--txt);font-size:16px;line-height:1.45;white-space:pre-wrap
+}
+.enc-out-delta{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;font-size:var(--fs-d)}
+.enc-out-pos{color:#3a8}
+.enc-out-neg{color:#e43}
 
-/* ── Ally encounter banner ──────────────────────────────────────────── */
-#ally-enc-banner{
-  position:fixed;bottom:calc(var(--hud-h,36px) + 8px);left:50%;transform:translateX(-50%);
-  background:var(--bg-panel);border:1px solid var(--gold);
-  border-radius:2px;padding:10px 14px;
-  z-index:18;min-width:220px;max-width:min(340px,90vw);
-  display:none;flex-direction:column;gap:4px
+/*──────────── Weather HUD indicator ────────────────────────────*/
+.hud-weather{
+  font-family:var(--stencil);font-size:var(--fs-d);letter-spacing:var(--ls-l);
+  color:var(--gold);white-space:nowrap;padding:0 4px;
+  transition:color 0.5s ease,text-shadow 0.5s ease
 }
-#ally-enc-banner.visible{display:flex}
-#ally-enc-sub{color:var(--txt-dim);font-size:var(--fs-d);margin-top:2px}
-#ally-enc-assist-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.enc-assist-btn{
-  padding:4px 8px;background:transparent;
-  border:1px solid var(--bdr-hi);color:var(--txt);
-  font-family:var(--stencil);font-size:14px;letter-spacing:1px;
-  border-radius:2px;cursor:pointer
+.hud-weather.wx-rain{color:#7EB8D0}
+.hud-weather.wx-storm{color:#99AACC;animation:hud-lightning-flicker 3s steps(1,end) infinite}
+.hud-weather.wx-chem{color:#88CC44;animation:hud-chem-pulse 4s ease-in-out infinite}
+@media(max-width:440px){.hud-weather{display:none}}
+
+@keyframes hud-lightning-flicker{
+  0%,7%,100%{color:#99AACC;text-shadow:none}
+  3%{color:#DDEEFF;text-shadow:0 0 8px rgba(200,220,255,0.9)}
+  5%{color:#BBCCEE;text-shadow:0 0 4px rgba(180,200,240,0.5)}
 }
-.enc-assist-btn:hover{border-color:var(--gold);color:var(--gold-hi)}
+@keyframes hud-chem-pulse{
+  0%,50%,100%{color:#88CC44;text-shadow:none}
+  25%{color:#AADE66;text-shadow:0 0 10px rgba(100,200,40,0.7)}
+  63%{color:#CCEE88;text-shadow:0 0 14px rgba(140,220,60,0.9)}
+  65%{color:#88CC44;text-shadow:none}
+}
+
+/* ── Narrative item effects ─────────────────────────────────── */
+body.trippy{filter:hue-rotate(180deg) saturate(3) invert(0.08);transition:filter 0.4s ease}

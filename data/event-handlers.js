@@ -22,7 +22,7 @@
  * @param {Object} ev - Event { k:'col', q, r, pid, res, amt }
  * @param {Object} ctx - Context { gameMap, players, myId, myVisionR, ... }
  */
-export function handleCollect(ev, ctx) {
+function handleCollect(ev, ctx) {
   const me = ctx.myId >= 0 ? ctx.players[ctx.myId] : null;
   if (me && ctx.hexDistWrap(me.q, me.r, ev.q, ev.r) <= ctx.myVisionR) {
     if (ctx.gameMap[ev.r] && ctx.gameMap[ev.r][ev.q]) {
@@ -53,7 +53,7 @@ export function handleCollect(ev, ctx) {
  * @param {Object} ev - Event { k:'rsp', q, r, res, amt }
  * @param {Object} ctx - Context { gameMap, ... }
  */
-export function handleResourceSpawn(ev, ctx) {
+function handleResourceSpawn(ev, ctx) {
   if (ctx.gameMap[ev.r] && ctx.gameMap[ev.r][ev.q]) {
     ctx.gameMap[ev.r][ev.q] = {
       ...ctx.gameMap[ev.r][ev.q],
@@ -69,7 +69,7 @@ export function handleResourceSpawn(ev, ctx) {
  * @param {Object} ev - Event { k:'mv', pid, q, r, mp, radd, exploD, ... }
  * @param {Object} ctx - Context { players, gameMap, myId, myVisionR, surveyedCells, footprintTimestamps, ... }
  */
-export function handleMovement(ev, ctx) {
+function handleMovement(ev, ctx) {
   const pm = ctx.players[ev.pid];
   if (!pm) {
     console.warn(`Movement: invalid player ID ${ev.pid}`);
@@ -129,7 +129,7 @@ export function handleMovement(ev, ctx) {
  * @param {Object} ev - Event { k:'join', pid }
  * @param {Object} ctx - Context { players, addLog, updateRestBubbles, ... }
  */
-export function handlePlayerJoin(ev, ctx) {
+function handlePlayerJoin(ev, ctx) {
   if (ev.pid < 0 || ev.pid >= ctx.players.length) {
     console.warn(`Join: invalid player ID ${ev.pid}`);
     return;
@@ -144,7 +144,7 @@ export function handlePlayerJoin(ev, ctx) {
  * @param {Object} ev - Event { k:'left', pid }
  * @param {Object} ctx - Context { players, addLog, updateRestBubbles, ... }
  */
-export function handlePlayerLeft(ev, ctx) {
+function handlePlayerLeft(ev, ctx) {
   if (ev.pid < 0 || ev.pid >= ctx.players.length) {
     console.warn(`Left: invalid player ID ${ev.pid}`);
     return;
@@ -159,7 +159,7 @@ export function handlePlayerLeft(ev, ctx) {
  * @param {Object} ev - Event { k:'downed', pid, ll }
  * @param {Object} ctx - Context { players, myId, addLog, narrateState, ... }
  */
-export function handleDowned(ev, ctx) {
+function handleDowned(ev, ctx) {
   if (ev.pid < 0 || ev.pid >= ctx.players.length) {
     console.warn(`Downed: invalid player ID ${ev.pid}`);
     return;
@@ -180,7 +180,7 @@ export function handleDowned(ev, ctx) {
  * @param {Object} ev - Event { k:'regen', pid }
  * @param {Object} ctx - Context { players, myId, addLog, ... }
  */
-export function handleRegen(ev, ctx) {
+function handleRegen(ev, ctx) {
   if (ev.pid < 0 || ev.pid >= ctx.players.length) {
     console.warn(`Regen: invalid player ID ${ev.pid}`);
     return;
@@ -198,7 +198,7 @@ export function handleRegen(ev, ctx) {
  * @param {Object} ev - Event { k:'dawn', mp, ... }
  * @param {Object} ctx - Context { gameState, players, myId, uiMaxMP, updateSidebar, showToast, ... }
  */
-export function handleDawn(ev, ctx) {
+function handleDawn(ev, ctx) {
   if (ev.pid === ctx.myId) {
     // Update max MP and trigger night fade effect
     const maxMP = ev.mp;
@@ -227,7 +227,7 @@ export function handleDawn(ev, ctx) {
  * @param {Object} ev - Event { k:'trd_off', from, to, give:[5], want:[5] }
  * @param {Object} ctx - Context { players, myId, addLog, escHtml, showToast }
  */
-export function handleTradeOffer(ev, ctx) {
+function handleTradeOffer(ev, ctx) {
   const fromName = ctx.players[ev.from]?.nm || 'P' + ev.from;
   const toName   = ctx.players[ev.to]?.nm   || 'P' + ev.to;
   const giveTxt  = ev.give.map((v, i) => v > 0 ? RES_SHORT[i] + '\u00d7' + v : null).filter(Boolean).join(' ') || '\u2014';
@@ -243,7 +243,7 @@ export function handleTradeOffer(ev, ctx) {
  * @param {Object} ev - Event { k:'trd_res', from, to, res }  res: 1=accepted 2=declined 3=expired
  * @param {Object} ctx - Context { players, myId, addLog, escHtml, showToast, updateSidebar }
  */
-export function handleTradeResult(ev, ctx) {
+function handleTradeResult(ev, ctx) {
   const fromName    = ctx.players[ev.from]?.nm || 'P' + ev.from;
   const toName      = ctx.players[ev.to]?.nm   || 'P' + ev.to;
   const LABELS      = ['', 'ACCEPTED', 'DECLINED', 'EXPIRED'];
@@ -261,7 +261,7 @@ export function handleTradeResult(ev, ctx) {
  * All event handlers by type.
  * Add new handlers here as event types are added.
  */
-export const eventHandlers = {
+const eventHandlers = {
   col:     handleCollect,
   rsp:     handleResourceSpawn,
   mv:      handleMovement,

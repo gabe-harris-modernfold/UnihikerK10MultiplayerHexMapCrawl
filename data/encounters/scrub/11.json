@@ -1,0 +1,57 @@
+{
+  "id": "scrub_sasquatch_01",
+  "title": "The Sasquatch Sighting",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Something enormous is in the scrub ahead. You hear it before the bushes part: a deep, rhythmic grinding sound, accompanied by a smell that combines wet dog, ozone, and something vaguely metallic. Then it steps out onto your path. Eight feet tall. Covered head to toe in matted, faintly glowing radioactive hair. And balanced, with total commitment, on a single oversized roller skate — left foot, no sock, the skate itself the size of a small suitcase. It looks at you. You look at it. The skate makes a sound on the gravel. It is going to move.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Run — get clear before it decides to skate at you",
+          "cost": { "fatigue": 3 },
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "fled_sasquatch",
+          "hazard_id": "crushed_by_skate"
+        },
+        {
+          "label": "Offer it a food item — maybe it's just hungry",
+          "cost": { "food": 2, "fatigue": 1 },
+          "base_risk": 20,
+          "skill": 5,
+          "success_node": "sasquatch_pleased",
+          "hazard_id": "food_rejected"
+        }
+      ]
+    },
+    "fled_sasquatch": {
+      "text": "It doesn't chase you, but the skate carries it faster than expected on the brief downslope and you put in real running time anyway. When you finally stop and look back, it's gone. The scrub where it stood is flattened in a wide arc and glows faintly for about twenty minutes.",
+      "can_bank": false,
+      "loot": [],
+      "choices": []
+    },
+    "sasquatch_pleased": {
+      "text": "It takes the food. It looks at it. It looks at you. It puts the food in a pouch you didn't notice on its person and rummages for a moment before producing a substantial clump of its own fur, which it hands to you with a gravity that suggests this is a significant exchange. Then it skates away into the scrub, slowly, with immense dignity. The fur glows faintly and smells powerfully of ozone.",
+      "can_bank": true,
+      "loot_table": "scrub_oddity",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "crushed_by_skate": {
+      "text": "The skate catches a downslope just as you turn to run and the Sasquatch achieves a brief, terrible speed. It clips you on the way past — not maliciously, just geometrically. The impact is total and immediate. You get up considerably worse than you went down.",
+      "penalty": { "fatigue": 4, "ll": -7 },
+      "status": 4,
+      "wound": [0, 1],
+      "ends_encounter": true
+    },
+    "food_rejected": {
+      "text": "It sniffs the offering carefully, makes a sound you can only describe as 'critically unimpressed', and skates directly at you. The next few seconds are mainly about survival. It doesn't pursue far, but you lose significant ground and arrive at your next position via a direction you did not plan.",
+      "penalty": { "fatigue": 3, "ll": -5 },
+      "status": 1,
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

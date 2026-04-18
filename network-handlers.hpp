@@ -248,9 +248,12 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Starting resources (all archetypes)
           p.inv[0] = 2;  // water tokens
           p.inv[1] = 1;  // food tokens
+          p.inv[2] = 3;  // fuel
+          p.inv[3] = 3;  // medicine
+          p.inv[4] = 3;  // scrap
           if (arch == 1) { p.inv[1] = 2; }           // Quartermaster: extra food
-          if (arch == 2) { p.inv[3] = 2; }           // Medic: medicine kit
-          if (arch == 3) { p.inv[1]=2; p.inv[3]=1; p.inv[4]=1; }  // Mule
+          if (arch == 2) { p.inv[3] = 5; }           // Medic: extra medicine (base 3 +2)
+          if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }  // Mule
           snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
           p.archetype    = (uint8_t)arch;
           p.ll           = 7;
@@ -293,9 +296,12 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Starting resources (all archetypes)
           p.inv[0] = 2;  // water tokens
           p.inv[1] = 1;  // food tokens
+          p.inv[2] = 3;  // fuel
+          p.inv[3] = 3;  // medicine
+          p.inv[4] = 3;  // scrap
           if (arch == 1) { p.inv[1] = 2; }           // Quartermaster: extra food
-          if (arch == 2) { p.inv[3] = 2; }           // Medic: medicine kit
-          if (arch == 3) { p.inv[1]=2; p.inv[3]=1; p.inv[4]=1; }  // Mule
+          if (arch == 2) { p.inv[3] = 5; }           // Medic: extra medicine (base 3 +2)
+          if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }  // Mule
           snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
           // Survivor initialisation
           p.archetype    = (uint8_t)arch;
@@ -787,15 +793,21 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int mySlot = findSlot(client->id());
       if (mySlot >= 0 && G.players[mySlot].connected) {
+        // Capture narrative effect param before item is consumed
+        Player& pl = G.players[mySlot];
+        uint8_t narParam = 0;
+        if (slotIdx < INV_SLOTS_MAX && pl.invType[slotIdx]) {
+          const ItemDef* preDef = getItemDef(pl.invType[slotIdx]);
+          if (preDef && preDef->effectId == EFX_NARRATIVE) narParam = preDef->effectParam;
+        }
         bool ok = useItem(mySlot, (uint8_t)slotIdx);
         if (ok) saveGame();
-        static char ack[256];
-        Player& pl = G.players[mySlot];
+        static char ack[320];
         snprintf(ack, sizeof(ack),
           "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"use\",\"slot\":%d,\"pid\":%d,"
           "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
           "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-          "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
+          "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d],\"efxp\":%d}",
           ok?"true":"false", slotIdx, mySlot,
           pl.invType[0],pl.invType[1],pl.invType[2],pl.invType[3],
           pl.invType[4],pl.invType[5],pl.invType[6],pl.invType[7],
@@ -804,7 +816,8 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           pl.invQty[4],pl.invQty[5],pl.invQty[6],pl.invQty[7],
           pl.invQty[8],pl.invQty[9],pl.invQty[10],pl.invQty[11],
           pl.equip[0],pl.equip[1],pl.equip[2],pl.equip[3],pl.equip[4],
-          pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4]);
+          pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4],
+          (int)narParam);
         client->text(ack);
       }
       xSemaphoreGive(G.mutex);
@@ -1040,9 +1053,9 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
                 terrain < 10 ? encPools[terrain].path : "N/A");
               client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
             } else {
+              uint8_t idx = cell.poi;  // poi stores the pre-placed encounter ID (1..N)
               cell.poi = 0;  // consume POI immediately
               if (G.threatClock < 20) G.threatClock++;
-              uint8_t idx = (uint8_t)(1 + ((uint32_t)esp_random() % encPools[terrain].count));
               encounters[pid].active           = 1;
               encounters[pid].encIdx           = idx;
               encounters[pid].hexQ             = (uint8_t)hq;
@@ -1086,12 +1099,13 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     ENC_JP(costLL,  "cost_ll")   ENC_JP(costFat,  "cost_fat")
     ENC_JP(costRad, "cost_rad")  ENC_JP(costFood, "cost_food")
     ENC_JP(costWat, "cost_water") ENC_JP(costRes, "cost_resolve")
+    ENC_JP(costScrap, "cost_scrap")
     ENC_JP(baseRisk,"base_risk") ENC_JP(skill,    "skill")
     ENC_JP(isTerm,  "is_terminal")
     ENC_JP(hazLL,   "haz_ll")   ENC_JP(hazFat, "haz_fat")
     ENC_JP(hazRad,  "haz_rad")  ENC_JP(hazSt,  "haz_st")
     ENC_JP(hazWt,   "haz_wt")   ENC_JP(hazWc,  "haz_wc")
-    ENC_JP(hazEnds, "haz_ends")
+    ENC_JP(hazEnds, "haz_ends") ENC_JP(hazLoseCon, "haz_lose_consumable")
     #undef ENC_JP
     // Parse loot array — indices map directly to p.inv[]: 0=Water 1=Food 2=Fuel 3=Medicine 4=Scrap.
     // NOTE: encounter JSON uses 0-based res indices; map cell.resource uses 1-based. Different spaces.
@@ -1121,18 +1135,19 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         bool canAfford = (p.ll >= costLL) && (p.fatigue + costFat <= 8) &&
                          (p.radiation + costRad <= 10) &&
                          (p.inv[1] >= costFood) && (p.inv[0] >= costWat) &&
-                         (p.resolve >= costRes);
+                         (p.resolve >= costRes) && (p.inv[4] >= costScrap);
         if (!canAfford) {
           client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
           xSemaphoreGive(G.mutex); return;
         }
         // Deduct costs
-        if (costLL)   { if (p.ll > (uint8_t)costLL) p.ll -= (uint8_t)costLL; else p.ll = 0; }
+        if (costLL)   { p.ll = (uint8_t)max(0, (int)p.ll - costLL); if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; } }
         p.fatigue  = (uint8_t)constrain((int)p.fatigue  + costFat, 0, 8);
         p.radiation= (uint8_t)constrain((int)p.radiation+ costRad, 0, 10);
         p.inv[1]   = (uint8_t)max(0, (int)p.inv[1] - costFood);
         p.inv[0]   = (uint8_t)max(0, (int)p.inv[0] - costWat);
         p.resolve  = (uint8_t)max(0, (int)p.resolve - costRes);
+        p.inv[4]   = (uint8_t)max(0, (int)p.inv[4] - costScrap);
         updateRadStatus(p);
         // Compute DN and roll
         uint8_t dn = computeEncounterDN(pid, (uint8_t)constrain(baseRisk, 0, 100),
@@ -1185,12 +1200,41 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.radiation= (uint8_t)constrain((int)p.radiation+ hazRad, 0, 10);
           if (hazRad) updateRadStatus(p);
           if (hazSt)  p.statusBits |= (uint8_t)hazSt;
+          if (hazLoseCon) {
+            // Remove a random consumable from the player's item slots
+            int slots[INV_SLOTS_MAX]; int slotCount = 0;
+            for (int s = 0; s < (int)p.invSlots; s++) {
+              if (p.invType[s] != 0) {
+                const ItemDef* def = getItemDef(p.invType[s]);
+                if (def && def->category == 0) slots[slotCount++] = s; // category 0 = consumable
+              }
+            }
+            if (slotCount > 0) {
+              int target = slots[random(0, slotCount)];
+              Serial.printf("[ENC] P%d haz_lose_consumable: dropped item:%d from slot %d\n",
+                pid, (int)p.invType[target], target);
+              p.invType[target] = 0;
+              p.invQty[target]  = 0;
+            }
+          }
           if (hazWc > 0 && hazWt < 3) {
             p.wounds[hazWt] = (uint8_t)min(10, (int)p.wounds[hazWt] + hazWc);
             if (p.wounds[hazWt]) p.statusBits |= ST_WOUNDED;
           }
           bool downed = (p.statusBits & ST_DOWNED) != 0;
           encounterEnded = downed || (hazEnds != 0);
+          // Auto-drain co-located allies: major hazard (LL loss or wound) costs 2, minor costs 1
+          bool isMajor = (hazLL < 0 || hazWc > 0);
+          int drainAmt = isMajor ? 2 : 1;
+          for (int ally = 0; ally < MAX_PLAYERS; ally++) {
+            if (ally == pid || !G.players[ally].connected) continue;
+            if ((int)G.players[ally].q != (int)p.q || (int)G.players[ally].r != (int)p.r) continue;
+            int drained = 0;
+            for (int ri = 0; ri < 5 && drained < drainAmt; ri++) {
+              if (G.players[ally].inv[ri] > 0) { G.players[ally].inv[ri]--; drained++; }
+            }
+            ev.encDrains[ally] = (uint8_t)drained;
+          }
         }
         // Reset per-node assist state
         enc.assistRisk = 0; enc.assistUsed = 0;
@@ -1309,38 +1353,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       xSemaphoreGive(G.mutex);
     }
 
-  // ── Encounter: ally assist ────────────────────────────────────────────────────
-  } else if (strncmp(tv, "enc_assist", (size_t)(te - tv)) == 0) {
-    // {"t":"enc_assist","target":2,"res":3}
-    const char* tgp = strstr(data, "\"target\""); if (!tgp) return;
-    const char* tgv = strchr(tgp + 8, ':');       if (!tgv) return;
-    int target = atoi(tgv + 1);
-    const char* rep = strstr(data, "\"res\""); if (!rep) return;
-    const char* rev = strchr(rep + 5, ':');    if (!rev) return;
-    int res = atoi(rev + 1);
-    if (target < 0 || target >= MAX_PLAYERS) return;
-    if (res < 0 || res > 4) return;
-
-    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      int pid = findSlot(client->id());
-      if (pid >= 0 && pid != target && encounters[target].active &&
-          G.players[target].connected &&
-          (int)G.players[pid].q == (int)G.players[target].q &&
-          (int)G.players[pid].r == (int)G.players[target].r &&
-          G.players[pid].inv[res] > 0 &&
-          !(encounters[target].assistUsed & (1 << pid))) {
-        G.players[pid].inv[res]--;
-        encounters[target].assistRisk = (int8_t)max(-12, (int)encounters[target].assistRisk - 4);
-        encounters[target].assistUsed |= (1 << pid);
-        GameEvent ev = {};
-        ev.type = EVT_ENC_ASSIST; ev.pid = (uint8_t)pid; ev.tradeTo = (uint8_t)target;
-        ev.encAssistRes = (uint8_t)res; ev.encRiskRed = -4;
-        enqEvt(ev);
-        Serial.printf("[ENC] P%d assists P%d (res:%d) assistRisk now %d\n",
-          pid, target, res, (int)encounters[target].assistRisk);
-      }
-      xSemaphoreGive(G.mutex);
-    }
   }
 }
 
