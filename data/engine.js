@@ -401,7 +401,11 @@ function buildAgentState() {
 // ── Character selection overlay helpers ──────────────────────────
 function showCharSelect() {
   // Guard: never show char-select while a live survivor exists
-  if (myId >= 0 && players[myId]?.on) return;
+  if (myId >= 0 && players[myId]?.on) {
+    console.log('[charSelect] BLOCKED by guard: myId=%d on=%s', myId, players[myId]?.on);
+    return;
+  }
+  console.log('[charSelect] SHOW — myId=%d lobbyAvail=%o', myId, lobbyAvail.val);
   // Hide the connecting overlay (behind char-select anyway, but clean it up)
   const co = document.getElementById('connect-overlay');
   if (co) { co.classList.add('fading-out'); setTimeout(() => { co.classList.remove('fading-out'); co.classList.add('hidden'); }, 400); }
@@ -499,13 +503,19 @@ function handleMsg(msg) {
       lobbyAvail.val    = Array.isArray(msg.avail) ? msg.avail : [];
       if (pickTimeoutId) { clearTimeout(pickTimeoutId); pickTimeoutId = null; }
       uiPickPending.val = false;
+      console.log('[lobby] avail=%o myId=%d pendingLobbyRedirect=%s', lobbyAvail.val, myId, pendingLobbyRedirect);
       if (!pendingLobbyRedirect) {
-        if (myId >= 0) {
-          // Already assigned: auto-repick same slot on reconnect instead of showing char select (BUG-01)
+        if (myId >= 0 && lobbyAvail.val.includes(myId)) {
+          // Already assigned and slot still free: auto-repick same slot on reconnect (BUG-01)
+          console.log('[lobby] auto-repick myId=%d', myId);
           send({ t: 'pick', arch: myId });
         } else {
+          // Slot taken or unassigned — show character select
+          if (myId >= 0) { console.log('[lobby] slot taken, resetting myId'); myId = -1; }
           showCharSelect();
         }
+      } else {
+        console.log('[lobby] suppressed by pendingLobbyRedirect');
       }
       break;
 
@@ -784,12 +794,19 @@ function handleEvent(ev) {
       // Server has reset our slot — show death message then redirect to char selection
       myId = -1;
       pendingLobbyRedirect = true;
+      console.log('[downed] received — starting 3.5s timer');
       window._onEncEnd?.();  // close encounter overlay if open when player is downed
       addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
       showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
       setTimeout(() => {
         pendingLobbyRedirect = false;
-        showCharSelect();
+        console.log('[downed] timer fired — lobbyAvail=%o', lobbyAvail.val);
+        if (lobbyAvail.val.length > 0) {
+          showCharSelect();
+        } else {
+          console.log('[downed] avail empty — forcing reconnect');
+          socket.close();  // onclose → reconnect → sendLobbyMsg → lobby handler calls showCharSelect()
+        }
       }, 3500);
       break;
     }

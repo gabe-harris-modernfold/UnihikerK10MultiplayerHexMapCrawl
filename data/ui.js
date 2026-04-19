@@ -1751,6 +1751,7 @@ function initCharSelect() {
     const avail   = lobbyAvail.val;
     const pending = uiPickPending.val;
     const availSet = new Set(avail);
+    console.log('[initCharSelect] reactive render — avail=%o', avail);
 
     return div({ class: 'cs-page' },
       h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),
