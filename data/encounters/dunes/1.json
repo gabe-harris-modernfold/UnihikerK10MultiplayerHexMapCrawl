@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Dig out the drum and pry it open.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 20,
           "skill": 5,
           "success_node": "drum_cache",
@@ -20,12 +20,20 @@
     "drum_cache": {
       "text": "Three drums buried in a row. One has corroded through, but two are sealed tight. Fuel, from the weight. Further digging reveals a fourth drum with a different shape — a storage cylinder.",
       "can_bank": true,
-      "loot": [{ "res": 2, "qty": [2, 4] }],
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
       "loot_table": "dunes_common",
       "choices": [
         {
           "label": "Break the seal on the storage cylinder.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 40,
           "skill": 2,
           "success_node": "storage_cylinder",
@@ -36,7 +44,22 @@
     "storage_cylinder": {
       "text": "The cylinder holds a vacuum-sealed bundle: spare parts, a compact water filter, and two sealed ration packs. Military surplus, pre-war issue.",
       "can_bank": true,
-      "loot": [{ "res": 0, "qty": [1, 2] }, { "res": 1, "qty": [1, 2] }],
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
       "loot_table": "dunes_rare",
       "choices": []
     }
@@ -44,12 +67,17 @@
   "hazards": {
     "sand_collapse": {
       "text": "The dune shifts. You're buried to the waist before you drag yourself free, lungs full of ash-dust.",
-      "penalty": { "fatigue": 2, "radiation": 1 },
+      "penalty": {
+        "radiation": 1
+      },
       "ends_encounter": false
     },
     "pressurized_gas": {
       "text": "The cylinder vents with a sharp crack. Chemical propellant burns your face and hands.",
-      "penalty": { "ll": -1, "radiation": 1 },
+      "penalty": {
+        "ll": -1,
+        "radiation": 1
+      },
       "ends_encounter": false
     }
   },

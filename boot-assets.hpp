@@ -90,7 +90,7 @@ static void printStatus() {
     bool     on; int16_t q, r; uint16_t score, steps;
     uint8_t  terrain;
     char     name[12]; uint32_t connectMs;
-    uint8_t  ll, food, water, fatigue, radiation, resolve;
+    uint8_t  ll, food, water, radiation;
     uint8_t  archetype, statusBits;
     uint8_t  skills[NUM_SKILLS];
   } snap[MAX_PLAYERS];
@@ -116,9 +116,7 @@ static void printStatus() {
     snap[i].ll        = p.ll;
     snap[i].food      = p.food;
     snap[i].water     = p.water;
-    snap[i].fatigue   = p.fatigue;
     snap[i].radiation = p.radiation;
-    snap[i].resolve   = p.resolve;
     snap[i].archetype = p.archetype;
     snap[i].statusBits = p.statusBits;
     memcpy(snap[i].skills, p.skills, NUM_SKILLS);
@@ -138,8 +136,8 @@ static void printStatus() {
     G.connectedCount, MAX_PLAYERS,
     snapDay, snapTC);
 
-  Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W  T   R Res Sb  Steps Score  Sk:Na Fo Sc Tr Sh En");
-  Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- -- --- -- --- ----- ----- --------------------------------");
+  Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W   R Sb  Steps Score  Sk:Na Fo Sc Tr Sh En");
+  Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- --- --- ----- ----- --------------------------------");
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!snap[i].on) continue;
@@ -150,11 +148,11 @@ static void printStatus() {
     uint32_t sessSec = sessMs / 1000;
     uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
 
-    Serial.printf("[STATUS]  P%d %-12s %-10s (%2d,%2d)  %-10s %2d %3d %2d %2d %2d %3d %2d %3d %5d %5d  %2d %2d %2d %2d %2d %2d  [%lum%02lus]\n",
+    Serial.printf("[STATUS]  P%d %-12s %-10s (%2d,%2d)  %-10s %2d %3d %2d %2d %3d %3d %5d %5d  %2d %2d %2d %2d %2d %2d  [%lum%02lus]\n",
       i, ARCHETYPE_NAME[arch], snap[i].name, snap[i].q, snap[i].r,
       T_NAME[t], effVR,
-      snap[i].ll, snap[i].food, snap[i].water, snap[i].fatigue, snap[i].radiation,
-      snap[i].resolve, snap[i].statusBits,
+      snap[i].ll, snap[i].food, snap[i].water, snap[i].radiation,
+      snap[i].statusBits,
       snap[i].steps, snap[i].score,
       snap[i].skills[SK_NAVIGATE], snap[i].skills[SK_FORAGE],
       snap[i].skills[SK_SCAVENGE], snap[i].skills[SK_TREAT],
@@ -276,9 +274,7 @@ static void loadItemRegistry() {
     else if (strcmp(key, "ll")       == 0) cur.statMods[STAT_LL]      = (int8_t)atoi(val);
     else if (strcmp(key, "food")     == 0) cur.statMods[STAT_FOOD]    = (int8_t)atoi(val);
     else if (strcmp(key, "water")    == 0) cur.statMods[STAT_WATER]   = (int8_t)atoi(val);
-    else if (strcmp(key, "fatigue")  == 0) cur.statMods[STAT_FATIGUE] = (int8_t)atoi(val);
     else if (strcmp(key, "rad")      == 0) cur.statMods[STAT_RAD]     = (int8_t)atoi(val);
-    else if (strcmp(key, "resolve")  == 0) cur.statMods[STAT_RESOLVE] = (int8_t)atoi(val);
     else if (strcmp(key, "mp")       == 0) cur.statMods[STAT_MP]      = (int8_t)atoi(val);
     else if (strcmp(key, "slots")    == 0) cur.statMods[STAT_SLOTS]   = (int8_t)atoi(val);
     else if (strcmp(key, "water_cost") == 0) cur.opCost[0] = (uint8_t)atoi(val);
@@ -449,8 +445,8 @@ static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQ
 }
 
 // ── Encounter DN computation (spec §3) ────────────────────────────────────────
-static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/, int8_t assistMod) {
-  int effectiveRisk = constrain((int)baseRisk + (int)assistMod, 0, 100);
+static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/) {
+  int effectiveRisk = constrain((int)baseRisk, 0, 100);
   if (G.threatClock >= TC_THRESHOLD_A) effectiveRisk += 5;
   if (G.threatClock >= TC_THRESHOLD_B) effectiveRisk += 5;
   if (G.threatClock >= TC_THRESHOLD_C) effectiveRisk += 5;
@@ -460,8 +456,6 @@ static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/, 
   Player& p = G.players[pid];
   int bonus = 0;
   if (p.ll > 4)        bonus += (p.ll - 4) / 2;
-  if (p.resolve > 2)   bonus += (p.resolve - 2);
-  if (p.fatigue > 4)   rawDN += (p.fatigue - 4);
   if (p.radiation > 3) rawDN += (p.radiation - 3) / 2;
   return (uint8_t)constrain(rawDN - bonus, 2, 12);
 }

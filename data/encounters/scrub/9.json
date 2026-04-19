@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Browse his wares — stay well clear of the turtle",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 20,
           "skill": 2,
           "success_node": "trader_browse",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Lean in to inspect something interesting — right near the bait",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 50,
           "skill": 5,
           "success_node": "trader_browse",
@@ -29,7 +29,13 @@
       "text": "His stock is genuinely unusual — things you rarely see and don't always know the names of. He sells at fair prices, seems to know exactly what everything is worth, and the turtle has apparently given up on you after the first pass. 'She's not hostile,' he explains, coiling the chain. 'She's focused.' He won't explain further.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_rare",
       "choices": []
@@ -38,16 +44,26 @@
   "hazards": {
     "turtle_bite": {
       "text": "The turtle doesn't snap at you — it simply extends its neck faster than physics should allow and takes a precise bite out of your lower calf. The trader winces. 'She does that sometimes. Here, I'll knock something off for the inconvenience.'",
-      "penalty": { "fatigue": 2, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": false
     },
     "turtle_bite_bad": {
       "text": "The shoe, the chain, and your entire forearm are in the turtle's mouth simultaneously. It takes the trader six minutes and a separate bribe-shoe to convince her to let go. You are not seriously damaged but you are completely reconsidering your approach to commerce.",
-      "penalty": { "fatigue": 3, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     }
   },

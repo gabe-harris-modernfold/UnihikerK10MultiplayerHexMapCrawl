@@ -219,14 +219,6 @@
   <div id="enc-box">
     <div id="enc-title" class="check-lbl">&#x1F441; ENCOUNTER</div>
     <div id="enc-node-text"></div>
-    <div id="enc-risk-bar-wrap">
-      <div class="check-lbl" id="enc-dn-label">DN —</div>
-      <div id="enc-risk-bar"><div id="enc-risk-fill"></div></div>
-    </div>
-    <div id="enc-fat-bar-wrap">
-      <span class="check-lbl" style="font-size:11px">FATIGUE</span>
-      <div class="track-boxes" id="enc-fat-track" role="meter" aria-label="Fatigue" aria-valuemin="0" aria-valuemax="8" aria-valuenow="0"></div>
-    </div>
     <div id="enc-loot-display"></div>
     <div id="enc-outcome"></div>
     <div id="enc-choice-list"></div>
@@ -294,27 +286,11 @@
           <div class="track-boxes" id="cs-water-track" role="meter" aria-label="Water" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
         </div>
         <div class="track-row">
-          <span class="track-label">FATIGUE</span>
-          <div class="track-boxes" id="cs-fat-track" role="meter" aria-label="Fatigue" aria-valuemin="0" aria-valuemax="8" aria-valuenow="0"></div>
-        </div>
-        <div class="track-row">
           <span class="track-label">RADIATION</span>
           <div class="track-boxes rad-track" id="cs-rad-track" role="meter" aria-label="Radiation" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
           <span class="track-suffix" id="cs-rad-status"></span>
         </div>
-        <div class="track-row">
-          <span class="track-label">RESOLVE</span>
-          <div id="cs-resolve-tokens"></div>
-        </div>
-        <div class="track-row wounds-row">
-          <span class="track-label">WOUNDS</span>
-          <div class="wounds-grid" id="cs-wounds-grid">
-            <span class="wound-badge" id="cs-wd0" title="Minor Wounds">—</span>
-            <span class="wound-badge" id="cs-wd1" title="Major Wounds">—</span>
-            <span class="wound-badge" id="cs-wd2" title="Grievous Wounds">—</span>
-          </div>
-          <span class="track-val wound-cond" id="cs-conditions"></span>
-        </div>
+
       </div>
 
       <!-- Equipment Slots -->

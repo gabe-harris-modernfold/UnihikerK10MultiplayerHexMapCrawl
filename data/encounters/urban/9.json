@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Step back fast and keep moving",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 25,
           "skill": 0,
           "success_node": "escaped_cleanly",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Use the wall to your advantage and fight",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 45,
           "skill": 5,
           "success_node": "attacker_down",
@@ -35,7 +35,13 @@
       "text": "It's over quickly once you stop holding back. The loot around the nest site suggests this trap has been running for a while — multiple victims, multiple rounds of picked-over supplies. You collect what's salvageable without looking too hard at context. A good haul. Bad feelings.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 3] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "urban_rare",
       "choices": []
@@ -44,16 +50,26 @@
   "hazards": {
     "bite_caught": {
       "text": "The jaw unhinges faster than you saw it coming. You get your forearm up and the teeth close on that instead of somewhere worse. The grip is enormous and the bite goes deep before you can break free.",
-      "penalty": { "fatigue": 3, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "bite_caught_bad": {
       "text": "She gets a bite in before you can close the distance. The teeth are real, the jaw strength is significant, and the wound is deep. You finish the fight but you finish it worse.",
-      "penalty": { "fatigue": 4, "ll": -10 },
+      "penalty": {
+        "ll": -10
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     }
   },

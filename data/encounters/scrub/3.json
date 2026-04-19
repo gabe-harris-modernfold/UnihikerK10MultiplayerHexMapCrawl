@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Crawl into the tree cavity to shelter and search",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 22,
           "skill": 4,
           "success_node": "cavity",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Check the fire ring for discarded goods",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 1,
           "success_node": "cavity",
@@ -29,13 +29,19 @@
       "text": "Inside the split, the lightning-cured wood is dry and warm. Wedged into a high knot-hole is a cloth roll: a field-surgery kit with two doses of antiseptic and a suture needle, still sterile by the look of the packaging. Lower down, scratched into the char: directions to a water source two hexes north.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 2] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_common",
       "choices": [
         {
           "label": "Climb the split to the high hollow above",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 42,
           "skill": 5,
           "success_node": "high_hollow",
@@ -43,7 +49,7 @@
         },
         {
           "label": "Excavate beneath the roots for a buried cache",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 35,
           "skill": 1,
           "success_node": "high_hollow",
@@ -55,8 +61,20 @@
       "text": "The high hollow holds a weatherproof bag clipped to a metal pin driven into the wood — someone planned this with care. Inside: compressed food blocks, a folded foil thermal blanket, and a fist-sized block of rendered fat wrapped in cloth. A traveller's resupply, precisely what you needed.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [2, 3] },
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_rare",
       "choices": []
@@ -65,30 +83,53 @@
   "hazards": {
     "bark_beetle": {
       "text": "The wood inside the cavity is riddled with bark-beetle tunnels that collapse under your hands, releasing a cloud of fine dust. You cough for ten minutes and your eyes stream.",
-      "penalty": { "fatigue": 2, "ll": -3 },
+      "penalty": {
+        "ll": -3
+      },
       "status": 2,
       "ends_encounter": false
     },
     "previous_occupant": {
       "text": "The previous occupant never actually left. A hollow-eyed scavenger erupts from under a pile of ash-coloured rags and clubs you across the ear before fleeing into the scrub.",
-      "penalty": { "fatigue": 2, "ll": -6 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -6
+      },
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     },
     "dead_branch": {
       "text": "A dead branch you put your weight on snaps and you fall five feet inside the split, landing on the root spar. Two ribs creak alarmingly.",
-      "penalty": { "fatigue": 3, "ll": -10 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -10
+      },
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     },
     "root_collapse": {
       "text": "The root matrix gives way under your digging and a section of tree base drops six inches, pinning your forearm briefly before you heave it clear.",
-      "penalty": { "fatigue": 2, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 4,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "adjective": ["Blasted", "Scorched", "Charred", "Seared", "Split", "Struck", "Hollowed", "Blackened"]
+    "adjective": [
+      "Blasted",
+      "Scorched",
+      "Charred",
+      "Seared",
+      "Split",
+      "Struck",
+      "Hollowed",
+      "Blackened"
+    ]
   }
 }

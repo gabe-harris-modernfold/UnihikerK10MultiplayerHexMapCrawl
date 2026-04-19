@@ -213,31 +213,51 @@ static void drawPlayerScreen() {
 
   canvasLine(0, 258, 239, 258, C_LINE);
 
-  uint32_t up = millis() / 1000;
-  snprintf(buf, sizeof(buf), "up:%lum%02lus",
-           (unsigned long)(up / 60), (unsigned long)(up % 60));
+  uint32_t upSec = millis() / 1000;
+  snprintf(buf, sizeof(buf), "up: %lum%02lus",
+           (unsigned long)(upSec / 60), (unsigned long)(upSec % 60));
   canvasText8(buf, 2, 262, C_INFO);
+
+  if (checkRtcReady()) {
+    time_t nowEpoch  = time(nullptr);
+    time_t bootEpoch = nowEpoch - (time_t)upSec;
+
+    struct tm bt; gmtime_r(&bootEpoch, &bt);
+    snprintf(buf, sizeof(buf), "boot: %02d:%02d:%02d", bt.tm_hour, bt.tm_min, bt.tm_sec);
+    canvasText8(buf, 122, 262, C_INFO);
+
+    struct tm ut; gmtime_r(&nowEpoch, &ut);
+    snprintf(buf, sizeof(buf), "UTC: %02d:%02d:%02d", ut.tm_hour, ut.tm_min, ut.tm_sec);
+    canvasText8(buf, 2, 275, C_INFO);
+
+    setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1); tzset();
+    struct tm it; localtime_r(&nowEpoch, &it);
+    setenv("TZ", "UTC0", 1); tzset();
+    snprintf(buf, sizeof(buf), "IN:  %02d:%02d:%02d", it.tm_hour, it.tm_min, it.tm_sec);
+    canvasText8(buf, 122, 275, C_INFO);
+  }
 
   IPAddress apIp  = WiFi.softAPIP();
   IPAddress staIp = WiFi.localIP();
   snprintf(buf, sizeof(buf), "AP: %d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
-  canvasText8(buf, 2, 282, 0x5C2C10);
+  canvasText8(buf, 2, 292, 0x5C2C10);
   bool staConn = (staIp[0] != 0);
   uint32_t stColor;
+  char stBuf[42];
   if (staConn) {
-    snprintf(buf, sizeof(buf), "ST: %d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
+    snprintf(stBuf, sizeof(stBuf), "ST: %d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
     stColor = 0x5C2C10;
   } else if (bootWifiPending) {
-    snprintf(buf, sizeof(buf), "ST: connecting...");
+    snprintf(stBuf, sizeof(stBuf), "ST: connecting...");
     stColor = 0x904030;
   } else if (savedSsid[0]) {
-    snprintf(buf, sizeof(buf), "ST: saved:\"%.16s\"", savedSsid);
+    snprintf(stBuf, sizeof(stBuf), "ST: \"%s\"", savedSsid);
     stColor = 0x904030;
   } else {
-    snprintf(buf, sizeof(buf), "ST: no creds");
+    snprintf(stBuf, sizeof(stBuf), "ST: no creds");
     stColor = 0x3A1808;
   }
-  canvasText8(buf, 2, 300, stColor);
+  canvasText8(stBuf, 122, 292, stColor);
 }
 
 // ── Screen 2: event log ────────────────────────────────────────

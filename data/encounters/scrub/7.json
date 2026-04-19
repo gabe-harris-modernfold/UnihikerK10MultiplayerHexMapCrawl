@@ -9,15 +9,15 @@
       "choices": [
         {
           "label": "Hold your ground and stare it down",
-          "cost": { "fatigue": 2, "resolve": -1 },
+          "cost": {},
           "base_risk": 40,
           "skill": 5,
           "success_node": "wraith_retreats",
-          "hazard_id": "resolve_shattered"
+          "hazard_id": "panic_sprint"
         },
         {
           "label": "Back away slowly without breaking eye contact",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 25,
           "skill": 0,
           "success_node": "wraith_retreats",
@@ -29,22 +29,30 @@
       "text": "It holds. You hold. Something passes between you that you will never be able to explain to anyone. Then it is simply gone — not moving away, just absent. In the place it stood, the scrub has been pushed flat in a perfect circle. At the centre: a small, dense cache of scrap that wasn't there before.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [2, 4] },
-        { "res": 3, "qty": [1, 2] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": []
     }
   },
   "hazards": {
-    "resolve_shattered": {
-      "text": "It moves toward you faster than anything that shape should move. Your nerve breaks completely. You run until your legs stop working and find yourself sitting in the scrub half a kilometre away with no memory of the distance between. You lost serious ground getting here.",
-      "penalty": { "fatigue": 5, "ll": -3 },
-      "status": 6,
-      "ends_encounter": true
-    },
     "panic_sprint": {
       "text": "Your body decides this is a running situation and executes before you can weigh in on the decision. You cover the next four hundred metres at a sprint you didn't know you had. You've put real distance between yourself and wherever you wanted to be.",
-      "penalty": { "fatigue": 4, "ll": -3 },
+      "penalty": {
+        "ll": -3
+      },
       "status": 2,
       "ends_encounter": true
     }

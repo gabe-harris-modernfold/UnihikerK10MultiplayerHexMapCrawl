@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Take a number and join the queue — do this the right way",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 10,
           "skill": 0,
           "success_node": "queue_step_1",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Walk straight to the front — cut the line",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 70,
           "skill": 5,
           "success_node": "license_obtained",
@@ -31,7 +31,7 @@
       "choices": [
         {
           "label": "Keep waiting",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "queue_step_2",
@@ -45,7 +45,7 @@
       "choices": [
         {
           "label": "Continue to wait — you're this close",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "license_obtained",
@@ -63,14 +63,19 @@
   "hazards": {
     "impatience_error": {
       "text": "You shift in your seat. You check the time. You look at the board. The ghoul nearest to you makes a sound that is not quite a warning but is not nothing. The queue is watching. Patience. Just patience.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "ghoul_frenzy": {
       "text": "They come up from their seats with the momentum of something that has been wound up for forty-seven years and finally released. There are more of them than you counted. They are very upset about the queue. You survive but you do not get the license and you do not go back.",
-      "penalty": { "fatigue": 5, "ll": -10 },
+      "penalty": {
+        "ll": -10
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": true
     }
   },

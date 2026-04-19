@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Haul the door open.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 5,
           "success_node": "equipment_room",
@@ -20,12 +20,27 @@
     "equipment_room": {
       "text": "Banks of relay equipment fill the room, dead and dark. A maintenance locker is padlocked. Emergency ration stores, mandated for remote station crews, are stacked near the back wall.",
       "can_bank": true,
-      "loot": [{ "res": 1, "qty": [2, 3] }, { "res": 0, "qty": [1, 2] }],
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
       "loot_table": "mountain_common",
       "choices": [
         {
           "label": "Cut through the maintenance locker padlock.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 50,
           "skill": 2,
           "success_node": "maintenance_locker",
@@ -36,7 +51,22 @@
     "maintenance_locker": {
       "text": "Spare parts, sealed tools, and a first-aid kit from an era when this equipment mattered. Also a sealed envelope marked DO NOT OPEN. You open it. Nothing useful inside. Still, the rest is worth having.",
       "can_bank": true,
-      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 4, "qty": [2, 3] }],
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
       "loot_table": "mountain_rare",
       "choices": []
     }
@@ -44,12 +74,16 @@
   "hazards": {
     "door_drop": {
       "text": "The door pulls free and swings hard. The edge catches your shoulder and drops you to one knee.",
-      "penalty": { "fatigue": 1, "ll": -1 },
+      "penalty": {
+        "ll": -1
+      },
       "ends_encounter": false
     },
     "electrical_arc": {
       "text": "A residual charge in the equipment bank arcs through the locker and into your hands. Your vision whites out.",
-      "penalty": { "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "status": 1,
       "ends_encounter": false
     }

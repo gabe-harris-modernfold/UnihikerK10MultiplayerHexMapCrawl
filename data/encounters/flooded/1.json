@@ -9,7 +9,9 @@
       "choices": [
         {
           "label": "Wade in and feel along the shelves.",
-          "cost": { "fatigue": 1, "radiation": 1 },
+          "cost": {
+            "radiation": 1
+          },
           "base_risk": 25,
           "skill": 2,
           "success_node": "shelf_search",
@@ -17,7 +19,7 @@
         },
         {
           "label": "Scan for high-water salvage first.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 1,
           "success_node": "shelf_search",
@@ -29,14 +31,26 @@
       "text": "Your hands close on sealed tins and a plastic-wrapped bundle wedged behind a shelf bracket. Most of the food is bloated and ruined, but a few sealed cans hold. A floating crate near the back wall catches your eye.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [1, 2] },
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "flooded_common",
       "choices": [
         {
           "label": "Pry open the floating crate.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 45,
           "skill": 2,
           "success_node": "crate_opened",
@@ -48,8 +62,20 @@
       "text": "The crate is sealed with industrial foam and holds pre-war medical supplies still in their blister packs. Someone packed this with the intention of coming back for it. They didn't. You do.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 3] },
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "flooded_rare",
       "choices": []
@@ -58,18 +84,28 @@
   "hazards": {
     "submerged_cut": {
       "text": "Something sharp under the water opens a gash along your forearm. The stagnant water gets into it immediately.",
-      "penalty": { "ll": -1, "radiation": 1 },
-      "wound": [0, 1],
+      "penalty": {
+        "ll": -1,
+        "radiation": 1
+      },
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "bad_footing": {
       "text": "A floor tile gives way and you drop into chest-deep water, swallowing a mouthful of filth before you scramble upright.",
-      "penalty": { "fatigue": 2, "radiation": 1 },
+      "penalty": {
+        "radiation": 1
+      },
       "ends_encounter": false
     },
     "crate_collapse": {
       "text": "The crate is heavier than it looks and the shelving you're bracing against gives way. The crash echoes off the walls and the whole structure groans. You get out fast, empty-handed.",
-      "penalty": { "ll": -1, "fatigue": 2 },
+      "penalty": {
+        "ll": -1
+      },
       "ends_encounter": true
     }
   },

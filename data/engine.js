@@ -23,8 +23,6 @@ const uiCooldown    = van.state(0);
 const uiLL          = van.state(7);
 const uiFood        = van.state(6);
 const uiWater       = van.state(6);
-const uiFat         = van.state(0);
-const uiResolve     = van.state(3);
 const uiMP          = van.state(6);
 // §6.2 Radiation track
 const uiRad         = van.state(0);
@@ -345,7 +343,7 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
   inv: [0,0,0,0,0], sp: 0, st: 0,
   // Survivor fields
-  ll: 7, food: 6, water: 6, fat: 0, rad: 0, res: 3,
+  ll: 7, food: 6, water: 6, rad: 0, res: 3,
   arch: 0, sb: 0, is: 8,
   sk: [0,0,0,0,0,0],
   wd: [0,0,0],
@@ -385,10 +383,10 @@ function buildAgentState() {
     me: me ? {
       q: me.q, r: me.r,
       ll: me.ll, food: me.food, water: me.water,
-      rad: me.rad, resolve: me.res, fat: me.fat,
+      rad: me.rad,
       mp: me.mp, resting: me.rest,
       inv: { water: me.inv[0], food: me.inv[1], fuel: me.inv[2], med: me.inv[3], scrap: me.inv[4] },
-      wounds: me.wd, statusBits: me.sb,
+      statusBits: me.sb,
       score: me.sc, name: me.nm,
     } : null,
     players: players.filter(p => p.on && p.id !== myId).map(p => ({
@@ -588,10 +586,9 @@ function handleMsg(msg) {
         if (pd.on && !wasOn) { renderPos[i].q = pd.q; renderPos[i].r = pd.r; }
         p.inv = pd.inv; p.sp = pd.sp;
         p.ll = pd.ll; p.food = pd.food; p.water = pd.water;
-        p.fat = pd.fat; p.rad = pd.rad; p.sb = pd.sb;
-        if (pd.wd) p.wd = pd.wd;
+        p.rad = pd.rad; p.sb = pd.sb;
+
         if (pd.mp  !== undefined) p.mp  = pd.mp;
-        if (pd.res !== undefined) p.res = pd.res;   // resolve (§4.4)
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
         if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
         if (pd.vm  !== undefined) p.vm  = pd.vm;    // valid move bitmask
@@ -854,7 +851,6 @@ function handleEvent(ev) {
           if (ev.fth !== undefined) players[ev.pid].fth = ev.fth;
         if (ev.wth !== undefined) players[ev.pid].wth = ev.wth;
         if (ev.rad !== undefined) players[ev.pid].rad = ev.rad;
-        if (ev.fat !== undefined) players[ev.pid].fat = ev.fat;
       }
       const who    = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const llTxt  = ev.dll < 0 ? ` \u25BC LL${ev.dll}` : ev.dll > 0 ? ` \u25B2 LL+${ev.dll}` : '';
@@ -878,12 +874,10 @@ function handleEvent(ev) {
       if (p) {
         p.mp   = ev.mp;
         p.ll   = ev.ll;
-        p.fat  = ev.fat;
         if (ev.fd)   p.inv[1] = Math.min(99, (p.inv[1] ?? 0) + ev.fd);
         if (ev.wd)   p.inv[0] = Math.min(99, (p.inv[0] ?? 0) + ev.wd);
 
         if (ev.rad !== undefined) p.rad = ev.rad;
-        if (ev.resd) p.res    = Math.max(0, Math.min(5, (p.res ?? 3) + ev.resd));
       }
       const who   = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       const actNm = ACT_NAMES[ev.a] ?? `Act${ev.a}`;
@@ -897,7 +891,6 @@ function handleEvent(ev) {
       if (ev.wd)   detail += ` +${ev.wd}Water`;
       if (ev.lld)  detail += ` ${ev.lld > 0 ? '+' : ''}${ev.lld}LL`;
       if (ev.radd) detail += ` ${ev.radd > 0 ? '+' : ''}${ev.radd}R`;
-      if (ev.resd) detail += ` +${ev.resd}Resolve`;
       if (ev.scoreD) detail += ` \u271F${ev.scoreD}pts`;
       addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
       // Special toasts for REST and SHELTER
@@ -1057,7 +1050,6 @@ function handleEvent(ev) {
         const p = players[myId];
         if (p) {
           if (ev.penLL)  p.ll  = Math.max(0, (p.ll  ?? 0) + ev.penLL);
-          if (ev.penFat) p.fat = Math.max(0, (p.fat ?? 0) + ev.penFat);
           if (ev.penRad) p.rad = Math.max(0, (p.rad ?? 0) + ev.penRad);
           if (ev.st) p.sb = ev.st;
         }

@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Carefully retrieve the note from under the paperweight",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 20,
           "skill": 2,
           "success_node": "note_retrieved",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Check the figure's pockets while you're here",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 2,
           "success_node": "note_retrieved",
@@ -30,7 +30,13 @@
       "can_bank": true,
       "loot_table": "drop_sticky_note",
       "loot": [
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "choices": []
     }
@@ -38,13 +44,15 @@
   "hazards": {
     "chair_collapses": {
       "text": "The ecosystem supporting the chair has more give than expected. Your weight on the desk-surface causes the entire arrangement to shift and partially collapse, and the figure tilts toward you at a speed that seems deliberate. You scramble back covered in decades of particulate and emerge with what you need but not what you wanted.",
-      "penalty": { "fatigue": 2, "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "status": 2,
       "ends_encounter": false
     },
     "disturbed_badly": {
       "text": "Something falls from the pocket that doesn't bear examination. You have the note. You're moving on and not looking back.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "status": 2,
       "ends_encounter": false
     }

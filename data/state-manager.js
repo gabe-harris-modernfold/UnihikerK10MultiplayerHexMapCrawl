@@ -109,7 +109,6 @@ function gameStateReducer(state, event) {
             ? {
                 ...p,
                 ll:  Math.max(0, (p.ll  ?? 0) + (event.penLL  ?? 0)),
-                fat: Math.max(0, (p.fat ?? 0) + (event.penFat ?? 0)),
                 rad: Math.max(0, (p.rad ?? 0) + (event.penRad ?? 0)),
                 ...(event.st ? { st: event.st } : {}),
               }

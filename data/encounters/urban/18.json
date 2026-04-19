@@ -9,7 +9,9 @@
       "choices": [
         {
           "label": "Buy a muffin — two food items, firm price",
-          "cost": { "food": 2, "fatigue": 1 },
+          "cost": {
+            "food": 2
+          },
           "base_risk": 10,
           "skill": 0,
           "success_node": "muffin_purchased",
@@ -17,7 +19,7 @@
         },
         {
           "label": "Decline politely and move on",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 40,
           "skill": 0,
           "success_node": "declined_safely",
@@ -29,7 +31,13 @@
       "text": "She wraps it with a ribbon. 'Don't squeeze it,' she says. Her eyes are kind and very sharp. 'And don't heat it. And if you drop it, walk away quickly.' She pats your hand and wishes you well. The muffin sits in your pack with the specific weight of something that has a detonator. You carry it with appropriate respect.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "urban_junk",
       "choices": []
@@ -44,14 +52,19 @@
   "hazards": {
     "granny_overcharge": {
       "text": "She recounts the transaction and determines you underpaid by one food item. Her position on this is firm, documented, and supported by a laminated pricing chart she produces from her apron pocket.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "walker_thrown": {
       "text": "The walker travels farther and faster than walkers are supposed to travel. It connects with your upper arm and the impact is genuine — she's been loading those wheels with something. 'Next time,' she calls, pleasantly, 'buy a muffin.'",
-      "penalty": { "fatigue": 2, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": true
     }
   },

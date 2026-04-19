@@ -112,11 +112,9 @@ function updateSidebar() {
   uiLL.val      = me.ll   ?? 6;
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
-  uiFat.val     = me.fat  ?? 0;
-  uiResolve.val = me.res  ?? 3;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiHasCond.val = ((me.wd?.[0] ?? 0) > 0 || (me.sb & 0x8C) !== 0);
+  uiHasCond.val = ((me.sb & 0x8C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => p.on)
@@ -240,20 +238,9 @@ function openCharSheet() {
   }
 
   // Wounds & Conditions
-  const wd0 = document.getElementById('cs-wd0');
-  const wd1 = document.getElementById('cs-wd1');
-  const wd2 = document.getElementById('cs-wd2');
+  // Conditions
   const wdCond = document.getElementById('cs-conditions');
-  if (wd0) {
-    const minor   = me.wd?.[0] || 0;
-    const major   = me.wd?.[1] || 0;
-    const grievous= me.wd?.[2] || 0;
-    wd0.textContent = minor   > 0 ? `${minor}×MIN`  : '—';
-    wd0.className   = 'wound-badge' + (minor   > 0 ? ' minor'   : '');
-    wd1.textContent = major   > 0 ? `${major}×MAJ`  : '—';
-    wd1.className   = 'wound-badge' + (major   > 0 ? ' major'   : '');
-    wd2.textContent = grievous> 0 ? `${grievous}×GRV`: '—';
-    wd2.className   = 'wound-badge' + (grievous> 0 ? ' grievous': '');
+  if (wdCond) {
     const conds = [];
     if (me.sb & 0x04) conds.push('BLEED');
     if (me.sb & 0x08) conds.push('FEVER');
@@ -273,9 +260,12 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('menu-overlay')) closeMenu();
 });
 
+let _lastEqKey = '';
+
 // Char-overlay visibility — driven by uiCharOpen state
 van.derive(() => {
   const overlay = document.getElementById('char-overlay');
+  if (uiCharOpen.val) _lastEqKey = ''; // force fresh render on open
   overlay.classList.toggle('open', uiCharOpen.val);
   // Move focus out before hiding so aria-hidden never traps a focused descendant
   if (!uiCharOpen.val && overlay.contains(document.activeElement)) {
@@ -645,17 +635,6 @@ function initCharSheetBindings() {
 
   });
 
-  // Resolve tokens (max 5)
-  van.derive(() => {
-    const el = document.getElementById('cs-resolve-tokens');
-    if (!el) return;
-    el.innerHTML = '';
-    for (let i = 1; i <= 5; i++) {
-      const dot = document.createElement('span');
-      dot.className = 'resolve-token' + (i <= uiResolve.val ? ' filled' : '');
-      el.appendChild(dot);
-    }
-  });
 
   // Radiation track (10 boxes; colour zones: 1-3 green, 4-6 yellow, 7-10 red)
   van.derive(() => {
@@ -686,10 +665,6 @@ function initCharSheetBindings() {
     }
   });
 
-  // Fatigue track (0–8, no thresholds)
-  van.derive(() => {
-    renderTrackBoxes('cs-fat-track', uiFat.val, [], 0, 8);
-  });
 
 }
 
@@ -1286,16 +1261,6 @@ function initMenuSystem() {
             ms({ class: 'ht-track-val' }, '0 – 10'),
             ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 4 = RAD-SICK. R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn. Use TREAT (Radiation) to remove 2 R.')
           ),
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'FATIGUE'),
-            ms({ class: 'ht-track-val' }, '0 – 8'),
-            ms({ class: 'ht-track-desc' }, 'Reduces effective MP each point above 4. Cleared by REST (−2 normally, −3 if another survivor shares your hex).')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'RESOLVE'),
-            ms({ class: 'ht-track-val' }, '0 – 5'),
-            ms({ class: 'ht-track-desc' }, 'Starts at 3. Gain +1 by resting in good shelter (SV 3+, or SV 2+ with a built shelter on the hex).')
-          ),
         )
       ),
 
@@ -1336,9 +1301,7 @@ function initMenuSystem() {
       sec('Rest',
         mp({ class: 'menu-text-body' },
           'The ▼ REST button is always available — it does not use your action slot. ' +
-          'Resting reduces Fatigue by 2 (or 3 if another survivor shares your hex). ' +
-          'If you are well-fed (Food ≥ 4), hydrated (Water ≥ 3), and not too tired (Fatigue < 4 after reduction), ' +
-          'you also recover 1 Life Level. Resting in good shelter (SV 3+, or SV 2 + built shelter) gains +1 Resolve. ' +
+          'If you are well-fed (Food ≥ 4) and hydrated (Water ≥ 3), you recover 1 Life Level. ' +
           'Once you REST you wait for dawn — if all connected players have rested, dawn triggers immediately.'
         )
       ),
@@ -1374,26 +1337,13 @@ function initMenuSystem() {
         )
       ),
 
-      sec('Fatigue',
-        mp({ class: 'menu-text-body' },
-          'Fatigue builds when foraging fails or partially succeeds, and when a Bleed treatment fails. It caps at 8. ' +
-          'There is no automatic recovery — only REST clears it.'
-        ),
-        mp({ class: 'menu-text-body' },
-          'REST recovery depends on where you sleep: ' +
-          'open ground −2 · shelter −3 · improved shelter −4. ' +
-          'You can only restore a Life Level while resting if fatigue drops below 4 (or below 6 in an improved shelter). ' +
-          'Exhausted survivors should build shelter before resting.'
-        )
-      ),
-
       sec('Wounds & Conditions',
         mp({ class: 'menu-text-body' },
           'Wounds reduce skill checks. Minor Wounds penalise Endure; Major Wounds penalise all skills. ' +
           'Grievous Wounds require a Settlement and a successful Treat to remove — and restore 1 LL when cleared.'
         ),
         mp({ class: 'menu-text-body' },
-          'Bleeding adds fatigue if left untreated. Fever penalises Forage checks. ' +
+          'Bleeding left untreated may worsen wounds. Fever penalises Forage checks. ' +
           'Both clear with a successful TREAT action.'
         )
       ),
@@ -1453,7 +1403,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/fatigue/rad/resolve), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'statusBits'),
@@ -1854,6 +1804,9 @@ function renderEquipment() {
   const grid = document.getElementById('cs-equip-grid');
   if (!grid || myId < 0) return;
   const me = players[myId];
+  const eqKey = JSON.stringify(me.eq ?? []);
+  if (eqKey === _lastEqKey) return;
+  _lastEqKey = eqKey;
   const SLOT_LABELS = ['NOGGIN', 'HIDE', 'MITTS', 'HOOVES', 'RUST BUCKET'];
   grid.innerHTML = '';
   for (let s = 0; s < 5; s++) {
@@ -1996,8 +1949,7 @@ document.getElementById('item-menu-backdrop')?.addEventListener('click', closeIt
 function initEncounterOverlay() {
   const overlay    = document.getElementById('enc-overlay');
   const nodeText   = document.getElementById('enc-node-text');
-  const dnLabel    = document.getElementById('enc-dn-label');
-  const riskFill   = document.getElementById('enc-risk-fill');
+
   const lootDisp   = document.getElementById('enc-loot-display');
   const outcomeDiv = document.getElementById('enc-outcome');
   const choiceList = document.getElementById('enc-choice-list');
@@ -2029,40 +1981,19 @@ function initEncounterOverlay() {
   }
 
   const SKILL_LABELS_ENC = ['Navigate','Forage','Scavenge','Treat','Shelter','Endure'];
-  const RISK_LABELS_ENC  = ['', 'CAUTIOUS', 'CAUTIOUS', 'RISKY', 'DANGEROUS', 'DESPERATE'];
-  function riskLabel(pct) {
-    if (pct <= 0)  return '';
-    if (pct <= 25) return 'CAUTIOUS';
-    if (pct <= 50) return 'RISKY';
-    if (pct <= 75) return 'DANGEROUS';
-    return 'DESPERATE';
-  }
+
 
   function renderNode(node) {
     currentNode = node;
     nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
 
     const baseRisk = Math.max(0, ...(node.choices ?? []).map(c => c.base_risk ?? 0));
-    dnLabel.textContent = riskLabel(baseRisk);
-    riskFill.style.width = `${baseRisk}%`;
-
     choiceList.innerHTML = '';
     (node.choices ?? []).forEach(ch => {
       const btn = document.createElement('button');
       btn.className = 'enc-choice-btn';
-      const riskClass = ch.base_risk <= 30 ? 'enc-risk-low' : ch.base_risk <= 60 ? 'enc-risk-mid' : 'enc-risk-high';
-      const cost = ch.cost ?? {};
-      const costParts = [
-        cost.ll        ? `${cost.ll} LL`        : null,
-        cost.fatigue   ? `${cost.fatigue} Fat`   : null,
-        cost.radiation ? `${cost.radiation} Rad` : null,
-        cost.food      ? `${cost.food} Food`     : null,
-        cost.water     ? `${cost.water} Water`   : null,
-      ].filter(Boolean);
       btn.innerHTML =
-        `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>` +
-        `<span class="enc-cost-tag">${costParts.length ? 'Cost: ' + costParts.join(' \u00b7 ') : 'No cost'}</span>` +
-        `<span class="enc-risk-tag ${riskClass}">${SKILL_LABELS_ENC[ch.skill] ?? 'Skill'}</span>`;
+        `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>`;
       btn.addEventListener('click', () => sendChoice(ch));
       choiceList.appendChild(btn);
     });
@@ -2076,7 +2007,7 @@ function initEncounterOverlay() {
     const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
     pendingHazText = haz.text ? resolveText(haz.text, currentEnc.placeholders) : '';
     const hazPen = haz.penalty ?? {};
-    const wound  = Array.isArray(haz.wound) ? haz.wound : [0, 0];
+
     const cost   = ch.cost ?? {};
     const nextKey = ch.success_node ?? '';
 
@@ -2104,16 +2035,14 @@ function initEncounterOverlay() {
       can_bank:    nextNode?.can_bank ?? false,
       ci:          nextKey,
       cost_ll:     cost.ll        ?? 0,
-      cost_fat:    cost.fatigue   ?? 0,
       cost_rad:    cost.radiation ?? 0,
       cost_food:   cost.food      ?? 0,
       cost_water:  cost.water     ?? 0,
       haz_ll:      hazPen.ll        ?? 0,
-      haz_fat:     hazPen.fatigue   ?? 0,
       haz_rad:     hazPen.radiation ?? 0,
       haz_st:      haz.status       ?? 0,
-      haz_wt:      wound[0]         ?? 0,
-      haz_wc:      wound[1]         ?? 0,
+      haz_wt:      0,
+      haz_wc:      0,
       haz_ends:    haz.ends_encounter ? 1 : 0,
       is_terminal: nextKey === '' ? 1 : 0,
     });
@@ -2193,7 +2122,6 @@ function initEncounterOverlay() {
       ev.loot.forEach((v, i) => { if (v > 0) deltaItems.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true }); });
     } else {
       if (ev.penLL  < 0) deltaItems.push({ txt: `${ev.penLL} Life`,         pos: false });
-      if (ev.penFat > 0) deltaItems.push({ txt: `+${ev.penFat} Fatigue`,    pos: false });
       if (ev.penRad > 0) deltaItems.push({ txt: `+${ev.penRad} Radiation`,  pos: false });
     }
     const deltaHtml = deltaItems.map(d =>
@@ -2253,10 +2181,6 @@ function initEncounterOverlay() {
     closeEncounter();
   });
 
-  // Fatigue track in encounter overlay
-  van.derive(() => {
-    renderTrackBoxes('enc-fat-track', uiFat.val, [], 0, 8);
-  });
 }
 
 // ── VanJS entry point ─────────────────────────────────────────────

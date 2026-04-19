@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Pay the five scrap and take the ward",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 10,
           "skill": 0,
           "success_node": "ward_received",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Push past him — you don't trust it",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 35,
           "skill": 2,
           "success_node": "no_trap_found",
@@ -35,7 +35,13 @@
       "text": "You walk the alley top to bottom. There is no trap. There was never a trap. There is, however, a small pile of scrap in the corner that suggests other people have used this route recently, possibly after paying him. You take what's there.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "choices": []
     }
@@ -43,14 +49,19 @@
   "hazards": {
     "ward_worthless": {
       "text": "He drops the serious face for exactly half a second before it reassembles. You handed over the scrap. You know it. He knows it. The transaction has concluded.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "actual_trap": {
       "text": "There is, improbably, an actual trap. Spring-loaded, chest height, very bad. The old man was not lying, which is not the outcome you prepared for.",
-      "penalty": { "fatigue": 3, "ll": -6 },
+      "penalty": {
+        "ll": -6
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": false
     }
   },

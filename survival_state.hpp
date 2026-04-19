@@ -32,14 +32,13 @@ static void duskCheck() {
     }
 
     if (ev.actOut == AO_FAIL) {
-      p.wounds[1] = (uint8_t)min(10, (int)p.wounds[1] + 1);  // +1 Major Wound (cap 10)
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
       if (p.ll == 0) {
         p.statusBits |= ST_DOWNED;
         p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
         enqEvt(devt);
-        Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dusk wound) — slot queued for reset\n", pid, p.name);
+        Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dusk) — slot queued for reset\n", pid, p.name);
       }
       ev.actLLD   = -1;
       ev.actNewLL = p.ll;
@@ -127,6 +126,10 @@ static void dawnUpkeep() {
       expDelta = 0;
     }
 
+    // ── Rest recovery: resting with adequate supplies → +1 LL ───────────
+    if (p.resting && p.food >= 4 && p.water >= 3 && p.ll < (uint8_t)effectiveMaxLL(pid))
+      llDelta++;
+
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────
     // Losses were accumulated first in llDelta (food, water, and exposure above).
     // Apply each step individually so we stop at 0 immediately.
@@ -178,7 +181,6 @@ static void dawnUpkeep() {
     ev.dawnFth     = p.fThreshBelow;
     ev.dawnWth     = p.wThreshBelow;
     ev.radR        = p.radiation;
-    ev.dawnFat     = p.fatigue;
     ev.dawnExpD    = expDelta;
     enqEvt(ev);
   }

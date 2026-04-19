@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Pay him to make it stop (surrender 10 scrap)",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "deed_purchased",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Attempt to disable him — fight through the pitch",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 55,
           "skill": 5,
           "success_node": "bob_disabled",
@@ -36,7 +36,13 @@
       "can_bank": true,
       "loot_table": "drop_crater_deed",
       "loot": [
-        { "res": 4, "qty": [2, 4] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
       ],
       "choices": []
     }
@@ -44,14 +50,19 @@
   "hazards": {
     "payment_glitch": {
       "text": "B.O.B.'s payment processor has been corrupted by three decades of optimism. He accepts your scrap and then immediately tries to double-charge you for a maintenance fee. The resulting argument is lengthy and technically unwinnable.",
-      "penalty": { "fatigue": 2 },
+      "penalty": {},
       "ends_encounter": false
     },
     "laser_sales_technique": {
       "text": "B.O.B. does not negotiate. He pivots smoothly from 'enthusiastic pitch' to 'sales enforcement mode' and the arm laser is, unfortunately, operational. The blast doesn't hit anything vital but it makes its point.",
-      "penalty": { "fatigue": 3, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 1,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     }
   },

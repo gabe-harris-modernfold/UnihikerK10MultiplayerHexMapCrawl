@@ -813,12 +813,6 @@ canvas{display:block;width:100%;height:100%}
   min-width:14px;text-align:right;flex-shrink:0
 }
 .track-suffix{font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
-.resolve-token{
-  display:inline-block;width:11px;height:11px;border-radius:50%;
-  border:1px solid #5C4010;margin:0 2px;background:var(--bg-deep);
-  vertical-align:middle
-}
-.resolve-token.filled{background:var(--gold);border-color:var(--gold-hi)}
 
 /* ── Radiation track ──────────────────────────────────────────── */
 /* Smaller boxes for 10-count R track */
@@ -834,16 +828,6 @@ canvas{display:block;width:100%;height:100%}
 .rad-status-sick    {color:#A09018 !important;letter-spacing:0.4px}
 .rad-status-critical{color:#CC3311 !important;letter-spacing:0.4px;animation:rad-pulse 1.2s ease-in-out infinite}
 @keyframes rad-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
-/* ── Wounds & Conditions row ──────────────────────────────────── */
-.wounds-grid{display:flex;gap:6px;align-items:center;flex:1}
-.wound-badge{
-  font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);
-  padding:2px 6px;border-radius:2px;border:1px solid var(--bdr-mid);
-  background:var(--bg-input);color:var(--txt-dim);white-space:nowrap
-}
-.wound-badge.minor  {color:#CC9944;border-color:#8A6622}
-.wound-badge.major  {color:#CC4422;border-color:#8A2A10}
-.wound-badge.grievous{color:#DD2211;border-color:#991108;animation:rad-pulse 1.6s infinite}
 .wound-cond{font-size:var(--fs-l);color:var(--ash);letter-spacing:var(--ls-l);font-family:var(--stencil)}
 
 /*──────────────────────── Focus visible ────────────────────────*/
@@ -1423,15 +1407,6 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   color:var(--txt);font-size:20px;line-height:1.45;
   margin-top:6px;white-space:pre-wrap
 }
-#enc-risk-bar-wrap{margin-top:2px}
-#enc-risk-bar{
-  height:6px;background:var(--bdr-mid);border-radius:3px;overflow:hidden;margin-top:4px
-}
-#enc-risk-fill{
-  height:100%;border-radius:3px;
-  background:linear-gradient(90deg,#3a8,#fa0,#e43);
-  transition:width 0.3s ease
-}
 #enc-fat-bar-wrap{margin-top:8px;display:flex;align-items:center;gap:6px}
 #enc-fat-bar-wrap .check-lbl{flex-shrink:0;width:60px}
 #enc-fat-track{flex:1}
@@ -1446,9 +1421,6 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   border-radius:2px;cursor:pointer;line-height:1.3
 }
 .enc-choice-btn:hover{border-color:var(--gold);color:var(--gold-hi);background:rgba(255,193,7,0.06)}
-.enc-choice-btn .enc-cost-tag{color:var(--txt-dim);font-size:14px;display:block;margin-top:2px}
-.enc-choice-btn .enc-risk-tag{font-size:14px}
-.enc-risk-low{color:#3a8}.enc-risk-mid{color:#fa0}.enc-risk-high{color:#e43}
 #enc-bank-row{margin-top:4px}
 #enc-outcome{
   display:none;flex-direction:column;gap:6px;

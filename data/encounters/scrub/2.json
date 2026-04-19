@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Dismantle the cairn and dig carefully",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 15,
           "skill": 0,
           "success_node": "cache",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Check the perimeter for the owner first",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 20,
           "skill": 0,
           "success_node": "cache",
@@ -29,14 +29,26 @@
       "text": "Two feet down, a waterproof box the size of a bread loaf. Inside: food, a small jar of purification tablets, and a handwritten note listing three more cache locations — all in a cipher you can't read. You pocket the note anyway. The cipher might be worth something to the right trader.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [2, 3] },
-        { "res": 0, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_common",
       "choices": [
         {
           "label": "Dig deeper — the box felt too light",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 38,
           "skill": 2,
           "success_node": "secondary",
@@ -44,7 +56,7 @@
         },
         {
           "label": "Backtrack and check the marker stone's base",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 30,
           "skill": 2,
           "success_node": "secondary",
@@ -56,8 +68,20 @@
       "text": "Below the box, wrapped in oilskin: a compact medkit, two scrap-bound fuel cells, and a sealant tube marked with military stencilling. Whoever {{name}} was, they cached against a very specific emergency. You take it all and restack the cairn out of habit — some courtesies survive the apocalypse.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 2] },
-        { "res": 2, "qty": [1, 2] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_rare",
       "choices": []
@@ -66,31 +90,61 @@
   "hazards": {
     "trap_wire": {
       "text": "A trip-wire at ankle height snaps taut and releases a spring-loaded noise maker — a tin of stones that clatters across the scrub for thirty metres. Your heart hammers. No one comes, but they might.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "ambush": {
       "text": "The owner is still here — gaunt, desperate, and armed with a length of rebar. You take a blow across the shoulder before managing to talk them down and agree to split the find.",
-      "penalty": { "fatigue": 2, "ll": -7 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -7
+      },
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     },
     "false_bottom": {
       "text": "The false bottom is rigged to a pressure plate that fires a spring-loaded spike into your forearm as you lift it. The spike is short but the puncture is deep.",
-      "penalty": { "fatigue": 2, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "scorpion_nest": {
       "text": "You upend the marker stone onto a colony of pale scorpions. Two land on your wrist before you can shake them loose, and the stings are already swelling.",
-      "penalty": { "fatigue": 2, "ll": -6 },
+      "penalty": {
+        "ll": -6
+      },
       "status": 1,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "name": ["Decker", "Mara", "Silt", "Rovan", "Kess", "Tyne", "Birch", "Halev"],
-    "cache_type": ["Stash", "Lifeline", "Dead Drop", "Bolt-Hole Box", "Reserve", "Supply Cache", "Survival Kit", "Buried Insurance"]
+    "name": [
+      "Decker",
+      "Mara",
+      "Silt",
+      "Rovan",
+      "Kess",
+      "Tyne",
+      "Birch",
+      "Halev"
+    ],
+    "cache_type": [
+      "Stash",
+      "Lifeline",
+      "Dead Drop",
+      "Bolt-Hole Box",
+      "Reserve",
+      "Supply Cache",
+      "Survival Kit",
+      "Buried Insurance"
+    ]
   }
 }

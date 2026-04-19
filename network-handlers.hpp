@@ -92,7 +92,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   int      slot    = -1;
   char     name[12] = {0};
   uint16_t steps   = 0, score = 0;
-  uint8_t  ll = 0, food = 0, water = 0, fatigue = 0, rad = 0, sb = 0;
+  uint8_t  ll = 0, food = 0, water = 0, rad = 0, sb = 0;
   uint32_t connMs  = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -102,7 +102,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       memcpy(name, p.name, 12);
       steps   = p.steps;   score   = p.score; connMs = p.connectMs;
       ll      = p.ll;      food    = p.food;  water  = p.water;
-      fatigue = p.fatigue; rad     = p.radiation; sb = p.statusBits;
+      rad     = p.radiation; sb = p.statusBits;
       p.connected  = false;
       p.wsClientId = 0;
       p.resting    = false;  // clear stale resting flag on disconnect
@@ -122,8 +122,8 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   if (slot < 0) return;
 
   uint32_t sessSec = (millis() - connMs) / 1000;
-  Serial.printf("[DISCONN] Slot:%d \"%s\" | steps:%d score:%d | LL:%d F:%d W:%d T:%d R:%d sb:0x%02X | session:%lum%02lus | players now:%d/%d\n",
-    slot, name, steps, score, ll, food, water, fatigue, rad, sb,
+  Serial.printf("[DISCONN] Slot:%d \"%s\" | steps:%d score:%d | LL:%d F:%d W:%d R:%d sb:0x%02X | session:%lum%02lus | players now:%d/%d\n",
+    slot, name, steps, score, ll, food, water, rad, sb,
     (unsigned long)(sessSec / 60), (unsigned long)(sessSec % 60),
     G.connectedCount, MAX_PLAYERS);
 
@@ -166,6 +166,8 @@ static void wifiConnectTask(void* param) {
       "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}", ip.c_str());
     Serial.printf("[WIFI]    Connected! STA IP: %s  AP IP: %s\n",
       ip.c_str(), WiFi.softAPIP().toString().c_str());
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    Serial.println("[TIME] NTP sync started");
     // Cache in globals so handleConnect can echo creds to new clients.
     // ESP32 already saved these to its own internal NVS when WiFi.begin(ssid,pass)
     // was called above — no separate Preferences write needed.
@@ -259,13 +261,10 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.ll           = 7;
           p.food         = 6;
           p.water        = 6;
-          p.fatigue      = 0;
           p.radiation    = 0;
-          p.resolve      = 3;
           p.statusBits   = 0;  // clears ST_DOWNED
           p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
           memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-          memset(p.wounds,      0, sizeof(p.wounds));
           memset(p.invType,     0, sizeof(p.invType));
           memset(p.invQty,      0, sizeof(p.invQty));
           memset(p.equip,       0, sizeof(p.equip));
@@ -308,13 +307,10 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.ll           = 7;
           p.food         = 6;
           p.water        = 6;
-          p.fatigue      = 0;
           p.radiation    = 0;
-          p.resolve      = 3;
           p.statusBits   = 0;
           p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
           memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-          memset(p.wounds,      0, sizeof(p.wounds));
           memset(p.invType,     0, sizeof(p.invType));
           memset(p.invQty,      0, sizeof(p.invQty));
           memset(p.equip,       0, sizeof(p.equip));
@@ -528,7 +524,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           if (G.map[nr][nq].terrain == 0) { pl.q = (int16_t)nq; pl.r = (int16_t)nr; break; }
         }
         pl.ll = 7; pl.food = 4; pl.water = 4;
-        pl.fatigue = 0; pl.radiation = 0; pl.resolve = 3;
+        pl.radiation = 0;
         pl.actUsed = false; pl.resting = false;
         pl.movesLeft = (int8_t)effectiveMP(i);
       }
@@ -566,14 +562,13 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       memset(p.invType,     0, sizeof(p.invType));
       memset(p.invQty,      0, sizeof(p.invQty));
       memset(p.equip,       0, sizeof(p.equip));
-      memset(p.wounds,      0, sizeof(p.wounds));
       memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
       memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
       p.archetype    = (uint8_t)arch;
       p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
       p.ll           = 0;
       p.food         = 0; p.water     = 0;
-      p.fatigue      = 0; p.radiation = 0; p.resolve = 0;
+      p.radiation = 0;
       p.score        = 0; p.steps     = 0;
       p.statusBits   = 0;
       p.movesLeft    = 0;
@@ -1076,8 +1071,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
               memset(encounters[pid].pendingItemType, 0, ENC_MAX_ITEMS);
               memset(encounters[pid].pendingItemQty,  0, ENC_MAX_ITEMS);
               encounters[pid].pendingItemCount = 0;
-              encounters[pid].assistRisk       = 0;
-              encounters[pid].assistUsed       = 0;
               // Send encounter path directly to active player
               char pathBuf[72];
               int pathLen = snprintf(pathBuf, sizeof(pathBuf),
@@ -1109,24 +1102,25 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
   // ── Encounter: make a choice ─────────────────────────────────────────────────
   } else if (strncmp(tv, "enc_choice", (size_t)(te - tv)) == 0) {
-    // {"t":"enc_choice","ci":0,"cost_ll":0,"cost_fat":1,"cost_rad":0,"cost_food":0,
+    // {"t":"enc_choice","ci":0,"cost_ll":0,"cost_rad":0,"cost_food":0,
     //  "cost_water":0,"cost_resolve":0,"base_risk":35,"skill":2,
     //  "loot":[0,0,0,1,0],"lt":"urban_common","can_bank":true,
     //  "is_terminal":false,
-    //  "haz_ll":0,"haz_fat":0,"haz_rad":0,"haz_st":0,"haz_wt":0,"haz_wc":0,"haz_ends":0}
+    //  "haz_ll":0,"haz_rad":0,"haz_st":0,"haz_ends":0}
     #define ENC_JP(field, key) const char* field##_p = strstr(data, "\"" key "\""); \
       int field = 0; if (field##_p) { const char* vp = strchr(field##_p + strlen("\"" key "\""), ':'); if (vp) field = atoi(vp + 1); }
-    ENC_JP(costLL,  "cost_ll")   ENC_JP(costFat,  "cost_fat")
+    ENC_JP(costLL,  "cost_ll")
     ENC_JP(costRad, "cost_rad")  ENC_JP(costFood, "cost_food")
-    ENC_JP(costWat, "cost_water") ENC_JP(costRes, "cost_resolve")
+    ENC_JP(costWat, "cost_water")
     ENC_JP(costScrap, "cost_scrap")
     ENC_JP(baseRisk,"base_risk") ENC_JP(skill,    "skill")
     ENC_JP(isTerm,  "is_terminal")
-    ENC_JP(hazLL,   "haz_ll")   ENC_JP(hazFat, "haz_fat")
+    ENC_JP(hazLL,   "haz_ll")
     ENC_JP(hazRad,  "haz_rad")  ENC_JP(hazSt,  "haz_st")
-    ENC_JP(hazWt,   "haz_wt")   ENC_JP(hazWc,  "haz_wc")
+
     ENC_JP(hazEnds, "haz_ends") ENC_JP(hazLoseCon, "haz_lose_consumable")
     #undef ENC_JP
+
     // Parse loot array — indices map directly to p.inv[]: 0=Water 1=Food 2=Fuel 3=Medicine 4=Scrap.
     // NOTE: encounter JSON uses 0-based res indices; map cell.resource uses 1-based. Different spaces.
     uint8_t lootArr[5] = {0};
@@ -1152,26 +1146,24 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         Player& p = G.players[pid];
         ActiveEncounter& enc = encounters[pid];
         // Validate affordability
-        bool canAfford = (p.ll >= costLL) && (p.fatigue + costFat <= 8) &&
+        bool canAfford = (p.ll >= costLL) &&
                          (p.radiation + costRad <= 10) &&
                          (p.inv[1] >= costFood) && (p.inv[0] >= costWat) &&
-                         (p.resolve >= costRes) && (p.inv[4] >= costScrap);
+                         (p.inv[4] >= costScrap);
         if (!canAfford) {
           client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
           xSemaphoreGive(G.mutex); return;
         }
         // Deduct costs
         if (costLL)   { p.ll = (uint8_t)max(0, (int)p.ll - costLL); if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; } }
-        p.fatigue  = (uint8_t)constrain((int)p.fatigue  + costFat, 0, 8);
         p.radiation= (uint8_t)constrain((int)p.radiation+ costRad, 0, 10);
         p.inv[1]   = (uint8_t)max(0, (int)p.inv[1] - costFood);
         p.inv[0]   = (uint8_t)max(0, (int)p.inv[0] - costWat);
-        p.resolve  = (uint8_t)max(0, (int)p.resolve - costRes);
         p.inv[4]   = (uint8_t)max(0, (int)p.inv[4] - costScrap);
         updateRadStatus(p);
         // Compute DN and roll
         uint8_t dn = computeEncounterDN(pid, (uint8_t)constrain(baseRisk, 0, 100),
-                                        (uint8_t)constrain(skill, 0, 5), enc.assistRisk);
+                                        (uint8_t)constrain(skill, 0, 5));
         CheckResult cr = resolveCheck(pid, (uint8_t)constrain(skill, 0, 5), dn, 0);
         // Build result event
         GameEvent ev = {};
@@ -1204,7 +1196,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         } else {
           // Apply hazard penalties
           ev.encPenLL  = (int8_t)hazLL;
-          ev.encPenFat = (int8_t)hazFat;
           ev.encPenRad = (int8_t)hazRad;
           ev.encStatus = (uint8_t)hazSt;
           ev.encEnds   = (uint8_t)(hazEnds ? 1 : 0);
@@ -1216,7 +1207,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
             if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; }
             if (p.ll == 0) ledFlash(255, 0, 0);
           }
-          p.fatigue  = (uint8_t)constrain((int)p.fatigue  + hazFat, 0, 8);
           p.radiation= (uint8_t)constrain((int)p.radiation+ hazRad, 0, 10);
           if (hazRad) updateRadStatus(p);
           if (hazSt)  p.statusBits |= (uint8_t)hazSt;
@@ -1237,14 +1227,10 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
               p.invQty[target]  = 0;
             }
           }
-          if (hazWc > 0 && hazWt < 3) {
-            p.wounds[hazWt] = (uint8_t)min(10, (int)p.wounds[hazWt] + hazWc);
-            if (p.wounds[hazWt]) p.statusBits |= ST_WOUNDED;
-          }
           bool downed = (p.statusBits & ST_DOWNED) != 0;
           encounterEnded = downed || (hazEnds != 0);
-          // Auto-drain co-located allies: major hazard (LL loss or wound) costs 2, minor costs 1
-          bool isMajor = (hazLL < 0 || hazWc > 0);
+          // Auto-drain co-located allies: major hazard (LL loss) costs 2, minor costs 1
+          bool isMajor = (hazLL < 0);
           int drainAmt = isMajor ? 2 : 1;
           for (int ally = 0; ally < MAX_PLAYERS; ally++) {
             if (ally == pid || !G.players[ally].connected) continue;
@@ -1256,8 +1242,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
             ev.encDrains[ally] = (uint8_t)drained;
           }
         }
-        // Reset per-node assist state
-        enc.assistRisk = 0; enc.assistUsed = 0;
         // Result must be broadcast before EVT_ENC_END so allies see the outcome before the encounter clears.
         enqEvt(ev);
         if (encounterEnded) {

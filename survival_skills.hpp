@@ -35,8 +35,6 @@ static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, uint8_t bonu
   uint8_t sb = G.players[pid].statusBits;
   if (sb & ST_RADSICK)  cm -= 1;                           // Rad-Sick: −1 all
   if (sb & ST_FEVERED)  cm -= 1;                           // Fevered:  −1 all
-  if (G.players[pid].wounds[1] > 0)                cm -= 1; // Major wound: −1 all
-  if (skill == SK_ENDURE && G.players[pid].wounds[0] > 0) cm -= 1; // Minor: −1 Endure only
   r.mods   = cm;
   r.total  = r.r1 + r.r2 + r.skillVal + r.mods;
   r.success = (r.total >= r.dn);

@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Slip away before anyone notices you",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 0,
           "success_node": "fled_safely",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Enter and search the tip jars while they perform",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 40,
           "skill": 2,
           "success_node": "tip_jar_loot",
@@ -35,7 +35,13 @@
       "text": "The jars are surprisingly heavy. Not everyone out here is broke. You stuff your pockets while an eight-foot mutant in a feather boa slowly and deliberately misses every beat. It would be saddening if you could look directly at it. You keep your eyes on the money.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [2, 4] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
       ],
       "loot_table": "urban_junk",
       "choices": []
@@ -44,18 +50,28 @@
   "hazards": {
     "noticed_fleeing": {
       "text": "A performer spots you through the tent flap as you turn to leave. They interpret this as audience participation. You spend the next twenty minutes being enthusiastically incorporated into the act before you can escape. Your sanity takes the hit.",
-      "penalty": { "fatigue": 2, "resolve": -1 },
+      "penalty": {
+        "ll": -1
+      },
       "status": 2,
       "ends_encounter": true
     },
     "performance_incident": {
       "text": "One of the performers sheds a limb mid-spin. It lands on you. The screaming is mutual. You run. You don't stop running for a while.",
-      "penalty": { "fatigue": 3, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 1,
       "ends_encounter": true
     }
   },
   "placeholders": {
-    "colour": ["Pink", "Green", "Orange", "Yellow", "Red"]
+    "colour": [
+      "Pink",
+      "Green",
+      "Orange",
+      "Yellow",
+      "Red"
+    ]
   }
 }

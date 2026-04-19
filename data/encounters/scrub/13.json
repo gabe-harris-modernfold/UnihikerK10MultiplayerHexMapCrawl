@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Stomp them methodically — work from the outside in",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 35,
           "skill": 5,
           "success_node": "roombas_destroyed",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Jump on a rock and wait them out — they can't climb",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 20,
           "skill": 0,
           "success_node": "waited_them_out",
@@ -29,13 +29,19 @@
       "text": "You work through them systematically, heel to chassis, until the last one makes a sound like a disappointed sigh and stops moving. The wreckage is modest but useful — lithium cells, a few copper wire bundles, salvageable motor housing. You keep an eye on the brush for stragglers. None come. You consider your boots and decide they've had worse days.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [2, 3] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
       ],
       "loot_table": "scrub_common",
       "choices": [
         {
           "label": "Strip the motors for more components",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 10,
           "skill": 2,
           "success_node": "motors_stripped",
@@ -47,7 +53,13 @@
       "text": "The swarm circles for twenty minutes before their batteries give out one by one. You climb down and collect what's left. Less satisfying than stomping but significantly less bloody.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": []
     },
@@ -55,7 +67,13 @@
       "text": "Sparky Bits everywhere. The motors are dense with reusable components — the kind of thing that trades well or builds into something useful. Not a bad haul for what was technically a fight with vacuum cleaners.",
       "can_bank": true,
       "loot": [
-        { "item": 22, "qty": [1, 2] }
+        {
+          "item": 22,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "scrub_common",
       "choices": []
@@ -64,20 +82,29 @@
   "hazards": {
     "ankle_sliced": {
       "text": "The first one gets under your guard and the taped knife opens a clean cut across your left ankle. You stomp it flat in retaliation. You stomp several more before the blood in your boot starts to feel concerning.",
-      "penalty": { "fatigue": 2, "ll": -3 },
+      "penalty": {
+        "ll": -3
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": false
     },
     "no_rock_nearby": {
       "text": "There is no rock. The scrub is flat for a hundred metres in every direction. The Roombas are patient. They will wait. You have to fight them anyway, and you fight them worse for having tried to avoid it.",
-      "penalty": { "fatigue": 3, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 4,
       "ends_encounter": false
     },
     "battery_leak": {
       "text": "A cracked lithium cell in the third motor vents directly onto your hand. It burns before you can pull back. Minor, but memorable.",
-      "penalty": { "fatigue": 1, "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "status": 1,
       "ends_encounter": false
     }

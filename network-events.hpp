@@ -94,12 +94,12 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
-          "\"rad\":%d,\"fat\":%d,\"expd\":%d}",
+          "\"rad\":%d,\"expd\":%d}",
           ev.pid, (int)ev.dawnDay,
           (int)ev.dawnF, (int)ev.dawnW, (int)ev.dawnLL,
           (int)ev.dawnMP, (int)ev.dawnLLDelta,
           (int)ev.dawnFth, (int)ev.dawnWth,
-          (int)ev.radR, (int)ev.dawnFat, (int)ev.dawnExpD);
+          (int)ev.radR, (int)ev.dawnExpD);
         ws.textAll(buf, len);
         // K10 event log — only once per day (pid==0 guards double-logging for 6-player dawn)
         if (ev.pid == 0) {
@@ -129,14 +129,14 @@ static void drainEvents() {
       }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
-          "\"mp\":%d,\"ll\":%d,\"fat\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
-          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"resd\":%d,\"sd\":%d,\"scoreD\":%d}",
+          "\"mp\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
+          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,\"scoreD\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
-          (int)ev.actNewMP, (int)ev.actNewLL, (int)ev.actNewFat,
+          (int)ev.actNewMP, (int)ev.actNewLL,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
           (int)ev.actDn, (int)ev.actTot,
           (int)ev.radD, (int)ev.radR,
-          (int)ev.actCnd, (int)ev.actResD, (int)ev.actScrapD, (int)ev.actScoreD);
+          (int)ev.actCnd, (int)ev.actScrapD, (int)ev.actScoreD);
         ws.textAll(buf, len);
         break;
 
@@ -232,27 +232,17 @@ static void drainEvents() {
         k10Play(MOTIF_DARK_ENTRY);
         break;
 
-      case EVT_ENC_ASSIST:
-        len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"enc_assist\",\"pid\":%d,\"tgt\":%d,\"res\":%d,\"rd\":%d}",
-          ev.pid, (int)ev.tradeTo, (int)ev.encAssistRes, (int)ev.encRiskRed);
-        ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d\xE2\x86\x92P%d assist (-4)",
-            (int)ev.pid, (int)ev.tradeTo);
-          k10LogAdd(lb); }
-        break;
-
       case EVT_ENC_RESULT: {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
-          "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penFat\":%d,\"penRad\":%d,"
+          "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penRad\":%d,"
           "\"st\":%d,\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.encItemType, (int)ev.encItemQty,
-          (int)ev.encPenLL, (int)ev.encPenFat, (int)ev.encPenRad,
+          (int)ev.encPenLL, (int)ev.encPenRad,
           (int)ev.encStatus, (int)ev.encEnds,
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);

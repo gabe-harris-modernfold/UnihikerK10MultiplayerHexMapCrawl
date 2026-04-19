@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Hand over the Intimidating Mask",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "mask_delivered",
@@ -22,7 +22,13 @@
       "can_bank": true,
       "loot_table": "drop_motorbike",
       "loot": [
-        { "res": 2, "qty": [2, 3] }
+        {
+          "res": 2,
+          "qty": [
+            2,
+            3
+          ]
+        }
       ],
       "choices": []
     }
@@ -30,7 +36,7 @@
   "hazards": {
     "minor_complication": {
       "text": "Jack gets the mask tangled in the romper's neck drawstring trying to put it on. You wait. It takes a while. No one speaks of it.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     }
   },

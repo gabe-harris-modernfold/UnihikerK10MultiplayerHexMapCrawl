@@ -43,7 +43,9 @@
       "Bash(cmd.exe /c \"dir /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\src\\\\\"\")",
       "Bash(cmd.exe /c \"dir /b \\\\\"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\UNIHIKER\\\\hardware\\\\esp32\\\\0.0.3\\\\libraries\\\\unihiker_k10\\\\src\\\\\"\")",
       "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\UNIHIKER\\\\hardware\\\\esp32\\\\0.0.3\\\\libraries\\\\unihiker_k10\\\\\"\")",
-      "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\\"\")"
+      "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\\"\")",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)"
     ]
   }
 }

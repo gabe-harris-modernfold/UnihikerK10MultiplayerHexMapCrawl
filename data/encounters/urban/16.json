@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Open the door",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 100,
           "skill": 0,
           "success_node": "also_explodes",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Check the seams first — something seems off",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 30,
           "skill": 2,
           "success_node": "trap_disarmed",
@@ -29,7 +29,13 @@
       "text": "There it is: a pressure-release valve welded to the inside of the door frame, connected to a tank of compressed methane and an igniter from a pre-war grill lighter. Crudely done but effective. You disarm it, ventilate the interior, and use the facility unmolested. Small victory. Important victory.",
       "can_bank": false,
       "loot": [
-        { "res": 2, "qty": [1, 2] }
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": []
     },
@@ -43,7 +49,9 @@
   "hazards": {
     "methane_blast": {
       "text": "The door opens and the methane plume meets the igniter and you exit this situation backward, on fire, briefly airborne. The Stink status is the least of your immediate concerns but it will be the most lasting.",
-      "penalty": { "fatigue": 3, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 128,
       "ends_encounter": true
     }

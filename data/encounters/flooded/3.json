@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Try to start the generator.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 20,
           "skill": 2,
           "success_node": "pump_interior",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Force the hatch and go in dark.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 25,
           "skill": 5,
           "success_node": "pump_interior",
@@ -29,15 +29,33 @@
       "text": "The interior is dim and clammy. Pump housings the size of barrels line the walls, most seized with rust. A wall-mounted cabinet is padlocked but the hinges have corroded through. Inside: service tools, a small fuel can, and a sealed box of water purification tablets.",
       "can_bank": true,
       "loot": [
-        { "res": 2, "qty": [1, 2] },
-        { "res": 0, "qty": [1, 2] },
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "flooded_common",
       "choices": [
         {
           "label": "Drain the generator's fuel reserve.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 40,
           "skill": 2,
           "success_node": "fuel_drained",
@@ -49,8 +67,20 @@
       "text": "You siphon every drop from the tank into your containers. The generator coughs once and goes cold. In the now-silent building you hear slow dripping and little else. You leave through the hatch and drop into the grey water below, heavier than you arrived.",
       "can_bank": true,
       "loot": [
-        { "res": 2, "qty": [2, 4] },
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 2,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "flooded_rare",
       "choices": []
@@ -59,18 +89,27 @@
   "hazards": {
     "generator_backfire": {
       "text": "The engine turns over then kicks back through the pull-cord, wrenching your shoulder hard. The cord snaps and whips across your forearm.",
-      "penalty": { "ll": -1, "fatigue": 2 },
-      "wound": [0, 1],
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "hatch_gas": {
       "text": "A pocket of foul gas hits you as the hatch opens. You hold your breath but the dizziness doesn't leave for an hour.",
-      "penalty": { "fatigue": 2, "radiation": 1 },
+      "penalty": {
+        "radiation": 1
+      },
       "ends_encounter": false
     },
     "fuel_spill": {
       "text": "The coupling bursts under pressure and fuel sprays across the floor. One spark and this building becomes a fireball. You run. The generator and its remaining fuel burn behind you as you hit the water.",
-      "penalty": { "ll": -1, "fatigue": 2 },
+      "penalty": {
+        "ll": -1
+      },
       "ends_encounter": true
     }
   },

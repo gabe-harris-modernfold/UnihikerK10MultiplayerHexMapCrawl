@@ -9,7 +9,9 @@
       "choices": [
         {
           "label": "Grab a jug and out-drink them all",
-          "cost": { "fatigue": 3, "food": 1 },
+          "cost": {
+            "food": 1
+          },
           "base_risk": 45,
           "skill": 5,
           "success_node": "party_won",
@@ -17,7 +19,7 @@
         },
         {
           "label": "Lurk at the edge and pick pockets while they're distracted",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 35,
           "skill": 2,
           "success_node": "party_won",
@@ -29,8 +31,20 @@
       "text": "You emerge from the chaos with your dignity only moderately destroyed. The crowd is too far gone to notice or care. Scattered around the bonfire perimeter: dropped packs, tipped-over crates, a whole section of collapsed shelving from someone's pre-war garage stash. You help yourself while Jack the Romper explains to no one in particular that he once arm-wrestled a deathclaw and tied.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [3, 6] },
-        { "res": 1, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            3,
+            6
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "scrub_rare",
       "choices": []
@@ -39,19 +53,32 @@
   "hazards": {
     "drinking_loss": {
       "text": "The fermented rad-roach milk hits you like a structural collapse. The next thing you know, you're face-down in the scrub forty metres from the fire, missing a boot and two items from your pack that you can't quite account for.",
-      "penalty": { "fatigue": 4, "ll": -6 },
+      "penalty": {
+        "ll": -6
+      },
       "status": 2,
       "ends_encounter": true
     },
     "caught_stealing": {
       "text": "A mutant with the peripheral vision of something that evolved in a very dangerous environment grabs your wrist mid-reach. The beating is enthusiastic and thorough. You are ejected from the party grounds with emphasis.",
-      "penalty": { "fatigue": 3, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": true
     }
   },
   "placeholders": {
-    "noise": ["Screaming", "Howling", "Catastrophe", "Disaster", "Spectacle"]
+    "noise": [
+      "Screaming",
+      "Howling",
+      "Catastrophe",
+      "Disaster",
+      "Spectacle"
+    ]
   }
 }

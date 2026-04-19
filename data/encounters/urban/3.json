@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Take the stairwell up to mid-floor units",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 20,
           "skill": 4,
           "success_node": "midfloor",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Search the ground-floor units first",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 10,
           "skill": 2,
           "success_node": "ground_units",
@@ -29,13 +29,25 @@
       "text": "The ground-floor units were the first to be picked over, but a bathroom cabinet sealed behind a swollen door yields a small find — and the kitchen of one apartment smells faintly of recent cooking. Someone on an upper floor is still alive and coming down to forage. You have minutes.",
       "can_bank": true,
       "loot": [
-        { "res": 0, "qty": [1, 2] },
-        { "res": 1, "qty": [1, 2] }
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": [
         {
           "label": "Climb to the upper floors before they return",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 35,
           "skill": 5,
           "success_node": "penthouse_cache",
@@ -43,7 +55,7 @@
         },
         {
           "label": "Leave before they find you here",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 0,
           "success_node": "penthouse_cache",
@@ -55,12 +67,18 @@
       "text": "The mid-floor corridor smells of damp concrete and the particular sweetness of long-term decay. Unit doors hang open in varying degrees of violence. One apartment near the end is different — its door is still on its hinges, locked from outside with a padlock. Whoever sealed it didn't want anyone getting in, or perhaps didn't want something getting out.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "choices": [
         {
           "label": "Force the padlocked unit door",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 45,
           "skill": 2,
           "success_node": "penthouse_cache",
@@ -72,9 +90,27 @@
       "text": "You find the {{cache_desc}} — packed into a hollow behind a false wall panel, sealed in plastic bins. The label reads a first name and a locker number, nothing else. Whoever hid this planned to come back for it. The view from the window shows three other towers, all dark. You are the only one moving in this city block.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [2, 4] },
-        { "res": 0, "qty": [1, 3] },
-        { "res": 3, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "urban_rare",
       "choices": []
@@ -83,37 +119,64 @@
   "hazards": {
     "stair_collapse": {
       "text": "A landing gives way under your foot. You catch the railing but your leg punches through to the floor below, scraping muscle against broken concrete before you haul yourself back up.",
-      "penalty": { "fatigue": 3, "ll": -10 },
+      "penalty": {
+        "ll": -10
+      },
       "status": 1,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "ground_squatter": {
       "text": "A unit is occupied — a hollow-eyed woman watches you from behind a barricade of furniture, saying nothing. You back out slowly, but not before she has a good look at what you are carrying.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "resident_confrontation": {
       "text": "They are already on their way down. You meet on the stairs — a wiry man with a length of rebar and nothing left to lose. The fight is ugly and brief. You come out worse.",
-      "penalty": { "fatigue": 3, "ll": -12 },
+      "penalty": {
+        "ll": -12
+      },
       "status": 1,
-      "wound": [1, 1],
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     },
     "hasty_exit": {
       "text": "You move too fast and trip a wire strung across the lobby threshold — a warning rig for the resident upstairs. You hear shouting begin above you as you hit the street running.",
-      "penalty": { "fatigue": 2 },
+      "penalty": {},
       "ends_encounter": true
     },
     "sealed_room": {
       "text": "The smell that rolls out when the door opens is enough to drop you to one knee. Whatever was sealed inside has been dead for a long time, but the enclosed air carries something else — mold, rot, a biological foulness that coats the back of your throat.",
-      "penalty": { "fatigue": 2, "radiation": 2 },
+      "penalty": {
+        "radiation": 2
+      },
       "status": 2,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "tower": ["Graymont", "Ashcroft", "Duskfield", "Siltmore", "Ironpeak", "Coldwall", "Rubble Row"],
-    "cache_desc": ["bug-out cache", "survival stash", "hidden emergency kit", "rationed long-haul supply", "carefully packed go-bag", "methodical hoarder's reserve"]
+    "tower": [
+      "Graymont",
+      "Ashcroft",
+      "Duskfield",
+      "Siltmore",
+      "Ironpeak",
+      "Coldwall",
+      "Rubble Row"
+    ],
+    "cache_desc": [
+      "bug-out cache",
+      "survival stash",
+      "hidden emergency kit",
+      "rationed long-haul supply",
+      "carefully packed go-bag",
+      "methodical hoarder's reserve"
+    ]
   }
 }

@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Try to follow his directions — they might mean something",
-          "cost": { "fatigue": 2, "resolve": -1 },
+          "cost": {},
           "base_risk": 60,
           "skill": 0,
           "success_node": "totally_lost",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Nod politely, eat something, and then wander off into the scrub",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 70,
           "skill": 0,
           "success_node": "totally_lost",
@@ -35,7 +35,9 @@
   "hazards": {
     "totally_lost_worse": {
       "text": "You come to your senses somewhere even less familiar than before, with a mild headache and the distinct sensation of having made a wrong turn at a conceptual level. The drifter's voice has faded entirely. Where are you? Excellent question.",
-      "penalty": { "fatigue": 3, "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "ends_encounter": true
     }
   },

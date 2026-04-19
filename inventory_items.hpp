@@ -140,9 +140,7 @@ static bool useItem(int pid, uint8_t slotIdx) {
   if (def->statMods[STAT_LL])      p.ll        = (uint8_t)constrain((int)p.ll      + def->statMods[STAT_LL],      0, (int)effectiveMaxLL(pid));
   if (def->statMods[STAT_FOOD])    p.food      = (uint8_t)constrain((int)p.food    + def->statMods[STAT_FOOD],    1, 6);
   if (def->statMods[STAT_WATER])   p.water     = (uint8_t)constrain((int)p.water   + def->statMods[STAT_WATER],   1, 6);
-  if (def->statMods[STAT_FATIGUE]) p.fatigue   = (uint8_t)constrain((int)p.fatigue + def->statMods[STAT_FATIGUE], 0, 8);
   if (def->statMods[STAT_RAD])     p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD],   0, 10);
-  if (def->statMods[STAT_RESOLVE]) p.resolve   = (uint8_t)constrain((int)p.resolve + def->statMods[STAT_RESOLVE], 0, 5);
   if (def->statMods[STAT_MP])      p.movesLeft = (int8_t)max(0, (int)p.movesLeft   + def->statMods[STAT_MP]);
   updateRadStatus(p);
 
@@ -339,14 +337,13 @@ static bool hasPassTerrainBit(int pid, uint8_t terrainBit) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Effective Movement Points = LL − major-wound penalty (max 2) − encumbrance penalty
+// Effective Movement Points = LL − encumbrance penalty
 //   + STAT_MP from equipment (items with no opCost always active;
 //     fuel-gated items like motorbike have STAT_MP applied in applyDawnItemCosts).
 // Called while holding G.mutex.
 static int effectiveMP(int pid) {
   Player& p  = G.players[pid];
   int     mp = (int)p.ll + 3;
-  mp -= min((int)p.wounds[1], 2);          // major wounds: −1 each, max −2
   // Encumbrance: count legacy inv slots used
   int used = 0;
   for (int k = 0; k < 5; k++) used += (int)p.inv[k];

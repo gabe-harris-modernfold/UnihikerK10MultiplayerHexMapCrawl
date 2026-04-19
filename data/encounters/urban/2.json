@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Bypass the lock and get into the armory",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 25,
           "skill": 2,
           "success_node": "armory",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Search the bullpen desks and lockers",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 2,
           "success_node": "bullpen",
@@ -29,13 +29,25 @@
       "text": "The bullpen is a ruin of overturned desks and faded paper. Someone has been living here — a nest of scorched foam and filthy cloth sits between two filing cabinets, still warm. Lockers line the far wall, most forced open, but a few still hold their standard-issue contents.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [2, 3] },
-        { "res": 1, "qty": [1, 2] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": [
         {
           "label": "Follow the warm nest trail to the armory",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 45,
           "skill": 0,
           "success_node": "armory",
@@ -47,8 +59,20 @@
       "text": "The armory is a {{state}}. Most racks are stripped bare, but the evidence cage in the corner was overlooked — padlocked shut, tagged parcels still inside, a few sealed MRE bags someone confiscated and never logged out. You work through the cage methodically, taking what hasn't turned to dust.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [3, 5] },
-        { "res": 1, "qty": [2, 3] }
+        {
+          "res": 4,
+          "qty": [
+            3,
+            5
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        }
       ],
       "loot_table": "urban_rare",
       "choices": []
@@ -57,27 +81,54 @@
   "hazards": {
     "lock_shock": {
       "text": "The dangling wire is live — a capacitor discharge from a backup battery slams through you when your tool makes contact. Your teeth ring for ten minutes after.",
-      "penalty": { "fatigue": 3, "ll": -7 },
+      "penalty": {
+        "ll": -7
+      },
       "status": 8,
       "ends_encounter": false
     },
     "squatter_ambush": {
       "text": "Whoever nested in that bullpen comes back before you finish. A thrown chunk of concrete catches you across the temple before you can retreat to cover.",
-      "penalty": { "fatigue": 2, "ll": -10 },
+      "penalty": {
+        "ll": -10
+      },
       "status": 1,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "resident_attack": {
       "text": "The nest's owner — gaunt, feverish, armed with a fire extinguisher — is already inside the armory and charges the moment you enter. You take a hard blow across the ribs before you can break away.",
-      "penalty": { "fatigue": 3, "ll": -12 },
+      "penalty": {
+        "ll": -12
+      },
       "status": 1,
-      "wound": [1, 1],
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "precinct": ["Ash District", "Cinder Ward", "Blackwall", "Irongate", "Dustfall", "Greyline", "Slagside"],
-    "state": ["stripped shell", "picked-over carcass", "methodical ruin", "raided hulk", "gutted cage", "systematic loss"]
+    "precinct": [
+      "Ash District",
+      "Cinder Ward",
+      "Blackwall",
+      "Irongate",
+      "Dustfall",
+      "Greyline",
+      "Slagside"
+    ],
+    "state": [
+      "stripped shell",
+      "picked-over carcass",
+      "methodical ruin",
+      "raided hulk",
+      "gutted cage",
+      "systematic loss"
+    ]
   }
 }

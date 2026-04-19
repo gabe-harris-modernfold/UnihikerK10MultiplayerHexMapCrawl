@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Enter the burrow quietly.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 30,
           "skill": 0,
           "success_node": "den_chamber",
@@ -20,12 +20,22 @@
     "den_chamber": {
       "text": "The den chamber is dry and lined with matted fur. Cached kills and gnawed scraps are piled in the corners — some still edible.",
       "can_bank": true,
-      "loot": [{ "res": 1, "qty": [2, 3] }],
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
       "loot_table": "forest_common",
       "choices": [
         {
           "label": "Search deeper for anything the creature couldn't eat.",
-          "cost": { "fatigue": 1, "ll": 1 },
+          "cost": {
+            "ll": 1
+          },
           "base_risk": 55,
           "skill": 1,
           "success_node": "back_of_den",
@@ -36,7 +46,22 @@
     "back_of_den": {
       "text": "At the rear of the den, a human pack. The creature collected it. A sealed tin and wrapped cloth bundle are inside, untouched.",
       "can_bank": true,
-      "loot": [{ "res": 3, "qty": [1, 2] }, { "res": 4, "qty": [1, 2] }],
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
       "loot_table": "forest_rare",
       "choices": []
     }
@@ -44,18 +69,28 @@
   "hazards": {
     "creature_returns": {
       "text": "A low growl behind you. You sprint out and it doesn't follow, but your heart nearly stops.",
-      "penalty": { "fatigue": 2 },
+      "penalty": {},
       "ends_encounter": true
     },
     "claw_trap": {
       "text": "A rusted snare set by the creature's previous occupant snaps shut on your wrist.",
-      "penalty": { "ll": -2 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        1,
+        1
+      ],
       "status": 4,
       "ends_encounter": true
     }
   },
   "placeholders": {
-    "creature": ["wolf", "boar", "large canid", "mutant badger"]
+    "creature": [
+      "wolf",
+      "boar",
+      "large canid",
+      "mutant badger"
+    ]
   }
 }

@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Browse the stalls openly.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 0,
           "success_node": "browsing",
@@ -17,7 +17,9 @@
         },
         {
           "label": "Ask the keeper for what you need.",
-          "cost": { "water": 1 },
+          "cost": {
+            "water": 1
+          },
           "base_risk": 10,
           "skill": 4,
           "success_node": "browsing",
@@ -29,14 +31,26 @@
       "text": "The keeper gestures to a back corner where salvage is piled under a canvas sheet. You find food rations and a handful of scrap worth trading. The crowd thins and the keeper watches you less carefully now.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [1, 2] },
-        { "res": 4, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "loot_table": "settlement_common",
       "choices": [
         {
           "label": "Press the keeper about the back room.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 40,
           "skill": 2,
           "success_node": "back_room",
@@ -48,8 +62,20 @@
       "text": "Behind a hanging tarp, shelves hold pre-war medical supplies and sealed canisters of fuel. The keeper gives you a long look and names a fair price for what you can carry. You leave with more than you came for.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 2] },
-        { "res": 2, "qty": [0, 1] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            0,
+            1
+          ]
+        }
       ],
       "loot_table": "settlement_rare",
       "choices": []
@@ -58,17 +84,21 @@
   "hazards": {
     "pickpocket": {
       "text": "A child bumps your arm and vanishes into the crowd. A ration pack is missing from your belt.",
-      "penalty": { "food": -1 },
+      "penalty": {
+        "food": -1
+      },
       "ends_encounter": false
     },
     "bad_deal": {
       "text": "The keeper palms your water and shrugs — the goods are damaged and worthless. You don't get it back.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "guard_confrontation": {
       "text": "A guard blocks the doorway and shoves you hard into the shelving. You stumble out into the street, empty-handed and bruised.",
-      "penalty": { "ll": -1, "fatigue": 2 },
+      "penalty": {
+        "ll": -1
+      },
       "ends_encounter": true
     }
   },

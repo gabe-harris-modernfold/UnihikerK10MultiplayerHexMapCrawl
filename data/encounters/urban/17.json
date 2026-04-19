@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Insert a Pre-War Coin and play",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "game_starts",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Try to open the cabinet and strip the components",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 35,
           "skill": 2,
           "success_node": "cabinet_stripped",
@@ -31,7 +31,7 @@
       "choices": [
         {
           "label": "Play for high score — aim for 10+",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 40,
           "skill": 5,
           "success_node": "high_score",
@@ -49,7 +49,13 @@
       "text": "The components are good — power board, display unit, original control chips. Whatever was keeping this running had decent engineering behind it.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [2, 4] }
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
       ],
       "loot_table": "urban_common",
       "choices": []
@@ -58,18 +64,22 @@
   "hazards": {
     "coin_rejected": {
       "text": "The coin slot takes your coin, considers it for a moment, and returns it with the energy of something that has standards. The screen continues displaying its attract loop.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "low_score": {
       "text": "You reach 7. The cabinet makes a sound like a disappointed sigh — a specific, designed sound, deliberately engineered to make you feel that. Then it shocks you through the controls. Not severely. Just enough. The panel stays shut.",
-      "penalty": { "fatigue": 1, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 2,
       "ends_encounter": true
     },
     "cabinet_defends_itself": {
       "text": "The cabinet detects the attempted disassembly and discharges its full power reserve through the chassis. You let go fast but not fast enough. The shock is significant and the components are now locked behind a magnetic shutter that was not there before.",
-      "penalty": { "fatigue": 2, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 2,
       "ends_encounter": false
     }

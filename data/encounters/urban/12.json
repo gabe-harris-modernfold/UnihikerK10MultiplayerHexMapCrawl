@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Take it carefully — this could be valuable",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 15,
           "skill": 2,
           "success_node": "bottle_retrieved",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Open it immediately and take a sip — curiosity wins",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "bottle_sampled",
@@ -36,7 +36,13 @@
       "can_bank": true,
       "loot_table": "drop_trippy_juice",
       "loot": [
-        { "res": 0, "qty": [1, 1] }
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
       ],
       "choices": []
     }
@@ -44,12 +50,20 @@
   "hazards": {
     "glass_shelf_collapse": {
       "text": "The shelf unit chose this moment to finish falling. The glass pane shatters and you pull back fast but catch a long shallow cut across your palm from the leading edge.",
-      "penalty": { "fatigue": 1, "ll": -3 },
+      "penalty": {
+        "ll": -3
+      },
       "status": 4,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "adj": ["Glowing", "Intact", "Sealed", "Pristine", "Impossible"]
+    "adj": [
+      "Glowing",
+      "Intact",
+      "Sealed",
+      "Pristine",
+      "Impossible"
+    ]
   }
 }

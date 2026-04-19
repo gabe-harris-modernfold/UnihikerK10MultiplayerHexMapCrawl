@@ -36,20 +36,23 @@ void saveGame() {
       for (int i = 0; i < MAX_PLAYERS; i++) {
         Player& pl = G.players[i];
         SavePlayer sp = {};
-        memcpy(sp.name, pl.name, 12);
+        memcpy(sp.name, pl.name, 16);
         sp.archetype = pl.archetype;
         memcpy(sp.skills, pl.skills, 6);
         sp.q = pl.q; sp.r = pl.r;
         sp.ll = pl.ll; sp.food = pl.food; sp.water = pl.water;
-        sp.fatigue = pl.fatigue; sp.radiation = pl.radiation; sp.resolve = pl.resolve;
+        sp.radiation = pl.radiation;
         memcpy(sp.inv, pl.inv, 5);
         memcpy(sp.invType, pl.invType, 12);
         memcpy(sp.invQty, pl.invQty, 12);
         memcpy(sp.equip,  pl.equip,  EQUIP_SLOTS);
         sp.invSlots = pl.invSlots;
-        memcpy(sp.wounds, pl.wounds, 3);
         sp.statusBits = pl.statusBits;  // preserve ST_DOWNED so pick handler triggers respawn on reload
         sp.score = pl.score; sp.steps = pl.steps;
+        sp.encCount     = pl.encCount;
+        sp.movesLeft    = pl.movesLeft;
+        sp.fThreshBelow = pl.fThreshBelow;
+        sp.wThreshBelow = pl.wThreshBelow;
         memcpy(sp.surveyedMap, pl.surveyedMap, sizeof(sp.surveyedMap));
         sp.used = (pl.name[0] != '\0') ? 1 : 0;
         p.write((uint8_t*)&sp, sizeof(sp));
@@ -108,20 +111,23 @@ bool tryLoadSave() {
       if (p.read((uint8_t*)&sp, sizeof(sp)) != sizeof(sp)) break;
       if (!sp.used) continue;
       Player& pl = G.players[i];
-      memcpy(pl.name, sp.name, 12);
+      memcpy(pl.name, sp.name, 16);
       pl.archetype = sp.archetype;
       memcpy(pl.skills, sp.skills, 6);
       pl.q = sp.q; pl.r = sp.r;
       pl.ll = sp.ll; pl.food = sp.food; pl.water = sp.water;
-      pl.fatigue = sp.fatigue; pl.radiation = sp.radiation; pl.resolve = sp.resolve;
+      pl.radiation = sp.radiation;
       memcpy(pl.inv, sp.inv, 5);
       memcpy(pl.invType, sp.invType, 12);
       memcpy(pl.invQty, sp.invQty, 12);
       memcpy(pl.equip,  sp.equip,  EQUIP_SLOTS);
       pl.invSlots = sp.invSlots;
-      memcpy(pl.wounds, sp.wounds, 3);
       pl.statusBits = sp.statusBits;
       pl.score = sp.score; pl.steps = sp.steps;
+      pl.encCount     = sp.encCount;
+      pl.movesLeft    = sp.movesLeft;
+      pl.fThreshBelow = sp.fThreshBelow;
+      pl.wThreshBelow = sp.wThreshBelow;
       memcpy(pl.surveyedMap, sp.surveyedMap, sizeof(pl.surveyedMap));
       pl.connected = false; pl.wsClientId = 0;
     }

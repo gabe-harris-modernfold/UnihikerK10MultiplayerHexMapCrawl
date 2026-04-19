@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Ask what's wrong — try to help",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 10,
           "skill": 0,
           "success_node": "jack_explains",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Ignore Jack and strip the helicopter yourself",
-          "cost": { "fatigue": 4 },
+          "cost": {},
           "base_risk": 35,
           "skill": 2,
           "success_node": "solo_strip",
@@ -31,7 +31,7 @@
       "choices": [
         {
           "label": "Agree to help — go get his mask from the gas station",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 0,
           "success_node": "quest_accepted",
@@ -39,7 +39,7 @@
         },
         {
           "label": "Decline — help strip the helicopter instead",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 25,
           "skill": 2,
           "success_node": "solo_strip",
@@ -57,8 +57,20 @@
       "text": "Jack watches you work with the quiet dignity of someone choosing not to comment. The helicopter yields a solid haul — rotor components, fuselage scrap, a sealed maintenance kit under the seats. Not the Motorbike he would have built you, but useful.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [3, 6] },
-        { "res": 2, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            3,
+            6
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "scrub_rare",
       "choices": []
@@ -67,14 +79,19 @@
   "hazards": {
     "jack_offended": {
       "text": "Jack stands up, retrieves his toolkit, and walks around to the other side of the helicopter without a word. You have made a grown man in a pink romper feel dismissed, and somehow that lands.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "rotor_injury": {
       "text": "A blade section catches on the fuselage as you drag it free and swings back at low height. You get the forearm up in time to protect your face. The forearm suffers for its sacrifice.",
-      "penalty": { "fatigue": 2, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 4,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": false
     }
   },

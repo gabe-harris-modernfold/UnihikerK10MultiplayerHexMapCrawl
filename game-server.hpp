@@ -195,6 +195,17 @@ static void setupWiFiAndServer() {
       j += ",\"crisis\":";      j += G.crisisState  ? "true" : "false";
       j += ",\"connected\":";   j += G.connectedCount;
       j += ",\"evtQueue\":";    j += pendingCount;
+      {
+        struct tm ti;
+        bool ok = (getLocalTime(&ti, 0) && ti.tm_year > 100);
+        j += ",\"rtc\":{\"synced\":"; j += ok ? "true" : "false";
+        if (ok) {
+          char ts[20]; strftime(ts, sizeof(ts), "%F %T", &ti);
+          j += ",\"utc\":\""; j += ts; j += "\"";
+          j += ",\"epoch\":"; j += (uint32_t)mktime(&ti);
+        }
+        j += "}";
+      }
 
       int shelters = 0, impShelters = 0, poiCount = 0;
       int resCnt[6] = {0,0,0,0,0,0};
@@ -290,9 +301,7 @@ static void setupWiFiAndServer() {
         j += ",\"ll\":";          j += p.ll;
         j += ",\"food\":";        j += p.food;
         j += ",\"water\":";       j += p.water;
-        j += ",\"fatigue\":";     j += p.fatigue;
         j += ",\"rad\":";         j += p.radiation;
-        j += ",\"resolve\":";     j += p.resolve;
         j += ",\"sb\":";          j += p.statusBits;
         j += ",\"mp\":";          j += p.movesLeft;
         j += ",\"encPenApplied\":"; j += p.encPenApplied ? "true" : "false";
@@ -300,9 +309,6 @@ static void setupWiFiAndServer() {
         j += ",\"radClean\":";    j += p.radClean      ? "true" : "false";
         j += ",\"fThreshBelow\":"; j += p.fThreshBelow;
         j += ",\"wThreshBelow\":"; j += p.wThreshBelow;
-        j += ",\"wounds\":[";
-        j += p.wounds[0]; j += ","; j += p.wounds[1]; j += ","; j += p.wounds[2];
-        j += "]";
         j += ",\"skills\":[";
         for (int s = 0; s < NUM_SKILLS; s++) { if (s) j += ","; j += p.skills[s]; }
         j += "]";

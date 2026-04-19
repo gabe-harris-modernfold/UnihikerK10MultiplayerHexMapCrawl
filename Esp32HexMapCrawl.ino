@@ -98,6 +98,18 @@ static char savedPass[65] = {0};
 static bool     bootWifiPending = false;
 static uint32_t bootWifiStartMs = 0;
 static constexpr uint32_t BOOT_WIFI_TIMEOUT = 12000;
+static bool rtcSynced = false;
+
+static bool checkRtcReady() {
+  if (rtcSynced) return true;
+  struct tm ti;
+  if (getLocalTime(&ti, 0) && ti.tm_year > 100) {
+    rtcSynced = true;
+    char ts[32]; strftime(ts, sizeof(ts), "%F %T", &ti);
+    Serial.printf("[TIME] RTC synced: %s UTC\n", ts);
+  }
+  return rtcSynced;
+}
 
 // ── Constants ──────────────────────────────────────────────────
 static constexpr int      MAP_COLS      = 25;
@@ -170,7 +182,6 @@ static const float WEATHER_INTENSITY[4][12] = {
 };
 
 // Status condition bitmask positions
-static constexpr uint8_t ST_WOUNDED  = (1 << 0);
 static constexpr uint8_t ST_RADSICK  = (1 << 1);
 static constexpr uint8_t ST_BLEEDING = (1 << 2);
 static constexpr uint8_t ST_FEVERED  = (1 << 3);
@@ -192,12 +203,10 @@ enum StatIdx : uint8_t {
   STAT_LL      = 0,
   STAT_FOOD    = 1,
   STAT_WATER   = 2,
-  STAT_FATIGUE = 3,
-  STAT_RAD     = 4,
-  STAT_RESOLVE = 5,
-  STAT_MP      = 6,
-  STAT_SLOTS   = 7,
-  STAT_COUNT   = 8
+  STAT_RAD     = 3,
+  STAT_MP      = 4,
+  STAT_SLOTS   = 5,
+  STAT_COUNT   = 6
 };
 
 enum ItemCategory : uint8_t {
@@ -323,16 +332,13 @@ struct Player {
   uint8_t  ll;
   uint8_t  food;
   uint8_t  water;
-  uint8_t  fatigue;
   uint8_t  radiation;
-  uint8_t  resolve;
 
   uint8_t  archetype;
   uint8_t  skills[NUM_SKILLS];
   uint8_t  invSlots;
 
   uint8_t  statusBits;
-  uint8_t  wounds[3];
 
   uint8_t  invType[INV_SLOTS_MAX];
   uint8_t  invQty[INV_SLOTS_MAX];
@@ -374,10 +380,9 @@ enum EvtType : uint8_t {
   EVT_TRADE_OFFER  = 12,
   EVT_TRADE_RESULT = 13,
   EVT_ENC_START    = 14,
-  EVT_ENC_ASSIST   = 15,
-  EVT_ENC_RESULT   = 16,
-  EVT_ENC_BANK     = 17,
-  EVT_ENC_END      = 18,
+  EVT_ENC_RESULT   = 15,
+  EVT_ENC_BANK     = 16,
+  EVT_ENC_END      = 17,
   EVT_WEATHER      = 19
 };
 
@@ -390,17 +395,14 @@ struct GameEvent {
   int8_t   dawnMP, dawnLLDelta;
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;
-  uint8_t  dawnFat;
   int8_t   dawnExpD;
   uint8_t  actType;
   uint8_t  actOut;
   uint8_t  actNewLL;
-  uint8_t  actNewFat;
   int8_t   actNewMP;
   int8_t   actFoodD;
   int8_t   actWatD;
   int8_t   actLLD;
-  int8_t   actResD;
   int8_t   actScrapD;
   int16_t  actScoreD;
   uint8_t  actCnd;
@@ -421,11 +423,9 @@ struct GameEvent {
   uint8_t  encDN;
   int8_t   encTotal;
   uint8_t  encLoot[5];
-  int8_t   encPenLL, encPenFat, encPenRad;
+  int8_t   encPenLL, encPenRad;
   uint8_t  encStatus;
   uint8_t  encEnds;
-  uint8_t  encAssistRes;  // resource type for assist event
-  int8_t   encRiskRed;    // risk reduction for assist event
   uint8_t  encItemType;   // typed item dropped (loot table roll)
   uint8_t  encItemQty;
   uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
@@ -455,8 +455,6 @@ struct ActiveEncounter {
   uint8_t  pendingItemType[ENC_MAX_ITEMS];
   uint8_t  pendingItemQty[ENC_MAX_ITEMS];
   uint8_t  pendingItemCount;
-  int8_t   assistRisk;  // accumulated risk reduction from assists (≥ -12)
-  uint8_t  assistUsed;  // bitmask: which ally pids assisted this node
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
 
@@ -502,7 +500,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 7;
+static constexpr uint8_t  SAVE_VERSION = 9;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -521,16 +519,19 @@ struct __attribute__((packed)) SavePlayer {
   uint8_t  archetype;
   uint8_t  skills[6];
   int16_t  q, r;
-  uint8_t  ll, food, water, fatigue, radiation, resolve;
+  uint8_t  ll, food, water, radiation;
   uint8_t  inv[5];
   uint8_t  invType[12];
   uint8_t  invQty[12];
   uint8_t  equip[EQUIP_SLOTS];
   uint8_t  invSlots;
-  uint8_t  wounds[3];
   uint8_t  statusBits;
   uint16_t score;
   uint16_t steps;
+  uint16_t encCount;
+  int8_t   movesLeft;
+  uint8_t  fThreshBelow;
+  uint8_t  wThreshBelow;
   uint8_t  used;
   uint8_t  surveyedMap[60];
 };
@@ -767,10 +768,9 @@ void setup() {
     memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
     p.archetype    = (uint8_t)i;
     p.ll = 7; p.food = 6; p.water = 6;
-    p.fatigue = 0; p.radiation = 0; p.resolve = 3;
+    p.radiation = 0;
     p.statusBits = 0; p.invSlots = ARCHETYPE_INV_SLOTS[i];
     memcpy(p.skills, ARCHETYPE_SKILLS[i], NUM_SKILLS);
-    memset(p.wounds,  0, sizeof(p.wounds));
     memset(p.invType, 0, sizeof(p.invType));
     memset(p.invQty,  0, sizeof(p.invQty));
     memset(p.equip,   0, sizeof(p.equip));
@@ -873,6 +873,8 @@ void loop() {
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
       ws.textAll(buf, (size_t)blen);
+      configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      Serial.println("[TIME] NTP sync started");
     } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
                now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
       bootWifiPending = false;

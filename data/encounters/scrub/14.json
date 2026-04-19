@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Stand in it and collect as many as possible",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 30,
           "skill": 5,
           "success_node": "hotdog_haul",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Find minimal shelter and grab what lands nearby",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 1,
           "success_node": "hotdog_haul",
@@ -35,13 +35,17 @@
   "hazards": {
     "severe_burns": {
       "text": "Boiling mystery meat at terminal velocity, delivered to your exposed skin for four solid minutes. The blisters will tell this story for weeks.",
-      "penalty": { "fatigue": 3, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 1,
       "ends_encounter": false
     },
     "minor_burns": {
       "text": "A few hotdogs find gaps in your cover and leave their mark. The smell of your own skin cooking is hard to shake. You have had worse days, technically.",
-      "penalty": { "fatigue": 1, "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "status": 1,
       "ends_encounter": false
     }

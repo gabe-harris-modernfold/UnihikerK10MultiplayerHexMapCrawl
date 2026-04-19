@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Use ammo to kill it from range",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 40,
           "skill": 5,
           "success_node": "centipede_dead",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Lure it away from the entrance, then slip past",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 30,
           "skill": 0,
           "success_node": "slipped_inside",
@@ -29,9 +29,27 @@
       "text": "It takes more than expected — the armour plating is genuine — but it eventually stops. The bulk store interior is a ruin, but a productive one: pallet after pallet of sealed goods, decades old but preserved by the structure's temperature stability. You take as much as you can carry and come back for more.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [3, 6] },
-        { "res": 0, "qty": [2, 4] },
-        { "res": 3, "qty": [2, 4] }
+        {
+          "res": 1,
+          "qty": [
+            3,
+            6
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            2,
+            4
+          ]
+        }
       ],
       "loot_table": "urban_common",
       "choices": []
@@ -40,8 +58,20 @@
       "text": "The interior smells like forty years of sealed goods slowly becoming something else. But the structure held most of the pallets upright and the seals on the containers are remarkable. A bulk haul of pre-war supplies — the kind of thing you tell stories about later.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [2, 4] },
-        { "res": 0, "qty": [1, 3] }
+        {
+          "res": 1,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "urban_common",
       "choices": []
@@ -50,19 +80,32 @@
   "hazards": {
     "centipede_reaches_you": {
       "text": "A segment catches you before you can finish it — armoured mandibles closing on your pack and one shoulder simultaneously. You tear free and pump everything you have left into it at close range. The wound is significant and you're going to feel this for days.",
-      "penalty": { "fatigue": 4, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "quicksand_caught": {
       "text": "The quicksand takes your boot and keeps it. You pull free with one sock, landing hard on the dry side. The centipede is already reorienting. You run. You are inside, technically. Also shoeless on one foot. You improvise.",
-      "penalty": { "fatigue": 3, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 2,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "name": ["Big Buy", "SaveMore", "ValueZone", "BulkWorld", "MaxiMart"]
+    "name": [
+      "Big Buy",
+      "SaveMore",
+      "ValueZone",
+      "BulkWorld",
+      "MaxiMart"
+    ]
   }
 }

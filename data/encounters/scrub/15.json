@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Sprint sideways and let it roll past",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 30,
           "skill": 0,
           "success_node": "dodged_weave",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Jump over it as it passes",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 45,
           "skill": 5,
           "success_node": "dodged_weave",
@@ -35,7 +35,9 @@
   "hazards": {
     "tangled_and_stripped": {
       "text": "It takes you off your feet and rolls over you in a dense, matted embrace. The teeth catch on your pack straps. By the time you've wrenched yourself free and sat up gasping, it has carried something away with it — something from your pack, gone into the scrub with the Weave, unrecoverable. You check your inventory with the quiet dread of someone who already knows.",
-      "penalty": { "fatigue": 4, "ll": -3 },
+      "penalty": {
+        "ll": -3
+      },
       "status": 4,
       "ends_encounter": true
     }

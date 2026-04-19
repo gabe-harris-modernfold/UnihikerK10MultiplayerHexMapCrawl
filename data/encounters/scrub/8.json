@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Pick it up and pocket it immediately",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 15,
           "skill": 0,
           "success_node": "device_retrieved",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Nudge it with a stick first, then pick it up",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 5,
           "skill": 2,
           "success_node": "device_retrieved",
@@ -35,7 +35,9 @@
   "hazards": {
     "device_shock": {
       "text": "The moment you touch it, a brief pulse of energy fires up your arm. Not enough to do real damage — more like a warning. Your fingers tingle for the next hour. The device sits in your pack perfectly still.",
-      "penalty": { "fatigue": 1, "ll": -2 },
+      "penalty": {
+        "ll": -2
+      },
       "status": 2,
       "ends_encounter": false
     }

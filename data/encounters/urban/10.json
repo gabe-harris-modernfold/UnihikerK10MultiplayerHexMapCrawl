@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Catch yourself on the wall and ease down carefully",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 50,
           "skill": 0,
           "success_node": "fell_anyway",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Commit to it — controlled slide, tuck and roll at the bottom",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 35,
           "skill": 5,
           "success_node": "fell_anyway",
@@ -35,9 +35,14 @@
   "hazards": {
     "fell_anyway_hard": {
       "text": "The chute terminates more abruptly than expected. You arrive at the bottom in a way that prioritises momentum over dignity and exit the situation covered in guano and substantially bruised. Still lost. Still relocated. Just louder about it.",
-      "penalty": { "fatigue": 3, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 2,
-      "wound": [1, 0],
+      "wound": [
+        1,
+        0
+      ],
       "ends_encounter": false
     }
   },

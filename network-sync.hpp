@@ -99,9 +99,9 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
       p.steps);
     // Survivor vitals
     pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
+      "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
       "\"arch\":%d,\"sb\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"au\":%d,\"rt\":%d,",
-      p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
+      p.ll, p.food, p.water, p.radiation,
       p.archetype, p.statusBits, p.invSlots,
       (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.movesLeft,
       p.actUsed ? 1 : 0, p.resting ? 1 : 0);
@@ -109,10 +109,6 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"sk\":[%d,%d,%d,%d,%d,%d],",
       p.skills[0], p.skills[1], p.skills[2], p.skills[3], p.skills[4], p.skills[5]);
-    // Wounds array
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "\"wd\":[%d,%d,%d],",
-      p.wounds[0], p.wounds[1], p.wounds[2]);
     // Inventory grid + equipment slots
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
@@ -174,19 +170,17 @@ static void broadcastState() {
     if (i) buf[pos++] = ',';
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
-      "\"ll\":%d,\"food\":%d,\"water\":%d,\"fat\":%d,\"rad\":%d,\"res\":%d,"
+      "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
       "\"sb\":%d,\"mp\":%d,\"fth\":%d,\"wth\":%d,\"au\":%d,\"vm\":%d,"
-      "\"wd\":[%d,%d,%d],"
       "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
       "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
       "\"eq\":[%d,%d,%d,%d,%d],\"enc\":%d}",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
-      p.ll, p.food, p.water, p.fatigue, p.radiation, p.resolve,
+      p.ll, p.food, p.water, p.radiation,
       p.statusBits, (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
       p.actUsed ? 1 : 0, (int)computeValidMoves(i),
-      p.wounds[0], p.wounds[1], p.wounds[2],
       p.invType[0],  p.invType[1],  p.invType[2],  p.invType[3],
       p.invType[4],  p.invType[5],  p.invType[6],  p.invType[7],
       p.invType[8],  p.invType[9],  p.invType[10], p.invType[11],

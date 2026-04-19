@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Offer scrap as tribute — sacrifice to the altar",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 30,
           "skill": 2,
           "success_node": "sacrifice_accepted",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Present the Sticky Note — you have the Sacred Password",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 10,
           "skill": 0,
           "success_node": "password_entered",
@@ -29,7 +29,13 @@
       "text": "The high priest accepts your offering and performs the Ritual of Input — a sustained typing sequence on the server's original keyboard that takes four minutes and produces a sound like something very large clearing its throat. The fog of ignorance lifts from your immediate surroundings, at least directionally. The connection is not made. It is never made. But something was revealed.",
       "can_bank": true,
       "loot": [
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "urban_common",
       "choices": []
@@ -41,7 +47,7 @@
       "choices": [
         {
           "label": "Fight The Router — this ends here",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 60,
           "skill": 5,
           "success_node": "router_defeated",
@@ -59,17 +65,19 @@
   "hazards": {
     "sacrifice_insufficient": {
       "text": "The high priest weighs your offering against the spiritual debt outstanding and finds it lacking. He returns two thirds of what you brought with the energy of someone managing a disappointment they have managed many times before.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "password_rejected": {
       "text": "The high priest inputs the password with shaking hands. The server makes a sound. The sound is not a handshake. It is an error tone — long, flat, and deeply familiar. 'INVALID CREDENTIALS' displays on the ancient monitor. The high priest sags. Perhaps this isn't the right server. Perhaps this isn't the right password. Perhaps some sacred connections cannot be made.",
-      "penalty": { "fatigue": 1 },
+      "penalty": {},
       "ends_encounter": false
     },
     "dial_up_blast": {
       "text": "The Router's primary attack is a focused beam of amplified 56k modem noise played at structural volumes. The sound enters through your ears and exits through your resolve. It does not do clean damage — it does loud, disorienting, deeply unpleasant damage.",
-      "penalty": { "fatigue": 3, "ll": -8 },
+      "penalty": {
+        "ll": -8
+      },
       "status": 2,
       "ends_encounter": false
     }

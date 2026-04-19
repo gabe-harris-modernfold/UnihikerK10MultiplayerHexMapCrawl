@@ -9,7 +9,9 @@
       "choices": [
         {
           "label": "Wade in along the firm eastern bank",
-          "cost": { "fatigue": 1, "water": 1 },
+          "cost": {
+            "water": 1
+          },
           "base_risk": 20,
           "skill": 0,
           "success_node": "rim",
@@ -17,7 +19,7 @@
         },
         {
           "label": "Probe the mud for a safe path with your staff",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 15,
           "skill": 4,
           "success_node": "rim",
@@ -29,13 +31,25 @@
       "text": "At the rim you can reach the crate's hasp. The mud seals it with a low sucking groan when you pull. Inside, wrapped in oilcloth gone brittle, are rations and a roll of water-purification tablets — someone cached this deliberately, then never came back. The sinkhole trembles once beneath you.",
       "can_bank": true,
       "loot": [
-        { "res": 1, "qty": [1, 3] },
-        { "res": 0, "qty": [1, 2] }
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
       ],
       "choices": [
         {
           "label": "Dig deeper into the crate for more",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 45,
           "skill": 2,
           "success_node": "deep_cache",
@@ -43,7 +57,7 @@
         },
         {
           "label": "Back off with what you have",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 30,
           "skill": 5,
           "success_node": "deep_cache",
@@ -55,8 +69,20 @@
       "text": "Beneath the oilcloth you find a second layer: a sealed medical pouch and three scrap-metal ingots bound with wire. You haul them free and back-step to solid ground, legs coated to the knee in grey slick. The sinkhole closes another inch, swallowing the empty crate without a sound.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [1, 2] },
-        { "res": 4, "qty": [1, 3] }
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
       ],
       "loot_table": "marsh_rare",
       "choices": []
@@ -65,29 +91,50 @@
   "hazards": {
     "sudden_sink": {
       "text": "The bank gives way without warning and you drop thigh-deep into clinging mud. Wrenching free tears something in your hip and costs you precious minutes.",
-      "penalty": { "fatigue": 3, "ll": -6 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -6
+      },
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": false
     },
     "reed_tangle": {
       "text": "Your staff snaps a submerged root cluster and the rebound rakes a jagged stump across your shin, opening a long shallow cut.",
-      "penalty": { "fatigue": 1, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 4,
       "ends_encounter": false
     },
     "collapse": {
       "text": "The rim caves inward and you go under to the waist. You drag yourself out, soaked and exhausted, losing most of your haul to the mud.",
-      "penalty": { "fatigue": 4, "ll": -8 },
-      "wound": [1, 1],
+      "penalty": {
+        "ll": -8
+      },
+      "wound": [
+        1,
+        1
+      ],
       "ends_encounter": true
     },
     "mire_leg": {
       "text": "A slow step onto apparently solid ground plunges your leg into concealed mire up to the knee. You wrench free but your boot stays behind.",
-      "penalty": { "fatigue": 2 },
+      "penalty": {},
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "adjective": ["Sunken", "Fetid", "Murky", "Hidden", "Brackish", "Forgotten", "Silted", "Drowned"]
+    "adjective": [
+      "Sunken",
+      "Fetid",
+      "Murky",
+      "Hidden",
+      "Brackish",
+      "Forgotten",
+      "Silted",
+      "Drowned"
+    ]
   }
 }

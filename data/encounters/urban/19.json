@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Move fast, hold your breath — get in and out",
-          "cost": { "fatigue": 3 },
+          "cost": {},
           "base_risk": 40,
           "skill": 2,
           "success_node": "mask_found",
@@ -17,7 +17,7 @@
         },
         {
           "label": "Cover your face and search systematically",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 30,
           "skill": 1,
           "success_node": "mask_found",
@@ -35,13 +35,17 @@
   "hazards": {
     "spore_exposure": {
       "text": "You don't hold your breath long enough. The spores are already in the air at threshold concentrations when you push through the door and you breathe before you mean to. The fever starts within minutes — a specific, fungal fever, different from the usual kind. The Sour Cream Tub, if you have one, knows what to do about this.",
-      "penalty": { "fatigue": 3, "ll": -4 },
+      "penalty": {
+        "ll": -4
+      },
       "status": 8,
       "ends_encounter": false
     },
     "prolonged_exposure": {
       "text": "The systematic search takes longer than the fast approach. More exposure time means more spore uptake. By the time you find the mask, you're already symptomatic. The fever is there. The Sour Cream Tub, if you have one, is what you want right now.",
-      "penalty": { "fatigue": 4, "ll": -5 },
+      "penalty": {
+        "ll": -5
+      },
       "status": 8,
       "ends_encounter": false
     }

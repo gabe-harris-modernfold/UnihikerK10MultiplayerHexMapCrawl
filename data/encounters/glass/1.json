@@ -9,7 +9,7 @@
       "choices": [
         {
           "label": "Pick a path through the glass columns.",
-          "cost": { "fatigue": 1 },
+          "cost": {},
           "base_risk": 30,
           "skill": 0,
           "success_node": "inner_pocket",
@@ -20,12 +20,20 @@
     "inner_pocket": {
       "text": "A pocket of open ground at the center holds the remnants of a pre-war monitoring station — melted into the glass but partially recoverable. Instruments and sealed cases half-embedded in the fused ground.",
       "can_bank": true,
-      "loot": [{ "res": 4, "qty": [2, 3] }],
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
       "loot_table": "glass_common",
       "choices": [
         {
           "label": "Chip a sealed case free from the glass.",
-          "cost": { "fatigue": 2 },
+          "cost": {},
           "base_risk": 55,
           "skill": 2,
           "success_node": "sealed_case",
@@ -36,7 +44,15 @@
     "sealed_case": {
       "text": "The case cracks open. Instruments wrapped in lead foil, still functional. Whoever left them here had the right idea.",
       "can_bank": true,
-      "loot": [{ "res": 4, "qty": [1, 3] }],
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
       "loot_table": "glass_rare",
       "choices": []
     }
@@ -44,21 +60,44 @@
   "hazards": {
     "glass_cut": {
       "text": "A razor edge catches your leg. Blood soaks through immediately.",
-      "penalty": { "ll": -1 },
+      "penalty": {
+        "ll": -1
+      },
       "status": 4,
-      "wound": [0, 1],
+      "wound": [
+        0,
+        1
+      ],
       "ends_encounter": false
     },
     "radiation_pocket": {
       "text": "The glass here is still hot. Your dosimeter screams.",
-      "penalty": { "radiation": 2, "ll": -1 },
+      "penalty": {
+        "radiation": 2,
+        "ll": -1
+      },
       "status": 2,
       "ends_encounter": false
     }
   },
   "placeholders": {
-    "formation": ["Vitrified", "Fused", "Crystalline", "Slag-Core"],
-    "color": ["pale amber", "smoky grey", "sickly green", "blue-black"],
-    "light_quality": ["flat grey", "hazy morning", "harsh afternoon", "dim overcast"]
+    "formation": [
+      "Vitrified",
+      "Fused",
+      "Crystalline",
+      "Slag-Core"
+    ],
+    "color": [
+      "pale amber",
+      "smoky grey",
+      "sickly green",
+      "blue-black"
+    ],
+    "light_quality": [
+      "flat grey",
+      "hazy morning",
+      "harsh afternoon",
+      "dim overcast"
+    ]
   }
 }

@@ -175,21 +175,15 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   } else if (cr.total >= (int)dn - 1) {
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + 2, 99);
     ev.actFoodD = 2;
-    if (p.fatigue < 8) p.fatigue++;
     addScore(p, ev, 1);
     ev.actOut   = AO_PARTIAL;
   } else {
-    if (p.fatigue < 8) p.fatigue++;
-    if (terr == 2 && p.wounds[0] < 10) {  // Rust Forest fail → Minor wound
-      p.wounds[0]++;
-      Serial.printf("[WOUND]   P%d \"%s\" Minor wound from Rust Forest (wounds[0]=%d)\n", pid, p.name, p.wounds[0]);
-    }
     ev.actOut = AO_FAIL;
   }
-  Serial.printf("[FORAGE]  P%d \"%s\" @ %s | DN%d tot:%d → %s | inv food:%d fat:%d\n",
+  Serial.printf("[FORAGE]  P%d \"%s\" @ %s | DN%d tot:%d → %s | inv food:%d\n",
     pid, p.name, T_NAME[terr], dn, cr.total,
     ev.actOut == AO_SUCCESS ? "SUCCESS" : ev.actOut == AO_PARTIAL ? "PARTIAL" : "FAIL",
-    p.inv[1], p.fatigue);
+    p.inv[1]);
 }
 
 static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
@@ -306,38 +300,6 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
     p.statusBits |= ST_FEVERED;
     Serial.printf("[WOUND]   P%d \"%s\" Fever from sleeping in Marsh (no shelter)\n", pid, p.name);
   }
-  // Camp bonus: any other player in the same hex
-  int campCount = 0;
-  for (int k = 0; k < MAX_PLAYERS; k++)
-    if (k != pid && G.players[k].connected &&
-        G.players[k].q == p.q && G.players[k].r == p.r) campCount++;
-  // Fatigue reduction: base 2 | +1 camp | +1 shelter | +2 improved shelter
-  int fatRed = 2;
-  if (campCount >= 1)     fatRed += 1;
-  if (hexShelt == 1)      fatRed += 1;
-  else if (hexShelt == 2) fatRed += 2;
-  uint8_t prevFat = p.fatigue;
-  p.fatigue = (uint8_t)max(0, (int)p.fatigue - fatRed);
-  // LL restore: Food≥4 AND Water≥3 AND fatigue low enough
-  // Improved shelter relaxes the fatigue threshold (fat<6 instead of fat<4)
-  bool llOk  = (p.food >= 4 && p.water >= 3);
-  bool fatOk = (p.fatigue < 4) || (hexShelt == 2 && p.fatigue < 6);
-  if (llOk && fatOk && p.ll < (uint8_t)effectiveMaxLL(pid)) {
-    p.ll++;
-    ev.actLLD = 1;
-  }
-  // Resolve gain (§7.3): SV≥3 | SV≥2+any shelter | SV≥1+improved shelter
-  {
-    uint8_t rHexT = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
-    uint8_t sv    = TERRAIN_SV[rHexT];
-    bool goodShelter = (sv >= 3) || (sv >= 2 && hexShelt > 0) || (sv >= 1 && hexShelt == 2);
-    if (goodShelter && p.resolve < 5) {
-      p.resolve++;
-      ev.actResD = 1;
-      Serial.printf("[REST]    P%d \"%s\" +1 Resolve (SV%d shelt:%d) → %d\n",
-        pid, p.name, sv, hexShelt, p.resolve);
-    }
-  }
   ev.actOut = AO_SUCCESS;
   uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
   // Count how many connected players are now resting (including this one)
@@ -345,10 +307,10 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   for (int k = 0; k < MAX_PLAYERS; k++) {
     if (G.players[k].connected) { totalConn++; if (G.players[k].resting) restCount++; }
   }
-  Serial.printf("[REST]    P%d \"%s\" fat %d→%d (red:%d shelt:%d camp:%d) | F:%d W:%d LL:%d%s res:%d"
+  Serial.printf("[REST]    P%d \"%s\" (shelt:%d) | F:%d W:%d LL:%d"
                 " | tick %lu/%lu ~%lus remain | resting %d/%d\n",
-    pid, p.name, prevFat, p.fatigue, fatRed, hexShelt, campCount,
-    p.food, p.water, p.ll, ev.actLLD ? " +1LL" : "", p.resolve,
+    pid, p.name, hexShelt,
+    p.food, p.water, p.ll,
     (unsigned long)G.dayTick, (unsigned long)DAY_TICKS,
     (unsigned long)(ticksLeft * TICK_MS / 1000),
     restCount, totalConn);
@@ -385,7 +347,6 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
   }
 
   ev.actNewLL  = p.ll;
-  ev.actNewFat = p.fatigue;
   ev.actNewMP  = p.movesLeft;
   enqEvt(ev);
 }
