@@ -37,6 +37,8 @@ const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
 const uiLogVisible  = van.state(localStorage.getItem('logVisible') === '1');
+// K10 screen flip (persisted to localStorage)
+const uiScreenFlip  = van.state(localStorage.getItem('k10_screenFlip') === '1');
 // Overlay open states — toggled via .val; van.derive in ui.js handles class changes
 const uiHexInfoOpen = van.state(false);
 const uiCharOpen    = van.state(false);
@@ -123,6 +125,111 @@ const SHADOW_ALPHA           = 0.72;  // shadow under character icons
 // WebSocket connection
 const WIFI_CREDS_SEND_DELAY_MS = 300; // delay before auto-sending WiFi creds
 const RECONNECT_DELAY_MS      = 2000; // delay before attempting reconnect
+
+// ── Client Diagnostics ───────────────────────────────────────────────────────
+// Access via window.diag.report() or window.diag.data in the browser console.
+// Auto-dumps every 60 s; also dumps on every disconnect and WS error.
+const Diag = (() => {
+  const d = {
+    sessionStart:       Date.now(),
+    wsConnections:      0,
+    wsDisconnects:      0,
+    wsErrors:           0,
+    droppedSends:       0,
+    msgSent:            0,
+    msgReceived:        0,
+    msgByType:          {},
+    lastConnectedAt:    null,
+    lastDisconnectedAt: null,
+    lastMsgAt:          null,
+    responseTimes:      [],  // RTT samples (ms), capped at 100
+    _pendingActionAt:   null,
+  };
+
+  function avgRtt() {
+    if (!d.responseTimes.length) return null;
+    return Math.round(d.responseTimes.reduce((a, b) => a + b, 0) / d.responseTimes.length);
+  }
+
+  function wsState() {
+    if (typeof socket === 'undefined' || !socket) return 'no socket';
+    return ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][socket.readyState] ?? '?';
+  }
+
+  function report() {
+    const now   = Date.now();
+    const upSec = d.lastConnectedAt ? Math.round((now - d.lastConnectedAt) / 1000) : null;
+    const ageSec = Math.round((now - d.sessionStart) / 1000);
+    const lastMsgAgo = d.lastMsgAt ? Math.round((now - d.lastMsgAt) / 1000) + 's ago' : '—';
+    const myPos = (typeof myId !== 'undefined' && myId >= 0 &&
+                   typeof players !== 'undefined' && players[myId])
+                  ? `q:${players[myId].q} r:${players[myId].r}` : '—';
+    const connCount = (typeof players !== 'undefined')
+                      ? players.filter(p => p?.on).length : '—';
+
+    console.group('%c[DIAG] Wasteland Crawl — Client Diagnostics', 'color:#4fc;font-weight:bold');
+    console.log(`Session age      : ${ageSec}s`);
+    console.log(`WS state         : ${wsState()}`);
+    console.log(`Connections      : ${d.wsConnections}  |  Disconnects: ${d.wsDisconnects}  |  Errors: ${d.wsErrors}`);
+    console.log(`Current uptime   : ${upSec != null ? upSec + 's' : '—'}`);
+    console.log(`Dropped sends    : ${d.droppedSends}`);
+    console.log(`Msgs sent        : ${d.msgSent}  |  Received: ${d.msgReceived}`);
+    console.log(`Last msg recv    : ${lastMsgAgo}`);
+    console.log(`Avg RTT (action→sync): ${avgRtt() != null ? avgRtt() + 'ms' : '—'}  (${d.responseTimes.length} samples)`);
+    console.log(`Min / Max RTT    : ${d.responseTimes.length ? Math.min(...d.responseTimes) + 'ms / ' + Math.max(...d.responseTimes) + 'ms' : '—'}`);
+    console.log(`Player ID        : ${typeof myId !== 'undefined' ? myId : '—'}`);
+    console.log(`My position      : ${myPos}`);
+    console.log(`Connected players: ${connCount}`);
+    console.table(d.msgByType);
+    console.groupEnd();
+  }
+
+  function onSend(obj) {
+    d.msgSent++;
+    if (obj.t === 'move' || obj.t === 'act') d._pendingActionAt = Date.now();
+  }
+
+  function onDropped() {
+    d.droppedSends++;
+    console.warn(`[DIAG] Dropped send — socket not open (total dropped: ${d.droppedSends}, ws: ${wsState()})`);
+  }
+
+  function onMsg(t) {
+    d.msgReceived++;
+    d.lastMsgAt = Date.now();
+    d.msgByType[t] = (d.msgByType[t] || 0) + 1;
+    if (d._pendingActionAt && (t === 'sync' || t === 'mov' || t === 'asgn')) {
+      const rtt = Date.now() - d._pendingActionAt;
+      d.responseTimes.push(rtt);
+      if (d.responseTimes.length > 100) d.responseTimes.shift();
+      d._pendingActionAt = null;
+    }
+  }
+
+  function onConnect() {
+    d.wsConnections++;
+    d.lastConnectedAt = Date.now();
+    console.info(`[DIAG] WS connected (#${d.wsConnections}) at ${new Date().toISOString()} — prior disconnects: ${d.wsDisconnects}`);
+  }
+
+  function onDisconnect() {
+    d.wsDisconnects++;
+    d.lastDisconnectedAt = Date.now();
+    console.warn(`[DIAG] WS closed (#${d.wsDisconnects}) — dropped sends total: ${d.droppedSends}`);
+    report();
+  }
+
+  function onError(ev) {
+    d.wsErrors++;
+    console.error(`[DIAG] WS error #${d.wsErrors} at ${new Date().toISOString()}`, ev);
+    report();
+  }
+
+  setInterval(report, 60_000);
+  window.diag = { report, data: d, avgRtt };
+
+  return { onSend, onDropped, onMsg, onConnect, onDisconnect, onError, report };
+})();
 
 // ── Move cooldown tracking (client-side estimate) ─────────────────
 let lastMoveSent   = 0;   // Date.now() of last move sent
@@ -321,6 +428,7 @@ let pendingLobbyRedirect = false;  // true while downed-death pause is running
 function connect() {
   socket = new WebSocket(wsUrl);
   socket.onopen    = () => {
+    Diag.onConnect();
     setStatus('Connected');
     serverHasWifiCreds = false;  // reset on each new connection
     // Auto-send saved WiFi credentials if server doesn't already have them
@@ -332,16 +440,20 @@ function connect() {
       }
     }, WIFI_CREDS_SEND_DELAY_MS);  // brief delay to receive 'saved' message first if server has creds
   };
-  socket.onclose   = () => { setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS); };
+  socket.onclose   = () => { Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS); };
   socket.onerror   = (event) => {
-    console.error('WebSocket error:', event);
+    Diag.onError(event);
     setStatus('Connection error — retrying...');
   };
-  socket.onmessage = e => handleMsg(JSON.parse(e.data));
+  socket.onmessage = e => { const msg = JSON.parse(e.data); Diag.onMsg(msg?.t); handleMsg(msg); };
 }
 function send(obj) {
-  if (socket && socket.readyState === WebSocket.OPEN)
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    Diag.onSend(obj);
     socket.send(JSON.stringify(obj));
+  } else {
+    Diag.onDropped();
+  }
 }
 
 
@@ -531,6 +643,7 @@ function handleMsg(msg) {
         }
         // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
         if (_cur?.poi) {
+          console.log(`[ENC] sending enc_start q=${_me.q} r=${_me.r} t=${Date.now()}`);
           send({ t: 'enc_start', q: _me.q, r: _me.r });
         }
       }
@@ -575,7 +688,13 @@ function handleMsg(msg) {
 
     case 'enc_path':
       // Direct message: server sends encounter location to the active player
+      console.log(`[ENC] enc_path recv biome=${msg.biome} id=${msg.id} t=${Date.now()}`);
       window._startEncounterFetch?.(msg.biome, msg.id);
+      break;
+
+    case 'enc_dbg':
+      console.warn('[ENC/DBG] server diagnostic:', msg.msg, 't='+Date.now());
+      showToast(`\u26A0 ENC DEBUG: ${msg.msg}`);
       break;
 
     case 'err':

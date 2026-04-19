@@ -1637,6 +1637,18 @@ function initMenuSystem() {
               (() => { const v = parseInt(localStorage.getItem('k10_ledBright') ?? '5'); return v === 0 ? '0 (off)' : String(v); })()
             )
           )
+        ),
+        md({ class: 'settings-row' },
+          mp({ class: 'settings-label' }, 'K10 Screen Flip'),
+          mb({
+            class: 'menu-item-btn',
+            style: () => `padding:3px 10px;font-size:var(--fs-d);border-color:${uiScreenFlip.val ? 'var(--gold)' : 'var(--bdr-mid)'}`,
+            onclick: () => {
+              uiScreenFlip.val = !uiScreenFlip.val;
+              localStorage.setItem('k10_screenFlip', uiScreenFlip.val ? '1' : '0');
+              send({ t: 'settings', audioVol: parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: parseInt(document.getElementById('k10-led-slider')?.value ?? '5'), screenFlip: uiScreenFlip.val });
+            }
+          }, () => uiScreenFlip.val ? 'FLIPPED  ▣' : 'NORMAL  ▢')
         )
       ),
 
@@ -2135,10 +2147,31 @@ function initEncounterOverlay() {
 
   // Called from engine.js enc_path handler
   window._startEncounterFetch = function(biome, id) {
-    fetch(`/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`)
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(enc => openEncounter(enc))
-      .catch(e => showToast(`\u2297 Encounter load failed: ${e.message}`));
+    const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
+    const t0 = Date.now();
+    console.log(`[ENC/FETCH] >>> ${url}  t=${t0}`);
+    showToast(`\u23F3 Loading encounter ${biome}/${id}\u2026`);
+    fetch(url)
+      .then(r => {
+        console.log(`[ENC/FETCH] HTTP ${r.status}  t+${Date.now()-t0}ms`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then(txt => {
+        console.log(`[ENC/FETCH] body ${txt.length} bytes  t+${Date.now()-t0}ms`);
+        let enc;
+        try { enc = JSON.parse(txt); }
+        catch(pe) {
+          console.error('[ENC/FETCH] JSON parse error:', pe, 'body=', txt.slice(0,200));
+          throw new Error(`JSON parse: ${pe.message}`);
+        }
+        console.log(`[ENC/FETCH] parsed ok  nodes=${Object.keys(enc.nodes??{}).length}  t+${Date.now()-t0}ms`);
+        openEncounter(enc);
+      })
+      .catch(e => {
+        console.error(`[ENC/FETCH] FAILED: ${e.message}  t+${Date.now()-t0}ms`);
+        showToast(`\u2297 Encounter load failed: ${e.message}`);
+      });
   };
 
   const SUCCESS_PHRASES = [

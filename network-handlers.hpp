@@ -998,7 +998,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     }
 
   } else if (strncmp(tv, "settings", (size_t)(te - tv)) == 0) {
-    // Settings: {"t":"settings","audioVol":N,"ledBright":N}
+    // Settings: {"t":"settings","audioVol":N,"ledBright":N,"screenFlip":bool}
     const char* avp = strstr(data, "\"audioVol\"");
     if (avp) { const char* avv = strchr(avp + 10, ':'); if (avv) {
       int v = atoi(avv + 1);
@@ -1008,6 +1008,15 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     if (lbp) { const char* lbv = strchr(lbp + 11, ':'); if (lbv) {
       int b = atoi(lbv + 1);
       if (b >= 0 && b <= 9) s_ledBright = (uint8_t)b;
+    }}
+    const char* sfp = strstr(data, "\"screenFlip\"");
+    if (sfp) { const char* sfv = strchr(sfp + 12, ':'); if (sfv) {
+      while (*sfv == ':' || *sfv == ' ') sfv++;
+      bool flip = (strncmp(sfv, "true", 4) == 0);
+      if (flip != s_screenFlip) {
+        s_screenFlip = flip;
+        tft.setRotation(s_screenFlip ? 0 : 2);
+      }
     }}
     saveK10Prefs();
 
@@ -1021,6 +1030,9 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     int hq = atoi(qv + 1), hr = atoi(rv + 1);
     if (hq < 0 || hq >= MAP_COLS || hr < 0 || hr >= MAP_ROWS) return;
 
+    Serial.printf("[ENC] enc_start recv q=%d r=%d  heap=%u  core=%d\n",
+      hq, hr, (unsigned)ESP.getFreeHeap(), xPortGetCoreID());
+    Serial.flush();
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int pid = findSlot(client->id());
       if (pid >= 0 && !encounters[pid].active && !(G.players[pid].statusBits & ST_DOWNED)) {
@@ -1072,19 +1084,27 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
                 "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d}",
                 encPools[terrain].path, (int)idx);
               client->text(pathBuf, (size_t)pathLen);
-              Serial.printf("[ENC] Serving -> /data/encounters/%s/%d.json\n", encPools[terrain].path, (int)idx);
+              Serial.printf("[ENC] P%d enters %s/%d at (%d,%d) — enc_path sent\n",
+                pid, encPools[terrain].path, (int)idx, hq, hr);
+              Serial.flush();
               // Broadcast EVT_ENC_START to allies
               GameEvent ev = {};
               ev.type = EVT_ENC_START; ev.pid = (uint8_t)pid;
               ev.q = (int16_t)hq; ev.r = (int16_t)hr;
               enqEvt(ev);
-              Serial.printf("[ENC] P%d enters %s/%d at (%d,%d)\n",
-                pid, encPools[terrain].path, (int)idx, hq, hr);
             }
           }
         }
+      } else if (pid < 0) {
+        Serial.printf("[ENC] enc_start WARN: no slot for client %u\n", client->id());
       }
       xSemaphoreGive(G.mutex);
+      Serial.println("[ENC] enc_start mutex released"); Serial.flush();
+    } else {
+      Serial.printf("[ENC] enc_start MUTEX TIMEOUT (5ms) — game loop busy  heap=%u\n",
+        (unsigned)ESP.getFreeHeap());
+      Serial.flush();
+      client->text("{\"t\":\"enc_dbg\",\"msg\":\"mutex_timeout\"}");
     }
 
   // ── Encounter: make a choice ─────────────────────────────────────────────────

@@ -357,14 +357,50 @@ static void setupWiFiAndServer() {
     }
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
-    Serial.printf("[ENC] Request: %s  core=%d  heap=%u\n", path, xPortGetCoreID(), (unsigned)ESP.getFreeHeap());
+    uint32_t t0 = millis();
+    Serial.printf("[ENC/HTTP] >>> %s  core=%d  heap=%u\n", path, xPortGetCoreID(), (unsigned)ESP.getFreeHeap());
     Serial.flush();
-    if (!SD.exists(path)) {
-      Serial.printf("[ENC] 404: %s\n", path); Serial.flush();
+    // Read under mutex to prevent SPI bus contention with persistence saves.
+    // req->send(SD, path) streams asynchronously on the web-server task and races
+    // with any concurrent SD.open() on the game task — causes a watchdog reset.
+    String content;
+    bool found = false;
+    bool mutexOk = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(500)) == pdTRUE);
+    Serial.printf("[ENC/HTTP] mutex_wait=%lums ok=%d\n", (unsigned long)(millis()-t0), mutexOk ? 1 : 0);
+    Serial.flush();
+    if (mutexOk) {
+      uint32_t tsd = millis();
+      bool exists = SD.exists(path);
+      Serial.printf("[ENC/HTTP] SD.exists=%d  t=%lums\n", exists ? 1 : 0, (unsigned long)(millis()-tsd));
+      Serial.flush();
+      if (exists) {
+        File f = SD.open(path, FILE_READ);
+        if (f) {
+          size_t fsz = f.size();
+          found = true;
+          content = f.readString();
+          f.close();
+          Serial.printf("[ENC/HTTP] read %u bytes (file_size=%u)  t=%lums\n",
+            (unsigned)content.length(), (unsigned)fsz, (unsigned long)(millis()-tsd));
+        } else {
+          Serial.printf("[ENC/HTTP] SD.open FAILED for %s\n", path);
+        }
+      }
+      xSemaphoreGive(G.mutex);
+    } else {
+      Serial.println("[ENC/HTTP] MUTEX TIMEOUT (500ms) — SD busy or deadlock");
+      Serial.flush();
+      req->send(503, "text/plain", "Server busy"); return;
+    }
+    if (!found) {
+      Serial.printf("[ENC/HTTP] 404: %s  total=%lums\n", path, (unsigned long)(millis()-t0));
+      Serial.flush();
       req->send(404, "text/plain", "Encounter not found"); return;
     }
-    Serial.printf("[ENC] streaming %s\n", path); Serial.flush();
-    req->send(SD, path, "application/json");
+    Serial.printf("[ENC/HTTP] sending %u bytes  total=%lums  heap=%u\n",
+      (unsigned)content.length(), (unsigned long)(millis()-t0), (unsigned)ESP.getFreeHeap());
+    Serial.flush();
+    req->send(200, "application/json", content);
   });
 
   // /img/*.png served from PSRAM imgCache
@@ -394,6 +430,7 @@ static void setupWiFiAndServer() {
           return;
         }
       }
+      req->send(204); return; // image not cached — silent no-content, no client error
     }
     req->send(404, "text/plain", "Not found: " + url);
   });

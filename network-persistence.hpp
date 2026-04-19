@@ -13,7 +13,13 @@ static void sanitizeName(char* s, int maxLen) {
 
 // ── SD Save ───────────────────────────────────────────────────────────────────
 void saveGame() {
-  if (SD.cardType() != CARD_NONE && xSemaphoreTake(G.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+  if (SD.cardType() == CARD_NONE) { Serial.println("[SAVE] SKIP: no SD card"); return; }
+  uint32_t _t0 = millis();
+  bool _got = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(100)) == pdTRUE);
+  Serial.printf("[SAVE] mutex_wait=%lums ok=%d  heap=%u\n",
+    (unsigned long)(millis()-_t0), _got ? 1 : 0, (unsigned)ESP.getFreeHeap());
+  Serial.flush();
+  if (_got) {
     if (!SD.exists(SAVE_DIR)) SD.mkdir(SAVE_DIR);
     // Map file
     File f = SD.open(SAVE_MAP_F, FILE_WRITE);
@@ -61,7 +67,11 @@ void saveGame() {
       gf.close();
     }
     xSemaphoreGive(G.mutex);
-    Serial.printf("[SAVE] Day %d saved to SD\n", (int)G.dayCount);
+    Serial.printf("[SAVE] Day %d saved  t=%lums\n", (int)G.dayCount, (unsigned long)(millis()-_t0));
+    Serial.flush();
+  } else {
+    Serial.println("[SAVE] MUTEX TIMEOUT (100ms) — save skipped");
+    Serial.flush();
   }
 }
 

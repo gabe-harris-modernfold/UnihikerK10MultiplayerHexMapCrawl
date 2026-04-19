@@ -77,7 +77,7 @@ static void drainEvents() {
         ws.textAll(buf, len);
         { char lb[34]; snprintf(lb, sizeof(lb), "P%d joined", (int)ev.pid);
           k10LogAdd(lb); }
-        k10PlaySeq(SEQ_JOIN);
+        k10PlaySeq(MOTIF_SEWER_ECHO);
         break;
       }
 
@@ -167,6 +167,7 @@ static void drainEvents() {
         taskEXIT_CRITICAL(&evtMux);
         // 4. Tell all lobby clients (including the downed player) archetypes now available
         broadcastLobbyUpdate();
+        k10PlaySeq(MOTIF_DEAD_BATTERY);
         Serial.printf("[DOWNED]  Slot %d reset — client %lu returned to lobby\n",
           (int)ev.pid, (unsigned long)ev.evWsId);
         break;
@@ -177,6 +178,7 @@ static void drainEvents() {
         // Broadcast regen event then send full syncs to all connected clients
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
         ws.textAll(buf, len);
+        k10PlaySeq(MOTIF_POWER_DOWN);
         for (AsyncWebSocketClient& cl : ws.getClients()) {
           int slot = findSlot(cl.id());
           if (slot >= 0) sendSync(&cl, slot);
@@ -227,6 +229,7 @@ static void drainEvents() {
         ws.textAll(buf, len);
         { char lb[34]; snprintf(lb, sizeof(lb), "P%d enters encounter", (int)ev.pid);
           k10LogAdd(lb); }
+        k10PlaySeq(MOTIF_DARK_ENTRY);
         break;
 
       case EVT_ENC_ASSIST:
@@ -259,12 +262,15 @@ static void drainEvents() {
         if (ev.encOut) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: %s OK", (int)ev.pid, sks);
           k10LogAdd(lb);
+          k10PlaySeq(MOTIF_DARK_DEPART);
         } else if (ev.encEnds) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD! Ejected", (int)ev.pid);
           k10LogAdd(lb);
+          k10PlaySeq(MOTIF_BROKEN_TECH);
         } else {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD (cont.)", (int)ev.pid);
           k10LogAdd(lb);
+          k10PlaySeq(MOTIF_SYSTEM_FAULT);
         }
         break;
       }
@@ -280,6 +286,7 @@ static void drainEvents() {
         if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
           char lb[34]; snprintf(lb, sizeof(lb), "P%d FULL CLEAR! +%d", (int)ev.pid, (int)ev.actScoreD);
           k10LogAdd(lb);
+          k10PlaySeq(MOTIF_WEIRD_ANOMALY);
         } else {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d banked enc loot", (int)ev.pid);
           k10LogAdd(lb);
@@ -315,6 +322,7 @@ static void drainEvents() {
         ws.textAll(buf, len);
         char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 4) ? WX[ev.q] : "?");
         k10LogAdd(lb);
+        k10PlaySeq(ev.q == WEATHER_STORM ? MOTIF_MUTANT_BREATH : MOTIF_DISTANT_THUD);
         break;
       }
     }

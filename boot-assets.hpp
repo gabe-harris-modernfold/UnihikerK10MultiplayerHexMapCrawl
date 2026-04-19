@@ -3,28 +3,6 @@
 // Boot splash, SD→PSRAM asset loading, item registry parser, periodic status.
 // Included by Esp32HexMapCrawl.ino before gameplay .hpp files.
 
-// ── Boot splash diagnostic log ─────────────────────────────────────────────
-static char    _sLog[14][30];
-static uint8_t _sN = 0;
-static void splashAdd(const char* msg, uint32_t col = 0) {
-  if (_sN == 14) {
-    for (int i = 0; i < 13; i++) memcpy(_sLog[i], _sLog[i+1], 30);
-    _sN = 13;
-  }
-  snprintf(_sLog[_sN++], 30, "%s", msg);
-  canvas.fillScreen(0x0000);
-  canvas.setTextSize(2);
-  for (uint8_t i = 0; i < _sN; i++) {
-    uint16_t c16 = col
-      ? (uint16_t)(((col & 0xF80000) >> 8) | ((col & 0x00FC00) >> 5) | ((col & 0x0000F8) >> 3))
-      : (uint16_t)0xD341;  // default amber ~0xD06818
-    canvas.setTextColor(c16);
-    canvas.setCursor(4, 4 + i * 16);
-    canvas.print(_sLog[i]);
-  }
-  canvas.pushSprite(0, 0);
-}
-
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
 static void loadWebFilesToRAM() {
   Serial.println("[WEB] Loading web assets into PSRAM...");

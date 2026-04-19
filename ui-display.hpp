@@ -24,12 +24,35 @@ static inline void canvasText16(const char* s, int x, int y, uint32_t col) {
   canvas.setCursor(x, y);
   canvas.print(s);
 }
+// canvasText8: 8px font (setTextSize 1)
+static inline void canvasText8(const char* s, int x, int y, uint32_t col) {
+  canvas.setTextSize(1);
+  canvas.setTextColor(c16(col));
+  canvas.setCursor(x, y);
+  canvas.print(s);
+}
 // canvasText24: 24px font (setTextSize 3)
 static inline void canvasText24(const char* s, int x, int y, uint32_t col) {
   canvas.setTextSize(3);
   canvas.setTextColor(c16(col));
   canvas.setCursor(x, y);
   canvas.print(s);
+}
+
+// ── Boot splash diagnostic log ─────────────────────────────────────────────
+static char    _sLog[14][30];
+static uint8_t _sN = 0;
+static void splashAdd(const char* msg, uint32_t col = 0) {
+  if (_sN == 14) {
+    for (int i = 0; i < 13; i++) memcpy(_sLog[i], _sLog[i+1], 30);
+    _sN = 13;
+  }
+  snprintf(_sLog[_sN++], 30, "%s", msg);
+  uint32_t textCol = col ? col : 0xD06818;
+  canvas.fillScreen(0x0000);
+  for (uint8_t i = 0; i < _sN; i++)
+    canvasText8(_sLog[i], 4, 4 + i * 10, textCol);
+  canvas.pushSprite(0, 0);
 }
 
 // ── LED flash (game events → RGB LEDs) ─────────────────────────────────────
@@ -118,25 +141,24 @@ static void drawPlayerScreen() {
   canvas.fillScreen(0x0000);
   canvasRect(0, 0, 240, 27, 0x1E0A00, true);
   canvasText24("WASTELAND", 2, 3, C_HDR);
-  canvasText16("[P]", 192, 10, 0x502010);
   canvasLine(0, 28, 239, 28, C_LINE);
 
   char buf[40];
   snprintf(buf, sizeof(buf), "Day:%-2u TC:%-2u  %luk",
            snapDay, snapTC,
            (unsigned long)(ESP.getFreeHeap() / 1024));
-  canvasText16(buf, 2, 32, C_INFO);
-  canvasLine(0, 50, 239, 50, C_LINE);
+  canvasText8(buf, 2, 32, C_INFO);
+  canvasLine(0, 42, 239, 42, C_LINE);
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
-    int y1 = 54 + i * 34;
-    int y2 = y1 + 17;
+    int y1 = 46 + i * 22;
+    int y2 = y1 + 11;
 
     if (snap[i].on) {
       uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
       uint32_t nameCol = (snap[i].statusBits & 0x0F) ? C_COND : C_TXT;
       snprintf(buf, sizeof(buf), "P%d %-4s  %-8.8s", i, ARCH_SHORT[arch], snap[i].name);
-      canvasText16(buf, 2, y1, nameCol);
+      canvasText8(buf, 2, y1, nameCol);
 
       uint32_t sc;
       if (snap[i].ll <= 2 || snap[i].food <= 1 || snap[i].water <= 1 || snap[i].radiation >= 7)
@@ -150,10 +172,10 @@ static void drawPlayerScreen() {
       snprintf(buf, sizeof(buf), "   LL:%-2u F:%-2u W:%-2u R:%-2u M:%-2d",
                snap[i].ll, snap[i].food, snap[i].water,
                snap[i].radiation, snap[i].movesLeft);
-      canvasText16(buf, 2, y2, sc);
+      canvasText8(buf, 2, y2, sc);
     } else {
       snprintf(buf, sizeof(buf), "P%d ----  (offline)", i);
-      canvasText16(buf, 2, y1, C_DIM);
+      canvasText8(buf, 2, y1, C_DIM);
     }
   }
 
@@ -162,12 +184,12 @@ static void drawPlayerScreen() {
   uint32_t up = millis() / 1000;
   snprintf(buf, sizeof(buf), "up:%lum%02lus",
            (unsigned long)(up / 60), (unsigned long)(up % 60));
-  canvasText16(buf, 2, 262, C_INFO);
+  canvasText8(buf, 2, 262, C_INFO);
 
   IPAddress apIp  = WiFi.softAPIP();
   IPAddress staIp = WiFi.localIP();
   snprintf(buf, sizeof(buf), "AP: %d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
-  canvasText16(buf, 2, 282, 0x5C2C10);
+  canvasText8(buf, 2, 282, 0x5C2C10);
   bool staConn = (staIp[0] != 0);
   uint32_t stColor;
   if (staConn) {
@@ -183,7 +205,7 @@ static void drawPlayerScreen() {
     snprintf(buf, sizeof(buf), "ST: no creds");
     stColor = 0x3A1808;
   }
-  canvasText16(buf, 2, 300, stColor);
+  canvasText8(buf, 2, 300, stColor);
 }
 
 // ── Screen 2: event log ────────────────────────────────────────
@@ -196,7 +218,6 @@ static void drawEventLogScreen() {
   canvas.fillScreen(0x0000);
   canvasRect(0, 0, 240, 27, 0x1E0A00, true);
   canvasText24("EVENT LOG", 2, 3, C_HDR);
-  canvasText16("[E]", 192, 10, 0x502010);
   canvasLine(0, 28, 239, 28, C_LINE);
 
   K10LogEntry snap[K10_LOG_SIZE];
@@ -217,15 +238,15 @@ static void drawEventLogScreen() {
     snprintf(buf, sizeof(buf), "-%lum%02lus %s",
              (unsigned long)mm, (unsigned long)ss, snap[idx].text);
     uint32_t col = (age < 60) ? C_HDR : C_INFO;
-    canvasText16(buf, 2, y, col);
-    y += 18;
+    canvasText8(buf, 2, y, col);
+    y += 10;
   }
   if (snapCount == 0)
-    canvasText16("No events yet", 2, 50, C_DIM);
+    canvasText8("No events yet", 2, 50, C_DIM);
 
   canvasLine(0, 306, 239, 306, C_LINE);
   snprintf(buf, sizeof(buf), "%d events", (int)snapCount);
-  canvasText16(buf, 2, 308, C_DIM);
+  canvasText8(buf, 2, 308, C_DIM);
 }
 
 // ── Screen 3: resources ────────────────────────────────────────
@@ -260,7 +281,6 @@ static void drawResourceScreen() {
   canvas.fillScreen(0x0000);
   canvasRect(0, 0, 240, 27, 0x1E0A00, true);
   canvasText24("RESOURCES", 2, 3, C_HDR);
-  canvasText16("[R]", 192, 10, 0x502010);
   canvasLine(0, 28, 239, 28, C_LINE);
 
   static const char* RS[5] = {"Wtr","Fod","Ful","Med","Scr"};
@@ -272,25 +292,25 @@ static void drawResourceScreen() {
     if (!snap[i].on) continue;
     anyOn = true;
     snprintf(buf, sizeof(buf), "P%d -- %.11s", i, snap[i].name);
-    canvasText16(buf, 2, y, C_HDR);
-    y += 18;
+    canvasText8(buf, 2, y, C_HDR);
+    y += 10;
     snprintf(buf, sizeof(buf), " %s:%-2u %s:%-2u %s:%-2u %s:%-2u %s:%-2u",
       RS[0], snap[i].inv[0], RS[1], snap[i].inv[1], RS[2], snap[i].inv[2],
       RS[3], snap[i].inv[3], RS[4], snap[i].inv[4]);
-    canvasText16(buf, 2, y, C_TXT);
-    y += 18;
+    canvasText8(buf, 2, y, C_TXT);
+    y += 10;
     for (int s = 0; s < snap[i].invSlots && s < INV_SLOTS_MAX && y < 295; s++) {
       if (!snap[i].invType[s]) continue;
       const ItemDef* def = getItemDef(snap[i].invType[s]);
       snprintf(buf, sizeof(buf), " %-14.14s x%u",
                def ? def->name : "???", snap[i].invQty[s]);
-      canvasText16(buf, 2, y, C_INFO);
-      y += 18;
+      canvasText8(buf, 2, y, C_INFO);
+      y += 10;
     }
     if (y < 295) { canvasLine(4, y+3, 235, y+3, C_LINE); y += 10; }
   }
   if (!anyOn)
-    canvasText16("No survivors online", 2, 50, C_DIM);
+    canvasText8("No survivors online", 2, 50, C_DIM);
 }
 
 // ── Screen 4: encounter tracking ──────────────────────────────
@@ -328,24 +348,23 @@ static void drawEncounterScreen() {
   canvas.fillScreen(0x0000);
   canvasRect(0, 0, 240, 27, 0x1E0A00, true);
   canvasText24("ENCOUNTERS", 2, 3, C_HDR);
-  canvasText16("[X]", 192, 10, 0x502010);
   canvasLine(0, 28, 239, 28, C_LINE);
 
   char buf[48];
   snprintf(buf, sizeof(buf), "POIs remaining: %u", (unsigned)poiLeft);
-  canvasText24(buf, 2, 32, C_HDR);
-  canvasLine(0, 52, 239, 52, C_LINE);
-  canvasText16("#   NAME         ENCS", 2, 56, C_DIM);
+  canvasText8(buf, 2, 32, C_HDR);
+  canvasLine(0, 42, 239, 42, C_LINE);
+  canvasText8("#   NAME         ENCS", 2, 46, C_DIM);
 
   if (cnt == 0) {
-    canvasText16("No survivors online", 2, 80, C_DIM);
+    canvasText8("No survivors online", 2, 80, C_DIM);
   } else {
     int y = 74;
     for (int rank = 0; rank < cnt && y < 310; rank++) {
       int i = order[rank];
       uint32_t col = (rank == 0) ? C_HDR : C_TXT;
       snprintf(buf, sizeof(buf), "%-2d  %-12.12s %u", rank + 1, snap[i].name, snap[i].encCount);
-      canvasText16(buf, 2, y, col);
+      canvasText8(buf, 2, y, col);
       y += 18;
     }
   }
@@ -433,7 +452,7 @@ static void drawMapScreen() {
 // Screens: 1=Players 2=Events 3=Resources 4=Encounters 5=Map
 static void checkGestureSwitch() {
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
-  if (btnB && !k10BtnBLast) k10Screen = (k10Screen % 5) + 1;
+  if (btnB && !k10BtnBLast) { k10Screen = (k10Screen % 5) + 1; k10PlaySeq(MOTIF_SCREEN_CLICK); }
   k10BtnBLast = btnB;
 }
 
@@ -508,7 +527,7 @@ static void checkScoreAudio() {
       k10LedPulse = millis() + 600;
       k10PulseR = 0x00; k10PulseG = 0xC8; k10PulseB = 0x30;
     } else {
-      k10PlaySeq(SEQ_SCORE_DOWN);
+      k10PlaySeq(MOTIF_ROTTEN_CHORD);
       k10LedPulse = millis() + 600;
       k10PulseR = 0xC8; k10PulseG = 0x10; k10PulseB = 0x10;
     }
@@ -520,7 +539,7 @@ static void checkScoreAudio() {
                   (snapTC >= TC_THRESHOLD_B) ? 2 :
                   (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
   if (tcLvl > k10PrevTCLevel) {
-    k10PlaySeq((tcLvl == 4 || crisis) ? SEQ_CRISIS : SEQ_ALERT);
+    k10PlaySeq((tcLvl == 4 || crisis) ? MOTIF_BUNKER_ALARM : MOTIF_WARNING_GRUNT);
   }
   k10PrevTCLevel = tcLvl;
 

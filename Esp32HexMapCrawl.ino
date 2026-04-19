@@ -351,26 +351,13 @@ struct Player {
   uint8_t  surveyedMap[60];
 };
 
-// ── Custom tone sequences ────────────────────────────────────────────────────
+// ── Tone sequences and motifs ────────────────────────────────────────────────
 struct ToneStep { int freq; int beat; };
 
-static const ToneStep SEQ_DAMAGE[]     = {{1300, 900},  {0,0}};
-static const ToneStep SEQ_SCORE_UP[]   = {{220, 2000}, {277, 2000}, {330, 2000}, {0,0}};
-static const ToneStep SEQ_SCORE_DOWN[] = {{330, 2000}, {277, 2000}, {220, 2000}, {0,0}};
-static const ToneStep SEQ_ALERT[]      = {{196, 2000}, {220, 2000}, {247, 2000}, {0,0}};
-static const ToneStep SEQ_CRISIS[]     = {{174, 2000}, {196, 2000}, {174, 2000}, {0,0}};
-static const ToneStep SEQ_RESOURCE[]   = {{185, 3000}, {185, 3000}, {185, 3000}, {0,0}};
-static const ToneStep SEQ_JOIN[]       = {{220, 2000}, {262, 2000}, {330, 2000}, {0,0}};
+// Score-up is the only upbeat/positive sound — kept distinct from the dark motifs
+static const ToneStep SEQ_SCORE_UP[] = {{220, 2000}, {277, 2000}, {330, 2000}, {0,0}};
 
-static const ToneStep SEQ_GEIGER[] = {
-  {800, 400}, {-430, 0},
-  {800, 400}, {-370, 0},
-  {800, 400}, {-310, 0},
-  {800, 400}, {-250, 0},
-  {800, 400}, {-190, 0},
-  {800, 400},
-  {0, 0}
-};
+#include "tone-motifs.hpp"  // 18 post-apocalyptic motifs (MOTIF_*)
 
 enum EvtType : uint8_t {
   EVT_COLLECT      = 1,
@@ -593,17 +580,20 @@ static uint8_t  k10PrevTCLevel = 0;
 
 static uint8_t  s_audioVol   = 5;
 static uint8_t  s_ledBright  = 4;
+static bool     s_screenFlip = false;
 
 static void loadK10Prefs() {
   Preferences p; p.begin("k10", true);
-  s_audioVol  = p.getUChar("vol",    5);
-  s_ledBright = p.getUChar("bright", 4);
+  s_audioVol   = p.getUChar("vol",    5);
+  s_ledBright  = p.getUChar("bright", 4);
+  s_screenFlip = p.getBool("flip",    false);
   p.end();
 }
 static void saveK10Prefs() {
   Preferences p; p.begin("k10", false);
   p.putUChar("vol",    s_audioVol);
   p.putUChar("bright", s_ledBright);
+  p.putBool("flip",    s_screenFlip);
   p.end();
 }
 
@@ -645,8 +635,8 @@ static uint32_t  g_bootNonce   = 0;
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
-#include "boot-assets.hpp"   // splash, asset loading, item registry, printStatus
-#include "ui-display.hpp"    // K10 screens, LED, audio
+#include "boot-assets.hpp"   // asset loading, item registry, printStatus
+#include "ui-display.hpp"    // K10 screens, LED, audio, boot splash (needs getItemDef from boot-assets)
 #include "usb_drive.h"       // USB MSC mode (needs canvas + canvasXxx from ui-display)
 
 // Gameplay chain (depend on hex-map + ui-display)
@@ -712,7 +702,7 @@ void setup() {
     Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(out0 | 0x01); Wire.endTransmission();
   }
   tft.init();
-  tft.setRotation(2);  // portrait, correct orientation
+  tft.setRotation(s_screenFlip ? 0 : 2);
   canvas.setPsram(true);
   canvas.setColorDepth(16);
   canvas.createSprite(240, 320);
