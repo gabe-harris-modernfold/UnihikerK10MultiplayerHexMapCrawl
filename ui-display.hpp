@@ -80,23 +80,54 @@ static void k10LogAdd(const char* text) {
   k10Dirty = true;
 }
 
-static TaskHandle_t s_toneTask = nullptr;
+static TaskHandle_t  s_toneTask = nullptr;
+static const char*   s_toneName = nullptr;
 
 static void toneTaskFn(void* arg) {
+  // playTone(freq, beat) treats 'beat' as sample count at 8000 Hz, not ms.
+  // It also calls i2s_zero_dma_buffer() immediately after writing, which
+  // cancels queued audio before the DMA clock has time to play it.
+  // Write directly to I2S instead: beat_ms * 8 = samples at 8 kHz.
+  // i2s_write(portMAX_DELAY) throttles to DMA playback speed naturally.
+  size_t written;
+  uint32_t savedRate = i2s_get_clk(I2S_NUM_0);
+  i2s_set_sample_rates(I2S_NUM_0, 8000);
+
   for (const ToneStep* s = (const ToneStep*)arg; s->freq != 0; s++) {
-    if (s->freq < 0)
-      vTaskDelay(pdMS_TO_TICKS(-(s->freq)));
-    else
-      k10Music.playTone(s->freq, s->beat);
+    int ms   = (s->freq < 0) ? -(s->freq) : s->beat;
+    int freq = (s->freq < 0) ? 0          : s->freq;
+    int n    = ms * 8;
+    for (int i = 0; i < n; i++) {
+      int16_t v = freq ? (int16_t)(32767.0f * sinf(i * (float)TWO_PI * freq / 8000.0f)) : 0;
+      int16_t buf[2] = {v, v};
+      i2s_write(I2S_NUM_0, buf, sizeof(buf), &written, portMAX_DELAY);
+    }
   }
+  // DMA buffer = 3*300 samples @ 8kHz = 112.5 ms max latency; drain before zeroing.
+  vTaskDelay(pdMS_TO_TICKS(115));
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  i2s_set_sample_rates(I2S_NUM_0, savedRate);
   s_toneTask = nullptr;
+  s_toneName = nullptr;
   vTaskDelete(nullptr);
 }
 
-static void k10PlaySeq(const ToneStep* seq) {
-  if (s_audioVol > 0 && s_toneTask == nullptr)
-    xTaskCreate(toneTaskFn, "tone", 2048, (void*)seq, 1, &s_toneTask);
+static void k10PlaySeq(const ToneStep* seq, const char* name = nullptr) {
+  if (s_audioVol == 0) {
+    Serial.printf("[TONE]    SKIP (vol=0): %s\n", name ? name : "?");
+    return;
+  }
+  if (s_toneTask != nullptr) {
+    Serial.printf("[TONE]    SKIP (busy):  %s\n", name ? name : "?");
+    return;
+  }
+  s_toneName = name;
+  Serial.printf("[TONE]    >> %s\n", name ? name : "?");
+  xTaskCreate(toneTaskFn, "tone", 4096, (void*)seq, 1, &s_toneTask);
 }
+
+// Stringifies the motif/sequence name automatically
+#define k10Play(seq) k10PlaySeq(seq, #seq)
 
 // ── Screen 1: player status dashboard ──────────────────────────
 static void drawPlayerScreen() {
@@ -452,7 +483,7 @@ static void drawMapScreen() {
 // Screens: 1=Players 2=Events 3=Resources 4=Encounters 5=Map
 static void checkGestureSwitch() {
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
-  if (btnB && !k10BtnBLast) { k10Screen = (k10Screen % 5) + 1; k10PlaySeq(MOTIF_SCREEN_CLICK); }
+  if (btnB && !k10BtnBLast) { k10Screen = (k10Screen % 5) + 1; k10Play(MOTIF_SCREEN_CLICK); }
   k10BtnBLast = btnB;
 }
 
@@ -523,11 +554,11 @@ static void checkScoreAudio() {
 
   if (teamScore / 100 != k10TeamScore / 100) {
     if (teamScore > k10TeamScore) {
-      k10PlaySeq(SEQ_SCORE_UP);
+      k10Play(SEQ_SCORE_UP);
       k10LedPulse = millis() + 600;
       k10PulseR = 0x00; k10PulseG = 0xC8; k10PulseB = 0x30;
     } else {
-      k10PlaySeq(MOTIF_ROTTEN_CHORD);
+      k10Play(MOTIF_ROTTEN_CHORD);
       k10LedPulse = millis() + 600;
       k10PulseR = 0xC8; k10PulseG = 0x10; k10PulseB = 0x10;
     }
@@ -539,7 +570,7 @@ static void checkScoreAudio() {
                   (snapTC >= TC_THRESHOLD_B) ? 2 :
                   (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
   if (tcLvl > k10PrevTCLevel) {
-    k10PlaySeq((tcLvl == 4 || crisis) ? MOTIF_BUNKER_ALARM : MOTIF_WARNING_GRUNT);
+    if (tcLvl == 4 || crisis) k10Play(MOTIF_BUNKER_ALARM); else k10Play(MOTIF_WARNING_GRUNT);
   }
   k10PrevTCLevel = tcLvl;
 

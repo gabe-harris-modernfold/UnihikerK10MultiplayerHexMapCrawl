@@ -33,7 +33,7 @@ static void duskCheck() {
 
     if (ev.actOut == AO_FAIL) {
       p.wounds[1] = (uint8_t)min(10, (int)p.wounds[1] + 1);  // +1 Major Wound (cap 10)
-      if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10PlaySeq(MOTIF_GROSS_SLUDGE); }  // red = LL lost
+      if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
       if (p.ll == 0) {
         p.statusBits |= ST_DOWNED;
         p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
@@ -150,7 +150,7 @@ static void dawnUpkeep() {
       p.ll = (uint8_t)min((int)p.ll + llDelta, (int)effectiveMaxLL(pid));
     }
     int8_t actualDelta = (int8_t)((int)p.ll - (int)prevLL); // true LL change (clamped)
-    if (actualDelta < 0) { ledFlash(255, 0, 0); k10PlaySeq(MOTIF_GROSS_SLUDGE); }  // red = LL lost
+    if (actualDelta < 0) { ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
 
     // ── Reset daily move budget and action flags ────────────────────────────
     p.movesLeft    = (p.statusBits & ST_DOWNED) ? 0 : (int8_t)effectiveMP(pid);  // downed: no moves
@@ -331,7 +331,7 @@ static void movePlayer(int pid, int dir) {
         p.radiation++;
         radGain = 1;
         updateRadStatus(p);
-        ledFlash(0, 255, 0); k10PlaySeq(MOTIF_GEIGER);  // green + geiger ticks
+        ledFlash(0, 255, 0); k10Play(MOTIF_GEIGER);  // green + geiger ticks
         Serial.printf("[RAD]     P%d \"%s\" +1 R (now %d) Endure DN6=%d FAIL\n",
           pid, p.name, p.radiation, cr.total);
       } else {

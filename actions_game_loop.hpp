@@ -136,7 +136,7 @@ static void tickGame() {
       if (G.map[p.r][p.q].shelter >= 2) continue;
       float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.016f;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
-        if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10PlaySeq(MOTIF_ACID_DRIP); }
+        if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP); }
         if (p.ll == 0) {
           p.statusBits |= ST_DOWNED; p.movesLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
