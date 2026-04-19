@@ -98,7 +98,8 @@ static void toneTaskFn(void* arg) {
     int freq = (s->freq < 0) ? 0          : s->freq;
     int n    = ms * 8;
     for (int i = 0; i < n; i++) {
-      int16_t v = freq ? (int16_t)(32767.0f * sinf(i * (float)TWO_PI * freq / 8000.0f)) : 0;
+      float   amp = 32767.0f * (s_audioVol / 5.0f);
+      int16_t v = freq ? (int16_t)(amp * sinf(i * (float)TWO_PI * freq / 8000.0f)) : 0;
       int16_t buf[2] = {v, v};
       i2s_write(I2S_NUM_0, buf, sizeof(buf), &written, portMAX_DELAY);
     }
