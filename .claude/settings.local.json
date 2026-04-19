@@ -33,7 +33,17 @@
       "Bash(xtensa-esp32s3-elf-nm \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/libunihiker_k10.a\")",
       "Bash(\"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/tools/xtensa-esp32s3-elf-gcc/esp-2021r2-patch5-8.4.0/bin/xtensa-esp32s3-elf-nm.exe\" \"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/hardware/esp32/0.0.3/tools/sdk/esp32s3/lib/liblvgl.a\")",
       "Bash(xargs -I{} bash -c '\"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/tools/xtensa-esp32s3-elf-gcc/esp-2021r2-patch5-8.4.0/bin/xtensa-esp32s3-elf-nm.exe\" \"{}\" 2>/dev/null | grep -q \"f_open\" && echo \"{}\"')",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(grep -E \"\\\\.\\(h|hpp\\)$\")",
+      "Bash(dir /s /b \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\libraries\")",
+      "Bash(findstr -i \"k10\\\\|unihiker\")",
+      "Bash(dir /s /b \"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\")",
+      "Bash(findstr -i \"unihiker\\\\|k10\")",
+      "Bash(dir /s /b \"C:\\\\\" 2>nul | findstr /i \"unihiker_k10.h\" | head -20)",
+      "Bash(cmd.exe /c \"dir /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\src\\\\\"\")",
+      "Bash(cmd.exe /c \"dir /b \\\\\"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\UNIHIKER\\\\hardware\\\\esp32\\\\0.0.3\\\\libraries\\\\unihiker_k10\\\\src\\\\\"\")",
+      "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\UNIHIKER\\\\hardware\\\\esp32\\\\0.0.3\\\\libraries\\\\unihiker_k10\\\\\"\")",
+      "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\\"\")"
     ]
   }
 }

@@ -1,22 +1,4 @@
 /**
- * Event Handlers Module (Tier 2.1)
- * Modularizes event handling from the monolithic handleEvent() function.
- * Each handler is focused and testable, reducing cognitive load.
- *
- * Usage in engine.js:
- *   import { eventHandlers } from './event-handlers.js';
- *
- *   function handleEvent(ev) {
- *     const handler = eventHandlers[ev.k];
- *     if (handler) {
- *       handler(ev, { gameState, players, gameMap, myId, ... });
- *     } else {
- *       console.warn(`Unknown event type: ${ev.k}`);
- *     }
- *   }
- */
-
-/**
  * Handle collection event (player picks up a resource).
  * Updates local gameMap and displays feedback to player.
  * @param {Object} ev - Event { k:'col', q, r, pid, res, amt }

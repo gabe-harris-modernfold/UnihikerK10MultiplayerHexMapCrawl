@@ -344,11 +344,16 @@ function showToast(msg) {
 
 // ── Flavor banner ─────────────────────────────────────────────────
 const SHELTER_WARNINGS = [
-  ['THE WASTES TOOK THEIR TOLL', 'build shelter before nightfall'],
-  ['EXPOSURE WEAKENS YOU', 'find cover or build a camp'],
-  ['YOU WOKE BLEEDING COLD', 'seek shelter before the next dusk'],
-  ['THE OPEN GROUND IS KILLING YOU', 'construct a shelter — use your scrap'],
-  ['ANOTHER HARD NIGHT IN THE RUINS', 'a shelter here could save your life'],
+    ['THE WASTES TOOK THEIR TOLL', 'build shelter before nightfall'],
+    ['EXPOSURE WEAKENS YOU', 'find cover or build a camp'],
+    ['YOU WOKE BLEEDING COLD', 'seek shelter before the next dusk'],
+    ['THE OPEN GROUND IS KILLING YOU', 'construct a shelter — use your scrap'],
+    ['ANOTHER HARD NIGHT IN THE RUINS', 'a shelter here could save your life'],
+    ['ASH RAIN SCOURED YOUR LUNGS', 'roofs block the fallout — build a shelter'],
+    ['THE HOWLING DUST CHOKED YOU BLIND', 'secure a shelter or hovel to breathe'],
+    ['SCAVENGERS TORE AT YOU IN THE DARK', 'four walls keep the vermin out'],
+    ['IRRADIATED DEW BURNED YOUR SKIN', 'craft a shelter before the midnight fog'],
+    ['BLACK SHIVER SET IN AS THE SUN DIED', 'a campfire and walls will warm you'],
 ];
 let bannerTimer = null;
 function showBanner(main, sub) {
@@ -2179,7 +2184,15 @@ function initEncounterOverlay() {
         if (Array.isArray(ev.loot))
           ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
         if (nextKey && currentEnc?.nodes?.[nextKey]) {
-          renderNode(currentEnc.nodes[nextKey]);
+          const contBtn = document.createElement('button');
+          contBtn.className = 'chk-action-btn';
+          contBtn.textContent = 'Continue \u2192';
+          contBtn.addEventListener('click', () => {
+            contBtn.remove();
+            // Guard: encounter may have been closed (abort/bank/ev.ends) while button was visible
+            if (currentEnc?.nodes?.[nextKey]) renderNode(currentEnc.nodes[nextKey]);
+          }, { once: true });
+          choiceList.appendChild(contBtn);
         } else {
           renderLoot();
           choiceList.innerHTML = '';
@@ -2187,7 +2200,8 @@ function initEncounterOverlay() {
           bankRow.style.display = '';
         }
       } else {
-        renderNode(currentNode);
+        // Guard: closeEncounter() may have fired during the 2200ms outcome window
+        if (currentNode) renderNode(currentNode);
       }
     }, 2200);
   };

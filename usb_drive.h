@@ -52,26 +52,24 @@ static void enterUSBDriveMode(UNIHIKER_K10& k10) {
   _msc.begin(sectors, 512);   // triggers USB disconnect+reconnect as CDC+MSC
   USB.begin();
 
-  // ── K10 status screen ────────────────────────────────────
-  k10.canvas->canvasRectangle(0, 0, 240, 320, 0x000000, 0x000000, true);
-  k10.canvas->canvasSetLineWidth(2);
-  k10.canvas->canvasLine(16,  56, 224,  56, 0x004080);
-  k10.canvas->canvasText("USB DRIVE", 44, 64, 0x00C0FF, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasLine(16, 100, 224, 100, 0x004080);
-  k10.canvas->canvasSetLineWidth(1);
+  // ── Status screen ─────────────────────────────────────────────
+  canvas.fillScreen(0x0000);
+  canvasLine(16,  56, 224,  56, 0x004080);
+  canvasText24("USB DRIVE", 44, 64, 0x00C0FF);
+  canvasLine(16, 100, 224, 100, 0x004080);
   char szBuf[30];
   snprintf(szBuf, 30, "SD card  %u MB", (unsigned)mb);
-  k10.canvas->canvasText(szBuf, 8, 112, 0x40A0C0, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("Drive visible on PC",  8, 136, 0x60C060, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasLine(16, 162, 224, 162, 0x202020);
-  k10.canvas->canvasText("Copy /data/ folder",   8, 172, 0x707070, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("Safely eject on PC",   8, 192, 0x707070, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("Then reboot K10",      8, 212, 0x707070, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasLine(16, 238, 224, 238, 0x181818);
-  k10.canvas->canvasText("/data/index.html",     8, 248, 0x404050, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("/data/*.css  *.js",    8, 266, 0x404050, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasText("/data/img/hex*.png",   8, 284, 0x404050, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->updateCanvas();
+  canvasText16(szBuf,                 8, 112, 0x40A0C0);
+  canvasText16("Drive visible on PC", 8, 136, 0x60C060);
+  canvasLine(16, 162, 224, 162, 0x202020);
+  canvasText16("Copy /data/ folder",  8, 172, 0x707070);
+  canvasText16("Safely eject on PC",  8, 192, 0x707070);
+  canvasText16("Then reboot K10",     8, 212, 0x707070);
+  canvasLine(16, 238, 224, 238, 0x181818);
+  canvasText16("/data/index.html",    8, 248, 0x404050);
+  canvasText16("/data/*.css  *.js",   8, 266, 0x404050);
+  canvasText16("/data/img/hex*.png",  8, 284, 0x404050);
+  canvas.pushSprite(0, 0);
 
   Serial.printf("[USB] Drive mode. %u sectors  %u MB. Waiting for host.\n",
                 (unsigned)sectors, (unsigned)mb);

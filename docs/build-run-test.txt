@@ -1,0 +1,69 @@
+Here's the full CLI picture for this project:
+
+---
+
+## Build & Flash
+
+```bash
+# Full workflow (compile + upload + monitor)
+./build_and_monitor.sh
+
+# Compile only — no upload
+./build_and_monitor.sh --skip-upload
+
+# Upload only — skip recompile (use cached build)
+./build_and_monitor.sh --monitor-only   # skips both, just monitors
+
+# Explicit port
+./build_and_monitor.sh -p COM5
+```
+
+Raw arduino-cli equivalents (if you want to run steps manually):
+```bash
+CLI="/c/Program Files/Arduino CLI/arduino-cli.exe"
+
+# Compile
+"$CLI" compile --fqbn UNIHIKER:esp32:k10 \
+  --build-property "build.cdc_on_boot=1" \
+  --libraries ./lib .
+
+# Upload
+"$CLI" upload -p COM9 --fqbn UNIHIKER:esp32:k10 .
+
+# Monitor (requires interactive terminal — won't work headless)
+"$CLI" monitor -p COM9 --config baudrate=115200
+```
+
+---
+
+## Serial Monitoring — Current Status
+
+The `arduino-cli monitor` command **requires an interactive TTY** — it exits immediately when run from a script or subprocess. This is a known limitation.
+
+Workarounds we've tried so far and their status:
+
+| Method | Result |
+|---|---|
+| `arduino-cli monitor` in script | Exits immediately (no TTY) |
+| PowerShell `SerialPort` | 0 bytes — board silent in boot screen |
+| Python pyserial | 0 bytes — same reason |
+| DTR toggle reset | Put board into download mode instead of run |
+| `cdc_on_boot=1` compile flag | Enabled, re-flashed ✓ — but still 0 bytes |
+
+The remaining issue is **timing**: setup() serial output fires in the ~2s window right after flash before the monitor connects, and loop() never runs because the **boot screen is blocking waiting for a button press on the device**.
+
+---
+
+## To actually capture serial output right now:
+
+**Option 1 — Interactive terminal** (simplest):
+Open a separate PowerShell or Git Bash window and run:
+```bash
+"/c/Program Files/Arduino CLI/arduino-cli.exe" monitor -p COM9 --config baudrate=115200
+```
+Then press BTN_A or BTN_B on the K10 — you'll see the `[loop +Xms]` heartbeat and sensor output live.
+
+**Option 2 — Fix the script's monitor**:
+Replace `arduino-cli monitor` in the scripts with the Python pyserial approach, which works headlessly. Since `cdc_on_boot=1` is now enabled, once the button is pressed and loop() is running, pyserial should pick it up. We just need to extend the wait window.
+
+Want me to swap the monitor section of the scripts to use Python?

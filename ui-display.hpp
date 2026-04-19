@@ -1,7 +1,36 @@
 #pragma once
 // ── ui-display.hpp ──────────────────────────────────────────────────────────
-// K10 display screens, LED flash, audio tone sequences, and score audio alerts.
+// LovyanGFX display screens, LED flash, audio tone sequences, and score audio alerts.
 // Included by Esp32HexMapCrawl.ino before gameplay .hpp files.
+
+// ── RGB888 → RGB565 colour helper ──────────────────────────────────────────
+static inline uint16_t c16(uint32_t c) {
+  return (uint16_t)(((c & 0xF80000) >> 8) | ((c & 0x00FC00) >> 5) | ((c & 0x0000F8) >> 3));
+}
+
+// ── Canvas drawing helpers (replace K10 canvas API) ─────────────────────────
+// canvasRect(x1,y1,x2,y2, col, fill): fill=true→fillRect, fill=false→drawRect
+static inline void canvasRect(int x1, int y1, int x2, int y2, uint32_t col, bool fill) {
+  if (fill) canvas.fillRect(x1, y1, x2 - x1, y2 - y1, c16(col));
+  else      canvas.drawRect(x1, y1, x2 - x1, y2 - y1, c16(col));
+}
+static inline void canvasLine(int x1, int y1, int x2, int y2, uint32_t col) {
+  canvas.drawLine(x1, y1, x2, y2, c16(col));
+}
+// canvasText16: 16px font (setTextSize 2)
+static inline void canvasText16(const char* s, int x, int y, uint32_t col) {
+  canvas.setTextSize(2);
+  canvas.setTextColor(c16(col));
+  canvas.setCursor(x, y);
+  canvas.print(s);
+}
+// canvasText24: 24px font (setTextSize 3)
+static inline void canvasText24(const char* s, int x, int y, uint32_t col) {
+  canvas.setTextSize(3);
+  canvas.setTextColor(c16(col));
+  canvas.setCursor(x, y);
+  canvas.print(s);
+}
 
 // ── LED flash (game events → RGB LEDs) ─────────────────────────────────────
 // Called from Core 1 (game loop). Sets LED immediately; loop() turns it off.
@@ -46,7 +75,7 @@ static void k10PlaySeq(const ToneStep* seq) {
     xTaskCreate(toneTaskFn, "tone", 2048, (void*)seq, 1, &s_toneTask);
 }
 
-// ── K10 screen 1: player status dashboard ──────────────────────
+// ── Screen 1: player status dashboard ──────────────────────────
 static void drawPlayerScreen() {
   struct {
     bool    on;
@@ -86,22 +115,18 @@ static void drawPlayerScreen() {
   static const uint32_t C_WARN = 0xC87020;
   static const uint32_t C_CRIT = 0xE89018;
 
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
-
-  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E0A00, 0x1E0A00, true);
-  k10.canvas->canvasText("WASTELAND", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasText("[P]", 192, 10, 0x502010, Canvas::eCNAndENFont16, 50, false);
-
-  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+  canvas.fillScreen(0x0000);
+  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
+  canvasText24("WASTELAND", 2, 3, C_HDR);
+  canvasText16("[P]", 192, 10, 0x502010);
+  canvasLine(0, 28, 239, 28, C_LINE);
 
   char buf[40];
   snprintf(buf, sizeof(buf), "Day:%-2u TC:%-2u  %luk",
            snapDay, snapTC,
            (unsigned long)(ESP.getFreeHeap() / 1024));
-  k10.canvas->canvasText(buf, 2, 32, C_INFO, Canvas::eCNAndENFont16, 50, false);
-
-  k10.canvas->canvasLine(0, 50, 239, 50, C_LINE);
+  canvasText16(buf, 2, 32, C_INFO);
+  canvasLine(0, 50, 239, 50, C_LINE);
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     int y1 = 54 + i * 34;
@@ -109,10 +134,9 @@ static void drawPlayerScreen() {
 
     if (snap[i].on) {
       uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
-
       uint32_t nameCol = (snap[i].statusBits & 0x0F) ? C_COND : C_TXT;
       snprintf(buf, sizeof(buf), "P%d %-4s  %-8.8s", i, ARCH_SHORT[arch], snap[i].name);
-      k10.canvas->canvasText(buf, 2, y1, nameCol, Canvas::eCNAndENFont16, 50, false);
+      canvasText16(buf, 2, y1, nameCol);
 
       uint32_t sc;
       if (snap[i].ll <= 2 || snap[i].food <= 1 || snap[i].water <= 1 || snap[i].radiation >= 7)
@@ -126,24 +150,24 @@ static void drawPlayerScreen() {
       snprintf(buf, sizeof(buf), "   LL:%-2u F:%-2u W:%-2u R:%-2u M:%-2d",
                snap[i].ll, snap[i].food, snap[i].water,
                snap[i].radiation, snap[i].movesLeft);
-      k10.canvas->canvasText(buf, 2, y2, sc, Canvas::eCNAndENFont16, 50, false);
+      canvasText16(buf, 2, y2, sc);
     } else {
       snprintf(buf, sizeof(buf), "P%d ----  (offline)", i);
-      k10.canvas->canvasText(buf, 2, y1, C_DIM, Canvas::eCNAndENFont16, 50, false);
+      canvasText16(buf, 2, y1, C_DIM);
     }
   }
 
-  k10.canvas->canvasLine(0, 258, 239, 258, C_LINE);
+  canvasLine(0, 258, 239, 258, C_LINE);
 
   uint32_t up = millis() / 1000;
   snprintf(buf, sizeof(buf), "up:%lum%02lus",
            (unsigned long)(up / 60), (unsigned long)(up % 60));
-  k10.canvas->canvasText(buf, 2, 262, C_INFO, Canvas::eCNAndENFont16, 50, false);
+  canvasText16(buf, 2, 262, C_INFO);
 
   IPAddress apIp  = WiFi.softAPIP();
   IPAddress staIp = WiFi.localIP();
   snprintf(buf, sizeof(buf), "AP: %d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
-  k10.canvas->canvasText(buf, 2, 282, 0x5C2C10, Canvas::eCNAndENFont16, 50, false);
+  canvasText16(buf, 2, 282, 0x5C2C10);
   bool staConn = (staIp[0] != 0);
   uint32_t stColor;
   if (staConn) {
@@ -159,46 +183,21 @@ static void drawPlayerScreen() {
     snprintf(buf, sizeof(buf), "ST: no creds");
     stColor = 0x3A1808;
   }
-  k10.canvas->canvasText(buf, 2, 300, stColor, Canvas::eCNAndENFont16, 50, false);
-
-  k10.canvas->updateCanvas();
+  canvasText16(buf, 2, 300, stColor);
 }
 
-// ── K10 screen 0: title ────────────────────────────────────────
-static void drawTitleScreen() {
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
-  // Background
-  k10.canvas->canvasRectangle(0,   0, 240, 320, 0x0D0400, 0x0D0400, true);
-  // Decorative border lines
-  k10.canvas->canvasRectangle(8,   8, 232, 312, 0x3A1808, 0x3A1808, false);
-  k10.canvas->canvasRectangle(12, 12, 228, 308, 0x502010, 0x502010, false);
-  // Title
-  k10.canvas->canvasText("WASTELAND",   22, 100, 0xD06818, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasText("HEX  CRAWL",  18, 132, 0xD06818, Canvas::eCNAndENFont24, 50, false);
-  // Dividers
-  k10.canvas->canvasLine(20, 96,  220, 96,  0x502010);
-  k10.canvas->canvasLine(20, 164, 220, 164, 0x502010);
-  // Subtitle
-  k10.canvas->canvasText("v3.0  6-Survivor Co-op", 8, 172, 0x904030, Canvas::eCNAndENFont16, 50, false);
-  // Indicator
-  k10.canvas->canvasText("[B] next screen", 52, 290, 0x3A1808, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->updateCanvas();
-}
-
-// ── K10 screen 2: event log ────────────────────────────────────
+// ── Screen 2: event log ────────────────────────────────────────
 static void drawEventLogScreen() {
   static const uint32_t C_HDR  = 0xD06818;
   static const uint32_t C_INFO = 0x904030;
   static const uint32_t C_LINE = 0x502010;
   static const uint32_t C_DIM  = 0x3A1808;
 
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
-  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E0A00, 0x1E0A00, true);
-  k10.canvas->canvasText("EVENT LOG", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasText("[E]", 192, 10, 0x502010, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+  canvas.fillScreen(0x0000);
+  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
+  canvasText24("EVENT LOG", 2, 3, C_HDR);
+  canvasText16("[E]", 192, 10, 0x502010);
+  canvasLine(0, 28, 239, 28, C_LINE);
 
   K10LogEntry snap[K10_LOG_SIZE];
   uint8_t snapHead = 0, snapCount = 0;
@@ -218,19 +217,18 @@ static void drawEventLogScreen() {
     snprintf(buf, sizeof(buf), "-%lum%02lus %s",
              (unsigned long)mm, (unsigned long)ss, snap[idx].text);
     uint32_t col = (age < 60) ? C_HDR : C_INFO;
-    k10.canvas->canvasText(buf, 2, y, col, Canvas::eCNAndENFont16, 50, false);
+    canvasText16(buf, 2, y, col);
     y += 18;
   }
   if (snapCount == 0)
-    k10.canvas->canvasText("No events yet", 2, 50, C_DIM, Canvas::eCNAndENFont16, 50, false);
+    canvasText16("No events yet", 2, 50, C_DIM);
 
-  k10.canvas->canvasLine(0, 306, 239, 306, C_LINE);
+  canvasLine(0, 306, 239, 306, C_LINE);
   snprintf(buf, sizeof(buf), "%d events", (int)snapCount);
-  k10.canvas->canvasText(buf, 2, 308, C_DIM, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->updateCanvas();
+  canvasText16(buf, 2, 308, C_DIM);
 }
 
-// ── K10 screen 3: resources ────────────────────────────────────
+// ── Screen 3: resources ────────────────────────────────────────
 static void drawResourceScreen() {
   static const uint32_t C_HDR  = 0xD06818;
   static const uint32_t C_TXT  = 0xC8A878;
@@ -259,12 +257,11 @@ static void drawResourceScreen() {
   }
   xSemaphoreGive(G.mutex);
 
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
-  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E0A00, 0x1E0A00, true);
-  k10.canvas->canvasText("RESOURCES", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasText("[R]", 192, 10, 0x502010, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+  canvas.fillScreen(0x0000);
+  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
+  canvasText24("RESOURCES", 2, 3, C_HDR);
+  canvasText16("[R]", 192, 10, 0x502010);
+  canvasLine(0, 28, 239, 28, C_LINE);
 
   static const char* RS[5] = {"Wtr","Fod","Ful","Med","Scr"};
   char buf[48];
@@ -275,29 +272,28 @@ static void drawResourceScreen() {
     if (!snap[i].on) continue;
     anyOn = true;
     snprintf(buf, sizeof(buf), "P%d -- %.11s", i, snap[i].name);
-    k10.canvas->canvasText(buf, 2, y, C_HDR, Canvas::eCNAndENFont16, 50, false);
+    canvasText16(buf, 2, y, C_HDR);
     y += 18;
     snprintf(buf, sizeof(buf), " %s:%-2u %s:%-2u %s:%-2u %s:%-2u %s:%-2u",
       RS[0], snap[i].inv[0], RS[1], snap[i].inv[1], RS[2], snap[i].inv[2],
       RS[3], snap[i].inv[3], RS[4], snap[i].inv[4]);
-    k10.canvas->canvasText(buf, 2, y, C_TXT, Canvas::eCNAndENFont16, 50, false);
+    canvasText16(buf, 2, y, C_TXT);
     y += 18;
     for (int s = 0; s < snap[i].invSlots && s < INV_SLOTS_MAX && y < 295; s++) {
       if (!snap[i].invType[s]) continue;
       const ItemDef* def = getItemDef(snap[i].invType[s]);
       snprintf(buf, sizeof(buf), " %-14.14s x%u",
                def ? def->name : "???", snap[i].invQty[s]);
-      k10.canvas->canvasText(buf, 2, y, C_INFO, Canvas::eCNAndENFont16, 50, false);
+      canvasText16(buf, 2, y, C_INFO);
       y += 18;
     }
-    if (y < 295) { k10.canvas->canvasLine(4, y+3, 235, y+3, C_LINE); y += 10; }
+    if (y < 295) { canvasLine(4, y+3, 235, y+3, C_LINE); y += 10; }
   }
   if (!anyOn)
-    k10.canvas->canvasText("No survivors online", 2, 50, C_DIM, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->updateCanvas();
+    canvasText16("No survivors online", 2, 50, C_DIM);
 }
 
-// ── K10 screen 4: encounter tracking ──────────────────────────
+// ── Screen 4: encounter tracking ──────────────────────────────
 static void drawEncounterScreen() {
   static const uint32_t C_HDR  = 0xD06818;
   static const uint32_t C_TXT  = 0xC8A878;
@@ -329,36 +325,33 @@ static void drawEncounterScreen() {
     order[b+1] = key;
   }
 
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
-  k10.canvas->canvasRectangle(0, 0, 240, 27, 0x1E0A00, 0x1E0A00, true);
-  k10.canvas->canvasText("ENCOUNTERS", 2, 3, C_HDR, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasText("[X]", 192, 10, 0x502010, Canvas::eCNAndENFont16, 50, false);
-  k10.canvas->canvasLine(0, 28, 239, 28, C_LINE);
+  canvas.fillScreen(0x0000);
+  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
+  canvasText24("ENCOUNTERS", 2, 3, C_HDR);
+  canvasText16("[X]", 192, 10, 0x502010);
+  canvasLine(0, 28, 239, 28, C_LINE);
 
   char buf[48];
   snprintf(buf, sizeof(buf), "POIs remaining: %u", (unsigned)poiLeft);
-  k10.canvas->canvasText(buf, 2, 32, C_HDR, Canvas::eCNAndENFont24, 50, false);
-  k10.canvas->canvasLine(0, 52, 239, 52, C_LINE);
-
-  k10.canvas->canvasText("#   NAME         ENCS", 2, 56, C_DIM, Canvas::eCNAndENFont16, 50, false);
+  canvasText24(buf, 2, 32, C_HDR);
+  canvasLine(0, 52, 239, 52, C_LINE);
+  canvasText16("#   NAME         ENCS", 2, 56, C_DIM);
 
   if (cnt == 0) {
-    k10.canvas->canvasText("No survivors online", 2, 80, C_DIM, Canvas::eCNAndENFont16, 50, false);
+    canvasText16("No survivors online", 2, 80, C_DIM);
   } else {
     int y = 74;
     for (int rank = 0; rank < cnt && y < 310; rank++) {
       int i = order[rank];
       uint32_t col = (rank == 0) ? C_HDR : C_TXT;
       snprintf(buf, sizeof(buf), "%-2d  %-12.12s %u", rank + 1, snap[i].name, snap[i].encCount);
-      k10.canvas->canvasText(buf, 2, y, col, Canvas::eCNAndENFont16, 50, false);
+      canvasText16(buf, 2, y, col);
       y += 18;
     }
   }
-  k10.canvas->updateCanvas();
 }
 
-// ── K10 screen 5: hex map minimap ─────────────────────────────
+// ── Screen 5: hex map minimap ──────────────────────────────────
 static void drawMapScreen() {
   // Terrain fill colours — monochromatic amber, indexed by terrain ID 0–10
   static const uint32_t TERR_COL[11] = {
@@ -392,8 +385,6 @@ static void drawMapScreen() {
 
   // ── layout: fill 240×320, no header ──────────────────────────
   // cells 9×16, odd-col y-offset 8 (= CH/2)
-  // width:  7 + 24*9 + 9 = 232 px  → 7px left, 8px right
-  // height: 4 + 18*16 + 8 + 16 = 316 px → 4px top/bottom
   static const int CW =  9;
   static const int CH = 16;
   static const int XS =  9;
@@ -403,8 +394,7 @@ static void drawMapScreen() {
   static const int MY =  4;
 
   // ── draw ─────────────────────────────────────────────────────
-  k10.canvas->canvasClear();
-  k10.canvas->canvasSetLineWidth(1);
+  canvas.fillScreen(0x0000);
 
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int q = 0; q < MAP_COLS; q++) {
@@ -412,11 +402,13 @@ static void drawMapScreen() {
       int py = MY + r * YS + (q & 1) * OY;
       uint8_t t = terr[r][q];
       uint32_t col = (t < 11) ? TERR_COL[t] : 0x3A1808;
-      k10.canvas->canvasRectangle(px, py, px + CW - 1, py + CH - 1, col, col, true);
+      // (x1,y1,x2,y2) → fillRect(x1, y1, w, h)
+      canvas.fillRect(px, py, CW - 1, CH - 1, c16(col));
     }
   }
 
-  // ── player number markers: white text over terrain, no background rect ─
+  // ── player number markers ─────────────────────────────────────
+  canvas.setTextSize(2);
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!ps[i].on) continue;
     int q = ps[i].q, r = ps[i].r;
@@ -424,23 +416,24 @@ static void drawMapScreen() {
     int px = MX + q * XS;
     int py = MY + r * YS + (q & 1) * OY;
     char num[2] = { (char)('1' + i), 0 };
-    k10.canvas->canvasText(num, px, py, 0xD06818, Canvas::eCNAndENFont16, 50, false);
+    canvas.setTextColor(c16(0xD06818));
+    canvas.setCursor(px, py);
+    canvas.print(num);
   }
 
-  // ── map border ───────────────────────────────────────────────
-  k10.canvas->canvasRectangle(MX-1, MY-1,
-                               MX + (MAP_COLS-1)*XS + CW,
-                               MY + (MAP_ROWS-1)*YS + OY + CH,
-                               0xD06818, 0x000000, false);
-
-  k10.canvas->updateCanvas();
+  // ── map border (amber outline) ────────────────────────────────
+  int bx1 = MX - 1;
+  int by1 = MY - 1;
+  int bx2 = MX + (MAP_COLS - 1) * XS + CW;
+  int by2 = MY + (MAP_ROWS - 1) * YS + OY + CH;
+  canvas.drawRect(bx1, by1, bx2 - bx1, by2 - by1, c16(0xD06818));
 }
 
 // ── K10 button B screen switching ─────────────────────────────
-// Screens: 0=Title 1=Players 2=Events 3=Resources 4=Encounters
+// Screens: 1=Players 2=Events 3=Resources 4=Encounters 5=Map
 static void checkGestureSwitch() {
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
-  if (btnB && !k10BtnBLast) k10Screen = (k10Screen + 1) % 6;
+  if (btnB && !k10BtnBLast) k10Screen = (k10Screen % 5) + 1;
   k10BtnBLast = btnB;
 }
 

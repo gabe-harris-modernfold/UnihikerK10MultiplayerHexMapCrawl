@@ -798,7 +798,7 @@ Use the following prompt with an LLM to generate encounter JSON files in bulk:
 
 **PROMPT:**
 
-You are writing encounter JSON files for "Ashways," a post-apocalyptic survival crawl played on a hex grid. Each encounter is a push-your-luck dungeon dive where a player explores a location node by node, spending resources and risking hazards for loot.
+You are writing encounter JSON files for "WASTELAND," a post-apocalyptic survival crawl played on a hex grid. Each encounter is a push-your-luck dungeon dive where a player explores a location node by node, spending resources and risking hazards for loot.
 
 **Target biome:** `{BIOME_NAME}` (terrain index `{TERRAIN_INDEX}`)
 **File index:** `{FILE_NUMBER}` (this is `{FILE_NUMBER}.json` in the `{BIOME_FOLDER}/` directory)
@@ -845,95 +845,4 @@ You are writing encounter JSON files for "Ashways," a post-apocalyptic survival 
 **Tone:** Grim, tactile, lived-in. Short punchy sentences. Second person present tense. No humor unless dark/gallows. The world is dangerous but not hopeless — there are things worth finding.
 
 **Generate a complete encounter JSON file. No comments in the output (pure JSON).**
-
----
-
----
-
-## 11. Implementation Phases
-
-### Phase 1: Server Foundation
-- Add `poi` to `HexCell`, bump SAVE_VERSION to 5 (HexCell 7→8 bytes, update `network-persistence.hpp`)
-- Add `ActiveEncounter` struct (no sideRoomUsed — v1 linear only)
-- Add `EncPoolInfo[10]` array, load `index.json` at boot
-- Add `EVT_ENC_*` event types and GameEvent encounter fields
-- `computeEncounterDN()` function (DN 2-12 range for existing 2d6 system)
-- `rollLootTable()` function, parse and cache `loot_tables.json` at boot (~1-2KB)
-- POI placement in `generateMap()`
-
-### Phase 2: Server Handlers
-- HTTP `/enc` route for JSON serving
-- WebSocket handlers: `enc_start`, `enc_choice`, `enc_bank`, `enc_abort`, `enc_assist` (exact JSON formats in §5)
-- Server-side loot table rolling during `enc_choice` (including `"lt"` string field parsing)
-- Event serialization for EVT_ENC_* events + k10LogAdd() calls
-- **Blocking**: early return in `handleAction()`, `movePlayer()`, `trade_offer`, `trade_accept`
-- **Dawn abort**: force-abort active encounters before `duskCheck()` in `tickGame()`
-- Disconnect cleanup (immediate ActiveEncounter clear)
-- POI claim rejection with specific "claimed" message
-- Random encounter selection (`random(0, count)` — no used-tracking in v1)
-- TC increment on entry and voluntary abort (not dawn abort)
-- Score via existing `addScore(p, ev, pts)`: +3 per resource banked, +10 full clear
-
-### Phase 3: Client
-- POI hex rendering (bit 7 of DD, global visibility)
-- Survey range adjustment (half normal range for POI detection)
-- Encounter JSON fetch + text resolution (active player only)
-- Encounter UI panel (modal overlay, risk bar with effective risk)
-- Ally banner + assist buttons (minimal — no spectator narrative)
-- Event handlers for `enc_*` messages (match JSON formats in §5)
-- "Claimed" rejection display
-
-### Phase 4: Content
-- Per-biome loot tables in `loot_tables.json` — currently only `urban` and `marsh` are defined. **16 missing tables** to add: `scrub_common`, `scrub_rare`, `dunes_common`, `dunes_rare`, `forest_common`, `forest_rare`, `flooded_common`, `flooded_rare`, `glass_common`, `glass_rare`, `ridge_common`, `ridge_rare`, `mountain_common`, `mountain_rare`, `settlement_common`, `settlement_rare`
-- 3-5 starter encounter JSON files across terrain types (linear, no side rooms)
-- `index.json` encounter pool
-- Placeholder word lists in encounter files
-
-### v2 Additions (deferred)
-- Side rooms (`side_room: true` flag, `sideRoomUsed` bitmask, one-shot gray-out UI)
-- Spectator view (allies fetch encounter JSON, read-only narrative panel)
-- Per-player POI visibility (conditional bit 7 encoding in vis-disk per surveyor)
-- Used-encounter bitmask tracking (repeat avoidance, pool exhaustion)
-
----
-
-## Critical Files
-| File | Changes |
-|------|---------|
-| `Esp32HexMapCrawl.ino` | HexCell.poi, ActiveEncounter, EncPoolInfo[], EVT_ENC_*, GameEvent enc fields, loot table cache, SAVE_VERSION=5 |
-| `actions_game_loop.hpp` | Encounter blocking in `handleAction()`, dawn encounter abort before `duskCheck()`, disconnect cleanup |
-| `network-handlers.hpp` | WebSocket enc_* handlers, trade blocking, POI claim rejection, TC increments, server-side loot table rolling, `"lt"` string parsing |
-| `network-events.hpp` | EVT_ENC_* JSON serialization, k10LogAdd() calls for encounter events |
-| `network-persistence.hpp` | SAVE_VERSION=5, HexCell 8 bytes (poi field persists) |
-| `hex-map.hpp` | POI placement in generateMap(), vis-disk bit 7 (global from HexCell.poi), half-range survey for POIs |
-| `survival_state.hpp` | Encounter block in `movePlayer()` early return |
-| `survival_skills.hpp` | `computeEncounterDN()` (DN 2-12), `rollLootTable()` |
-| `data/ui.js` | Encounter panel, ally assist banner, effective risk bar |
-| `data/state-manager.js` | enc_* event reducer cases |
-| `data/engine.js` | POI hex rendering (global visibility, bit 7 of DD byte) |
-
-## Verification
-1. Add 1 test encounter JSON to SD card, verify HTTP `/enc` serves it
-2. Verify server parses and caches `loot_tables.json` at boot (check serial log)
-3. Verify `index.json` loads into `encPools[]` at boot (serial log: pool counts per terrain)
-4. Generate map, confirm POI hexes appear only after survey at half range (check via serial debug or vis-disk)
-5. Verify POI visibility is global (Player A surveys, Player B also sees the eye icon)
-6. Move onto POI hex, start encounter, verify `enc_start` event broadcasts to same-hex allies
-7. Verify second player trying to enter same POI gets "claimed" rejection
-8. Make choices, verify server resolves rolls and sends `EVT_ENC_RESULT` events (including server-rolled loot table items)
-9. Bank loot, verify `inv[]` updated and `poi` zeroed on hex. Verify score via `addScore`: +3 per resource, +10 full clear
-10. Test ally banner: ally on same hex sees "Player X is in an encounter" with assist buttons
-11. Test assist: second player on same hex spends 1 resource, verify -4 risk reduction (max -12 cap)
-12. Test **action blocking**: while in encounter, attempt move/forage/trade/rest — all should be blocked
-13. Test **dawn abort**: start encounter, let dawn fire, verify encounters force-abort BEFORE duskCheck runs (no TC increment)
-14. Test **dusk after dawn abort**: player with high radiation is force-aborted from encounter, then duskCheck runs — downed rules apply at POI hex normally (encounter already over)
-15. Test voluntary abort: verify TC increments by 1 on abort
-16. Test hazard: fail a roll, verify penalties applied and loot lost (terminal hazard)
-17. Test non-terminal hazard: fail an early-node roll with `ends_encounter: false`, verify penalty applied but encounter continues
-18. Test downed: trigger hazard that would drop LL to 0, verify encounter ends with loot lost
-19. Test disconnect: disconnect mid-encounter, verify ActiveEncounter cleared immediately, POI consumed
-20. Test inventory overflow: bank with full typed inventory, verify items drop to ground via `dropItem()`. If ground full (32 items), item is lost
-21. Verify 2d6 DN range produces reasonable pass/fail rates at various base_risk levels (spot-check: base_risk 20 should be easy, 60 should be hard)
-22. **Save/load round-trip**: start game, survey POIs, consume some encounters, save (dawn), reload — verify POI state persists correctly (consumed POIs stay gone, unconsumed POIs still present)
-23. **K10 event log**: verify encounter events appear on K10 Screen 1 (start, bank, hazard, abort, assist)
 24. **Version migration**: load a v4 save file, verify it's rejected cleanly and a fresh game starts

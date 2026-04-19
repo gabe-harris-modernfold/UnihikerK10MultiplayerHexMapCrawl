@@ -4,16 +4,14 @@
 // Has access to all globals, constants, structs, and functions defined above it.
 
 // ── Weather phase state machine ───────────────────────────────────────────────
-// Called each tick while holding G.mutex.
+// Called once per dawn (not per tick) so resting through days advances weather normally.
 static void updateWeatherPhase() {
-  if (G.tickId % WEATHER_TICK_DIVIDER != 0) return;  // advance only every N ticks
-
-  // Accumulate bad-weather streak (non-CLEAR ticks)
+  // Accumulate bad-weather streak in game-days
   if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
 
   if (G.weatherCounter > 0) { G.weatherCounter--; return; }
 
-  static constexpr uint16_t BAD_WEATHER_CAP = 180; // 3 days × 60 weather-ticks/day
+  static constexpr uint16_t BAD_WEATHER_CAP = 6; // max 6 game-days of bad weather
   uint8_t next;
   if (G.badWeatherTicks >= BAD_WEATHER_CAP) {
     next = WEATHER_CLEAR;  // force clear after 3-day bad-weather streak
@@ -45,7 +43,6 @@ static void updateWeatherPhase() {
 static void tickGame() {
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
   G.tickId++;
-  updateWeatherPhase();
 
   // ── Day cycle: advance dayTick; trigger Dawn when full day elapses ──────
   G.dayTick++;
@@ -98,6 +95,7 @@ static void tickGame() {
       (int)G.dayCount,
       (unsigned long)(DAY_TICKS * TICK_MS / 1000),
       (unsigned long)DAY_TICKS, (unsigned long)TICK_MS);
+    updateWeatherPhase();  // advance weather once per game-day
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
   }

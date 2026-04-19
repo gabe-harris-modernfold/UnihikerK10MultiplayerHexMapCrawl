@@ -324,7 +324,6 @@ const ITEMS = [
     img:'img/items/item_25.png', icon:'img/items/icon_25.png',
     preUse:  null, postUse: null,
     story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too.' },
-  // ── NEW ITEMS ──────────────────────────────────────────────────────────────
   { id:26, name:'Motorbike',        category:1, slot:5,
     img:'img/items/item_26.png', icon:'img/items/icon_26.png',
     preUse: null, postUse: null,

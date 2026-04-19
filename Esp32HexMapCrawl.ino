@@ -80,12 +80,13 @@
 #include <esp_wifi.h>
 #include <FS.h>
 #include <SD.h>
+#include <LovyanGFX.hpp>
+#include "lgfx_config.h"
 #include <ESPAsyncWebServer.h>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
 #pragma GCC diagnostic pop
-#include "usb_drive.h"
 
 static const char* AP_SSID = "WASTELAND";
 
@@ -151,14 +152,12 @@ static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 
 // ── Weather system constants ──────────────────────────────────────────────────
 static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
                            WEATHER_STORM = 2, WEATHER_CHEM  = 3;
-// Weather counter decrements only once every WEATHER_TICK_DIVIDER game ticks.
-// At TICK_MS=100 (10 ticks/sec), divider=50 → 5 sec/weather-tick:
-//   Clear 240-400 weather-ticks = 20-33 min | Chem 15-30 = 1.25-2.5 min
-static constexpr uint32_t WEATHER_TICK_DIVIDER = 50;
+// Weather counter is in game-days; decremented once per dawn (not per tick).
+// CLEAR, RAIN, STORM, CHEM
 static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 1, 3, 5 };
 static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
-static const uint16_t WEATHER_DUR_MIN[4]     = { 240, 30, 20, 15 };
-static const uint16_t WEATHER_DUR_MAX[4]     = { 400, 50, 40, 30 };
+static const uint16_t WEATHER_DUR_MIN[4]     = { 3, 1, 1, 1 };
+static const uint16_t WEATHER_DUR_MAX[4]     = { 7, 3, 2, 1 };
 // Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
@@ -571,6 +570,8 @@ static unsigned long  lastScreenMs  = 0;
 static constexpr uint32_t SCREEN_MS  = 10000;
 static UNIHIKER_K10   k10;
 static Music          k10Music;
+static LGFX           tft;
+static LGFX_Sprite    canvas(&tft);
 
 // ── K10 multi-screen state ─────────────────────────────────────────────────
 #define K10_LOG_SIZE 15
@@ -580,7 +581,7 @@ static uint8_t      k10LogHead  = 0;
 static uint8_t      k10LogCount = 0;
 static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 
-static uint8_t  k10Screen     = 0;
+static uint8_t  k10Screen     = 1;
 static uint8_t  k10ScreenLast = 255;
 static bool     k10BtnBLast   = false;
 static volatile bool k10Dirty = true;  // set whenever game state changes
@@ -641,16 +642,12 @@ static ImgFile   imgCache[MAX_IMG_CACHE];
 static int       imgCacheCount = 0;
 static uint32_t  g_bootNonce   = 0;
 
-// ── Decoded title bitmap (TRUE_COLOR_ALPHA, PSRAM) ─────────────────────────
-static uint8_t*     g_titlePixels = nullptr;   // 3 bytes/px: lv_color_t + alpha
-static lv_img_dsc_t g_titleImgDsc;
-static uint16_t     g_titleW = 0, g_titleH = 0;
-
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
 #include "boot-assets.hpp"   // splash, asset loading, item registry, printStatus
 #include "ui-display.hpp"    // K10 screens, LED, audio
+#include "usb_drive.h"       // USB MSC mode (needs canvas + canvasXxx from ui-display)
 
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
@@ -697,13 +694,30 @@ void setup() {
     Serial.printf("[RESET] Reason: %s (%d)\n", rs, (int)rr);
   }
 
-  // ── K10 screen init ───────────────────────────────────────────
+  // ── K10 hardware init (buttons, LEDs, audio) ─────────────────
   k10.begin();
   loadK10Prefs();
-  k10.initScreen(2, 0);
-  k10.creatCanvas();
-  k10.setScreenBackground(0x000000);
-  digital_write(eLCD_BLK, 0);  // screen off until display issue resolved
+
+  // ── LovyanGFX display init ────────────────────────────────────
+  // k10.begin() turns backlight off (XL9535 P0.0=LOW). Enable it via Wire.
+  Wire.begin(47, 48);  // SDA=47, SCL=48 (K10 I2C bus)
+  {
+    // Config P0.0 as output
+    Wire.beginTransmission(0x20); Wire.write(0x06); Wire.endTransmission(false);
+    Wire.requestFrom((uint8_t)0x20, (uint8_t)1); uint8_t cfg0 = Wire.read();
+    Wire.beginTransmission(0x20); Wire.write(0x06); Wire.write(cfg0 & ~0x01); Wire.endTransmission();
+    // Set P0.0 HIGH = backlight on
+    Wire.beginTransmission(0x20); Wire.write(0x02); Wire.endTransmission(false);
+    Wire.requestFrom((uint8_t)0x20, (uint8_t)1); uint8_t out0 = Wire.read();
+    Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(out0 | 0x01); Wire.endTransmission();
+  }
+  tft.init();
+  tft.setRotation(2);  // portrait, correct orientation
+  canvas.setPsram(true);
+  canvas.setColorDepth(16);
+  canvas.createSprite(240, 320);
+  canvas.fillScreen(0x0000);
+  canvas.pushSprite(0, 0);
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
   Serial.printf("[SETUP] Map: %dx%d=%d cells | VISION_R:%d | MOVE_CD:%lums | RESPAWN:%ds\n",
@@ -808,7 +822,6 @@ void setup() {
   }
 
   loadWebFilesToRAM();
-  decodeTitleImage();
   g_bootNonce = esp_random();
   for (int i = 0; i < WEB_FILE_COUNT; i++)
     snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
@@ -883,17 +896,17 @@ void loop() {
 
   bool screenChanged = (k10Screen != k10ScreenLast);
   k10ScreenLast = k10Screen;
-  if (screenChanged || k10Dirty || (k10Screen != 0 && now - lastScreenMs >= SCREEN_MS)) {
+  if (screenChanged || k10Dirty || (now - lastScreenMs >= SCREEN_MS)) {
     lastScreenMs = now;
     k10Dirty = false;
     switch (k10Screen) {
-      case 0:  if (screenChanged) drawTitleScreen(); break;
       case 2:  drawEventLogScreen();   break;
       case 3:  drawResourceScreen();   break;
       case 4:  drawEncounterScreen();  break;
       case 5:  drawMapScreen();        break;
       default: drawPlayerScreen();     break;  // case 1
     }
+    canvas.pushSprite(0, 0);
   }
 
   if (g_ledEndMs && now >= g_ledEndMs) {

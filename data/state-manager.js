@@ -1,5 +1,5 @@
 /**
- * Game State Management Module (Tier 3.2)
+ * Game State Manager
  * Implements event sourcing pattern with full state history and replay capability.
  * Enables time-travel debugging, state snapshots, and perfect replay.
  */

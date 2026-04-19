@@ -482,6 +482,12 @@ function handleMsg(msg) {
         if (pd.eq) p.eq = pd.eq;   // equipment slots
         if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
       });
+      // Sync can carry stale eq after item_result; refresh equipment grid only if open.
+      // Do NOT call renderInventory here — sync fires on every tick and would hammer
+      // the item icon requests on every cycle. Inventory is already up-to-date from item_result.
+      if (document.getElementById('char-overlay')?.classList.contains('open')) {
+        renderEquipment?.();
+      }
       if (msg.gs) { Object.assign(gameState, msg.gs); if (msg.gs.wp !== undefined) { weatherPhase = msg.gs.wp; updateWeatherHUD(); } }
       updateSidebar();
       updateTerrainCard();
@@ -583,9 +589,11 @@ function handleMsg(msg) {
 function handleEvent(ev) {
   switch (ev.k) {
     case 'col': {
-      // Clear resource unconditionally — null check handles fog cells
-      if (gameMap[ev.r]?.[ev.q])
-        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: 0, amount: 0 };
+      // Clear resource unconditionally — mutate in-place so cached cell refs stay valid
+      if (gameMap[ev.r]?.[ev.q]) {
+        gameMap[ev.r][ev.q].resource = 0;
+        gameMap[ev.r][ev.q].amount   = 0;
+      }
       collectedCells.add(`${ev.q}_${ev.r}`);
       const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
       addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
