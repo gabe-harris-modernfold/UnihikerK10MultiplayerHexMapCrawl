@@ -114,7 +114,6 @@ function updateSidebar() {
   uiWater.val   = me.water ?? 6;
   uiMP.val      = me.mp   ?? 0;
   uiRad.val     = me.rad  ?? 0;
-  uiHasCond.val = ((me.sb & 0x8C) !== 0);
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => p.on)
@@ -235,18 +234,6 @@ function openCharSheet() {
       row.appendChild(lbl);
       grid.appendChild(row);
     });
-  }
-
-  // Wounds & Conditions
-  // Conditions
-  const wdCond = document.getElementById('cs-conditions');
-  if (wdCond) {
-    const conds = [];
-    if (me.sb & 0x04) conds.push('BLEED');
-    if (me.sb & 0x08) conds.push('FEVER');
-    if (me.sb & 0x80) conds.push('STINK');
-    wdCond.textContent = conds.join(' ');
-    wdCond.style.color = conds.length ? '#CC4422' : '';
   }
 
   uiCharOpen.val = true;
@@ -1032,11 +1019,6 @@ function initActionPanel() {
   });
 
   van.derive(() => {
-    const btn = document.getElementById('fab-action-btn');
-    if (!btn) return;
-    btn.classList.toggle('has-condition', uiHasCond.val);
-  });
-  van.derive(() => {
     const btn = document.getElementById('fab-rest-btn');
     if (!btn) return;
     btn.classList.toggle('rest-btn-used', uiResting.val);
@@ -1259,7 +1241,7 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             ms({ class: 'ht-track-lbl' }, 'RADIATION'),
             ms({ class: 'ht-track-val' }, '0 – 10'),
-            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 4 = RAD-SICK. R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn. Use TREAT (Radiation) to remove 2 R.')
+            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn.'))
           ),
         )
       ),
@@ -1267,7 +1249,7 @@ function initMenuSystem() {
       sec('Actions',
         mp({ class: 'menu-text-body' },
           'Open the ☞ ACTION menu to choose an action. ' +
-          'Actions cost MP and most require a skill check. Every action awards points (see Scoring). Settlement terrain reduces all TREAT difficulty by 2.'
+          'Actions cost MP and most require a skill check. Every action awards points (see Scoring).'
         ),
         md({ class: 'ht-act-list' },
           md({ class: 'ht-act-row' },
@@ -1337,14 +1319,10 @@ function initMenuSystem() {
         )
       ),
 
-      sec('Wounds & Conditions',
+      sec('Wounds',
         mp({ class: 'menu-text-body' },
           'Wounds reduce skill checks. Minor Wounds penalise Endure; Major Wounds penalise all skills. ' +
           'Grievous Wounds require a Settlement and a successful Treat to remove — and restore 1 LL when cleared.'
-        ),
-        mp({ class: 'menu-text-body' },
-          'Bleeding left untreated may worsen wounds. Fever penalises Forage checks. ' +
-          'Both clear with a successful TREAT action.'
         )
       ),
 
@@ -1352,7 +1330,7 @@ function initMenuSystem() {
         mp({ class: 'menu-text-body' },
           'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
           'Meeting or exceeding DN = success. ' +
-          'Six skills: NAVIGATE · FORAGE · SCAVENGE · TREAT · SHELTER · ENDURE.'
+          'Five skills: NAVIGATE · FORAGE · SCAVENGE · SHELTER · ENDURE.'
         )
       ),
 
@@ -1375,9 +1353,6 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             ms({}, 'SHELTER'), ms({}, '+4 pts basic, +8 pts improved')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'TREAT'), ms({}, '+3 pts success')
           ),
           md({ class: 'ht-track-row' },
             ms({}, 'SURVEY'), ms({}, '+2 pts first per hex, +0 repeats')
@@ -1403,11 +1378,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), statusBits, wounds[3], skills[6], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'statusBits'),
-            mp({ class: 'ht-track-desc' }, 'Bitmask: bit0=Wounded, bit1=RadSick, bit2=Bleeding, bit3=Fevered, bit4=Downed, bit5=Stable, bit6=Panicked')
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[3], skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
           )
         ),
 
@@ -1486,7 +1457,7 @@ function initMenuSystem() {
             mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.4.1/state?pid=0 for player zero, /state?pid=1 for player one, etc.')
           )
         )
-      ),
+      )
     );
 
     if (page === 'settings') return wrap(
