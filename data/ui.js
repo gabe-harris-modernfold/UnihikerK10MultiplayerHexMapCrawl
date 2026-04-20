@@ -1241,7 +1241,7 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             ms({ class: 'ht-track-lbl' }, 'RADIATION'),
             ms({ class: 'ht-track-val' }, '0 – 10'),
-            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn.'))
+            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn.')
           ),
         )
       ),
