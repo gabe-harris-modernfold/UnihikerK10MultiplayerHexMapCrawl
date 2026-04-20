@@ -124,7 +124,7 @@ static constexpr uint32_t STATUS_MS     = 30000;
 
 // ── Survivor system constants ───────────────────────────────────
 static constexpr int      NUM_ARCHETYPES  = 6;
-static constexpr int      NUM_SKILLS      = 6;
+static constexpr int      NUM_SKILLS      = 5;
 static constexpr int      INV_SLOTS_STD   = 8;
 static constexpr int      INV_SLOTS_MULE  = 12;
 static constexpr int      INV_SLOTS_MAX   = 12;
@@ -138,9 +138,8 @@ static constexpr uint8_t  TC_THRESHOLD_D  = 17;
 static constexpr int SK_NAVIGATE = 0;
 static constexpr int SK_FORAGE   = 1;
 static constexpr int SK_SCAVENGE = 2;
-static constexpr int SK_TREAT    = 3;
-static constexpr int SK_SHELTER  = 4;
-static constexpr int SK_ENDURE   = 5;
+static constexpr int SK_SHELTER  = 3;
+static constexpr int SK_ENDURE   = 4;
 
 // ── Action system constants ─────────────────────────────────────
 static constexpr uint8_t ACT_FORAGE  = 0;
@@ -181,14 +180,6 @@ static const float WEATHER_INTENSITY[4][12] = {
   { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f },
 };
 
-// Status condition bitmask positions
-static constexpr uint8_t ST_RADSICK  = (1 << 1);
-static constexpr uint8_t ST_BLEEDING = (1 << 2);
-static constexpr uint8_t ST_FEVERED  = (1 << 3);
-static constexpr uint8_t ST_DOWNED   = (1 << 4);
-static constexpr uint8_t ST_STABLE   = (1 << 5);
-static constexpr uint8_t ST_PANICKED = (1 << 6);
-static constexpr uint8_t ST_STINK   = (1 << 7);   // Applied by methane/sewage encounters; blocks stealth for 2 turns
 
 // ── Item system ─────────────────────────────────────────────────
 static constexpr uint8_t  MAX_ITEMS  = 128;
@@ -280,7 +271,7 @@ static const char* VIS_LABEL[6] = { "BLIND", "PENLT", "LOW  ", "STD  ", "HIGH ",
 static const char* RES_NAME[6]  = { "None","Water","Food ","Fuel ","Med  ","Scrap" };
 static const char* DIR_NAME[6]  = { "SE","NE","N ","NW","SW","S " };
 static const char* SKILL_NAME[NUM_SKILLS] = {
-  "Navigate","Forage  ","Scavenge","Treat   ","Shelter ","Endure  "
+  "Navigate","Forage  ","Scavenge","Shelter ","Endure  "
 };
 
 // ── Survivor archetype tables ───────────────────────────────────
@@ -288,12 +279,12 @@ static const char* ARCHETYPE_NAME[NUM_ARCHETYPES] = {
   "Guide", "Quartermaster", "Medic", "Mule", "Scout", "Endurer"
 };
 static const uint8_t ARCHETYPE_SKILLS[NUM_ARCHETYPES][NUM_SKILLS] = {
-  { 2, 1, 0, 0, 1, 1 },
-  { 0, 2, 1, 1, 1, 0 },
-  { 0, 0, 1, 2, 0, 2 },
-  { 0, 1, 2, 0, 1, 1 },
-  { 2, 1, 1, 0, 0, 1 },
-  { 1, 0, 0, 1, 2, 2 },
+  { 2, 1, 0, 1, 1 },
+  { 0, 2, 1, 1, 0 },
+  { 0, 0, 1, 0, 2 },
+  { 0, 1, 2, 1, 1 },
+  { 2, 1, 1, 0, 1 },
+  { 1, 0, 0, 2, 2 },
 };
 static const uint8_t ARCHETYPE_INV_SLOTS[NUM_ARCHETYPES] = {
   INV_SLOTS_STD, INV_SLOTS_STD, INV_SLOTS_STD,
@@ -337,8 +328,6 @@ struct Player {
   uint8_t  archetype;
   uint8_t  skills[NUM_SKILLS];
   uint8_t  invSlots;
-
-  uint8_t  statusBits;
 
   uint8_t  invType[INV_SLOTS_MAX];
   uint8_t  invQty[INV_SLOTS_MAX];
@@ -424,7 +413,6 @@ struct GameEvent {
   int8_t   encTotal;
   uint8_t  encLoot[5];
   int8_t   encPenLL, encPenRad;
-  uint8_t  encStatus;
   uint8_t  encEnds;
   uint8_t  encItemType;   // typed item dropped (loot table roll)
   uint8_t  encItemQty;
@@ -525,7 +513,6 @@ struct __attribute__((packed)) SavePlayer {
   uint8_t  invQty[12];
   uint8_t  equip[EQUIP_SLOTS];
   uint8_t  invSlots;
-  uint8_t  statusBits;
   uint16_t score;
   uint16_t steps;
   uint16_t encCount;
@@ -769,7 +756,7 @@ void setup() {
     p.archetype    = (uint8_t)i;
     p.ll = 7; p.food = 6; p.water = 6;
     p.radiation = 0;
-    p.statusBits = 0; p.invSlots = ARCHETYPE_INV_SLOTS[i];
+    p.invSlots = ARCHETYPE_INV_SLOTS[i];
     memcpy(p.skills, ARCHETYPE_SKILLS[i], NUM_SKILLS);
     memset(p.invType, 0, sizeof(p.invType));
     memset(p.invQty,  0, sizeof(p.invQty));
@@ -781,12 +768,12 @@ void setup() {
   }
 
   Serial.println("[SETUP] Survivor archetype assignments:");
-  Serial.println("[SETUP]   Slot  Archetype      InvSlots  Skills[Nav For Scav Treat Shel End]");
+  Serial.println("[SETUP]   Slot  Archetype      InvSlots  Skills[Nav For Scav Shel End]");
   for (int i = 0; i < NUM_ARCHETYPES; i++) {
     const uint8_t* sk = ARCHETYPE_SKILLS[i];
-    Serial.printf("[SETUP]   P%d    %-13s  %-8d  [%d   %d   %d    %d     %d    %d]\n",
+    Serial.printf("[SETUP]   P%d    %-13s  %-8d  [%d   %d   %d    %d    %d]\n",
       i, ARCHETYPE_NAME[i], ARCHETYPE_INV_SLOTS[i],
-      sk[0], sk[1], sk[2], sk[3], sk[4], sk[5]);
+      sk[0], sk[1], sk[2], sk[3], sk[4]);
   }
 
   // ── SD card mount ─────────────────────────────────────────────

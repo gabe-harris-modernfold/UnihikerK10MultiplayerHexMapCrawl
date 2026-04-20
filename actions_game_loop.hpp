@@ -127,7 +127,7 @@ static void tickGame() {
   if (G.weatherPhase == WEATHER_CHEM) {
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
-      if (!p.connected || (p.statusBits & ST_DOWNED)) continue;
+      if (!p.connected || (p.ll == 0)) continue;
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
       // Settlement (t==9) and Ruins terrain: fully immune to all weather hazards
@@ -138,7 +138,7 @@ static void tickGame() {
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP); }
         if (p.ll == 0) {
-          p.statusBits |= ST_DOWNED; p.movesLeft = 0;
+          p.movesLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
           dev.evWsId = p.wsClientId; enqEvt(dev);
         }
@@ -228,10 +228,6 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
     addScore(p, ev, 2);
     ev.actOut    = AO_PARTIAL;
   } else {
-    if (terr == 6 && !(p.statusBits & ST_BLEEDING)) {  // Glass Fields fail → Bleeding
-      p.statusBits |= ST_BLEEDING;
-      Serial.printf("[WOUND]   P%d \"%s\" Bleeding from Glass Fields shards\n", pid, p.name);
-    }
     ev.actOut = AO_FAIL;
   }
   Serial.printf("[SCAV]    P%d \"%s\" @ %s | DN%d tot:%d → %s | scrap:%d\n",
@@ -295,11 +291,6 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   p.actUsed = true;
   p.resting = true;  // mark as resting; if all players rest, day ends early
   uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=shelter, 2=improved shelter
-  // Marsh exposure: resting without shelter risks infection → Fever
-  if (terr == 3 && hexShelt == 0 && !(p.statusBits & ST_FEVERED)) {
-    p.statusBits |= ST_FEVERED;
-    Serial.printf("[WOUND]   P%d \"%s\" Fever from sleeping in Marsh (no shelter)\n", pid, p.name);
-  }
   ev.actOut = AO_SUCCESS;
   uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
   // Count how many connected players are now resting (including this one)
@@ -326,7 +317,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
   Player& p    = G.players[pid];
   uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   if (terr >= NUM_TERRAIN) terr = 0;
-  if (p.statusBits & ST_DOWNED) return;  // downed — no actions until respawn
+  if (p.ll == 0) return;  // downed — no actions until respawn
   if (encounters[pid].active)  return;  // locked during active encounter
 
   GameEvent ev = {};

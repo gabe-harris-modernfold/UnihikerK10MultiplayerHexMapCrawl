@@ -91,7 +91,7 @@ static void printStatus() {
     uint8_t  terrain;
     char     name[12]; uint32_t connectMs;
     uint8_t  ll, food, water, radiation;
-    uint8_t  archetype, statusBits;
+    uint8_t  archetype;
     uint8_t  skills[NUM_SKILLS];
   } snap[MAX_PLAYERS];
   uint32_t tick = 0;
@@ -118,7 +118,6 @@ static void printStatus() {
     snap[i].water     = p.water;
     snap[i].radiation = p.radiation;
     snap[i].archetype = p.archetype;
-    snap[i].statusBits = p.statusBits;
     memcpy(snap[i].skills, p.skills, NUM_SKILLS);
   }
   for (int r = 0; r < MAP_ROWS; r++)
@@ -136,8 +135,8 @@ static void printStatus() {
     G.connectedCount, MAX_PLAYERS,
     snapDay, snapTC);
 
-  Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W   R Sb  Steps Score  Sk:Na Fo Sc Tr Sh En");
-  Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- --- --- ----- ----- --------------------------------");
+  Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W   R  Steps Score  Sk:Na Fo Sc Sh En");
+  Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- ---  ----- ----- --------------------------------");
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!snap[i].on) continue;
@@ -148,15 +147,13 @@ static void printStatus() {
     uint32_t sessSec = sessMs / 1000;
     uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
 
-    Serial.printf("[STATUS]  P%d %-12s %-10s (%2d,%2d)  %-10s %2d %3d %2d %2d %3d %3d %5d %5d  %2d %2d %2d %2d %2d %2d  [%lum%02lus]\n",
+    Serial.printf("[STATUS]  P%d %-12s %-10s (%2d,%2d)  %-10s %2d %3d %2d %2d %3d %5d %5d  %2d %2d %2d %2d %2d  [%lum%02lus]\n",
       i, ARCHETYPE_NAME[arch], snap[i].name, snap[i].q, snap[i].r,
       T_NAME[t], effVR,
       snap[i].ll, snap[i].food, snap[i].water, snap[i].radiation,
-      snap[i].statusBits,
       snap[i].steps, snap[i].score,
       snap[i].skills[SK_NAVIGATE], snap[i].skills[SK_FORAGE],
-      snap[i].skills[SK_SCAVENGE], snap[i].skills[SK_TREAT],
-      snap[i].skills[SK_SHELTER],  snap[i].skills[SK_ENDURE],
+      snap[i].skills[SK_SCAVENGE], snap[i].skills[SK_SHELTER],  snap[i].skills[SK_ENDURE],
       (unsigned long)(sessSec / 60), (unsigned long)(sessSec % 60));
   }
   if (G.connectedCount == 0)

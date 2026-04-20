@@ -302,7 +302,6 @@ static void setupWiFiAndServer() {
         j += ",\"food\":";        j += p.food;
         j += ",\"water\":";       j += p.water;
         j += ",\"rad\":";         j += p.radiation;
-        j += ",\"sb\":";          j += p.statusBits;
         j += ",\"mp\":";          j += p.movesLeft;
         j += ",\"encPenApplied\":"; j += p.encPenApplied ? "true" : "false";
         j += ",\"resting\":";     j += p.resting       ? "true" : "false";

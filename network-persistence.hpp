@@ -47,7 +47,6 @@ void saveGame() {
         memcpy(sp.invQty, pl.invQty, 12);
         memcpy(sp.equip,  pl.equip,  EQUIP_SLOTS);
         sp.invSlots = pl.invSlots;
-        sp.statusBits = pl.statusBits;  // preserve ST_DOWNED so pick handler triggers respawn on reload
         sp.score = pl.score; sp.steps = pl.steps;
         sp.encCount     = pl.encCount;
         sp.movesLeft    = pl.movesLeft;
@@ -122,7 +121,6 @@ bool tryLoadSave() {
       memcpy(pl.invQty, sp.invQty, 12);
       memcpy(pl.equip,  sp.equip,  EQUIP_SLOTS);
       pl.invSlots = sp.invSlots;
-      pl.statusBits = sp.statusBits;
       pl.score = sp.score; pl.steps = sp.steps;
       pl.encCount     = sp.encCount;
       pl.movesLeft    = sp.movesLeft;

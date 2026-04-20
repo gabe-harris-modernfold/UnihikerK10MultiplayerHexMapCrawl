@@ -34,7 +34,6 @@ static void duskCheck() {
     if (ev.actOut == AO_FAIL) {
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
       if (p.ll == 0) {
-        p.statusBits |= ST_DOWNED;
         p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
         enqEvt(devt);
@@ -62,7 +61,6 @@ static void dawnUpkeep() {
     // ── Clean-zone R recovery (§6.2): no rad hex entered all day → R−1 ─────
     if (p.radClean && p.radiation > 0) {
       p.radiation--;
-      updateRadStatus(p);
       Serial.printf("[DAWN]    P%d \"%s\" clean zone R→%d\n", pid, p.name, p.radiation);
     }
     p.radClean = true;  // reset for new day
@@ -73,7 +71,6 @@ static void dawnUpkeep() {
       const ItemDef* def = getItemDef(p.equip[s]);
       if (def && def->statMods[STAT_RAD] < 0) {
         p.radiation = (uint8_t)max(0, (int)p.radiation + (int)def->statMods[STAT_RAD]);
-        updateRadStatus(p);
         Serial.printf("[ITEM]  P%d \"%s\" dawn rad mod %+d → R:%d\n",
           pid, def->name, (int)def->statMods[STAT_RAD], (int)p.radiation);
       }
@@ -142,7 +139,6 @@ static void dawnUpkeep() {
         }
         if (p.ll > 0) p.ll--;
         if (p.ll == 0) {
-          p.statusBits |= ST_DOWNED;
           GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
           enqEvt(devt);
           Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dawn upkeep) — slot queued for reset\n", pid, p.name);
@@ -156,7 +152,7 @@ static void dawnUpkeep() {
     if (actualDelta < 0) { ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
 
     // ── Reset daily move budget and action flags ────────────────────────────
-    p.movesLeft    = (p.statusBits & ST_DOWNED) ? 0 : (int8_t)effectiveMP(pid);  // downed: no moves
+    p.movesLeft    = (p.ll == 0) ? 0 : (int8_t)effectiveMP(pid);  // downed: no moves
     p.actUsed      = false;
     p.encPenApplied = false;
     p.resting      = false;
@@ -238,7 +234,7 @@ static void collectResource(int pid, int q, int r) {
 static uint8_t computeValidMoves(int pid) {
   Player& p = G.players[pid];
   if (!p.connected) return 0;
-  if ((p.statusBits & ST_DOWNED) || p.resting || p.movesLeft == 0) return 0;
+  if ((p.ll == 0) || p.resting || p.movesLeft == 0) return 0;
   uint8_t mask = 0;
   for (int d = 0; d < 6; d++) {
     int nq = wrapQ(p.q + DQ[d]);
@@ -254,7 +250,7 @@ static uint8_t computeValidMoves(int pid) {
 static void movePlayer(int pid, int dir) {
   if (dir < 0 || dir > 5) return;
   Player& p  = G.players[pid];
-  if (p.statusBits & ST_DOWNED) return;  // downed — waiting for slot reset
+  if (p.ll == 0) return;  // downed — waiting for slot reset
   if (encounters[pid].active)  return;  // locked during active encounter
   if (p.resting) {
     Serial.printf("[BLOCKED] P%d \"%s\" resting — waiting for other survivors to finish\n", pid, p.name);
@@ -332,7 +328,6 @@ static void movePlayer(int pid, int dir) {
       if (!cr.success) {
         p.radiation++;
         radGain = 1;
-        updateRadStatus(p);
         ledFlash(0, 255, 0); k10Play(MOTIF_GEIGER);  // green + geiger ticks
         Serial.printf("[RAD]     P%d \"%s\" +1 R (now %d) Endure DN6=%d FAIL\n",
           pid, p.name, p.radiation, cr.total);

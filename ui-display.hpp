@@ -135,7 +135,7 @@ static void drawPlayerScreen() {
   struct {
     bool    on;
     char    name[12];
-    uint8_t ll, food, water, radiation, statusBits;
+    uint8_t ll, food, water, radiation;
     uint8_t archetype;
     int8_t  movesLeft;
   } snap[MAX_PLAYERS];
@@ -153,7 +153,6 @@ static void drawPlayerScreen() {
     snap[i].water      = p.water;
     snap[i].radiation  = p.radiation;
     snap[i].archetype  = p.archetype;
-    snap[i].statusBits = p.statusBits;
     snap[i].movesLeft  = p.movesLeft;
     memcpy(snap[i].name, p.name, 12);
   }
@@ -165,7 +164,7 @@ static void drawPlayerScreen() {
   static const uint32_t C_LINE = 0x502010;
   static const uint32_t C_TXT  = 0xC87840;
   static const uint32_t C_DIM  = 0x3A1808;
-  static const uint32_t C_COND = 0xD06010;
+
   static const uint32_t C_OK   = 0xC05810;
   static const uint32_t C_WARN = 0xC87020;
   static const uint32_t C_CRIT = 0xE89018;
@@ -188,7 +187,7 @@ static void drawPlayerScreen() {
 
     if (snap[i].on) {
       uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
-      uint32_t nameCol = (snap[i].statusBits & 0x0F) ? C_COND : C_TXT;
+      uint32_t nameCol = C_TXT;
       snprintf(buf, sizeof(buf), "P%d %-4s  %-8.8s", i, ARCH_SHORT[arch], snap[i].name);
       canvasText8(buf, 2, y1, nameCol);
 
@@ -196,7 +195,7 @@ static void drawPlayerScreen() {
       if (snap[i].ll <= 2 || snap[i].food <= 1 || snap[i].water <= 1 || snap[i].radiation >= 7)
         sc = C_CRIT;
       else if (snap[i].ll <= 3 || snap[i].food <= 2 || snap[i].water <= 2 ||
-               snap[i].radiation >= 4 || (snap[i].statusBits & 0x0F))
+               snap[i].radiation >= 4)
         sc = C_WARN;
       else
         sc = C_OK;

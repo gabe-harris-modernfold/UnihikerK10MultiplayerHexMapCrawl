@@ -237,18 +237,18 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penRad\":%d,"
-          "\"st\":%d,\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
+          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.encItemType, (int)ev.encItemQty,
           (int)ev.encPenLL, (int)ev.encPenRad,
-          (int)ev.encStatus, (int)ev.encEnds,
+          (int)ev.encEnds,
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);
         ws.textAll(buf, len);
-        static const char* SK_SHORT[6] = {"NAV","FORAGE","SCAV","TREAT","SHELT","ENDURE"};
-        const char* sks = (ev.encSkill < 6) ? SK_SHORT[ev.encSkill] : "?";
+        static const char* SK_SHORT[5] = {"NAV","FORAGE","SCAV","SHELT","ENDURE"};
+        const char* sks = (ev.encSkill < 5) ? SK_SHORT[ev.encSkill] : "?";
         if (ev.encOut) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: %s OK", (int)ev.pid, sks);
           k10LogAdd(lb);

@@ -136,7 +136,7 @@ function actAvailable(actId, terrainIdx) {
     case ACT_FORAGE:  return TERRAIN_FORAGE_DN[terrainIdx]  > 0;
     case ACT_WATER:   return TERRAIN_HAS_WATER[terrainIdx]  > 0;
     case ACT_SCAV:    return TERRAIN_SALVAGE_DN[terrainIdx] > 0;
-    default:          return true;   // REST, TREAT, SHELTER, SURVEY available everywhere
+    default:          return true;   // REST, SHELTER, SURVEY available everywhere
   }
 }
 
@@ -261,7 +261,7 @@ const ITEMS = [
   { id:9,  name:'Anti-Rot Kit',     category:0, slot:0,
     img:'img/items/item_9.png',  icon:'img/items/icon_9.png',
     preUse:  'Antibiotics, antiseptic, and a prayer.',
-    postUse: 'Fever breaks. The rot stops spreading. Status cleared.',
+    postUse: 'Wounds treated. Recovery begins.',
     story:   null },
   { id:10, name:'Bright Bad Idea',  category:0, slot:0,
     img:'img/items/item_10.png', icon:'img/items/icon_10.png',
@@ -343,7 +343,7 @@ const ITEMS = [
   { id:30, name:'Sour Cream Tub',   category:0, slot:0,
     img:'img/items/item_30.png', icon:'img/items/icon_30.png',
     preUse:  'The seal is unbroken. Against all odds, it smells fine.',
-    postUse: 'Cool, dense, and impossibly soothing. The fever breaks. +3 LL, cures Fevered.',
+    postUse: 'Cool, dense, and impossibly soothing. +3 LL.',
     story:   null },
   { id:31, name:'Trippy Juice',     category:0, slot:0,
     img:'img/items/item_31.png', icon:'img/items/icon_31.png',
@@ -455,7 +455,7 @@ function getItemNarrative(id, phase) {
 const SK_SHORT = ['Nav', 'For', 'Scav', 'Trt', 'Shel', 'End'];
 
 // ── Skill check constants (mirrors server SK_* / SKILL_NAME) ─────
-const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','TREAT','SHELTER','ENDURE'];
+const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
 // Suggested DN per skill index, indexed by terrain type 0-11
 // terrain:        0   1   2   3   4   5   6   7   8   9  10  11  99
 const SK_DN = [

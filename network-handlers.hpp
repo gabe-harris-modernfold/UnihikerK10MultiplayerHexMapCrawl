@@ -92,7 +92,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   int      slot    = -1;
   char     name[12] = {0};
   uint16_t steps   = 0, score = 0;
-  uint8_t  ll = 0, food = 0, water = 0, rad = 0, sb = 0;
+  uint8_t  ll = 0, food = 0, water = 0, rad = 0;
   uint32_t connMs  = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -102,7 +102,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       memcpy(name, p.name, 12);
       steps   = p.steps;   score   = p.score; connMs = p.connectMs;
       ll      = p.ll;      food    = p.food;  water  = p.water;
-      rad     = p.radiation; sb = p.statusBits;
+      rad     = p.radiation;
       p.connected  = false;
       p.wsClientId = 0;
       p.resting    = false;  // clear stale resting flag on disconnect
@@ -122,8 +122,8 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   if (slot < 0) return;
 
   uint32_t sessSec = (millis() - connMs) / 1000;
-  Serial.printf("[DISCONN] Slot:%d \"%s\" | steps:%d score:%d | LL:%d F:%d W:%d R:%d sb:0x%02X | session:%lum%02lus | players now:%d/%d\n",
-    slot, name, steps, score, ll, food, water, rad, sb,
+  Serial.printf("[DISCONN] Slot:%d \"%s\" | steps:%d score:%d | LL:%d F:%d W:%d R:%d | session:%lum%02lus | players now:%d/%d\n",
+    slot, name, steps, score, ll, food, water, rad,
     (unsigned long)(sessSec / 60), (unsigned long)(sessSec % 60),
     G.connectedCount, MAX_PLAYERS);
 
@@ -228,10 +228,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         p.connectMs  = millis();
 
         // Reconnect path: player has prior progress — restore without wiping score/position
-        // isDowned also catches ll==0 with no ST_DOWNED (old saves written before the persistence
-        // fix; or any edge-case where ll reached 0 before ST_DOWNED was flushed to the save).
-        // A live survivor never legitimately has ll==0, so this is always a respawn trigger.
-        bool isDowned    = !!(p.statusBits & ST_DOWNED) || (p.ll == 0);
+        bool isDowned    = (p.ll == 0);
         bool isReconnect = (p.score > 0 || p.steps > 0) && !isDowned;
         int attempts = 0;
         if (isDowned) {
@@ -262,7 +259,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.food         = 6;
           p.water        = 6;
           p.radiation    = 0;
-          p.statusBits   = 0;  // clears ST_DOWNED
           p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
           memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
           memset(p.invType,     0, sizeof(p.invType));
@@ -308,7 +304,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           p.food         = 6;
           p.water        = 6;
           p.radiation    = 0;
-          p.statusBits   = 0;
           p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
           memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
           memset(p.invType,     0, sizeof(p.invType));
@@ -570,7 +565,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
       p.food         = 0; p.water     = 0;
       p.radiation = 0;
       p.score        = 0; p.steps     = 0;
-      p.statusBits   = 0;
       p.movesLeft    = 0;
       p.actUsed      = false;
       p.encPenApplied = false;
@@ -1030,7 +1024,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     Serial.flush();
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int pid = findSlot(client->id());
-      if (pid >= 0 && !encounters[pid].active && !(G.players[pid].statusBits & ST_DOWNED)) {
+      if (pid >= 0 && !encounters[pid].active && !(G.players[pid].ll == 0)) {
         Player& p   = G.players[pid];
         HexCell& cell = G.map[hr][hq];
         if ((int)p.q != hq || (int)p.r != hr) {
@@ -1116,7 +1110,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
     ENC_JP(baseRisk,"base_risk") ENC_JP(skill,    "skill")
     ENC_JP(isTerm,  "is_terminal")
     ENC_JP(hazLL,   "haz_ll")
-    ENC_JP(hazRad,  "haz_rad")  ENC_JP(hazSt,  "haz_st")
+    ENC_JP(hazRad,  "haz_rad")
 
     ENC_JP(hazEnds, "haz_ends") ENC_JP(hazLoseCon, "haz_lose_consumable")
     #undef ENC_JP
@@ -1142,7 +1136,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       int pid = findSlot(client->id());
-      if (pid >= 0 && encounters[pid].active && !(G.players[pid].statusBits & ST_DOWNED)) {
+      if (pid >= 0 && encounters[pid].active && !(G.players[pid].ll == 0)) {
         Player& p = G.players[pid];
         ActiveEncounter& enc = encounters[pid];
         // Validate affordability
@@ -1155,12 +1149,11 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           xSemaphoreGive(G.mutex); return;
         }
         // Deduct costs
-        if (costLL)   { p.ll = (uint8_t)max(0, (int)p.ll - costLL); if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; } }
+        if (costLL)   { p.ll = (uint8_t)max(0, (int)p.ll - costLL); if (p.ll == 0) p.movesLeft = 0; }
         p.radiation= (uint8_t)constrain((int)p.radiation+ costRad, 0, 10);
         p.inv[1]   = (uint8_t)max(0, (int)p.inv[1] - costFood);
         p.inv[0]   = (uint8_t)max(0, (int)p.inv[0] - costWat);
         p.inv[4]   = (uint8_t)max(0, (int)p.inv[4] - costScrap);
-        updateRadStatus(p);
         // Compute DN and roll
         uint8_t dn = computeEncounterDN(pid, (uint8_t)constrain(baseRisk, 0, 100),
                                         (uint8_t)constrain(skill, 0, 5));
@@ -1197,19 +1190,15 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Apply hazard penalties
           ev.encPenLL  = (int8_t)hazLL;
           ev.encPenRad = (int8_t)hazRad;
-          ev.encStatus = (uint8_t)hazSt;
           ev.encEnds   = (uint8_t)(hazEnds ? 1 : 0);
           if (hazLL > 0) {
             Serial.printf("[ENC] WARNING: P%d haz_ll=%d is positive — LL penalties must be negative in JSON. Ignored.\n", pid, hazLL);
           } else if (hazLL < 0) {
             int newLL = (int)p.ll + hazLL;
             p.ll = (uint8_t)max(0, newLL);
-            if (p.ll == 0) { p.statusBits |= ST_DOWNED; p.movesLeft = 0; }
-            if (p.ll == 0) ledFlash(255, 0, 0);
+            if (p.ll == 0) { p.movesLeft = 0; ledFlash(255, 0, 0); }
           }
           p.radiation= (uint8_t)constrain((int)p.radiation+ hazRad, 0, 10);
-          if (hazRad) updateRadStatus(p);
-          if (hazSt)  p.statusBits |= (uint8_t)hazSt;
           if (hazLoseCon) {
             // Remove a random consumable from the player's item slots
             int slots[INV_SLOTS_MAX]; int slotCount = 0;
@@ -1227,7 +1216,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
               p.invQty[target]  = 0;
             }
           }
-          bool downed = (p.statusBits & ST_DOWNED) != 0;
+          bool downed = (p.ll == 0);
           encounterEnded = downed || (hazEnds != 0);
           // Auto-drain co-located allies: major hazard (LL loss) costs 2, minor costs 1
           bool isMajor = (hazLL < 0);
@@ -1246,7 +1235,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
         enqEvt(ev);
         if (encounterEnded) {
           // End encounter — loot lost
-          if (p.statusBits & ST_DOWNED) {
+          if (p.ll == 0) {
             GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
             enqEvt(devt);
           }
@@ -1255,7 +1244,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
           // Always send EVT_ENC_END so allies can clear the banner regardless of downed state
           { GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)pid;
             eev.q = (int16_t)hq; eev.r = (int16_t)hr2;
-            eev.encOut = (G.players[pid].statusBits & ST_DOWNED) ? 3 : 0; // 3=downed, 0=hazard
+            eev.encOut = (G.players[pid].ll == 0) ? 3 : 0; // 3=downed, 0=hazard
             enqEvt(eev); }
         }
         Serial.printf("[ENC] P%d choice: DN%d roll%d %s%s\n",

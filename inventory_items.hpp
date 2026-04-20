@@ -25,9 +25,7 @@ static void efxThreatMod(int pid, uint8_t itemId, uint8_t param) {
     pid, itemId, delta, (int)G.threatClock);
 }
 static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
-  // param = bitmask of ST_* bits to clear
-  G.players[pid].statusBits &= ~param;
-  Serial.printf("[ITEM]  P%d efxCureStatus item:%d cleared 0x%02X\n", pid, itemId, (int)param);
+  (void)pid; (void)itemId; (void)param; // conditions removed
 }
 
 // EFX_NARRATIVE — server-side handler for params requiring server action.
@@ -142,7 +140,6 @@ static bool useItem(int pid, uint8_t slotIdx) {
   if (def->statMods[STAT_WATER])   p.water     = (uint8_t)constrain((int)p.water   + def->statMods[STAT_WATER],   1, 6);
   if (def->statMods[STAT_RAD])     p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD],   0, 10);
   if (def->statMods[STAT_MP])      p.movesLeft = (int8_t)max(0, (int)p.movesLeft   + def->statMods[STAT_MP]);
-  updateRadStatus(p);
 
   // Dispatch effects
   dispatchEffect(pid, *def);

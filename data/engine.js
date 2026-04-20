@@ -28,7 +28,6 @@ const uiMP          = van.state(6);
 const uiRad         = van.state(0);
 // §5 Action tracking
 const uiResting     = van.state(false);  // true after REST until dawn
-const uiHasCond     = van.state(false);  // true when player has treatable conditions
 let maxMP = 6;           // plain copy used by non-reactive rendering (time-of-day clock)
 const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
@@ -344,8 +343,8 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   inv: [0,0,0,0,0], sp: 0, st: 0,
   // Survivor fields
   ll: 7, food: 6, water: 6, rad: 0, res: 3,
-  arch: 0, sb: 0, is: 8,
-  sk: [0,0,0,0,0,0],
+  arch: 0, is: 8,
+  sk: [0,0,0,0,0],
   wd: [0,0,0],
   it: Array(12).fill(0),
   iq: Array(12).fill(0),
@@ -386,7 +385,6 @@ function buildAgentState() {
       rad: me.rad,
       mp: me.mp, resting: me.rest,
       inv: { water: me.inv[0], food: me.inv[1], fuel: me.inv[2], med: me.inv[3], scrap: me.inv[4] },
-      statusBits: me.sb,
       score: me.sc, name: me.nm,
     } : null,
     players: players.filter(p => p.on && p.id !== myId).map(p => ({
@@ -586,7 +584,7 @@ function handleMsg(msg) {
         if (pd.on && !wasOn) { renderPos[i].q = pd.q; renderPos[i].r = pd.r; }
         p.inv = pd.inv; p.sp = pd.sp;
         p.ll = pd.ll; p.food = pd.food; p.water = pd.water;
-        p.rad = pd.rad; p.sb = pd.sb;
+        p.rad = pd.rad;
 
         if (pd.mp  !== undefined) p.mp  = pd.mp;
         if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
@@ -1051,7 +1049,6 @@ function handleEvent(ev) {
         if (p) {
           if (ev.penLL)  p.ll  = Math.max(0, (p.ll  ?? 0) + ev.penLL);
           if (ev.penRad) p.rad = Math.max(0, (p.rad ?? 0) + ev.penRad);
-          if (ev.st) p.sb = ev.st;
         }
         updateSidebar();
         window._onEncResult?.(ev);

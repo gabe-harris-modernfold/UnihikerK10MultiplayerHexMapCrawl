@@ -12,16 +12,8 @@ void ledFlash(uint8_t r, uint8_t g, uint8_t b);
 // effectiveMaxLL is defined in inventory_items.hpp (included after this file).
 static uint8_t effectiveMaxLL(int pid);
 
-// ── §6.2 Radiation status sync ───────────────────────────────────────────────
-// Sync ST_RADSICK to current radiation level (R ≥ 4 = Rad-Sick).
-static void updateRadStatus(Player& p) {
-  if (p.radiation >= 4) p.statusBits |=  ST_RADSICK;
-  else                  p.statusBits &= ~ST_RADSICK;
-}
-
 // ── Skill check resolution ────────────────────────────────────────────────────
 // Call while holding G.mutex (reads player skills/status).
-// bonus = item bonus from client (0–2). Condition penalties applied automatically.
 static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, uint8_t bonus) {
   uint32_t rnd  = esp_random();
   CheckResult r;
@@ -29,13 +21,7 @@ static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, uint8_t bonu
   r.r2       = 1 + (int)((rnd >> 8)  % 6);
   r.dn       = (int)dn;
   r.skillVal = (int)G.players[pid].skills[skill < NUM_SKILLS ? skill : 0];
-
-  // Net modifier: item bonus + condition penalties (§3.1 Step 4)
-  int cm = (int)bonus;
-  uint8_t sb = G.players[pid].statusBits;
-  if (sb & ST_RADSICK)  cm -= 1;                           // Rad-Sick: −1 all
-  if (sb & ST_FEVERED)  cm -= 1;                           // Fevered:  −1 all
-  r.mods   = cm;
+  r.mods   = (int)bonus;
   r.total  = r.r1 + r.r2 + r.skillVal + r.mods;
   r.success = (r.total >= r.dn);
   return r;
