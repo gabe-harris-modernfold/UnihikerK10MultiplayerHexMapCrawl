@@ -1457,8 +1457,7 @@ function initMenuSystem() {
             mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.4.1/state?pid=0 for player zero, /state?pid=1 for player one, etc.')
           )
         )
-      )
-    );
+      ));
 
     if (page === 'settings') return wrap(
       back('main'),
