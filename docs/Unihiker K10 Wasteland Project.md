@@ -1,6 +1,6 @@
 # Unihiker K10 Wasteland Project
 
-An embedded systems example for the **Unihiker K10** device (ESP32-S3) that provides modular hardware abstraction and 10 independent component tests. Designed for developers to explore sensor and application logic without wrestling with low-level hardware details.
+An embedded systems example for the **Unihiker K10** device (ESP32-S3)
 
 ### I2C Sensors (GPIO 47 SDA / 48 SCL)
 - `aht20.h` — Temperature & humidity (address: 0x38)

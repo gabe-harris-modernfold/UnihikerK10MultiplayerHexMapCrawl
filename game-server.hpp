@@ -440,6 +440,25 @@ static void setupWiFiAndServer() {
     req->send(404, "text/plain", "Not found: " + url);
   });
 
+  server.on("/upload", HTTP_POST,
+    [](AsyncWebServerRequest* request) {
+      request->send(200, "text/plain", "OK");
+    },
+    [](AsyncWebServerRequest* request, const String& filename,
+       size_t index, uint8_t* data, size_t len, bool final) {
+      static File uploadFile;
+      if (index == 0) {
+        String dest = request->hasParam("dest")
+                      ? request->getParam("dest")->value()
+                      : "/data/" + filename;
+        if (!dest.startsWith("/")) dest = "/" + dest;
+        uploadFile = SD.open(dest.c_str(), FILE_WRITE);
+      }
+      if (uploadFile) uploadFile.write(data, len);
+      if (final && uploadFile) uploadFile.close();
+    }
+  );
+
   server.begin();
   { char hb[30]; snprintf(hb, 30, "Heap: %ukB free", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd("HTTP+WS ready", 0x60A040);

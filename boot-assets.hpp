@@ -443,7 +443,7 @@ static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQ
 
 // ── Encounter DN computation (spec §3) ────────────────────────────────────────
 static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/) {
-  int effectiveRisk = constrain((int)baseRisk, 0, 100);
+  int effectiveRisk = min((int)baseRisk, 100);
   if (G.threatClock >= TC_THRESHOLD_A) effectiveRisk += 5;
   if (G.threatClock >= TC_THRESHOLD_B) effectiveRisk += 5;
   if (G.threatClock >= TC_THRESHOLD_C) effectiveRisk += 5;

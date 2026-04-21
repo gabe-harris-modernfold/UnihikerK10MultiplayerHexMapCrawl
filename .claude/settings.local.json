@@ -45,7 +45,13 @@
       "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Users\\\\harrisg1\\\\AppData\\\\Local\\\\Arduino15\\\\packages\\\\UNIHIKER\\\\hardware\\\\esp32\\\\0.0.3\\\\libraries\\\\unihiker_k10\\\\\"\")",
       "Bash(cmd.exe /c \"dir /s /b \\\\\"C:\\\\Program Files \\(x86\\)\\\\Mind+\\\\Arduino\\\\hardware\\\\dfrobot\\\\esp32s3\\\\libraries\\\\unihiker_k10\\\\\"\")",
       "Bash(python3 -c ' *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(./build_and_monitor.sh --skip-upload)",
+      "Bash(\"/c/Program Files/Arduino CLI/arduino-cli.exe\" compile --fqbn UNIHIKER:esp32:k10 --build-property \"build.cdc_on_boot=1\" --libraries ./lib .)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe\" upload -p COM9 --fqbn UNIHIKER:esp32:k10 \"C:\\\\SourceCode\\\\Esp32HexMapCrawl\" 2>&1)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe\" board list 2>&1)",
+      "Bash(wmic logicaldisk *)",
+      "Bash(powershell -Command \"Get-PSDrive -PSProvider FileSystem | Select-Object Name,Root,Description\")"
     ]
   }
 }

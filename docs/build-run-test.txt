@@ -34,6 +34,51 @@ CLI="/c/Program Files/Arduino CLI/arduino-cli.exe"
 "$CLI" monitor -p COM9 --config baudrate=115200
 ```
 
+## PowerShell — Verified Working Commands (2026-04-21)
+
+`build_and_monitor.sh` does not exist. Use these PowerShell commands directly.
+
+```powershell
+# Find the active COM port (K10 showed up as COM3, not COM9)
+& "C:\Program Files\Arduino CLI\arduino-cli.exe" board list
+
+# Compile only (no upload) — use cached .ino path, not ./lib
+& "C:\Program Files\Arduino CLI\arduino-cli.exe" compile `
+  --fqbn UNIHIKER:esp32:k10 `
+  --build-property "build.cdc_on_boot=1" `
+  --libraries "C:\SourceCode\Esp32HexMapCrawl\lib" `
+  "C:\SourceCode\Esp32HexMapCrawl"
+# Result: Sketch 20% flash, 29% RAM — exit code 0
+
+# Upload (port was COM3, not COM9 — confirm with board list first)
+& "C:\Program Files\Arduino CLI\arduino-cli.exe" upload `
+  -p COM3 --fqbn UNIHIKER:esp32:k10 `
+  "C:\SourceCode\Esp32HexMapCrawl"
+
+# Monitor (interactive terminal only)
+& "C:\Program Files\Arduino CLI\arduino-cli.exe" monitor `
+  -p COM3 --config baudrate=115200
+```
+
+---
+
+## Upload Web Files to SD Card
+
+The firmware exposes a `/upload` endpoint. Use this to push the `data/` directory
+to the ESP32's SD card without physically removing it:
+
+```bash
+for f in data/*.js data/*.html; do
+  curl -F "file=@$f" "http://192.168.4.72/upload?dest=/data/$(basename $f)"
+  echo
+done
+```
+
+- IP is `192.168.4.72` (confirm with `arduino-cli board list` or check your router)
+- Server responds `OK` per file on success
+- Reboot the ESP32 after uploading so it reloads files from SD into PSRAM
+- New JS files also need entries in the `WEB_FILES[]` array in `Esp32HexMapCrawl.ino`
+
 ---
 
 ## Serial Monitoring — Current Status

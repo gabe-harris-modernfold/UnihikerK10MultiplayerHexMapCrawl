@@ -72,7 +72,12 @@
  *   network-persistence.hpp — SD save/load
  *   network-sync.hpp      — state serialization and broadcast
  *   network-events.hpp    — event queue drain → JSON → clients
- *   network-handlers.hpp  — WebSocket session lifecycle and message dispatch
+ *   network-session.hpp      — WebSocket connect/disconnect, WiFi join task
+ *   network-msg-player.hpp   — pick, move, name, wifi, check, regen, erase, act, settings
+ *   network-msg-trade.hpp    — trade offer/accept/decline
+ *   network-msg-items.hpp    — use/equip/unequip/drop/pickup item
+ *   network-msg-encounter.hpp — enc_start, enc_choice, enc_bank, enc_abort
+ *   network-handlers.hpp     — message dispatch and WS event dispatcher
  */
 
 #include <Preferences.h>
@@ -596,20 +601,24 @@ AsyncWebSocket  ws("/ws");
 struct WebFile { const char* url; const char* mime; const char* sdName;
                  uint8_t* buf; size_t len; char etag[26]; };
 static WebFile WEB_FILES[] = {
-  { "/",                           "text/html",       "index.html",                nullptr, 0 },
-  { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0 },
-  { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0 },
-  { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0 },
-  { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0 },
-  { "/game-config.js",             "text/javascript", "game-config.js",            nullptr, 0 },
-  { "/state-manager.js",           "text/javascript", "state-manager.js",          nullptr, 0 },
-  { "/animation-manager.js",       "text/javascript", "animation-manager.js",      nullptr, 0 },
-  { "/event-handlers.js",          "text/javascript", "event-handlers.js",         nullptr, 0 },
-  { "/style.css",                  "text/css",        "style.css",                 nullptr, 0 },
-  { "/ui.js",                      "text/javascript", "ui.js",                     nullptr, 0 },
-  { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0 },
-  { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0 },
-  { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0 },
+  { "/",                           "text/html",       "index.html",                nullptr, 0, {} },
+  { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0, {} },
+  { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0, {} },
+  { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0, {} },
+  { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0, {} },
+  { "/game-config.js",             "text/javascript", "game-config.js",            nullptr, 0, {} },
+  { "/state-manager.js",           "text/javascript", "state-manager.js",          nullptr, 0, {} },
+  { "/animation-manager.js",       "text/javascript", "animation-manager.js",      nullptr, 0, {} },
+  { "/event-handlers.js",          "text/javascript", "event-handlers.js",         nullptr, 0, {} },
+  { "/ui-state.js",                "text/javascript", "ui-state.js",               nullptr, 0, {} },
+  { "/network.js",                 "text/javascript", "network.js",                nullptr, 0, {} },
+  { "/map-decoder.js",             "text/javascript", "map-decoder.js",            nullptr, 0, {} },
+  { "/renderer.js",                "text/javascript", "renderer.js",               nullptr, 0, {} },
+  { "/style.css",                  "text/css",        "style.css",                 nullptr, 0, {} },
+  { "/ui.js",                      "text/javascript", "ui.js",                     nullptr, 0, {} },
+  { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0, {} },
+  { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0, {} },
+  { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0, {} },
 };
 static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
 
@@ -637,6 +646,11 @@ static uint32_t  g_bootNonce   = 0;
 #include "network-persistence.hpp"
 #include "network-sync.hpp"
 #include "network-events.hpp"
+#include "network-session.hpp"
+#include "network-msg-player.hpp"
+#include "network-msg-trade.hpp"
+#include "network-msg-items.hpp"
+#include "network-msg-encounter.hpp"
 #include "network-handlers.hpp"
 
 // Server orchestration — last: calls drainEvents(), broadcastState()
