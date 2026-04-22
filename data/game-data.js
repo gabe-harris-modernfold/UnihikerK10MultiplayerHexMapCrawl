@@ -142,14 +142,14 @@ function actAvailable(actId, terrainIdx) {
 
 // ── Survivor archetypes (§9.4 Synergy Roles) ─────────────────────
 // Indices 0-5 mirror server ARCHETYPE_NAME[] and slot assignment.
-// skills: [Navigate, Forage, Scavenge, Treat, Shelter, Endure]  0=none 1=trained 2=expert
+// skills: [Navigate, Forage, Scavenge, Shelter, Endure]  0=none 1=trained 2=expert
 const ARCHETYPES = [
   {
     name: 'GUIDE',
     icon: '\u29BF',   // ⦿ crosshair
     color: '#8B4513',
     trait: 'Companions entering your hex via your movement pay MC\u22121 (min\u00a01).',
-    skills: [2, 1, 0, 0, 1, 1],
+    skills: [2, 1, 0, 1, 1],
     invSlots: 8,
     desc: 'Natural pathfinder. Leads allies through hostile terrain, reducing the movement cost for anyone following in their footsteps.',
     flavor: 'Points the way. Usually directly into trouble.'
@@ -159,7 +159,7 @@ const ARCHETYPES = [
     icon: '\u25A3',   // ▣ box
     color: '#C07818',
     trait: 'In a Camp (2+ Survivors), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
-    skills: [0, 2, 1, 1, 1, 0],
+    skills: [0, 2, 1, 1, 0],
     invSlots: 8,
     desc: 'Supply expert. Stretches the group\'s rations when camped with other survivors. Trait is inactive when travelling solo.',
     flavor: 'Stretches rations until they\u2019re unrecognizable. Survival tastes like cardboard.'
@@ -169,7 +169,7 @@ const ARCHETYPES = [
     icon: '\u2764',   // ♥ heart
     color: '#6B5449',
     trait: 'May treat Major Wounds in the field at DN\u00a09.',
-    skills: [0, 0, 1, 2, 0, 2],
+    skills: [0, 0, 1, 0, 2],
     invSlots: 8,
     desc: 'Field surgeon. Can stabilise serious wounds without a settlement.',
     flavor: 'Patches survivors back together. What remains is... functional.'
@@ -179,7 +179,7 @@ const ARCHETYPES = [
     icon: '\u26BF',   // ⚿ key
     color: '#A07828',
     trait: '12\u00a0inventory slots \u2014 hauls twice the standard load.',
-    skills: [0, 1, 2, 0, 1, 1],
+    skills: [0, 1, 2, 1, 1],
     invSlots: 12,
     desc: 'Pack carrier. Hauls twice the standard load.',
     flavor: 'Carries everything. Even the weight of everyone\u2019s poor decisions.'
@@ -189,7 +189,7 @@ const ARCHETYPES = [
     icon: '\u25CE',   // ◎ circle
     color: '#7A6055',
     trait: 'Survey costs 0\u00a0MP. May Survey before moving on the same turn without consuming the action slot.',
-    skills: [2, 1, 1, 0, 0, 1],
+    skills: [2, 1, 1, 0, 1],
     invSlots: 8,
     desc: 'Recon specialist. Survey is free and combinable with movement, giving the group an early read on terrain ahead.',
     flavor: 'Gets there first. Doesn\u2019t always come back.'
@@ -199,7 +199,7 @@ const ARCHETYPES = [
     icon: '\u25D9',   // ◙ inverse circle
     color: '#6A3008',
     trait: 'Endure skill treated as\u00a01\u00a0higher for all checks (does not affect Collective Endure).',
-    skills: [1, 0, 0, 1, 2, 2],
+    skills: [1, 0, 0, 2, 2],
     invSlots: 8,
     desc: 'Hardened survivor. Built to endure radiation, exhaustion and injury. The last one standing when conditions reach their worst.',
     flavor: 'Lasts longer than most. Which isn\u2019t saying much.'

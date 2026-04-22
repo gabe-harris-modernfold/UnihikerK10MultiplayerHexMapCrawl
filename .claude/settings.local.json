@@ -51,7 +51,18 @@
       "PowerShell(& \"C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe\" upload -p COM9 --fqbn UNIHIKER:esp32:k10 \"C:\\\\SourceCode\\\\Esp32HexMapCrawl\" 2>&1)",
       "PowerShell(& \"C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe\" board list 2>&1)",
       "Bash(wmic logicaldisk *)",
-      "Bash(powershell -Command \"Get-PSDrive -PSProvider FileSystem | Select-Object Name,Root,Description\")"
+      "Bash(powershell -Command \"Get-PSDrive -PSProvider FileSystem | Select-Object Name,Root,Description\")",
+      "Bash(xargs wc *)",
+      "Bash(sed -n '38,48p' /c/SourceCode/Esp32HexMapCrawl/network-persistence.hpp)",
+      "Bash(sed -n '113,122p' /c/SourceCode/Esp32HexMapCrawl/network-persistence.hpp)",
+      "Bash(curl -s \"http://192.168.4.72/upload?dest=/data/ui.js\" --head)",
+      "Bash(curl -s -I \"http://192.168.4.72/data/ui.js\")",
+      "Bash(curl -s -o /dev/null -w \"%{size_upload}\" -F \"file=@C:/SourceCode/Esp32HexMapCrawl/data/ui.js\" \"http://192.168.4.72/upload?dest=/data/ui.js\")",
+      "Bash(curl -s -I \"http://192.168.4.72/ui.js\")",
+      "Bash(curl -s -o /tmp/ui_from_esp32.js \"http://192.168.4.72/ui.js\")",
+      "Read(//tmp/**)",
+      "Bash(xxd)",
+      "Bash(curl --limit-rate 50K -F \"file=@C:/SourceCode/Esp32HexMapCrawl/data/network.js\" \"http://192.168.4.72/upload?dest=/data/network.js\")"
     ]
   }
 }

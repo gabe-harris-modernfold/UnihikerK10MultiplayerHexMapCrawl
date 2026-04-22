@@ -13,9 +13,11 @@ static void gameLoopTask(void* param) {
     uint32_t loopMs = millis();
     if (loopMs - lastWatermarkMs >= 5000) {
       lastWatermarkMs = loopMs;
-      Serial.printf("[STACK] GameLoop HWM: %u bytes free\n",
-        uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+      Serial.printf("[STACK] GameLoop HWM: %u bytes free  heap=%u\n",
+        uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t),
+        (unsigned)ESP.getFreeHeap());
     }
+    uint32_t t0tick = millis();
     tickGame();
     drainEvents();
     // ── Trade offer expiry sweep ──────────────────────────────────
@@ -39,6 +41,9 @@ static void gameLoopTask(void* param) {
       }
     }
     broadcastState();
+    uint32_t tickDur = millis() - t0tick;
+    if (tickDur > TICK_MS * 3)
+      Serial.printf("[LOOP] SLOW TICK: %lums  heap=%u\n", (unsigned long)tickDur, (unsigned)ESP.getFreeHeap());
   }
 }
 
@@ -383,10 +388,12 @@ static void setupWiFiAndServer() {
         if (f) {
           size_t fsz = f.size();
           found = true;
+          Serial.printf("[ENC/HTTP] pre-read heap=%u  fsz=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)fsz);
+          Serial.flush();
           content = f.readString();
           f.close();
-          Serial.printf("[ENC/HTTP] read %u bytes (file_size=%u)  t=%lums\n",
-            (unsigned)content.length(), (unsigned)fsz, (unsigned long)(millis()-tsd));
+          Serial.printf("[ENC/HTTP] post-read heap=%u  content=%u  t=%lums\n",
+            (unsigned)ESP.getFreeHeap(), (unsigned)content.length(), (unsigned long)(millis()-tsd));
         } else {
           Serial.printf("[ENC/HTTP] SD.open FAILED for %s\n", path);
         }
@@ -402,10 +409,12 @@ static void setupWiFiAndServer() {
       Serial.flush();
       req->send(404, "text/plain", "Encounter not found"); return;
     }
-    Serial.printf("[ENC/HTTP] sending %u bytes  total=%lums  heap=%u\n",
-      (unsigned)content.length(), (unsigned long)(millis()-t0), (unsigned)ESP.getFreeHeap());
+    Serial.printf("[ENC/HTTP] pre-send heap=%u  content=%u  total=%lums\n",
+      (unsigned)ESP.getFreeHeap(), (unsigned)content.length(), (unsigned long)(millis()-t0));
     Serial.flush();
     req->send(200, "application/json", content);
+    Serial.printf("[ENC/HTTP] post-send heap=%u\n", (unsigned)ESP.getFreeHeap());
+    Serial.flush();
   });
 
   // /img/*.png served from PSRAM imgCache
@@ -454,7 +463,7 @@ static void setupWiFiAndServer() {
         if (!dest.startsWith("/")) dest = "/" + dest;
         uploadFile = SD.open(dest.c_str(), FILE_WRITE);
       }
-      if (uploadFile) uploadFile.write(data, len);
+      if (uploadFile) { uploadFile.write(data, len); uploadFile.flush(); yield(); }
       if (final && uploadFile) uploadFile.close();
     }
   );

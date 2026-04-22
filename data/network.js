@@ -100,7 +100,7 @@ const Diag = (() => {
   setInterval(report, 60_000);
   window.diag = { report, data: d, avgRtt };
 
-  return { onSend, onDropped, onMsg, onConnect, onDisconnect, onError, report };
+  return { onSend, onDropped, onMsg, onConnect, onDisconnect, onError, report, wsState };
 })();
 
 // ── Move cooldown tracking (client-side estimate) ─────────────────
@@ -135,7 +135,11 @@ function connect() {
       }
     }, WIFI_CREDS_SEND_DELAY_MS);  // brief delay to receive 'saved' message first if server has creds
   };
-  socket.onclose   = () => { Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS); };
+  socket.onclose   = (ev) => {
+    const msSinceEnc = window._lastEncStartT ? (Date.now() - window._lastEncStartT) : '—';
+    console.warn(`[DIAG] WS closed  code=${ev.code}  wasClean=${ev.wasClean}  reason="${ev.reason}"  msSinceEncStart=${msSinceEnc}`);
+    Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS);
+  };
   socket.onerror   = (event) => {
     Diag.onError(event);
     setStatus('Connection error — retrying...');
@@ -343,8 +347,10 @@ function handleMsg(msg) {
         }
         // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
         if (_cur?.poi) {
-          console.log(`[ENC] sending enc_start q=${_me.q} r=${_me.r} t=${Date.now()}`);
+          window._lastEncStartT = Date.now();
+          console.log(`[ENC] sending enc_start q=${_me.q} r=${_me.r} t=${window._lastEncStartT}  wsState=${socket?.readyState ?? '?'}  buffered=${socket?.bufferedAmount ?? '?'}`);
           send({ t: 'enc_start', q: _me.q, r: _me.r });
+          console.log(`[ENC] enc_start send() returned  wsState=${socket?.readyState ?? '?'}  buffered=${socket?.bufferedAmount ?? '?'}`);
         }
       }
       updateTerrainCard();
@@ -388,7 +394,7 @@ function handleMsg(msg) {
 
     case 'enc_path':
       // Direct message: server sends encounter location to the active player
-      console.log(`[ENC] enc_path recv biome=${msg.biome} id=${msg.id} t=${Date.now()}`);
+      console.log(`[ENC] enc_path recv biome=${msg.biome} id=${msg.id} t=${Date.now()}  msSinceEncStart=${window._lastEncStartT ? Date.now()-window._lastEncStartT : '—'}  wsState=${Diag.wsState()}`);
       window._startEncounterFetch?.(msg.biome, msg.id);
       break;
 

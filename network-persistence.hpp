@@ -38,7 +38,7 @@ void saveGame() {
         SavePlayer sp = {};
         memcpy(sp.name, pl.name, 16);
         sp.archetype = pl.archetype;
-        memcpy(sp.skills, pl.skills, 6);
+        memcpy(sp.skills, pl.skills, NUM_SKILLS);
         sp.q = pl.q; sp.r = pl.r;
         sp.ll = pl.ll; sp.food = pl.food; sp.water = pl.water;
         sp.radiation = pl.radiation;
@@ -112,7 +112,7 @@ bool tryLoadSave() {
       Player& pl = G.players[i];
       memcpy(pl.name, sp.name, 16);
       pl.archetype = sp.archetype;
-      memcpy(pl.skills, sp.skills, 6);
+      memcpy(pl.skills, sp.skills, NUM_SKILLS);
       pl.q = sp.q; pl.r = sp.r;
       pl.ll = sp.ll; pl.food = sp.food; pl.water = sp.water;
       pl.radiation = sp.radiation;

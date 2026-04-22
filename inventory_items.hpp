@@ -175,7 +175,7 @@ static bool equipItem(int pid, uint8_t slotIdx) {
   if (prev) {
     // Find a free inv slot
     bool placed = false;
-    for (int i = 0; i < INV_SLOTS_MAX && !placed; i++) {
+    for (int i = 0; i < p.invSlots && !placed; i++) {
       if (!p.invType[i]) {
         p.invType[i] = prev; p.invQty[i] = 1;
         placed = true;
@@ -208,7 +208,7 @@ static bool unequipItem(int pid, uint8_t eslot) {
   uint8_t itemId = p.equip[eslot];
   if (!itemId) return false;
   // Find free inv slot
-  for (int i = 0; i < INV_SLOTS_MAX; i++) {
+  for (int i = 0; i < p.invSlots; i++) {
     if (!p.invType[i]) {
       p.invType[i] = itemId; p.invQty[i] = 1;
       p.equip[eslot] = 0;
@@ -286,7 +286,7 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
 
   // Find existing stack or free slot in inventory
   int freeSlot = -1, stackSlot = -1;
-  for (int i = 0; i < INV_SLOTS_MAX; i++) {
+  for (int i = 0; i < p.invSlots; i++) {
     if (p.invType[i] == itemId && stackSlot < 0) stackSlot = i;
     if (!p.invType[i] && freeSlot < 0) freeSlot = i;
   }

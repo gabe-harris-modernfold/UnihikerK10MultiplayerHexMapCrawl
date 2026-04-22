@@ -223,13 +223,25 @@ static void drainEvents() {
         break; // name changes broadcast via broadcastState(); no dedicated event message needed
 
       case EVT_ENC_START:
+        Serial.printf("[ENC] EVT_ENC_START dispatch pid=%d q=%d r=%d  heap=%u  stackHWM=%u\n",
+          (int)ev.pid, (int)ev.q, (int)ev.r,
+          (unsigned)ESP.getFreeHeap(), (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        Serial.flush();
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
           ev.pid, (int)ev.q, (int)ev.r);
+        Serial.printf("[ENC] EVT_ENC_START step1: about to ws.textAll (%d bytes)  heap=%u\n",
+          len, (unsigned)ESP.getFreeHeap()); Serial.flush();
         ws.textAll(buf, len);
+        Serial.printf("[ENC] EVT_ENC_START step2: ws.textAll done  heap=%u\n",
+          (unsigned)ESP.getFreeHeap()); Serial.flush();
         { char lb[34]; snprintf(lb, sizeof(lb), "P%d enters encounter", (int)ev.pid);
           k10LogAdd(lb); }
+        Serial.printf("[ENC] EVT_ENC_START step3: about to k10Play  heap=%u  toneTask=%s\n",
+          (unsigned)ESP.getFreeHeap(), s_toneTask ? "BUSY" : "free"); Serial.flush();
         k10Play(MOTIF_DARK_ENTRY);
+        Serial.printf("[ENC] EVT_ENC_START step4: k10Play returned  heap=%u\n",
+          (unsigned)ESP.getFreeHeap()); Serial.flush();
         break;
 
       case EVT_ENC_RESULT: {

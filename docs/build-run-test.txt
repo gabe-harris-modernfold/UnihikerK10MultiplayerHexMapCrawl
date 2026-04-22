@@ -68,14 +68,25 @@ The firmware exposes a `/upload` endpoint. Use this to push the `data/` director
 to the ESP32's SD card without physically removing it:
 
 ```bash
-for f in data/*.js data/*.html; do
-  curl -F "file=@$f" "http://192.168.4.72/upload?dest=/data/$(basename $f)"
+# Upload all web assets (JS, HTML, CSS)
+for f in data/*.js data/*.html data/*.css; do
+  curl --limit-rate 50K -F "file=@$f" "http://192.168.4.72/upload?dest=/data/$(basename $f)"
   echo
+  sleep 0.5   # let ESP32 WiFi RX buffer drain between files
+done
+
+# Upload survivor portraits (only needed when images change)
+for f in data/img/survivors/*.jpg; do
+  curl --limit-rate 50K -F "file=@$f" "http://192.168.4.72/upload?dest=/data/img/survivors/$(basename $f)"
+  echo
+  sleep 0.5
 done
 ```
 
 - IP is `192.168.4.72` (confirm with `arduino-cli board list` or check your router)
 - Server responds `OK` per file on success
+- `--limit-rate 50K` prevents WiFi RX buffer corruption on large files (>12KB)
+- **Always include `*.css` in the upload** — a stale CSS file causes overlays to lose `position:fixed` and cards to lose all styling, even if JS files are fine
 - Reboot the ESP32 after uploading so it reloads files from SD into PSRAM
 - New JS files also need entries in the `WEB_FILES[]` array in `Esp32HexMapCrawl.ino`
 

@@ -510,7 +510,7 @@ struct __attribute__((packed)) SaveHeader {
 struct __attribute__((packed)) SavePlayer {
   char     name[16];
   uint8_t  archetype;
-  uint8_t  skills[6];
+  uint8_t  skills[NUM_SKILLS];
   int16_t  q, r;
   uint8_t  ll, food, water, radiation;
   uint8_t  inv[5];
@@ -615,7 +615,11 @@ static WebFile WEB_FILES[] = {
   { "/map-decoder.js",             "text/javascript", "map-decoder.js",            nullptr, 0, {} },
   { "/renderer.js",                "text/javascript", "renderer.js",               nullptr, 0, {} },
   { "/style.css",                  "text/css",        "style.css",                 nullptr, 0, {} },
-  { "/ui.js",                      "text/javascript", "ui.js",                     nullptr, 0, {} },
+  { "/ui-utils.js",                "text/javascript", "ui-utils.js",               nullptr, 0, {} },
+  { "/ui-hud.js",                  "text/javascript", "ui-hud.js",                 nullptr, 0, {} },
+  { "/ui-panels.js",               "text/javascript", "ui-panels.js",              nullptr, 0, {} },
+  { "/ui-items.js",                "text/javascript", "ui-items.js",               nullptr, 0, {} },
+  { "/ui-encounter.js",            "text/javascript", "ui-encounter.js",           nullptr, 0, {} },
   { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0, {} },
   { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0, {} },
   { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0, {} },
