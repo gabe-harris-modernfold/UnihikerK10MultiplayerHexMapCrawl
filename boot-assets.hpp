@@ -5,9 +5,8 @@
 
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
 static void loadWebFilesToRAM() {
-  Serial.println("[WEB] Loading web assets into PSRAM...");
   File dir = SD.open("/data");
-  if (!dir) { Serial.println("[WEB] ERROR: cannot open /data"); return; }
+  if (!dir) {  return; }
   File f = dir.openNextFile();
   while (f) {
     String fname = String(f.name());
@@ -30,9 +29,7 @@ static void loadWebFilesToRAM() {
                 imgCache[imgCacheCount].buf = buf;
                 imgCache[imgCacheCount].len = sz;
                 imgCacheCount++;
-                Serial.printf("[WEB]   img/%s: %u bytes -> PSRAM\n", cacheName, (unsigned)sz);
               } else {
-                Serial.printf("[WEB]   img/%s/%s: ps_malloc FAILED\n", subDirName.c_str(), subFile.name());
               }
             }
             subFile.close();
@@ -48,9 +45,7 @@ static void loadWebFilesToRAM() {
             imgCache[imgCacheCount].buf = buf;
             imgCache[imgCacheCount].len = sz;
             imgCacheCount++;
-            Serial.printf("[WEB]   img/%-22s %u bytes -> PSRAM\n", imgFile.name(), (unsigned)sz);
           } else {
-            Serial.printf("[WEB]   img/%s: ps_malloc(%u) FAILED\n", imgFile.name(), (unsigned)sz);
           }
         }
         imgFile.close();
@@ -65,9 +60,7 @@ static void loadWebFilesToRAM() {
             size_t got = f.read(buf, sz);
             WEB_FILES[i].buf = buf;
             WEB_FILES[i].len = got;
-            Serial.printf("[WEB]   %-16s %u bytes -> PSRAM\n", WEB_FILES[i].sdName, (unsigned)got);
           } else {
-            Serial.printf("[WEB]   %-16s ps_malloc(%u) FAILED\n", WEB_FILES[i].sdName, (unsigned)sz);
           }
           break;
         }
@@ -77,11 +70,6 @@ static void loadWebFilesToRAM() {
     f = dir.openNextFile();
   }
   dir.close();
-  for (int i = 0; i < WEB_FILE_COUNT; i++)
-    if (!WEB_FILES[i].buf)
-      Serial.printf("[WEB]   WARNING: %s not cached!\n", WEB_FILES[i].sdName);
-  Serial.printf("[WEB]   %d image(s) cached.\n", imgCacheCount);
-  Serial.printf("[WEB] Done. Free heap: %u bytes\n", (unsigned)ESP.getFreeHeap());
 }
 
 // ── Periodic player status table ───────────────────────────────
@@ -128,15 +116,7 @@ static void printStatus() {
   xSemaphoreGive(G.mutex);
 
   uint32_t upSec = nowMs / 1000;
-  Serial.printf("\n[STATUS] tick:%lu | heap:%lu | uptime:%lum%02lus | players:%d/%d | Day:%d TC:%d/20\n",
-    (unsigned long)tick,
-    (unsigned long)ESP.getFreeHeap(),
-    (unsigned long)(upSec / 60), (unsigned long)(upSec % 60),
-    G.connectedCount, MAX_PLAYERS,
-    snapDay, snapTC);
 
-  Serial.println("[STATUS]  SL Arch         Name       Pos      Terrain    vR  LL  F  W   R  Steps Score  Sk:Na Fo Sc Sh En");
-  Serial.println("[STATUS]  -- ------------ ---------- -------- ---------- -- --- -- -- ---  ----- ----- --------------------------------");
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!snap[i].on) continue;
@@ -147,21 +127,7 @@ static void printStatus() {
     uint32_t sessSec = sessMs / 1000;
     uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
 
-    Serial.printf("[STATUS]  P%d %-12s %-10s (%2d,%2d)  %-10s %2d %3d %2d %2d %3d %5d %5d  %2d %2d %2d %2d %2d  [%lum%02lus]\n",
-      i, ARCHETYPE_NAME[arch], snap[i].name, snap[i].q, snap[i].r,
-      T_NAME[t], effVR,
-      snap[i].ll, snap[i].food, snap[i].water, snap[i].radiation,
-      snap[i].steps, snap[i].score,
-      snap[i].skills[SK_NAVIGATE], snap[i].skills[SK_FORAGE],
-      snap[i].skills[SK_SCAVENGE], snap[i].skills[SK_SHELTER],  snap[i].skills[SK_ENDURE],
-      (unsigned long)(sessSec / 60), (unsigned long)(sessSec % 60));
   }
-  if (G.connectedCount == 0)
-    Serial.println("[STATUS]  (no players connected)");
-
-  Serial.printf("[STATUS] Map live resources: Water:%d Food:%d Fuel:%d Med:%d Scrap:%d | total:%d\n\n",
-    mapRes[1], mapRes[2], mapRes[3], mapRes[4], mapRes[5],
-    mapRes[1]+mapRes[2]+mapRes[3]+mapRes[4]+mapRes[5]);
 }
 
 // ── Item registry parser ──────────────────────────────────────────────────────
@@ -197,7 +163,6 @@ static void commitItem(ItemDef& cur, bool& hasItem) {
   if (itemCount < MAX_ITEMS) {
     itemRegistry[itemCount++] = cur;
   } else {
-    Serial.println("[ITEMS] WARNING: MAX_ITEMS reached, skipping");
   }
   hasItem = false;
   cur = ItemDef{};
@@ -209,7 +174,6 @@ static void loadItemRegistry() {
 
   File f = SD.open("/data/items.cfg");
   if (!f) {
-    Serial.println("[ITEMS] /data/items.cfg not found — no items loaded");
     return;
   }
 
@@ -288,7 +252,6 @@ static void loadItemRegistry() {
   commitItem(cur, hasItem);
   f.close();
 
-  Serial.printf("[ITEMS] Loaded %d item(s) from /data/items.cfg\n", (int)itemCount);
 }
 
 // Lookup item by ID — O(N) scan over loaded registry.
@@ -324,9 +287,8 @@ static bool  jsonStr(const char* p, char* buf, int bufLen) {
 
 // Load /data/encounters/index.json → encPools[0..9]
 static void loadEncounterIndex() {
-  Serial.println("[ENC] Loading encounter index from /data/encounters/index.json ...");
   File f = SD.open("/data/encounters/index.json");
-  if (!f) { Serial.println("[ENC] /data/encounters/index.json not found"); return; }
+  if (!f) {  return; }
   size_t sz = min((size_t)f.size(), (size_t)512);
   char* buf = (char*)malloc(sz + 1);
   if (!buf) { f.close(); return; }
@@ -345,7 +307,6 @@ static void loadEncounterIndex() {
     const char* pv = jsonFindKey(tmp, "path");
     if (cv) encPools[t].count = (uint8_t)jsonInt(cv);
     if (pv) jsonStr(pv, encPools[t].path, sizeof(encPools[t].path));
-    Serial.printf("[ENC]   terrain %d: %-10s %d files\n", t, encPools[t].path, encPools[t].count);
   }
   free(buf);
 }
@@ -353,7 +314,7 @@ static void loadEncounterIndex() {
 // Load /encounters/loot_tables.json → lootTables[0..19]
 static void loadLootTables() {
   File f = SD.open("/data/encounters/loot_tables.json");
-  if (!f) { Serial.println("[ENC] /data/encounters/loot_tables.json not found"); return; }
+  if (!f) {  return; }
   size_t sz = f.size();
   char* buf = (char*)ps_malloc(sz + 1);
   if (!buf) buf = (char*)malloc(sz + 1);
@@ -413,7 +374,6 @@ static void loadLootTables() {
     p = arr;
   }
   free(buf);
-  Serial.printf("[ENC] Loaded %d loot tables\n", (int)lootTableCount);
 }
 
 // Roll a weighted loot table entry → writes item ID and qty to out params

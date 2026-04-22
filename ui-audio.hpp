@@ -37,15 +37,12 @@ static void toneTaskFn(void* arg) {
 
 static void k10PlaySeq(const ToneStep* seq, const char* name = nullptr) {
   if (s_audioVol == 0) {
-    Serial.printf("[TONE]    SKIP (vol=0): %s\n", name ? name : "?");
     return;
   }
   if (s_toneTask != nullptr) {
-    Serial.printf("[TONE]    SKIP (busy):  %s\n", name ? name : "?");
     return;
   }
   s_toneName = name;
-  Serial.printf("[TONE]    >> %s\n", name ? name : "?");
   xTaskCreate(toneTaskFn, "tone", 4096, (void*)seq, 1, &s_toneTask);
 }
 

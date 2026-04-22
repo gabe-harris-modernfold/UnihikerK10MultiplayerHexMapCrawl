@@ -35,8 +35,6 @@ static void updateWeatherPhase() {
   GameEvent ev = {}; ev.type = EVT_WEATHER;
   ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
   enqEvt(ev);
-  Serial.printf("[WEATHER] Phase→%d counter→%d badTicks→%d\n",
-                (int)next, (int)G.weatherCounter, (int)G.badWeatherTicks);
 }
 
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────
@@ -63,21 +61,9 @@ static void tickGame() {
 
   bool dawnOccurred = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
-    bool earlyDawn = (connCount > 0 && allResting && G.dayTick < DAY_TICKS);
-    uint32_t savedTick = G.dayTick;
     G.dayTick = 0;
     G.dayCount++;
     dawnOccurred = true;
-    if (earlyDawn) {
-      Serial.printf("[DUSK]    ──── Day %d ends EARLY (all %d resting) | tick %lu/%lu (%.0f%%, %lus saved) ────\n",
-        (int)G.dayCount - 1, connCount,
-        (unsigned long)savedTick, (unsigned long)DAY_TICKS,
-        100.0f * savedTick / DAY_TICKS,
-        (unsigned long)((DAY_TICKS - savedTick) * TICK_MS / 1000));
-    } else {
-      Serial.printf("[DUSK]    ──── Day %d ends (natural) | tick %lu/%lu ────\n",
-        (int)G.dayCount - 1, (unsigned long)savedTick, (unsigned long)DAY_TICKS);
-    }
     // Force-abort any active encounters before dusk (no TC increment for dawn abort)
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (!encounters[i].active) continue;
@@ -88,13 +74,8 @@ static void tickGame() {
       eev.q = (int16_t)hq; eev.r = (int16_t)hr;
       eev.encOut = 2;  // reason: dawn
       enqEvt(eev);
-      Serial.printf("[ENC]     P%d encounter force-aborted (dawn)\n", i);
     }
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
-    Serial.printf("[DAWN]    ──── Day %d begins | cycle %lus/day (%lu ticks @ %lums) ────\n",
-      (int)G.dayCount,
-      (unsigned long)(DAY_TICKS * TICK_MS / 1000),
-      (unsigned long)DAY_TICKS, (unsigned long)TICK_MS);
     updateWeatherPhase();  // advance weather once per game-day
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
@@ -114,10 +95,6 @@ static void tickGame() {
           rev.type = EVT_RESPAWN; rev.q = (int16_t)c; rev.r = (int16_t)r;
           rev.res  = cell.resource; rev.amt = cell.amount;
           enqEvt(rev);
-          Serial.printf("[RESPAWN] (%2d,%2d) %s | %dx%s | tick:%lu\n",
-            c, r, T_NAME[cell.terrain],
-            cell.amount, RES_NAME[cell.resource],
-            (unsigned long)G.tickId);
         }
       }
     }
@@ -142,7 +119,6 @@ static void tickGame() {
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
           dev.evWsId = p.wsClientId; enqEvt(dev);
         }
-        Serial.printf("[CHEM]    P%d \"%s\" chem tick LL→%d\n", pid, p.name, (int)p.ll);
       }
     }
   }
@@ -180,10 +156,6 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   } else {
     ev.actOut = AO_FAIL;
   }
-  Serial.printf("[FORAGE]  P%d \"%s\" @ %s | DN%d tot:%d → %s | inv food:%d\n",
-    pid, p.name, T_NAME[terr], dn, cr.total,
-    ev.actOut == AO_SUCCESS ? "SUCCESS" : ev.actOut == AO_PARTIAL ? "PARTIAL" : "FAIL",
-    p.inv[1]);
 }
 
 static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
@@ -195,8 +167,6 @@ static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
   ev.actWatD   = (int8_t)spend;
   addScore(p, ev, spend);
   ev.actOut    = AO_SUCCESS;
-  Serial.printf("[WATER]   P%d \"%s\" @ %s | +%d water | inv water:%d mp→%d\n",
-    pid, p.name, T_NAME[terr], spend, p.inv[0], p.movesLeft);
 }
 
 static void doScav(int pid, uint8_t terr, GameEvent& ev) {
@@ -206,7 +176,6 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   spendMP(p, 2);
   if (TERRAIN_IS_RUINS[terr] && G.threatClock < 20) {
     G.threatClock++;
-    Serial.printf("[TC]      Threat Clock → %d (Scavenge in Ruins)\n", G.threatClock);
   }
   CheckResult cr = resolveCheck(pid, SK_SCAVENGE, dn, 0);
   ev.actDn = dn; ev.actTot = (int8_t)cr.total;
@@ -230,16 +199,11 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   } else {
     ev.actOut = AO_FAIL;
   }
-  Serial.printf("[SCAV]    P%d \"%s\" @ %s | DN%d tot:%d → %s | scrap:%d\n",
-    pid, p.name, T_NAME[terr], dn, cr.total,
-    ev.actOut == AO_SUCCESS ? "SUCCESS" : ev.actOut == AO_PARTIAL ? "PARTIAL" : "FAIL",
-    p.inv[4]);
 }
 
 static void doShelter(int pid, GameEvent& ev) {
   Player& p = G.players[pid];
   if (p.inv[4] == 0) {
-    Serial.printf("[SHELTER] ✗ %s (P%d) no scrap\n", p.name, pid);
     return;  // ev.actOut stays AO_BLOCKED — UI responds accordingly
   }
   // Auto-select type: 2+ scrap + 2+ MP = improved shelter (2 MP), otherwise basic shelter (1 MP)
@@ -253,9 +217,6 @@ static void doShelter(int pid, GameEvent& ev) {
   ev.actOut    = AO_SUCCESS;
   ev.actCnd    = shelterType;           // 1=basic, 2=improved (reuses cnd field)
   ev.actScrapD = -(int8_t)shelterType;
-  Serial.printf("[SHELTER] ✓ %s (P%d) built %s shelter @ (%d,%d) | -%d MP | scrap→%d\n",
-    p.name, pid, shelterType == 2 ? "improved shelter" : "shelter",
-    p.q, p.r, mpCost, (int)p.inv[4]);
 }
 
 static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* survLen) {
@@ -281,8 +242,6 @@ static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* su
     playerVisParams(pid, &visR, &mr);
     *survLen = buildSurveyDisk(survBuf, survCap, p.q, p.r, visR, pid);
   }
-  Serial.printf("[SURVEY]  P%d \"%s\" @ (%d,%d) surveyed extended ring\n",
-    pid, p.name, p.q, p.r);
 }
 
 static void doRest(int pid, uint8_t terr, GameEvent& ev) {
@@ -298,13 +257,6 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   for (int k = 0; k < MAX_PLAYERS; k++) {
     if (G.players[k].connected) { totalConn++; if (G.players[k].resting) restCount++; }
   }
-  Serial.printf("[REST]    P%d \"%s\" (shelt:%d) | F:%d W:%d LL:%d"
-                " | tick %lu/%lu ~%lus remain | resting %d/%d\n",
-    pid, p.name, hexShelt,
-    p.food, p.water, p.ll,
-    (unsigned long)G.dayTick, (unsigned long)DAY_TICKS,
-    (unsigned long)(ticksLeft * TICK_MS / 1000),
-    restCount, totalConn);
 }
 
 // ── §5 Action dispatcher ──────────────────────────────────────────────────────

@@ -10,8 +10,6 @@ static void handleConnect(AsyncWebSocketClient* client) {
       for (int i = 0; i < MAX_PLAYERS; i++) {
         Player& p = G.players[i];
         if (p.connected && !ws.client(p.wsClientId)) {
-          Serial.printf("[CONNECT] Freeing stale slot %d (wsId %lu gone)\n",
-                         i, (unsigned long)p.wsClientId);
           p.connected  = false;
           p.wsClientId = 0;
           if (G.connectedCount > 0) G.connectedCount--;
@@ -34,8 +32,6 @@ static void handleConnect(AsyncWebSocketClient* client) {
   taskEXIT_CRITICAL(&evtMux);
 
   if (connectedCount + lobbySize >= MAX_PLAYERS) {
-    Serial.printf("[LOBBY]   FULL — client:#%lu rejected (%d connected, %d in lobby)\n",
-      (unsigned long)client->id(), connectedCount, lobbySize);
     client->text("{\"t\":\"full\"}");
     return;
   }
@@ -49,8 +45,6 @@ static void handleConnect(AsyncWebSocketClient* client) {
 
   if (!added) { client->text("{\"t\":\"full\"}"); return; }
 
-  Serial.printf("[LOBBY]   Client #%lu in character selection (%d connected, %d→%d in lobby)\n",
-    (unsigned long)client->id(), connectedCount, lobbySize, lobbySize + 1);
   // If we have saved WiFi credentials, echo them to this client so its
   // localStorage (and the Settings inputs) stay in sync across devices/reboots.
   if (savedSsid[0]) {
@@ -75,7 +69,6 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   }
   taskEXIT_CRITICAL(&evtMux);
   if (wasInLobby) {
-    Serial.printf("[LOBBY]   Client #%lu left lobby\n", (unsigned long)client->id());
     return;
   }
 
@@ -112,10 +105,6 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   if (slot < 0) return;
 
   uint32_t sessSec = (millis() - connMs) / 1000;
-  Serial.printf("[DISCONN] Slot:%d \"%s\" | steps:%d score:%d | LL:%d F:%d W:%d R:%d | session:%lum%02lus | players now:%d/%d\n",
-    slot, name, steps, score, ll, food, water, rad,
-    (unsigned long)(sessSec / 60), (unsigned long)(sessSec % 60),
-    G.connectedCount, MAX_PLAYERS);
 
   broadcastLobbyUpdate();
   saveGame();
@@ -126,25 +115,19 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
 static void wifiConnectTask(void* param) {
   WifiTaskCtx* ctx = (WifiTaskCtx*)param;
 
-  Serial.printf("[WIFI]    Task start — ssid:\"%s\" pass_len:%d current_mode:%d\n",
-    ctx->ssid, (int)strlen(ctx->pass), (int)WiFi.getMode());
 
   // Only switch mode if not already in AP+STA — re-calling WiFi.mode() when
   // already in WIFI_AP_STA can reset the WiFi stack and drop the softAP.
   if (WiFi.getMode() != WIFI_MODE_APSTA) {
-    Serial.println("[WIFI]    Switching to WIFI_AP_STA");
     WiFi.mode(WIFI_AP_STA);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 
-  Serial.printf("[WIFI]    Calling WiFi.begin(\"%s\")...\n", ctx->ssid);
   WiFi.begin(ctx->ssid, ctx->pass[0] ? ctx->pass : nullptr);
 
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
     vTaskDelay(pdMS_TO_TICKS(500));
-    Serial.printf("[WIFI]    status=%d  elapsed=%lums\n",
-      (int)WiFi.status(), (unsigned long)(millis() - t0));
   }
 
   char buf[88]; int blen;
@@ -152,10 +135,7 @@ static void wifiConnectTask(void* param) {
     String ip = WiFi.localIP().toString();
     blen = snprintf(buf, sizeof(buf),
       "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}", ip.c_str());
-    Serial.printf("[WIFI]    Connected! STA IP: %s  AP IP: %s\n",
-      ip.c_str(), WiFi.softAPIP().toString().c_str());
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-    Serial.println("[TIME] NTP sync started");
     // Cache in globals so handleConnect can echo creds to new clients.
     // ESP32 already saved these to its own internal NVS when WiFi.begin(ssid,pass)
     // was called above — no separate Preferences write needed.
@@ -169,8 +149,6 @@ static void wifiConnectTask(void* param) {
     // would suppress the client's auto-send retry (NVS copy is kept for next boot).
     savedSsid[0] = '\0';
     blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"fail\"}");
-    Serial.printf("[WIFI]    Failed (timeout) — back to AP mode  IP: %s\n",
-      WiFi.softAPIP().toString().c_str());
   }
 
   ws.textAll(buf, (size_t)blen);

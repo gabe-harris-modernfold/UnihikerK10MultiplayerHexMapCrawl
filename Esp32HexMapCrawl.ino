@@ -115,7 +115,6 @@ static bool checkRtcReady() {
   if (getLocalTime(&ti, 0) && ti.tm_year > 100) {
     rtcSynced = true;
     char ts[32]; strftime(ts, sizeof(ts), "%F %T", &ti);
-    Serial.printf("[TIME] RTC synced: %s UTC\n", ts);
   }
   return rtcSynced;
 }
@@ -666,15 +665,8 @@ static uint32_t  g_bootNonce   = 0;
 
 // ── Setup ──────────────────────────────────────────────────────
 void setup() {
-  Serial.begin(115200);
   { unsigned long t0 = millis(); while (!Serial && millis()-t0 < 3000) delay(10); }
   delay(200);
-  Serial.println();
-  Serial.println("╔══════════════════════════════════════════════╗");
-  Serial.println("║   ESP32-S3  WASTELAND HEX CRAWL  v3.0       ║");
-  Serial.println("║   11-Terrain | FOW | 6-Survivor Co-op        ║");
-  Serial.println("╚══════════════════════════════════════════════╝");
-  Serial.printf("[SETUP] Free heap at boot: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
 
   // ── Reset reason ─────────────────────────────────────────────
   { esp_reset_reason_t rr = esp_reset_reason();
@@ -691,7 +683,6 @@ void setup() {
       case ESP_RST_DEEPSLEEP:rs = "DEEPSLEEP"; break;
       default:               rs = "UNKNOWN";   break;
     }
-    Serial.printf("[RESET] Reason: %s (%d)\n", rs, (int)rr);
   }
 
   // ── K10 hardware init (buttons, LEDs, audio) ─────────────────
@@ -720,13 +711,8 @@ void setup() {
   canvas.pushSprite(0, 0);
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
-  Serial.printf("[SETUP] Map: %dx%d=%d cells | VISION_R:%d | MOVE_CD:%lums | RESPAWN:%ds\n",
-    MAP_COLS, MAP_ROWS, MAP_COLS * MAP_ROWS,
-    VISION_R, (unsigned long)MOVE_CD_MS, (int)RESPAWN_TICKS / 10);
 
   // Print terrain reference table
-  Serial.println("[SETUP] Terrain MC/SV/VIS table:");
-  Serial.println("[SETUP]   #  Name       MC  SV  Vis     Resources");
   for (int t = 0; t < NUM_TERRAIN; t++) {
     const char* visTxt = (TERRAIN_VIS[t] >= 2)   ? "+2 VHIGH "
                        : (TERRAIN_VIS[t] == 1)  ? "+1 HIGH  "
@@ -736,27 +722,24 @@ void setup() {
                        :                          "BLIND    ";
     char mcBuf[4] = {(char)('0'+TERRAIN_MC[t]), 0};
     const char* mcStr = (TERRAIN_MC[t] == 255) ? "∞" : mcBuf;
-    Serial.printf("[SETUP]   %2d %-10s %-3s %-3d %-9s ",
-      t, T_NAME[t], mcStr, TERRAIN_SV[t], visTxt);
     switch (t) {
-      case 0:  Serial.print("Any"); break;
-      case 1:  Serial.print("Fuel/Scrap"); break;
-      case 2:  Serial.print("Food/Scrap"); break;
-      case 3:  Serial.print("Water/Food"); break;
-      case 4:  Serial.print("Scrap/Med"); break;
-      case 5:  Serial.print("Water"); break;
-      case 6:  Serial.print("Scrap"); break;
-      case 7:  Serial.print("Fuel/Scrap"); break;
-      case 8:  Serial.print("Scrap/Med"); break;
-      case 9:  Serial.print("Any"); break;
-      case 10: Serial.print("None (impassable)"); break;
+      case 0:   break;
+      case 1:   break;
+      case 2:   break;
+      case 3:   break;
+      case 4:   break;
+      case 5:   break;
+      case 6:   break;
+      case 7:   break;
+      case 8:   break;
+      case 9:   break;
+      case 10:  break;
     }
-    Serial.println();
   }
 
   // ── Mutex + game state init ───────────────────────────────────
   G.mutex = xSemaphoreCreateMutex();
-  if (!G.mutex) { Serial.println("[ERROR] Mutex creation failed!"); for (;;) delay(1000); }
+  if (!G.mutex) {  for (;;) delay(1000); }
 
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
@@ -789,20 +772,14 @@ void setup() {
     snprintf(p.name, sizeof(p.name), "%s%d", ARCHETYPE_NAME[i], i);
   }
 
-  Serial.println("[SETUP] Survivor archetype assignments:");
-  Serial.println("[SETUP]   Slot  Archetype      InvSlots  Skills[Nav For Scav Shel End]");
   for (int i = 0; i < NUM_ARCHETYPES; i++) {
     const uint8_t* sk = ARCHETYPE_SKILLS[i];
-    Serial.printf("[SETUP]   P%d    %-13s  %-8d  [%d   %d   %d    %d    %d]\n",
-      i, ARCHETYPE_NAME[i], ARCHETYPE_INV_SLOTS[i],
-      sk[0], sk[1], sk[2], sk[3], sk[4]);
   }
 
   // ── SD card mount ─────────────────────────────────────────────
   splashAdd("Mounting SD card...");
   if (!SD.begin()) {
     splashAdd("SD FAIL - insert card!", 0xC04020);
-    Serial.println("[ERROR] SD card mount failed! Insert card and reboot.");
     for (;;) delay(1000);
   }
   {
@@ -810,12 +787,9 @@ void setup() {
     uint64_t use = SD.usedBytes()  / (1024*1024);
     char sdBuf[30]; snprintf(sdBuf, 30, "SD %uMB/%uMB used", (unsigned)tot, (unsigned)use);
     splashAdd(sdBuf, 0x406030);
-    Serial.println("[SETUP] SD card mounted OK");
-    Serial.printf("[SETUP] SD: total=%lluMB used=%lluMB\n", tot, use);
   }
   if (!SD.exists("/data/index.html")) {
     splashAdd("WARN: no index.html!", 0xC89030);
-    Serial.println("[WARN]  /index.html missing on SD card root!");
   } else {
     splashAdd("index.html OK", 0x60A040);
   }
@@ -852,10 +826,8 @@ void setup() {
     splashAdd(eb, 0x60A040); }
 
   splashAdd("Generating map...");
-  Serial.println("[SETUP] Loading or generating map...");
   if (!tryLoadSave()) {
     generateMap();
-    Serial.println("[SAVE] No save found - fresh map generated");
   }
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
@@ -876,19 +848,16 @@ void loop() {
       bootWifiPending = false;
       strlcpy(savedSsid, WiFi.SSID().c_str(), sizeof(savedSsid));
       strlcpy(savedPass, WiFi.psk().c_str(),  sizeof(savedPass));
-      Serial.printf("[WIFI] Boot connect OK — STA IP: %s\n", WiFi.localIP().toString().c_str());
       k10ScreenLast = 255;  // force title redraw after WiFi splash would have disrupted it
       char buf[88];
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
       ws.textAll(buf, (size_t)blen);
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-      Serial.println("[TIME] NTP sync started");
     } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
                now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
       bootWifiPending = false;
       savedSsid[0] = '\0';
-      Serial.printf("[WIFI] Boot connect failed (status=%d)\n", (int)wst);
     }
   }
 
@@ -920,11 +889,6 @@ void loop() {
   if (now - lastStatusMs >= STATUS_MS) {
     lastStatusMs = now;
     printStatus();
-
-    uint32_t heap = ESP.getFreeHeap();
-    if (heap < 100000)
-      Serial.printf("[HEAP]  *** WARNING: low heap %lu bytes — consider reboot ***\n",
-        (unsigned long)heap);
   }
   delay(100);
 }

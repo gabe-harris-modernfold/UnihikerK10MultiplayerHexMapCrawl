@@ -9,20 +9,14 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
   int hq = atoi(qv + 1), hr = atoi(rv + 1);
   if (hq < 0 || hq >= MAP_COLS || hr < 0 || hr >= MAP_ROWS) return;
 
-  Serial.printf("[ENC] enc_start recv q=%d r=%d  heap=%u  minHeap=%u  stackHWM=%u  core=%d\n",
-    hq, hr, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
-    (unsigned)uxTaskGetStackHighWaterMark(NULL), xPortGetCoreID());
-  Serial.flush();
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int pid = findSlot(client->id());
     if (pid >= 0 && !encounters[pid].active && !(G.players[pid].ll == 0)) {
       Player& p     = G.players[pid];
       HexCell& cell = G.map[hr][hq];
       if ((int)p.q != hq || (int)p.r != hr) {
-        Serial.printf("[ENC] REJECT 'Not at hex': player at (%d,%d), tried (%d,%d)\n", p.q, p.r, hq, hr);
         client->text("{\"t\":\"err\",\"msg\":\"Not at that hex\"}");
       } else if (cell.poi == 0) {
-        Serial.printf("[ENC] REJECT 'Already looted': cell.poi=0 at (%d,%d)\n", hq, hr);
         client->text("{\"t\":\"err\",\"msg\":\"Already looted\"}");
       } else {
         bool claimed = false;
@@ -37,11 +31,6 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
         } else {
           uint8_t terrain = cell.terrain;
           if (terrain >= 10 || encPools[terrain].count == 0) {
-            Serial.printf("[ENC] REJECT 'No encounters here': terrain=%d (>=10:%s), pool count=%d, path='%s'\n",
-              terrain,
-              terrain >= 10 ? "YES" : "no",
-              terrain < 10 ? (int)encPools[terrain].count : -1,
-              terrain < 10 ? encPools[terrain].path : "N/A");
             client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
           } else {
             uint8_t idx = cell.poi;
@@ -59,49 +48,27 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
             int pathLen = snprintf(pathBuf, sizeof(pathBuf),
               "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d}",
               encPools[terrain].path, (int)idx);
-            Serial.printf("[ENC] enc_start step1: about to client->text enc_path  heap=%u\n",
-              (unsigned)ESP.getFreeHeap()); Serial.flush();
+             
             client->text(pathBuf, (size_t)pathLen);
-            Serial.printf("[ENC] enc_start step2: enc_path sent (%d bytes) P%d %s/%d (%d,%d)  heap=%u\n",
-              pathLen, pid, encPools[terrain].path, (int)idx, hq, hr, (unsigned)ESP.getFreeHeap());
-            Serial.flush();
             GameEvent ev = {};
             ev.type = EVT_ENC_START; ev.pid = (uint8_t)pid;
             ev.q = (int16_t)hq; ev.r = (int16_t)hr;
-            Serial.printf("[ENC] enc_start step3: about to enqEvt  heap=%u\n",
-              (unsigned)ESP.getFreeHeap()); Serial.flush();
+             
             enqEvt(ev);
-            Serial.printf("[ENC] enc_start step4: enqEvt done  heap=%u\n",
-              (unsigned)ESP.getFreeHeap()); Serial.flush();
+             
           }
         }
       }
     } else if (pid < 0) {
-      Serial.printf("[ENC] enc_start REJECT: no slot for client %u  heap=%u\n",
-        client->id(), (unsigned)ESP.getFreeHeap());
-      Serial.flush();
       client->text("{\"t\":\"enc_dbg\",\"msg\":\"no_slot\"}");
     } else if (encounters[pid].active) {
-      Serial.printf("[ENC] enc_start REJECT: P%d already in encounter (active=0x%02X hexQ=%d hexR=%d)  heap=%u\n",
-        pid, (unsigned)encounters[pid].active,
-        (int)encounters[pid].hexQ, (int)encounters[pid].hexR,
-        (unsigned)ESP.getFreeHeap());
-      Serial.flush();
       client->text("{\"t\":\"err\",\"msg\":\"Already in an encounter — abort first\"}");
     } else {
       // pid >= 0, not in encounter, but ll == 0
-      Serial.printf("[ENC] enc_start REJECT: P%d is downed (ll=0)  heap=%u\n",
-        pid, (unsigned)ESP.getFreeHeap());
-      Serial.flush();
       client->text("{\"t\":\"err\",\"msg\":\"Cannot enter — you are downed\"}");
     }
     xSemaphoreGive(G.mutex);
-    Serial.printf("[ENC] enc_start mutex released  heap=%u\n", (unsigned)ESP.getFreeHeap());
-    Serial.flush();
   } else {
-    Serial.printf("[ENC] enc_start MUTEX TIMEOUT (5ms) — game loop busy  heap=%u\n",
-      (unsigned)ESP.getFreeHeap());
-    Serial.flush();
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"mutex_timeout\"}");
   }
 }
@@ -194,7 +161,6 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
         ev.encPenRad = (int8_t)hazRad;
         ev.encEnds   = (uint8_t)(hazEnds ? 1 : 0);
         if (hazLL > 0) {
-          Serial.printf("[ENC] WARNING: P%d haz_ll=%d is positive — LL penalties must be negative in JSON. Ignored.\n", pid, hazLL);
         } else if (hazLL < 0) {
           int newLL = (int)p.ll + hazLL;
           p.ll = (uint8_t)max(0, newLL);
@@ -211,8 +177,6 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
           }
           if (slotCount > 0) {
             int target = slots[random(0, slotCount)];
-            Serial.printf("[ENC] P%d haz_lose_consumable: dropped item:%d from slot %d\n",
-              pid, (int)p.invType[target], target);
             p.invType[target] = 0;
             p.invQty[target]  = 0;
           }
@@ -246,8 +210,6 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
           eev.encOut = (G.players[pid].ll == 0) ? 3 : 0;
           enqEvt(eev); }
       }
-      Serial.printf("[ENC] P%d choice: DN%d roll%d %s%s\n",
-        pid, dn, cr.total, cr.success ? "OK" : "FAIL", encounterEnded ? " (end)" : "");
     }
     xSemaphoreGive(G.mutex);
   }
@@ -307,7 +269,6 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
             groundItems[gslot].itemType = itemId;
             groundItems[gslot].qty = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
           } else {
-            Serial.printf("[ENC] P%d bank item:%d x%d LOST — MAX_GROUND full\n", pid, (int)itemId, (int)qty);
           }
         }
       }
@@ -319,8 +280,6 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       addScore(p, ev, scoreGain);
       p.encCount++;
       enqEvt(ev);
-      Serial.printf("[ENC] P%d banked (res:%d score+%d%s)\n",
-        pid, totalRes, scoreGain, fullClear ? " FULLCLEAR" : "");
       enc = {};
     }
     xSemaphoreGive(G.mutex);
@@ -337,7 +296,6 @@ static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t
       GameEvent ev = {}; ev.type = EVT_ENC_END; ev.pid = (uint8_t)pid;
       ev.q = (int16_t)hq; ev.r = (int16_t)hr2; ev.encOut = 1;  // reason: abort
       enqEvt(ev);
-      Serial.printf("[ENC] P%d aborted (TC now %d)\n", pid, (int)G.threatClock);
     }
     xSemaphoreGive(G.mutex);
   }

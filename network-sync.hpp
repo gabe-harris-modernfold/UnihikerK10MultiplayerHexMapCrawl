@@ -150,8 +150,6 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     forrageAnimalCount);
   xSemaphoreGive(G.mutex);
 
-  Serial.printf("[SYNC]    →P%d | visR:%d mask:%c | mapStr:%dB | total:%d/6400B\n",
-    pid, visR, maskRes ? 'Y' : 'N', mapLen, pos);
 
   client->text(buf, (size_t)pos);
 }

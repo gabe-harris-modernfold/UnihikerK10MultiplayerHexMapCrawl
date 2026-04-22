@@ -202,8 +202,8 @@ function openCharSheet() {
   const arch     = ARCHETYPES[me.arch] || ARCHETYPES[0];
   const archIcon = document.getElementById('cs-arch-icon');
   const archName = document.getElementById('cs-arch-name');
-  if (archIcon) { archIcon.textContent = arch.icon; archIcon.style.color = arch.color; }
-  if (archName) { archName.textContent = arch.name; archName.style.color = arch.color; }
+  if (archIcon) { archIcon.textContent = arch.icon; archIcon.style.color = ''; }
+  if (archName) { archName.textContent = arch.name; archName.style.color = ''; }
   document.getElementById('char-sheet')
     .style.setProperty('--cs-portrait', `url('img/survivors/${arch.name.toLowerCase()}.jpg')`);
   const archTrait = document.getElementById('cs-arch-trait');
@@ -419,7 +419,34 @@ function applyRadStatus(rad) {
   rStat.className   = 'track-suffix' + suffix;
 }
 
+function initSurvivalTracks() {
+  // Char sheet tracks — built by makeSegmentBar
+  const section = document.getElementById('cs-survival-section');
+  if (section) {
+    section.appendChild(makeSegmentBar({ id: 'cs-ll-track',    label: 'LIFE LEVEL', count: 7  }));
+    section.appendChild(makeSegmentBar({ id: 'cs-food-track',  label: 'FOOD',       count: 6  }));
+    section.appendChild(makeSegmentBar({ id: 'cs-water-track', label: 'WATER',      count: 6  }));
+    const radRow = makeSegmentBar({ id: 'cs-rad-track', label: 'RADIATION', count: 10 });
+    radRow.querySelector('.track-boxes').classList.add('rad-track');
+    const radStatus = document.createElement('span');
+    radStatus.className = 'track-suffix';
+    radStatus.id = 'cs-rad-status';
+    radRow.appendChild(radStatus);
+    section.appendChild(radRow);
+  }
+
+  // HUD tracks — replace static meter elements in-place
+  ['hud-ll-track', 'hud-mp-track'].forEach(oldId => {
+    const old = document.getElementById(oldId);
+    if (!old) return;
+    const count = oldId === 'hud-ll-track' ? 7 : 6;
+    old.replaceWith(makeSegmentBar({ id: oldId, count, meterOnly: true }));
+  });
+}
+
 function initCharSheetBindings() {
+  initSurvivalTracks();
+
   // Live stat elements
   const stepsEl   = document.getElementById('cs-steps');
   const visionEl  = document.getElementById('cs-vision');

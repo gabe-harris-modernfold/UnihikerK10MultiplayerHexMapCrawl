@@ -68,7 +68,10 @@
       "Bash(node -e \"require\\('ws'\\)\")",
       "Bash(npm init *)",
       "Bash(npm install *)",
-      "Bash(npm root *)"
+      "Bash(npm root *)",
+      "Bash(curl -s -I \"http://localhost:8080/style.css\")",
+      "Bash(python _strip_serial.py)",
+      "Bash(python -c ' *)"
     ]
   }
 }

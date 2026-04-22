@@ -13,12 +13,9 @@ static void sanitizeName(char* s, int maxLen) {
 
 // ── SD Save ───────────────────────────────────────────────────────────────────
 void saveGame() {
-  if (SD.cardType() == CARD_NONE) { Serial.println("[SAVE] SKIP: no SD card"); return; }
+  if (SD.cardType() == CARD_NONE) {  return; }
   uint32_t _t0 = millis();
   bool _got = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(100)) == pdTRUE);
-  Serial.printf("[SAVE] mutex_wait=%lums ok=%d  heap=%u\n",
-    (unsigned long)(millis()-_t0), _got ? 1 : 0, (unsigned)ESP.getFreeHeap());
-  Serial.flush();
   if (_got) {
     if (!SD.exists(SAVE_DIR)) SD.mkdir(SAVE_DIR);
     // Map file
@@ -69,11 +66,7 @@ void saveGame() {
       gf.close();
     }
     xSemaphoreGive(G.mutex);
-    Serial.printf("[SAVE] Day %d saved  t=%lums\n", (int)G.dayCount, (unsigned long)(millis()-_t0));
-    Serial.flush();
   } else {
-    Serial.println("[SAVE] MUTEX TIMEOUT (100ms) — save skipped");
-    Serial.flush();
   }
 }
 
@@ -86,8 +79,6 @@ bool tryLoadSave() {
   if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) { f.close(); return false; }
   if (hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) {
     f.close();
-    Serial.printf("[SAVE] Version mismatch (file:%d expected:%d) — fresh start\n",
-      (int)hdr.version, (int)SAVE_VERSION);
     return false;
   }
   if (f.read((uint8_t*)G.map, sizeof(G.map)) != sizeof(G.map)) { f.close(); return false; }
@@ -131,6 +122,5 @@ bool tryLoadSave() {
     }
     p.close();
   }
-  Serial.printf("[SAVE] Loaded Day %d from SD\n", (int)G.dayCount);
   return true;
 }

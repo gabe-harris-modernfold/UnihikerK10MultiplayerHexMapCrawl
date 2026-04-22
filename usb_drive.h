@@ -71,7 +71,5 @@ static void enterUSBDriveMode(UNIHIKER_K10& k10) {
   canvasText16("/data/img/hex*.png",  8, 284, 0x404050);
   canvas.pushSprite(0, 0);
 
-  Serial.printf("[USB] Drive mode. %u sectors  %u MB. Waiting for host.\n",
-                (unsigned)sectors, (unsigned)mb);
   for (;;) delay(1000);   // TinyUSB is serviced by background tasks
 }

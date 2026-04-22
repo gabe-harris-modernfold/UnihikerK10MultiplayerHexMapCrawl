@@ -21,8 +21,6 @@ static void efxThreatMod(int pid, uint8_t itemId, uint8_t param) {
   // param is treated as signed int8_t: positive raises TC, negative lowers it.
   int delta = (int)(int8_t)param;
   G.threatClock = (uint8_t)constrain((int)G.threatClock + delta, 0, 20);
-  Serial.printf("[ITEM]  P%d efxThreatMod item:%d TC%+d → %d\n",
-    pid, itemId, delta, (int)G.threatClock);
 }
 static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
   (void)pid; (void)itemId; (void)param; // conditions removed
@@ -33,7 +31,6 @@ static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
 // All other params (11=UI scramble, 12=reverse keys, 20-32=misc) are client-side;
 // the server just broadcasts the item-use event with the param for the client to handle.
 static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
-  Serial.printf("[ITEM]  P%d efxNarrative item:%d param:%d\n", pid, itemId, (int)param);
   if (param == 10) {
     // teleport_random — move player to a random surveyed hex
     // surveyedMap bitmask: bit (r*MAP_COLS+q) => q = idx%MAP_COLS, r = idx/MAP_COLS
@@ -58,8 +55,6 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
       }
       G.players[pid].q = tq;
       G.players[pid].r = tr;
-      Serial.printf("[ITEM]  P%d teleported to (%d,%d)\n",
-        pid, (int)G.players[pid].q, (int)G.players[pid].r);
     }
   }
 }
@@ -103,13 +98,9 @@ static void applyDawnItemCosts(int pid) {
     }
     if (canAfford) {
       for (int k = 0; k < 5; k++) p.inv[k] -= def->opCost[k];
-      Serial.printf("[ITEM]  P%d dawn cost paid for \"%s\" (item %d)\n",
-        pid, def->name, (int)def->id);
       // STAT_MP bonus is added to movesLeft here (set by dawnUpkeep BEFORE this call)
       p.movesLeft = (int8_t)min(127, (int)p.movesLeft + (int)def->statMods[STAT_MP]);
     } else {
-      Serial.printf("[ITEM]  P%d dawn cost NOT paid for \"%s\" — item inactive\n",
-        pid, def->name);
       // If we can't afford the cost, the item's STAT_MP bonus does NOT apply.
       // Other statMods (LL, etc.) still show via calcEffectiveStat — game design
       // choice: equipment stays on, but fuel-gated bonuses are dormant.
@@ -131,8 +122,6 @@ static bool useItem(int pid, uint8_t slotIdx) {
   // Equipment must be equipped, not used directly (use equipItem instead)
   if (def->category == ITEM_EQUIPMENT) return false;
 
-  Serial.printf("[ITEM]  P%d use \"%s\" (slot %d qty %d)\n",
-    pid, def->name, (int)slotIdx, (int)p.invQty[slotIdx]);
 
   // Apply stat modifiers
   if (def->statMods[STAT_LL])      p.ll        = (uint8_t)constrain((int)p.ll      + def->statMods[STAT_LL],      0, (int)effectiveMaxLL(pid));
@@ -182,8 +171,6 @@ static bool equipItem(int pid, uint8_t slotIdx) {
       }
     }
     if (!placed) {
-      Serial.printf("[ITEM]  P%d equip \"%s\" BLOCKED — no inv space for displaced item\n",
-        pid, def->name);
       return false;
     }
   }
@@ -193,8 +180,6 @@ static bool equipItem(int pid, uint8_t slotIdx) {
   p.invType[slotIdx] = 0;
   p.invQty[slotIdx]  = 0;
 
-  Serial.printf("[ITEM]  P%d equipped \"%s\" → slot %s\n",
-    pid, def->name, EQUIP_SLOT_NAMES[def->equipSlot]);
   return true;
 }
 
@@ -216,12 +201,9 @@ static bool unequipItem(int pid, uint8_t eslot) {
       uint8_t newCap = effectiveMaxLL(pid);
       if (p.ll > newCap) p.ll = newCap;
       const ItemDef* def = getItemDef(itemId);
-      Serial.printf("[ITEM]  P%d unequipped \"%s\" from slot %d (LL cap now %d)\n",
-        pid, def ? def->name : "?", (int)eslot, (int)newCap);
       return true;
     }
   }
-  Serial.printf("[ITEM]  P%d unequip BLOCKED — inventory full\n", pid);
   return false;
 }
 
@@ -250,7 +232,6 @@ static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
     }
   }
   if (gslot < 0) {
-    Serial.println("[ITEM]  dropItem BLOCKED — MAX_GROUND reached");
     return false;
   }
 
@@ -265,8 +246,6 @@ static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
   groundItems[gslot].qty      = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
 
   const ItemDef* def = getItemDef(itemId);
-  Serial.printf("[ITEM]  P%d dropped \"%s\" x%d at (%d,%d) gslot:%d\n",
-    pid, def ? def->name : "?", (int)qty, (int)p.q, (int)p.r, gslot);
   return true;
 }
 
@@ -292,7 +271,6 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   }
   int targetSlot = (stackSlot >= 0) ? stackSlot : freeSlot;
   if (targetSlot < 0) {
-    Serial.printf("[ITEM]  P%d pickup BLOCKED — inventory full\n", pid);
     return false;
   }
   const ItemDef* def = getItemDef(itemId);
@@ -305,7 +283,6 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
     canTake = min(qty, room);
   }
   if (!canTake) {
-    Serial.printf("[ITEM]  P%d pickup BLOCKED — stack full\n", pid);
     return false;
   }
 
@@ -314,8 +291,6 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   gi.qty -= canTake;
   if (!gi.qty) { gi.itemType = 0; gi.q = 0; gi.r = 0; }
 
-  Serial.printf("[ITEM]  P%d picked up \"%s\" x%d from (%d,%d)\n",
-    pid, def ? def->name : "?", (int)canTake, (int)p.q, (int)p.r);
   return true;
 }
 

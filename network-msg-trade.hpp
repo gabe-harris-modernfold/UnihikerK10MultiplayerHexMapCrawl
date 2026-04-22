@@ -64,7 +64,6 @@ static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size
         memcpy(tev.tradeWant, want, 5);
         enqEvt(tev);
         valid = true;
-        Serial.printf("[TRADE]   P%d → P%d offer queued\n", fromSlot, toPid);
       }
     }
     xSemaphoreGive(G.mutex);
@@ -102,11 +101,9 @@ static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, siz
       executeTrade(fromPid, mySlot, tradeOffers[fromPid]);
       tev.tradeTo     = (uint8_t)mySlot;
       tev.tradeResult = 1;
-      Serial.printf("[TRADE]   P%d ↔ P%d ACCEPTED\n", fromPid, mySlot);
     } else if (mySlot >= 0) {
       tev.tradeTo     = (uint8_t)mySlot;
       tev.tradeResult = 2;
-      Serial.printf("[TRADE]   P%d → P%d accept FAILED (validation)\n", fromPid, mySlot);
     }
     tradeOffers[fromPid].active = false;
     enqEvt(tev);
@@ -132,7 +129,6 @@ static void handleMsg_trade_decline(AsyncWebSocketClient* client, char* data, si
       tev.tradeTo     = (uint8_t)mySlot;
       tev.tradeResult = 2;
       enqEvt(tev);
-      Serial.printf("[TRADE]   P%d → P%d DECLINED\n", fromPid, mySlot);
     }
     xSemaphoreGive(G.mutex);
   }

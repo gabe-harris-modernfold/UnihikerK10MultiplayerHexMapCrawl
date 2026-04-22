@@ -86,13 +86,13 @@ static uint8_t pickVariant(uint8_t n, uint32_t rnd) {
   return 0;
 }
 
-static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 10,  3,  2,  2,  0,  3,  2,  1,  3,  0 };
+static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 12,  3,  2,  0,  0,  3,  2,  1,  3,  0 };
 
 // Clump % per terrain
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
   15,  // 0 Open Scrub
   40,  // 1 Ash Dunes
-  55,  // 2 Rust Forest
+  75,  // 2 Rust Forest
   45,  // 3 Marsh
   35,  // 4 Broken Urban
   50,  // 5 Flooded Ruins
@@ -309,6 +309,54 @@ static void generateMap() {
         G.map[r][c].terrain = scratch[r][c];
   }
 
+  // ── Phase 2.82: Flooded Ruins seeded along rivers ───────────────
+  // Flooded Ruins (5) are placed only on non-river hexes that border
+  // a River (11). Urban neighbors flood eagerly; other passable
+  // terrain floods occasionally. Mountains, craters, settlements,
+  // and existing rivers never flood.
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int c = 0; c < MAP_COLS; c++) {
+      uint8_t t = G.map[r][c].terrain;
+      if (t == 8 || t == 9 || t == 10 || t == 11) continue;
+      bool nearRiver = false;
+      for (int d = 0; d < 6 && !nearRiver; d++)
+        if (G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain == 11) nearRiver = true;
+      if (!nearRiver) continue;
+      uint8_t prob = (t == 4) ? 70 : 20;
+      if ((esp_random() % 100) < prob) G.map[r][c].terrain = 5;
+    }
+  }
+
+  // ── Phase 2.85: Rust Forest de-speckle ──────────────────────────
+  // Isolated single-hex forests are rare: convert lone forest hexes
+  // to their dominant non-forest neighbor (or scrub) most of the time.
+  {
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        scratch[r][c] = G.map[r][c].terrain;
+
+    for (int r = 0; r < MAP_ROWS; r++) {
+      for (int c = 0; c < MAP_COLS; c++) {
+        if (G.map[r][c].terrain != 2) continue;
+        uint8_t nCount[NUM_TERRAIN] = {0};
+        for (int d = 0; d < 6; d++)
+          nCount[G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain]++;
+        if (nCount[2] > 0) continue;
+        if ((esp_random() % 100) >= 90) continue;
+        uint8_t best = 0;
+        uint8_t bestN = 0;
+        for (int t = 0; t < NUM_TERRAIN; t++) {
+          if (t == 2 || t == 8 || t == 9 || t == 10 || t == 11) continue;
+          if (nCount[t] > bestN) { bestN = nCount[t]; best = (uint8_t)t; }
+        }
+        scratch[r][c] = best;
+      }
+    }
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        G.map[r][c].terrain = scratch[r][c];
+  }
+
   // ── Phase 2.9: Guaranteed minimums for Settlement and Nuke Crater ───────────
   {
     const uint8_t MIN_SETTLE = 3;
@@ -407,7 +455,6 @@ static void generateMap() {
           if (G.map[r3][c3].terrain == (uint8_t)t)
             hexBuf[hexCount++] = (uint16_t)(r3 * MAP_COLS + c3);
       if (hexCount == 0) {
-        Serial.printf("[POI] terrain %d: 0 hexes, skipping %d encounters\n", t, (int)n);
         continue;
       }
       // Fisher-Yates shuffle
@@ -420,8 +467,6 @@ static void generateMap() {
         uint16_t hIdx = hexBuf[i % hexCount];
         G.map[hIdx / MAP_COLS][hIdx % MAP_COLS].poi = (uint8_t)(i + 1);
       }
-      Serial.printf("[POI] terrain %d: placed %d encounters across %d hexes\n",
-        t, (int)n, hexCount);
     }
   }
 
@@ -437,23 +482,6 @@ static void generateMap() {
       if (cell.resource > 0 && cell.resource < 6) { rCount[cell.resource]++; totalRes++; }
     }
 
-  Serial.printf("[MAP] Generated %dx%d = %d cells | clump passes:%d\n",
-    MAP_COLS, MAP_ROWS, MAP_COLS * MAP_ROWS, SMOOTH_PASSES);
-  Serial.print ("[MAP] Terrain  : ");
-  for (int t = 0; t < NUM_TERRAIN; t++)
-    Serial.printf("%s:%d ", T_SHORT[t], tCount[t]);
-  Serial.println();
-  Serial.print ("[MAP] Base wt% : ");
-  for (int t = 0; t < NUM_TERRAIN; t++)
-    Serial.printf("%s:%-2d ", T_SHORT[t], T_BASE[t]);
-  Serial.println();
-  Serial.print ("[MAP] Clump %  : ");
-  for (int t = 0; t < NUM_TERRAIN; t++)
-    Serial.printf("%s:%-2d ", T_SHORT[t], TERRAIN_CLUMP[t]);
-  Serial.println();
-  Serial.printf("[MAP] Resources: Water:%d Food:%d Fuel:%d Med:%d Scrap:%d | total:%d (%.1f%%)\n",
-    rCount[1], rCount[2], rCount[3], rCount[4], rCount[5],
-    totalRes, (float)totalRes * 100.0f / (MAP_COLS * MAP_ROWS));
 }
 
 // ── Map encode: fog masked ─────────────────────────────────────

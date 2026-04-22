@@ -21,14 +21,11 @@ static void duskCheck() {
       ev.actDn  = 8;
       ev.actTot = 0;
       ev.actOut = AO_FAIL;
-      Serial.printf("[DUSK]    P%d \"%s\" R:10 auto-FAIL Endure\n", pid, p.name);
     } else {
       CheckResult cr = resolveCheck(pid, SK_ENDURE, 8, 0);
       ev.actDn  = 8;
       ev.actTot = (int8_t)cr.total;
       ev.actOut = cr.success ? AO_SUCCESS : AO_FAIL;
-      Serial.printf("[DUSK]    P%d \"%s\" R:%d Endure DN8=%d → %s\n",
-        pid, p.name, p.radiation, cr.total, cr.success ? "PASS" : "FAIL");
     }
 
     if (ev.actOut == AO_FAIL) {
@@ -37,7 +34,6 @@ static void duskCheck() {
         p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
         enqEvt(devt);
-        Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dusk) — slot queued for reset\n", pid, p.name);
       }
       ev.actLLD   = -1;
       ev.actNewLL = p.ll;
@@ -61,7 +57,6 @@ static void dawnUpkeep() {
     // ── Clean-zone R recovery (§6.2): no rad hex entered all day → R−1 ─────
     if (p.radClean && p.radiation > 0) {
       p.radiation--;
-      Serial.printf("[DAWN]    P%d \"%s\" clean zone R→%d\n", pid, p.name, p.radiation);
     }
     p.radClean = true;  // reset for new day
 
@@ -71,15 +66,12 @@ static void dawnUpkeep() {
       const ItemDef* def = getItemDef(p.equip[s]);
       if (def && def->statMods[STAT_RAD] < 0) {
         p.radiation = (uint8_t)max(0, (int)p.radiation + (int)def->statMods[STAT_RAD]);
-        Serial.printf("[ITEM]  P%d \"%s\" dawn rad mod %+d → R:%d\n",
-          pid, def->name, (int)def->statMods[STAT_RAD], (int)p.radiation);
       }
     }
 
     // ── Settlement rest: no food or water consumed (§settlement rule) ────────
     bool inSettlement = (G.map[p.r][p.q].terrain == 9);
     if (inSettlement) {
-      Serial.printf("[DAWN]    P%d \"%s\" in Settlement — food/water upkeep skipped\n", pid, p.name);
     }
 
     // ── Food (§4.1): consume 1 token; F track +1; else F track -1 ─────────
@@ -112,13 +104,11 @@ static void dawnUpkeep() {
       if (!covered) {
         llDelta--;
         expDelta = -1;
-        Serial.printf("[DAWN]    P%d \"%s\" exposed (SV%d shelt:%d) −1 LL\n", pid, p.name, sv, shelt);
       }
     }
 
     // ── Shelter protection: resting in shelter suppresses all LL losses ────
     if (p.resting && G.map[p.r][p.q].shelter > 0 && llDelta < 0) {
-      Serial.printf("[DAWN]    P%d \"%s\" shelter protection — %d LL loss(es) suppressed\n", pid, p.name, -llDelta);
       llDelta  = 0;
       expDelta = 0;
     }
@@ -134,14 +124,12 @@ static void dawnUpkeep() {
     if (llDelta < 0) {
       for (int i = 0; i < -llDelta; i++) {
         if (p.archetype == 5 && (esp_random() % 4 == 0)) {  // Endurer: 25% chance to resist
-          Serial.printf("[DAWN]    P%d \"%s\" Endurer resists LL loss\n", pid, p.name);
           continue;
         }
         if (p.ll > 0) p.ll--;
         if (p.ll == 0) {
           GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
           enqEvt(devt);
-          Serial.printf("[DOWNED]  P%d \"%s\" LL=0 (dawn upkeep) — slot queued for reset\n", pid, p.name);
           break;
         }
       }
@@ -159,10 +147,6 @@ static void dawnUpkeep() {
     // Apply equipped item operating costs (fuel-gated MP bonuses added here)
     applyDawnItemCosts(pid);
 
-    Serial.printf("[DAWN]    P%d \"%s\" Day:%d | F:%d W:%d LL:%d%+d | R:%d | MP:%d | inv F:%d W:%d\n",
-      pid, p.name, (int)G.dayCount,
-      (int)p.food, (int)p.water, (int)p.ll, (int)actualDelta,
-      (int)p.radiation, (int)p.movesLeft, p.inv[1], p.inv[0]);
 
     // Enqueue event for broadcast (includes threshold bitmasks for client rendering)
     GameEvent ev = {};
@@ -194,8 +178,6 @@ static void collectResource(int pid, int q, int r) {
   int totalInv = 0;
   for (int k = 0; k < 5; k++) totalInv += (int)p.inv[k];
   if (totalInv >= (int)p.invSlots) {
-    Serial.printf("[COLLECT] P%d \"%s\" (%2d,%2d) FULL (%d/%d) — %s skipped\n",
-      pid, p.name, q, r, totalInv, (int)p.invSlots, RES_NAME[cell.resource]);
     return;  // inventory full, cannot collect
   }
   // Collect only as many as there is room for
@@ -209,9 +191,6 @@ static void collectResource(int pid, int q, int r) {
     ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = gain;
     enqEvt(ev); }
 
-  Serial.printf("[COLLECT] P%d \"%s\" (%2d,%2d) +%dx%s | inv W:%d F:%d Fu:%d M:%d S:%d | score:%d\n",
-    pid, p.name, q, r, gain, RES_NAME[cell.resource],
-    p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4], p.score);
 
   cell.amount = 0; cell.resource = 0;
   cell.respawnTimer = RESPAWN_TICKS;
@@ -222,8 +201,6 @@ static void collectResource(int pid, int q, int r) {
   if (totalInvAfter > (int)p.invSlots && !p.encPenApplied) {
     p.encPenApplied = true;
     if (p.movesLeft > 0) p.movesLeft--;
-    Serial.printf("[ENC]     P%d \"%s\" inv %d/%d — encumbrance −1 MP → mp:%d\n",
-      pid, p.name, totalInvAfter, (int)p.invSlots, (int)p.movesLeft);
   }
 }
 
@@ -253,7 +230,6 @@ static void movePlayer(int pid, int dir) {
   if (p.ll == 0) return;  // downed — waiting for slot reset
   if (encounters[pid].active)  return;  // locked during active encounter
   if (p.resting) {
-    Serial.printf("[BLOCKED] P%d \"%s\" resting — waiting for other survivors to finish\n", pid, p.name);
     return;
   }
   int     nq = wrapQ(p.q + DQ[dir]);
@@ -268,13 +244,10 @@ static void movePlayer(int pid, int dir) {
     if (destTerrain == 11) neededBit = TERR_PASS_RIVER;
     // Add future terrain unlocks here (e.g. Nuke Crater → TERR_PASS_NUKE)
     if (!neededBit || !hasPassTerrainBit(pid, neededBit)) {
-      Serial.printf("[BLOCKED] P%d \"%s\" dir:%s → (%2d,%2d) %s (impassable)\n",
-        pid, p.name, DIR_NAME[dir], nq, nr, T_NAME[destTerrain]);
       return;
     }
     // Terrain unlocked by equipment — use a default MC of 2 for river traversal
     mc = 2;
-    Serial.printf("[ITEM]  P%d terrain unlock: %s traversal\n", pid, T_NAME[destTerrain]);
   }
 
   // ── Weather movement penalty ─────────────────────────────────────────────
@@ -282,8 +255,6 @@ static void movePlayer(int pid, int dir) {
 
   // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
   if (p.movesLeft == 0) {
-    Serial.printf("[EXHAUST] P%d \"%s\" → (%2d,%2d) MP=0 (LL:%d) — wait for Dawn\n",
-      pid, p.name, nq, nr, (int)p.ll);
     return;
   }
 
@@ -313,11 +284,6 @@ static void movePlayer(int pid, int dir) {
   // Deduct movement cost from daily MP budget
   p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
 
-  Serial.printf("[MOVE]    P%d \"%s\" (%2d,%2d)→(%2d,%2d) %s [%s] visR:%d%s cd:%lums mp:%d\n",
-    pid, p.name, oldQ, oldR, p.q, p.r,
-    T_NAME[destTerrain], VIS_LABEL[visLvl + 3],
-    effVisR, (visLvl == -2) ? " mask" : "     ",
-    (unsigned long)cd, (int)p.movesLeft);
 
   // ── Radiation entry check (§6.2): Rad-tagged terrain → Endure DN6 or +1 R ──
   int8_t radGain = 0;
@@ -329,11 +295,7 @@ static void movePlayer(int pid, int dir) {
         p.radiation++;
         radGain = 1;
         ledFlash(0, 255, 0); k10Play(MOTIF_GEIGER);  // green + geiger ticks
-        Serial.printf("[RAD]     P%d \"%s\" +1 R (now %d) Endure DN6=%d FAIL\n",
-          pid, p.name, p.radiation, cr.total);
       } else {
-        Serial.printf("[RAD]     P%d \"%s\" R:%d Endure DN6=%d PASS\n",
-          pid, p.name, p.radiation, cr.total);
       }
     }
   }

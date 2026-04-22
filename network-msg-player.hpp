@@ -69,8 +69,6 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
         p.score = savedScore;
         p.steps = savedSteps;
-        Serial.printf("[RESPAWN] Slot:%d (%s) score:%d — rising from the ash\n",
-          arch, ARCHETYPE_NAME[arch], (int)p.score);
       } else if (!isReconnect) {
         // New player: spawn on passable terrain and full init
         do {
@@ -107,8 +105,6 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
       } else {
         // Reconnecting player: preserve score, position, inventory — just clear transient state
-        Serial.printf("[RECONN]  Slot:%d (%s) score:%d steps:%d pos:(%d,%d) — restored\n",
-          arch, ARCHETYPE_NAME[arch], (int)p.score, (int)p.steps, (int)p.q, (int)p.r);
         p.actUsed      = false;
         p.encPenApplied = false;
       }
@@ -139,11 +135,6 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
       if (lobbyIds[i] == client->id()) { lobbyIds[i] = 0; break; }
     taskEXIT_CRITICAL(&evtMux);
 
-    Serial.printf("[CONNECT] Slot:%d (%s) client:#%lu | spawn:(%2d,%2d) %s [%s] visR:%d attempts:%d\n",
-      arch, ARCHETYPE_NAME[arch], (unsigned long)client->id(),
-      snap.q, snap.r, T_NAME[snap.terrain], VIS_LABEL[snap.visLvl + 3], snap.visR, snap.attempts);
-    Serial.printf("[CONNECT]   name:\"%s\" | players now:%d/%d\n",
-      snap.name, snap.connCount, MAX_PLAYERS);
 
     char buf[48];
     snprintf(buf, sizeof(buf), "{\"t\":\"asgn\",\"id\":%d}", arch);
@@ -181,8 +172,6 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
     xSemaphoreGive(G.mutex);
   }
   if (visLen > 0) {
-    Serial.printf("[VIS]     →P%d visR:%d mask:%c cells:%d msgLen:%d/1100B\n",
-      slot, vr, mr ? 'Y' : 'N', visCells, visLen);
     client->text(visBuf, (size_t)visLen);
   }
 }
@@ -209,7 +198,6 @@ static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len)
     xSemaphoreGive(G.mutex);
   }
   if (slot >= 0) {
-    Serial.printf("[NAME]    Slot:%d \"%s\" → \"%s\"\n", slot, oldName, newName);
     char nameBuf[56];
     int  nameLen = snprintf(nameBuf, sizeof(nameBuf),
       "{\"t\":\"ev\",\"k\":\"nm\",\"pid\":%d,\"nm\":\"%s\"}", slot, newName);
@@ -278,10 +266,6 @@ static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len
     xSemaphoreGive(G.mutex);
   }
   if (slot >= 0) {
-    Serial.printf("[CHECK]   P%d %s DN%d | %d+%d sk:%d mod:%d = %d | %s\n",
-      slot, SKILL_NAME[sk], dn,
-      res.r1, res.r2, res.skillVal, res.mods, res.total,
-      res.success ? "SUCCESS" : "FAIL");
     broadcastCheck(slot, (uint8_t)sk, res);
   }
 }
@@ -308,7 +292,6 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     xSemaphoreGive(G.mutex);
   }
   { GameEvent ev = {}; ev.type = EVT_REGEN; enqEvt(ev); }
-  Serial.println("[REGEN]   Map regenerated — all players scattered");
 }
 
 static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -374,7 +357,6 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
 
   broadcastLobbyUpdate();
   saveGame();
-  Serial.printf("[ERASE]   Slot %d (%s) wiped\n", arch, ARCHETYPE_NAME[arch]);
 }
 
 static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) {

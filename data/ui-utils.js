@@ -142,6 +142,47 @@ document.querySelectorAll('.dir-btn[data-dir]').forEach(btn => {
   btn.addEventListener('pointercancel', clearHold);
 });
 
+// ── Segment bar factory ───────────────────────────────────────────
+// Creates a .track-row element: [label] [box][box][box]…
+// opts: { id, label, count=6, color=null, colorHi=null, labelWidth=null }
+//   id        — given to the meter element; pass to renderTrackBoxes() to update
+//   label     — text shown to the left (omit to skip label)
+//   count     — total number of segments (default 6)
+//   color     — CSS color for filled segments (default: amber --gold)
+//   colorHi   — CSS color for filled segment border (defaults to color)
+//   labelWidth — override label width (default 80px)
+// opts.meterOnly — return just the container element without the .track-row wrapper
+function makeSegmentBar({ id, label, count = 6, color = null, colorHi = null, labelWidth = null, meterOnly = false } = {}) {
+  const meter = document.createElement('div');
+  meter.className = 'track-boxes';
+  meter.setAttribute('role', 'meter');
+  if (id) meter.id = id;
+  if (label) meter.setAttribute('aria-label', label);
+  meter.setAttribute('aria-valuenow', '0');
+  meter.setAttribute('aria-valuemax', String(count));
+  if (color)   meter.style.setProperty('--seg-color',    color);
+  if (colorHi) meter.style.setProperty('--seg-color-hi', colorHi);
+  for (let i = 0; i < count; i++) {
+    const b = document.createElement('div');
+    b.className = 'track-box';
+    meter.appendChild(b);
+  }
+
+  if (meterOnly) return meter;
+
+  const row = document.createElement('div');
+  row.className = 'track-row';
+  if (label) {
+    const lbl = document.createElement('span');
+    lbl.className = 'track-label';
+    if (labelWidth) lbl.style.width = labelWidth;
+    lbl.textContent = label;
+    row.appendChild(lbl);
+  }
+  row.appendChild(meter);
+  return row;
+}
+
 // Keyboard: Q=NW(3) W=N(2) E=NE(1)  S=S(5) D=SE(0)  [A freed for ACTION shortcut]
 const keyMap = {
   'KeyQ':'3','KeyW':'2','KeyE':'1','KeyS':'5','KeyD':'0',
