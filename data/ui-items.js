@@ -1,6 +1,7 @@
 // ── Item System UI ────────────────────────────────────────────────
 
 let _lastEqKey = '';  // moved here from ui-hud.js; used by renderEquipment + char-overlay derive
+function resetLastEqKey() { _lastEqKey = ''; }
 
 const CAT_NAMES = ['Gulpable', 'Bolt-On', 'Salvage', 'Relic'];
 const CAT_CLASSES = ['cat-consumable', 'cat-equipment', 'cat-material', 'cat-key'];
@@ -23,7 +24,7 @@ function renderInventory() {
     const qty    = me.iq?.[i] ?? 0;
     const div    = document.createElement('div');
     div.className = 'item-slot' + (typeId ? ' occupied' : '');
-    div.setAttribute('data-slot', i);
+    div.dataset.slot = i;
     if (typeId) {
       const item = getItemById?.(typeId);
       const catClass = CAT_CLASSES[item?.category ?? 0] ?? 'cat-consumable';
@@ -54,7 +55,7 @@ function renderEquipment() {
     const itemId = me.eq?.[s] ?? 0;
     const div    = document.createElement('div');
     div.className = 'equip-slot' + (itemId ? ' filled' : '');
-    div.setAttribute('data-eslot', s);
+    div.dataset.eslot = s;
     if (itemId) {
       const item = getItemById?.(itemId);
       div.innerHTML =
@@ -154,7 +155,7 @@ function renderHexGroundItems(q, r) {
   const row  = document.getElementById('hi-ground-row');
   const list = document.getElementById('hi-ground-list');
   if (!list || !row) return;
-  const here = (typeof groundItems !== 'undefined' ? groundItems : [])
+  const here = (typeof groundItems === 'undefined' ? [] : groundItems)
     .filter(gi => gi.q === q && gi.r === r && gi.id > 0);
   if (here.length === 0) {
     row.style.display = 'none';

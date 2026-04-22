@@ -1,3 +1,32 @@
+function getShelterDesc(shelterMaxed, shelterLevel, scrap, mp) {
+  if (shelterMaxed) return 'Improved shelter already here — nothing to build';
+  if (shelterLevel === 1 && scrap === 0) return 'Shelter here — needs scrap to upgrade';
+  if (shelterLevel === 1 && scrap >= 2 && mp >= 2) return '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
+  if (shelterLevel === 1) return '1 scrap → upgrade to improved \uD83C\uDFE0 (1 MP, +4 pts)';
+  if (scrap === 0) return 'Needs scrap — none in pack';
+  if (scrap === 1) return '1 scrap → shelter \u26FA (1 MP, +4 pts)';
+  if (mp < 2) return '1 scrap → shelter \u26FA (1 MP, +4 pts) — not enough MP for improved';
+  return '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
+}
+
+function getBlockReason(def, shelterLevel, available, hasMP, slotFree, mp, scrap) {
+  const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
+  const hasScrap = def.id !== ACT_SHELTER || scrap > 0;
+  if (shelterMaxed) return 'Max shelter built here';
+  if (def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap) return 'Shelter here — need scrap to upgrade';
+  if (!available) {
+    if (def.id === ACT_FORAGE) return 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)';
+    if (def.id === ACT_WATER)  return 'Needs Water terrain (Marsh \u00b7 Flooded District)';
+    if (def.id === ACT_SCAV)   return 'Needs Salvage terrain (Broken Urban · Glass Fields)';
+    if (def.id === ACT_TRADE)  return 'No survivors on this hex';
+    return 'Not available here';
+  }
+  if (!hasMP)    return `Needs ${def.mpCost} MP (have ${mp})`;
+  if (!hasScrap) return `Needs scrap (have ${scrap})`;
+  if (!slotFree) return 'Action used this cycle \u2014 REST to reset';
+  return '';
+}
+
 function initActionPanel() {
   const actionPanel     = document.getElementById('action-panel');
   const actionBtnList   = document.getElementById('action-btn-list');
@@ -108,6 +137,42 @@ function initActionPanel() {
     document.getElementById('action-trade-ctrl').style.display = 'none';
   }
 
+  function showExhaustedPanel(me) {
+    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
+    let exhaustedHTML = '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
+    if (tradeAvailExhausted) {
+      exhaustedHTML +=
+        `<button id="action-btn-6" class="action-item-btn" role="listitem" aria-label="TRADE — Exchange resources with a co-located survivor">` +
+        `<span class="act-icon">\u21C4</span>` +
+        `<span class="act-body"><span class="act-label">TRADE</span>` +
+        `<span class="act-desc">Exchange resources with a co-located survivor \u2014 free</span></span></button>`;
+    }
+    actionBtnList.innerHTML = exhaustedHTML;
+    actionStatusBar.innerHTML =
+      `<span class="act-mp-badge act-mp-zero">MP: 0</span>` +
+      '<span class="act-used-badge">\u2297 NO MOVEMENT POINTS</span>';
+    actionPanel.classList.add('open');
+    actionPanel.setAttribute('aria-hidden', 'false');
+    if (tradeAvailExhausted) {
+      const tb = document.getElementById('action-btn-6');
+      if (tb) tb.addEventListener('click', () => {
+        buildTradeTargetList();
+        document.getElementById('action-trade-ctrl').style.display = '';
+        actionBtnList.style.display = 'none';
+      });
+    }
+  }
+
+  function showRestingPanel(mp) {
+    actionBtnList.innerHTML =
+      '<div class="act-exhausted-msg">\ud83d\ude34 RESTING \u2014 waiting for dawn</div>';
+    actionStatusBar.innerHTML =
+      `<span class="act-mp-badge">MP: ${mp}</span>` +
+      '<span class="act-used-badge">\u2297 RESTING</span>';
+    actionPanel.classList.add('open');
+    actionPanel.setAttribute('aria-hidden', 'false');
+  }
+
   function openActionPanel() {
     if (myId < 0) return;
     if (players[myId]?.ll === 0) {
@@ -136,41 +201,13 @@ function initActionPanel() {
     // Fix: suppress action menu entirely at MP:0 — only REST makes sense
     // Exception: TRADE is free (0 MP) and must remain available if a co-located player exists
     if (mp === 0) {
-      const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
-      let exhaustedHTML = '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
-      if (tradeAvailExhausted) {
-        exhaustedHTML +=
-          `<button id="action-btn-6" class="action-item-btn" role="listitem" aria-label="TRADE — Exchange resources with a co-located survivor">` +
-          `<span class="act-icon">\u21C4</span>` +
-          `<span class="act-body"><span class="act-label">TRADE</span>` +
-          `<span class="act-desc">Exchange resources with a co-located survivor \u2014 free</span></span></button>`;
-      }
-      actionBtnList.innerHTML = exhaustedHTML;
-      actionStatusBar.innerHTML =
-        `<span class="act-mp-badge act-mp-zero">MP: 0</span>` +
-        '<span class="act-used-badge">\u2297 NO MOVEMENT POINTS</span>';
-      actionPanel.classList.add('open');
-      actionPanel.setAttribute('aria-hidden', 'false');
-      if (tradeAvailExhausted) {
-        const tb = document.getElementById('action-btn-6');
-        if (tb) tb.addEventListener('click', () => {
-          buildTradeTargetList();
-          document.getElementById('action-trade-ctrl').style.display = '';
-          actionBtnList.style.display = 'none';
-        });
-      }
+      showExhaustedPanel(me);
       return;
     }
 
     // Fix: suppress action menu when resting — show resting banner instead
     if (uiResting.val) {
-      actionBtnList.innerHTML =
-        '<div class="act-exhausted-msg">\ud83d\ude34 RESTING \u2014 waiting for dawn</div>';
-      actionStatusBar.innerHTML =
-        `<span class="act-mp-badge">MP: ${mp}</span>` +
-        '<span class="act-used-badge">\u2297 RESTING</span>';
-      actionPanel.classList.add('open');
-      actionPanel.setAttribute('aria-hidden', 'false');
+      showRestingPanel(mp);
       return;
     }
 
@@ -210,11 +247,10 @@ function initActionPanel() {
       const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
       // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
       // allow terrain-dependent actions optimistically; the server validates.
-      const available   = def.id === ACT_TRADE  ? tradeAvail
-                        : (terr === null ? true : (!shelterMaxed && actAvailable(def.id, terr)));
+      const terrAvail  = terr === null || (!shelterMaxed && actAvailable(def.id, terr));
+      const available  = def.id === ACT_TRADE ? tradeAvail : terrAvail;
       const hasMP      = mp >= def.mpCost;
-      const needsScrap = def.id === ACT_SHELTER;
-      const hasScrap   = !needsScrap || scrap > 0;
+      const hasScrap   = def.id !== ACT_SHELTER || scrap > 0;
       // Actions that bypass the action slot (deterministic — no skill roll):
       const slotless   = def.id === ACT_SHELTER || def.id === ACT_WATER || def.id === ACT_TRADE
                        || (def.id === ACT_SURVEY && isScout);
@@ -224,29 +260,11 @@ function initActionPanel() {
       // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
       let desc = def.desc;
       if (def.id === ACT_SHELTER) {
-        desc = shelterMaxed                          ? 'Improved shelter already here — nothing to build'
-             : shelterLevel === 1 && scrap === 0     ? 'Shelter here — needs scrap to upgrade'
-             : shelterLevel === 1 && scrap >= 2 && mp >= 2 ? '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)'
-             : shelterLevel === 1                    ? '1 scrap → upgrade to improved \uD83C\uDFE0 (1 MP, +4 pts)'
-             : scrap === 0                           ? 'Needs scrap — none in pack'
-             : scrap === 1                           ? '1 scrap → shelter \u26FA (1 MP, +4 pts)'
-             : mp < 2                                ? '1 scrap → shelter \u26FA (1 MP, +4 pts) — not enough MP for improved'
-             :                                        '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
+        desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, mp);
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = shelterMaxed                      ? 'Max shelter built here'
-                        : def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap
-                                                            ? 'Shelter here — need scrap to upgrade'
-                        : !available   ? (def.id === ACT_FORAGE ? 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)'
-                                        : def.id === ACT_WATER  ? 'Needs Water terrain (Marsh \u00b7 Flooded District)'
-                                        : def.id === ACT_SCAV   ? 'Needs Salvage terrain (Broken Urban · Glass Fields)'
-                                        : def.id === ACT_TRADE  ? 'No survivors on this hex'
-                                        : 'Not available here')
-                        : !hasMP       ? `Needs ${def.mpCost} MP (have ${mp})`
-                        : !hasScrap    ? `Needs scrap (have ${scrap})`
-                        : !slotFree    ? 'Action used this cycle \u2014 REST to reset'
-                        : '';
+      const blockReason = getBlockReason(def, shelterLevel, available, hasMP, slotFree, mp, scrap);
 
       const btn = document.createElement('button');
       btn.id        = 'action-btn-' + def.id;   // stable ID for AI agents
@@ -264,7 +282,15 @@ function initActionPanel() {
 
       btn.addEventListener('click', () => {
         if (!canAct) {
-          showToast(!available ? '\u2297 Not available here' : !hasMP ? '\u2297 Insufficient MP' : '\u2297 Need scrap to build');
+          let toastMsg;
+          if (!available) {
+            toastMsg = '\u2297 Not available here';
+          } else if (hasMP) {
+            toastMsg = '\u2297 Need scrap to build';
+          } else {
+            toastMsg = '\u2297 Insufficient MP';
+          }
+          showToast(toastMsg);
           return;
         }
         if (def.id === ACT_WATER) {
@@ -308,7 +334,7 @@ function initActionPanel() {
       return;
     }
     if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
-    restSent = true;
+    restSent = true; // NOSONAR — declared in network.js
     updateRestIndicator();
     send({ t: 'act', a: ACT_REST });
   });
@@ -322,7 +348,7 @@ function initActionPanel() {
   });
   document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
   // Expose for engine.js (dawn event re-renders the panel if it's open)
-  window.openActionPanel = openActionPanel;
+  globalThis.openActionPanel = openActionPanel;
 }
 
 function initTradeOverlay() {
@@ -331,7 +357,7 @@ function initTradeOverlay() {
   let expireInterval   = null;
   let expireEnd        = 0;
 
-  window._openTradeOffer = function(fromPid, give, want) {
+  globalThis._openTradeOffer = function(fromPid, give, want) {
     pendingTradeFrom = fromPid;
     expireEnd = Date.now() + 30000;
     const fromName = players[fromPid]?.nm || 'P' + fromPid;
@@ -357,7 +383,7 @@ function initTradeOverlay() {
     overlay.classList.remove('open');
     overlay.style.display = 'none';
   }
-  window._closeTradeOverlay = _closeTradeOverlay;
+  globalThis._closeTradeOverlay = _closeTradeOverlay;
 
   document.getElementById('trade-accept-btn').addEventListener('click', () => {
     if (pendingTradeFrom < 0) return;
@@ -388,6 +414,15 @@ function initPlayerList() {
   });
 }
 
+function populateSlider(sliderId, labelId, storageKey, defaultVal, offLabel) {
+  const slider = document.getElementById(sliderId);
+  if (!slider) return;
+  const v = Number.parseInt(localStorage.getItem(storageKey) ?? String(defaultVal));
+  slider.value = v;
+  const lbl = document.getElementById(labelId);
+  if (lbl) lbl.textContent = v === 0 ? offLabel : String(v);
+}
+
 function initMenuSystem() {
   const { div: md, span: ms, button: mb, h2: mh2, h3: mh3, p: mp, input: minput, br: mbr } = van.tags;
 
@@ -395,39 +430,21 @@ function initMenuSystem() {
   van.derive(() => { menuOverlay.classList.toggle('open', uiMenuPage.val !== null); });
 
   // Pre-populate settings inputs after VanJS commits new DOM
+  function populateSettingsInputs() {
+    const inp = document.getElementById('menu-name-input');
+    if (inp && myId >= 0) inp.value = players[myId].nm || '';
+    const ssidInp = document.getElementById('wifi-ssid');
+    const passInp = document.getElementById('wifi-pass');
+    if (ssidInp) ssidInp.value = localStorage.getItem('wifi_ssid') || '';
+    if (passInp) passInp.value = localStorage.getItem('wifi_pass') || '';
+    populateSlider('k10-vol-slider', 'k10-vol-val', 'k10_audioVol',  5, '0 (mute)');
+    populateSlider('k10-led-slider', 'k10-led-val', 'k10_ledBright', 5, '0 (off)');
+  }
+
   van.derive(() => {
     if (uiMenuPage.val !== 'settings') return;
-    setTimeout(() => {
-      const inp = document.getElementById('menu-name-input');
-      if (inp && myId >= 0) inp.value = players[myId].nm || '';
-      const ssidInp = document.getElementById('wifi-ssid');
-      const passInp = document.getElementById('wifi-pass');
-      if (ssidInp) ssidInp.value = localStorage.getItem('wifi_ssid') || '';
-      if (passInp) passInp.value = localStorage.getItem('wifi_pass') || '';
-      const volSlider = document.getElementById('k10-vol-slider');
-      const ledSlider = document.getElementById('k10-led-slider');
-      if (volSlider) {
-        const v = parseInt(localStorage.getItem('k10_audioVol') ?? '5');
-        volSlider.value = v;
-        const lbl = document.getElementById('k10-vol-val');
-        if (lbl) lbl.textContent = v === 0 ? '0 (mute)' : String(v);
-      }
-      if (ledSlider) {
-        const b = parseInt(localStorage.getItem('k10_ledBright') ?? '5');
-        ledSlider.value = b;
-        const lbl = document.getElementById('k10-led-val');
-        if (lbl) lbl.textContent = b === 0 ? '0 (off)' : String(b);
-      }
-    }, 0);
+    setTimeout(populateSettingsInputs, 0);
   });
-
-  const RES_GUIDE = [
-    { name:'Water',    cls:'dot-water', desc:'Marshes, settlements, open scrub.' },
-    { name:'Food',     cls:'dot-food',  desc:'Rust forests, marshes.'            },
-    { name:'Fuel',     cls:'dot-fuel',  desc:'Ash dunes, ridges, urban ruins.'   },
-    { name:'Medicine', cls:'dot-med',   desc:'Broken urban, glass fields.'       },
-    { name:'Scrap',    cls:'dot-scrap', desc:'Almost anywhere except craters.'   },
-  ];
 
   van.add(document.getElementById('menu-content'), () => {
     const page = uiMenuPage.val;
@@ -598,9 +615,14 @@ function initMenuSystem() {
       sec('Terrain',
         md({ class: 'terrain-grid' },
           ...TERRAIN.map(t => {
-            const vis = t.vis > 0 ? ms({ class: 'tr-vis-hi'  }, '\u25B2 HIGH')
-                      : t.vis < 0 ? ms({ class: 'tr-vis-pen' }, '\u25BC MASK')
-                      :             ms({ class: 'vis-std' }, 'STD');
+            let vis;
+            if (t.vis > 0) {
+              vis = ms({ class: 'tr-vis-hi'  }, '\u25B2 HIGH');
+            } else if (t.vis < 0) {
+              vis = ms({ class: 'tr-vis-pen' }, '\u25BC MASK');
+            } else {
+              vis = ms({ class: 'vis-std' }, 'STD');
+            }
             const mc  = t.mc === 255 ? ms({ class: 'mc-block' }, 'BLOCK')
                       :               ms({}, `MC:${t.mc}`);
             return md({ class: 'terrain-ref-card' },
@@ -804,7 +826,7 @@ function initMenuSystem() {
 
       md({ class: 'settings-row' },
         mp({ class: 'settings-label' }, 'Server IP'),
-        mp({ class: 'settings-val' }, () => uiConn.val === 'Connected' ? (window.location.hostname || 'unknown') : 'unknown')
+        mp({ class: 'settings-val' }, () => uiConn.val === 'Connected' ? (globalThis.location.hostname || 'unknown') : 'unknown')
       ),
 
       md({ class: 'settings-row' },
@@ -821,15 +843,15 @@ function initMenuSystem() {
               value: localStorage.getItem('k10_audioVol') ?? '5',
               class: 'settings-slider',
               oninput: e => {
-                const v = parseInt(e.target.value);
+                const v = Number.parseInt(e.target.value);
                 const lbl = document.getElementById('k10-vol-val');
                 if (lbl) lbl.textContent = v === 0 ? '0 (mute)' : String(v);
                 localStorage.setItem('k10_audioVol', v);
-                send({ t: 'settings', audioVol: v, ledBright: parseInt(document.getElementById('k10-led-slider')?.value ?? '5') });
+                send({ t: 'settings', audioVol: v, ledBright: Number.parseInt(document.getElementById('k10-led-slider')?.value ?? '5') });
               }
             }),
             ms({ id: 'k10-vol-val', class: 'settings-slider-val' },
-              (() => { const v = parseInt(localStorage.getItem('k10_audioVol') ?? '5'); return v === 0 ? '0 (mute)' : String(v); })()
+              (() => { const v = Number.parseInt(localStorage.getItem('k10_audioVol') ?? '5'); return v === 0 ? '0 (mute)' : String(v); })()
             )
           )
         ),
@@ -841,15 +863,15 @@ function initMenuSystem() {
               value: localStorage.getItem('k10_ledBright') ?? '5',
               class: 'settings-slider',
               oninput: e => {
-                const v = parseInt(e.target.value);
+                const v = Number.parseInt(e.target.value);
                 const lbl = document.getElementById('k10-led-val');
                 if (lbl) lbl.textContent = v === 0 ? '0 (off)' : String(v);
                 localStorage.setItem('k10_ledBright', v);
-                send({ t: 'settings', audioVol: parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: v });
+                send({ t: 'settings', audioVol: Number.parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: v });
               }
             }),
             ms({ id: 'k10-led-val', class: 'settings-slider-val' },
-              (() => { const v = parseInt(localStorage.getItem('k10_ledBright') ?? '5'); return v === 0 ? '0 (off)' : String(v); })()
+              (() => { const v = Number.parseInt(localStorage.getItem('k10_ledBright') ?? '5'); return v === 0 ? '0 (off)' : String(v); })()
             )
           )
         ),
@@ -861,7 +883,7 @@ function initMenuSystem() {
             onclick: () => {
               uiScreenFlip.val = !uiScreenFlip.val;
               localStorage.setItem('k10_screenFlip', uiScreenFlip.val ? '1' : '0');
-              send({ t: 'settings', audioVol: parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: parseInt(document.getElementById('k10-led-slider')?.value ?? '5'), screenFlip: uiScreenFlip.val });
+              send({ t: 'settings', audioVol: Number.parseInt(document.getElementById('k10-vol-slider')?.value ?? '5'), ledBright: Number.parseInt(document.getElementById('k10-led-slider')?.value ?? '5'), screenFlip: uiScreenFlip.val });
             }
           }, () => uiScreenFlip.val ? 'FLIPPED  ▣' : 'NORMAL  ▢')
         )
@@ -958,7 +980,7 @@ function initMenuSystem() {
 
 // ── Character Selection Screen ────────────────────────────────────
 function initCharSelect() {
-  const { div, span, button, h2, p } = van.tags;
+  const { div, span, h2, p } = van.tags;
   const container = document.getElementById('char-select-content');
   if (!container) return;
 
@@ -1001,7 +1023,7 @@ function initCharSelect() {
               uiPickPending.val = true;
               send({ t: 'pick', arch: i });
               if (pickTimeoutId) clearTimeout(pickTimeoutId);
-              pickTimeoutId = setTimeout(() => {
+              pickTimeoutId = setTimeout(() => { // NOSONAR — declared in ui-state.js
                 if (uiPickPending.val) {
                   uiPickPending.val = false;
                   showToast('\u26A0 Server did not respond \u2014 please try selecting again.');

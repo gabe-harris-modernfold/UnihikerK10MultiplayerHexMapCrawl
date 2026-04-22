@@ -87,9 +87,9 @@ class WeatherParticleSystem {
       id: this._nextId++, shape: 'circle',
       x: Math.random() * w, y: h + 5,
       dx: (Math.random() - 0.5) * 0.8,
-      dy: -(0.5 + Math.random() * 1.0),
-      color: `rgba(${60 + (Math.random() * 40) | 0},${180 + (Math.random() * 60) | 0},${20 + (Math.random() * 30) | 0},0.8)`,
-      size: 1.5 + Math.random() * 1.0,
+      dy: -(0.5 + Math.random()),
+      color: `rgba(${60 + Math.trunc(Math.random() * 40)},${180 + Math.trunc(Math.random() * 60)},${20 + Math.trunc(Math.random() * 30)},0.8)`,
+      size: 1.5 + Math.random(),
       maxOpacity: 0.4 + Math.random() * 0.3,
       opacity: 0, age: 0, dead: false,
     };

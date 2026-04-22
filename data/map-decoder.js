@@ -20,9 +20,9 @@ function parseMapFog(hexStr) {
   for (let r = 0; r < MAP_ROWS; r++) {
     for (let c = 0; c < MAP_COLS; c++) {
       const idx = (r * MAP_COLS + c) * 6;
-      const tt  = parseInt(hexStr.substr(idx,     2), 16);
-      const dd  = parseInt(hexStr.substr(idx + 2, 2), 16);
-      const vv  = parseInt(hexStr.substr(idx + 4, 2), 16);
+      const tt  = Number.parseInt(hexStr.substr(idx,     2), 16);
+      const dd  = Number.parseInt(hexStr.substr(idx + 2, 2), 16);
+      const vv  = Number.parseInt(hexStr.substr(idx + 4, 2), 16);
       gameMap[r][c] = decodeCell(tt, dd, vv);
     }
   }
@@ -33,11 +33,11 @@ function parseMapFog(hexStr) {
 //   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
 function applyVisDisk(cells) {
   for (let i = 0; i < cells.length; i += 10) {
-    const q  = parseInt(cells.substr(i,     2), 16);
-    const r  = parseInt(cells.substr(i + 2, 2), 16);
-    const tt = parseInt(cells.substr(i + 4, 2), 16);
-    const dd = parseInt(cells.substr(i + 6, 2), 16);
-    const vv = parseInt(cells.substr(i + 8, 2), 16);
+    const q  = Number.parseInt(cells.substr(i,     2), 16);
+    const r  = Number.parseInt(cells.substr(i + 2, 2), 16);
+    const tt = Number.parseInt(cells.substr(i + 4, 2), 16);
+    const dd = Number.parseInt(cells.substr(i + 6, 2), 16);
+    const vv = Number.parseInt(cells.substr(i + 8, 2), 16);
     if (r < MAP_ROWS && q < MAP_COLS) {
       const cell = decodeCell(tt, dd, vv);
       // Preserve locally-cleared resource — col event may arrive before vis disk

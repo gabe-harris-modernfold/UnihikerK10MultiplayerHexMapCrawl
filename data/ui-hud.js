@@ -75,7 +75,7 @@ function populateHexInfo(q, r, cell) {
 document.getElementById('terrain-card').addEventListener('click', () => {
   if (myId < 0) return;
   const me   = players[myId];
-  const cell = gameMap[me.r] && gameMap[me.r][me.q];
+  const cell = gameMap[me.r]?.[me.q];
   if (!cell) return;
   if (!uiHexInfoOpen.val) populateHexInfo(me.q, me.r, cell);
   uiHexInfoOpen.val = !uiHexInfoOpen.val;
@@ -95,7 +95,7 @@ function updateWeatherHUD() {
   if (!el) return;
   const icons   = ['\u2600', '\uD83C\uDF27', '\u26A1', '\u2623'];
   const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem'];
-  const phase = (typeof weatherPhase !== 'undefined') ? weatherPhase : 0;
+  const phase = (typeof weatherPhase === 'undefined') ? 0 : weatherPhase;
   el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
   el.className = 'hud-weather ' + (classes[phase] ?? '');
 }
@@ -169,10 +169,11 @@ function updateDirButtons() {
   const exhausted = (me.mp ?? 1) === 0;
   // While in encounter, resting, or exhausted, show all 6 buttons dimmed with a helpful tooltip (BUG-12)
   const vm = (inEnc || resting || exhausted) ? 0 : (me.vm ?? 0x3F);
-  const blockMsg = inEnc ? 'Inside encounter \u2014 complete or bank first'
-    : resting ? 'Resting \u2014 waiting for dawn'
-    : exhausted ? 'No MP \u2014 REST to recover'
-    : 'Blocked (impassable)';
+  let blockMsg;
+  if (inEnc)           blockMsg = 'Inside encounter \u2014 complete or bank first';
+  else if (resting)    blockMsg = 'Resting \u2014 waiting for dawn';
+  else if (exhausted)  blockMsg = 'No MP \u2014 REST to recover';
+  else                 blockMsg = 'Blocked (impassable)';
   for (let d = 0; d < 6; d++) {
     const btn = document.getElementById(`dir-btn-${d}`);
     if (!btn) continue;
@@ -213,7 +214,7 @@ function openCharSheet() {
   if (grid) {
     grid.innerHTML = '';
     SK_NAMES.forEach((name, i) => {
-      const lvl = (me.sk && me.sk[i]) || 0;
+      const lvl = me.sk?.[i] || 0;
       const row = document.createElement('div');
       row.className = 'cs-skill-row';
       const label = document.createElement('span');
@@ -228,7 +229,11 @@ function openCharSheet() {
       }
       const lbl = document.createElement('span');
       lbl.className = 'cs-skill-level';
-      lbl.textContent = lvl === 2 ? 'EXPERT' : lvl === 1 ? 'TRAINED' : '—';
+      let lvlLabel;
+      if (lvl === 2)      lvlLabel = 'EXPERT';
+      else if (lvl === 1) lvlLabel = 'TRAINED';
+      else                lvlLabel = '—';
+      lbl.textContent = lvlLabel;
       row.appendChild(label);
       row.appendChild(dots);
       row.appendChild(lbl);
@@ -250,7 +255,7 @@ document.getElementById('menu-overlay').addEventListener('click', e => {
 // Char-overlay visibility — driven by uiCharOpen state
 van.derive(() => {
   const overlay = document.getElementById('char-overlay');
-  if (uiCharOpen.val) _lastEqKey = ''; // force fresh render on open (defined in ui-items.js)
+  if (uiCharOpen.val) resetLastEqKey(); // force fresh render on open (defined in ui-items.js)
   overlay.classList.toggle('open', uiCharOpen.val);
   // Move focus out before hiding so aria-hidden never traps a focused descendant
   if (!uiCharOpen.val && overlay.contains(document.activeElement)) {
@@ -284,7 +289,11 @@ function initHudBindings() {
     van.derive(() => {
       const conn = uiConn.val;
       connDot.style.color = (conn === 'Connected' ? 'var(--gold-hi)' : '#C06030');
-      connDot.setAttribute('aria-label', conn === 'Connected' ? 'connected' : conn === 'Connecting...' ? 'connecting' : 'disconnected');
+      let ariaLabel;
+      if (conn === 'Connected')     ariaLabel = 'connected';
+      else if (conn === 'Connecting...') ariaLabel = 'connecting';
+      else                          ariaLabel = 'disconnected';
+      connDot.setAttribute('aria-label', ariaLabel);
     });
   }
 
@@ -355,11 +364,19 @@ function initHudBindings() {
 // Track box renderer — builds/updates N child divs inside containerId.
 // thresholds: [{box, bit}]; firedMask: server bitmask (fth/wth).
 //   armed (bit=0): orange arrow; spent (bit=1): dim arrow.
+function _trackBoxClass(filled, thr, fired) {
+  let cls = 'track-box';
+  if (filled) cls += ' filled';
+  if (thr && !fired) cls += filled ? ' thresh-filled'       : ' thresh';
+  if (thr &&  fired) cls += filled ? ' thresh-spent-filled' : ' thresh-spent';
+  return cls;
+}
+
 function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count = 6) {
   const el = document.getElementById(containerId);
   if (!el) return;
   // Trim excess boxes when count decreases (e.g. maxMP changes between days)
-  while (el.children.length > count) el.removeChild(el.lastChild);
+  while (el.children.length > count) el.lastChild.remove();
   while (el.children.length < count) {
     const b = document.createElement('div');
     b.className = 'track-box';
@@ -370,13 +387,36 @@ function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count =
     const filled = i <= value;
     const thr    = thresholds.find(t => t.box === i);
     const fired  = thr ? !!(firedMask & thr.bit) : false;
-    b.className  = 'track-box' +
-      (filled ? ' filled' : '') +
-      (thr && !fired ? (filled ? ' thresh-filled'       : ' thresh')       : '') +
-      (thr &&  fired ? (filled ? ' thresh-spent-filled' : ' thresh-spent') : '');
+    b.className  = _trackBoxClass(filled, thr, fired);
   }
   el.setAttribute('aria-valuenow', value);
   el.setAttribute('aria-valuemax', count);
+}
+
+function applyRadColors(rad) {
+  const trackEl = document.getElementById('cs-rad-track');
+  if (!trackEl) return;
+  for (let i = 0; i < 10; i++) {
+    const b   = trackEl.children[9 - i];
+    const box = i + 1;
+    b.classList.remove('rad-filled', 'rad-filled-yellow', 'rad-filled-red');
+    if (box <= rad) {
+      if      (box >= 7) b.classList.add('rad-filled-red');
+      else if (box >= 4) b.classList.add('rad-filled-yellow');
+      else               b.classList.add('rad-filled');
+    }
+  }
+}
+
+function applyRadStatus(rad) {
+  const rStat = document.getElementById('cs-rad-status');
+  if (!rStat) return;
+  let text = '';
+  let suffix = '';
+  if (rad >= 7)      { text = '\u00a0\u2622 DUSK CHECK'; suffix = ' rad-status-critical'; }
+  else if (rad >= 4) { text = '\u00a0RAD-SICK';          suffix = ' rad-status-sick'; }
+  rStat.textContent = text;
+  rStat.className   = 'track-suffix' + suffix;
 }
 
 function initCharSheetBindings() {
@@ -424,29 +464,8 @@ function initCharSheetBindings() {
   van.derive(() => {
     const rad = uiRad.val;
     renderTrackBoxes('cs-rad-track', rad, [{ box: 4, bit: 0 }, { box: 7, bit: 0 }], 0, 10);
-    const trackEl = document.getElementById('cs-rad-track');
-    if (trackEl) {
-      for (let i = 0; i < 10; i++) {
-        const b   = trackEl.children[9 - i];
-        const box = i + 1;
-        if (box <= rad) {
-          b.classList.add('rad-filled');
-          b.classList.remove('rad-filled-yellow', 'rad-filled-red');
-          if      (box >= 7) { b.classList.remove('rad-filled'); b.classList.add('rad-filled-red');    }
-          else if (box >= 4) { b.classList.remove('rad-filled'); b.classList.add('rad-filled-yellow'); }
-        } else {
-          b.classList.remove('rad-filled', 'rad-filled-yellow', 'rad-filled-red');
-        }
-      }
-    }
-    const rStat = document.getElementById('cs-rad-status');
-    if (rStat) {
-      rStat.textContent = rad >= 7 ? '\u00a0\u2622 DUSK CHECK'
-                        : rad >= 4 ? '\u00a0RAD-SICK'
-                        :            '';
-      rStat.className = 'track-suffix' +
-        (rad >= 7 ? ' rad-status-critical' : rad >= 4 ? ' rad-status-sick' : '');
-    }
+    applyRadColors(rad);
+    applyRadStatus(rad);
   });
 
 
@@ -478,8 +497,12 @@ function initMapBindings() {
         ? `${RES_NAMES[cc.resource]} ×${cc.amount}`
         : mcStr;
     const badge = document.getElementById('tc-vis-badge');
-    badge.className   = t.vis > 0 ? 'vis-high' : t.vis < 0 ? 'vis-penalty' : '';
-    badge.textContent = t.vis > 0 ? '◉ HIGH VIS +2' : t.vis < 0 ? '◎ VIS PENALTY' : '';
+    let badgeClass = '';
+    let badgeText  = '';
+    if (t.vis > 0)      { badgeClass = 'vis-high';    badgeText = '◉ HIGH VIS +2'; }
+    else if (t.vis < 0) { badgeClass = 'vis-penalty'; badgeText = '◎ VIS PENALTY'; }
+    badge.className   = badgeClass;
+    badge.textContent = badgeText;
     if (uiHexInfoOpen.val) populateHexInfo(cc.q, cc.r, cc);
   });
 

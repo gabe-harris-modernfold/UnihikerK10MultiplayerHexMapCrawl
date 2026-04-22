@@ -1,4 +1,12 @@
 // ── Encounter overlay + ally banner ──────────────────────────────
+function resolveText(text, placeholders) {
+  if (!placeholders) return text;
+  return text.replaceAll(/\{\{(\w+)\}\}/g, (_, key) => {
+    const opts = placeholders[key];
+    return (Array.isArray(opts) && opts.length) ? opts[Math.floor(Math.random() * opts.length)] : key;
+  });
+}
+
 function initEncounterOverlay() {
   const overlay    = document.getElementById('enc-overlay');
   const nodeText   = document.getElementById('enc-node-text');
@@ -20,14 +28,6 @@ function initEncounterOverlay() {
   let pendingNextKey  = '';     // next node key sent in enc_choice, consumed by _onEncResult
   let pendingHazText  = '';     // resolved hazard narration, shown on failure
 
-  function resolveText(text, placeholders) {
-    if (!placeholders) return text;
-    return text.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-      const opts = placeholders[key];
-      return (Array.isArray(opts) && opts.length) ? opts[Math.floor(Math.random() * opts.length)] : key;
-    });
-  }
-
   function renderLoot() {
     const parts = pendingLoot.map((v, i) => v > 0 ? `${RES_NAMES_ENC[i]}×${v}` : null).filter(Boolean);
     lootDisp.textContent = parts.length ? `Pending: ${parts.join('  ')}` : '';
@@ -39,7 +39,6 @@ function initEncounterOverlay() {
     currentNode = node;
     nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
 
-    const baseRisk = Math.max(0, ...(node.choices ?? []).map(c => c.base_risk ?? 0));
     choiceList.innerHTML = '';
     (node.choices ?? []).forEach(ch => {
       const btn = document.createElement('button');
@@ -131,10 +130,10 @@ function initEncounterOverlay() {
   }
 
   // Called from network.js enc_path handler
-  window._startEncounterFetch = function(biome, id) {
+  globalThis._startEncounterFetch = function(biome, id) {
     const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
     const t0 = Date.now();
-    console.log(`[ENC/FETCH] >>> ${url}  t=${t0}  _startEncounterFetch defined:${typeof window._startEncounterFetch}`);
+    console.log(`[ENC/FETCH] >>> ${url}  t=${t0}  _startEncounterFetch defined:${typeof globalThis._startEncounterFetch}`);
     showToast(`\u23F3 Loading encounter ${biome}/${id}\u2026`);
     fetch(url)
       .then(r => {
@@ -146,9 +145,9 @@ function initEncounterOverlay() {
         console.log(`[ENC/FETCH] body ${txt.length} bytes  t+${Date.now()-t0}ms`);
         let enc;
         try { enc = JSON.parse(txt); }
-        catch(pe) {
-          console.error('[ENC/FETCH] JSON parse error:', pe, 'body=', txt.slice(0,200));
-          throw new Error(`JSON parse: ${pe.message}`);
+        catch(error_) {
+          console.error('[ENC/FETCH] JSON parse error:', error_, 'body=', txt.slice(0,200));
+          throw new Error(`JSON parse: ${error_.message}`);
         }
         console.log(`[ENC/FETCH] parsed ok  nodes=${Object.keys(enc.nodes??{}).length}  start_node=${enc.start_node}  t+${Date.now()-t0}ms`);
         openEncounter(enc);
@@ -167,7 +166,7 @@ function initEncounterOverlay() {
   ];
 
   // Called from engine.js enc_res handler — show outcome then advance or stay
-  window._onEncResult = function(ev) {
+  globalThis._onEncResult = function(ev) {
     if (ev.ends) { closeEncounter(); return; }
 
     const nextKey = pendingNextKey;
@@ -218,15 +217,15 @@ function initEncounterOverlay() {
           canBank = true;
           bankRow.style.display = '';
         }
-      } else {
-        // Guard: closeEncounter() may have fired during the 2200ms outcome window
-        if (currentNode) renderNode(currentNode);
+      // Guard: closeEncounter() may have fired during the 2200ms outcome window
+      } else if (currentNode) {
+        renderNode(currentNode);
       }
     }, 2200);
   };
 
-  window._onEncBank = function() { closeEncounter(); };
-  window._onEncEnd  = function() { closeEncounter(); };
+  globalThis._onEncBank = function() { closeEncounter(); };
+  globalThis._onEncEnd  = function() { closeEncounter(); };
 
   bankBtn.addEventListener('click', () => {
     send({ t: 'enc_bank' });

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WASTELAND</title>
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -11,7 +11,7 @@
 
 <!-- Top HUD -->
 <div id="hud">
-  <button class="hud-btn" id="menu-btn" aria-label="open menu">&#x2630; MENU</button>
+  <button class="hud-btn" id="menu-btn">&#x2630; MENU</button>
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
@@ -24,11 +24,11 @@
   <div id="hud-ll">
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">LL</span>
-      <div class="track-boxes" id="hud-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
+      <meter class="track-boxes" id="hud-ll-track" aria-label="Life Level" min="0" max="7" value="7"></meter>
     </div>
     <div class="hud-ll-row">
       <span class="hud-ll-lbl">MP</span>
-      <div class="track-boxes" id="hud-mp-track" role="meter" aria-label="Movement Points" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
+      <meter class="track-boxes" id="hud-mp-track" aria-label="Movement Points" min="0" max="6" value="6"></meter>
     </div>
   </div>
 </div>
@@ -36,11 +36,11 @@
 <!-- Main -->
 <main id="main" aria-label="game area">
   <!-- Hex canvas -->
-  <div id="canvas-wrap" tabindex="0" aria-label="game map">
-    <canvas id="hexCanvas"></canvas>
+  <div id="canvas-wrap" role="application" aria-label="game map">
+    <canvas id="hexCanvas" tabindex="0"></canvas>
 
     <!-- Terrain card (upper-right of canvas) -->
-    <div id="terrain-card" role="button" tabindex="0" title="Click for hex details" aria-label="current terrain — click for hex details" aria-expanded="false">
+    <button id="terrain-card" title="Click for hex details" aria-label="current terrain — click for hex details" aria-expanded="false">
       <div id="tc-header">
         <div id="tc-text">
           <div id="tc-name">Unknown</div>
@@ -49,11 +49,11 @@
         </div>
         <div id="tc-arrow">&#x25B6;</div>
       </div>
-    </div>
+    </button>
 
     <!-- Expanded hex info panel -->
     <div id="hex-info">
-      <span id="hex-close" role="button" tabindex="0" aria-label="close hex info panel">&#x2715;</span>
+      <button id="hex-close" aria-label="close hex info panel">&#x2715;</button>
       <h2><span id="hi-title">HEX DATA</span></h2>
       <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
       <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
@@ -107,11 +107,12 @@
 </main>
 
 <!-- Controls -->
-<div id="controls" role="group" aria-label="movement controls">
+<fieldset id="controls" aria-label="movement controls">
+  <legend class="sr-only">Movement Controls</legend>
   <button class="dir-btn" data-dir="3" id="dir-btn-3" aria-label="move northwest">&#x2196;</button>
   <button class="dir-btn" data-dir="2" id="dir-btn-2" aria-label="move north">&#x2191;</button>
   <button class="dir-btn" data-dir="1" id="dir-btn-1" aria-label="move northeast">&#x2197;</button>
-  <div class="dir-btn empty" id="cd-center" role="img" aria-label="movement cooldown" aria-hidden="true">
+  <div class="dir-btn empty" id="cd-center" aria-hidden="true">
     <svg viewBox="0 0 36 36" width="20" height="20" aria-hidden="true">
       <circle cx="18" cy="18" r="14" fill="none" stroke="#180C04" stroke-width="3.5"/>
       <circle id="cd-arc" cx="18" cy="18" r="14" fill="none"
@@ -123,15 +124,15 @@
   <button class="dir-btn" data-dir="4" id="dir-btn-4" aria-label="move southwest">&#x2199;</button>
   <button class="dir-btn" data-dir="5" id="dir-btn-5" aria-label="move south">&#x2193;</button>
   <button class="dir-btn" data-dir="0" id="dir-btn-0" aria-label="move southeast">&#x2198;</button>
-</div>
+</fieldset>
 
 <!-- Action panel modal -->
-<div id="action-panel" role="dialog" aria-modal="true" aria-labelledby="action-panel-title" aria-hidden="true">
+<dialog id="action-panel" aria-modal="true" aria-labelledby="action-panel-title">
   <div id="action-box">
-    <span id="action-close" role="button" tabindex="0" aria-label="close action panel">&#x2715;</span>
+    <button id="action-close" aria-label="close action panel">&#x2715;</button>
     <h2 id="action-panel-title"><span class="act-title-line">&#x261E; ACTIONS</span><span class="act-title-sub" id="act-panel-terrain-sub"></span></h2>
     <div id="action-status-bar"></div>
-    <div id="action-btn-list" role="list" aria-label="available actions"><!-- populated by JS --></div>
+    <ul id="action-btn-list" aria-label="available actions"><!-- populated by JS --></ul>
     <!-- WATER mp sub-control -->
     <div id="action-water-ctrl" style="display:none">
       <div class="check-row">
@@ -156,7 +157,7 @@
       </div>
     </div>
   </div>
-</div>
+</dialog>
 
 <!-- Connect overlay -->
 <div id="connect-overlay">
@@ -181,11 +182,11 @@
 </div>
 
 <!-- Toast stack -->
-<div id="toast-stack" role="status" aria-live="polite" aria-atomic="true"></div>
+<output id="toast-stack" aria-live="polite" aria-atomic="true"></output>
 
 <!-- Item action context menu (z-index 50, slide-up sheet) -->
 <div id="item-menu-backdrop"></div>
-<div id="item-action-menu" role="dialog" aria-modal="true" aria-label="Item actions">
+<dialog id="item-action-menu" aria-modal="true" aria-label="Item actions">
   <div id="item-menu-title">
     <img id="item-menu-icon" class="item-icon-img" src="" alt="" width="32" height="32">
     <span id="item-menu-name">—</span>
@@ -193,10 +194,10 @@
   <div id="item-menu-story"></div>
   <div id="item-menu-btns"></div>
   <button class="item-menu-btn" id="item-menu-close">&#x2715; Cancel</button>
-</div>
+</dialog>
 
 <!-- Incoming trade offer overlay (z-index 19, above action panel) -->
-<div id="trade-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="trade-overlay-title">
+<dialog id="trade-overlay" aria-modal="true" aria-labelledby="trade-overlay-title">
   <div id="trade-box">
     <div id="trade-overlay-title" class="check-lbl">&#x21C4; TRADE OFFER</div>
     <div id="trade-from-label"></div>
@@ -210,12 +211,12 @@
       <button id="trade-decline-btn" class="chk-action-btn">&#x2715; DECLINE</button>
     </div>
   </div>
-</div>
+</dialog>
 <!-- Flavor banner (shelter warning etc.) -->
 <div id="flavor-banner" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
 <!-- ──────────────── Encounter Overlay (active player) ──────────────── -->
-<div id="enc-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="enc-title">
+<dialog id="enc-overlay" aria-modal="true" aria-labelledby="enc-title">
   <div id="enc-box">
     <div id="enc-title" class="check-lbl">&#x1F441; ENCOUNTER</div>
     <div id="enc-node-text"></div>
@@ -227,13 +228,13 @@
     </div>
     <button id="enc-abort-btn" class="chk-action-btn" style="margin-top:6px;border-color:#888;color:#888">&#x2715; ABORT</button>
   </div>
-</div>
+</dialog>
 
 
 <!-- ─────────────────── Character Sheet Overlay ─────────────────────── -->
-<div id="char-overlay" role="dialog" aria-modal="true" aria-labelledby="char-sheet-title" aria-hidden="true">
+<dialog id="char-overlay" aria-modal="true" aria-labelledby="char-sheet-title">
   <div id="char-sheet">
-    <span id="char-close" role="button" tabindex="0" aria-label="close survivor sheet">&#x2715;</span>
+    <button id="char-close" aria-label="close survivor sheet">&#x2715;</button>
 
     <!-- Portrait column -->
     <div id="cs-portrait-panel">
@@ -275,19 +276,19 @@
         <h3>Survival Tracks</h3>
         <div class="track-row">
           <span class="track-label">LIFE LEVEL</span>
-          <div class="track-boxes" id="cs-ll-track" role="meter" aria-label="Life Level" aria-valuemin="0" aria-valuemax="7" aria-valuenow="7"></div>
+          <meter class="track-boxes" id="cs-ll-track" aria-label="Life Level" min="0" max="7" value="7"></meter>
         </div>
         <div class="track-row">
           <span class="track-label">FOOD</span>
-          <div class="track-boxes" id="cs-food-track" role="meter" aria-label="Food" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
+          <meter class="track-boxes" id="cs-food-track" aria-label="Food" min="0" max="6" value="6"></meter>
         </div>
         <div class="track-row">
           <span class="track-label">WATER</span>
-          <div class="track-boxes" id="cs-water-track" role="meter" aria-label="Water" aria-valuemin="0" aria-valuemax="6" aria-valuenow="6"></div>
+          <meter class="track-boxes" id="cs-water-track" aria-label="Water" min="0" max="6" value="6"></meter>
         </div>
         <div class="track-row">
           <span class="track-label">RADIATION</span>
-          <div class="track-boxes rad-track" id="cs-rad-track" role="meter" aria-label="Radiation" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
+          <meter class="track-boxes rad-track" id="cs-rad-track" aria-label="Radiation" min="0" max="10" value="0"></meter>
           <span class="track-suffix" id="cs-rad-status"></span>
         </div>
 
@@ -296,7 +297,7 @@
       <!-- Equipment Slots -->
       <div class="cs-section">
         <h3>Strapped On</h3>
-        <div id="cs-equip-grid"><!-- populated by renderEquipment() in ui.js --></div>
+        <div id="cs-equip-grid"><!-- populated by renderEquipment() in ui-items.js --></div>
       </div>
 
       <!-- Inventory -->
@@ -322,10 +323,10 @@
     </div>
 
   </div>
-</div>
+</dialog>
 
 <!-- ─────────────────── Agent Instructions Overlay ────────────────────── -->
-<div id="help-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true">
+<dialog id="help-overlay" aria-modal="true" aria-labelledby="help-title">
   <div id="help-box">
     <span id="help-close">&#x2715;</span>
     <h2 id="help-title">&#x2623; AI AGENT PLAYBOOK</h2>
@@ -466,7 +467,7 @@
     </div>
 
   </div>
-</div>
+</dialog>
 
 <!-- ─────────────────────────── Script ────────────────────────────────── -->
 <script type="text/javascript" src="/van.js"></script>
@@ -492,8 +493,8 @@
 (function(){
   var ov    = document.getElementById('help-overlay');
   var close = document.getElementById('help-close');
-  if (close) close.addEventListener('click', function(){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); });
-  if (ov)    ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); ov.setAttribute('aria-hidden','true'); }});
+  if (close) close.addEventListener('click', function(){ ov.classList.remove('open'); });
+  if (ov)    ov.addEventListener('click', function(e){ if (e.target === ov){ ov.classList.remove('open'); }});
 })();
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }
 </script>

@@ -8,7 +8,7 @@ function addLog(html) {
   inner.innerHTML = logLines.slice(-14).map(l => `<div class="log-line">${l}</div>`).join('');
 }
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 }
 
 // ── Toast stack ───────────────────────────────────────────────────
@@ -90,6 +90,7 @@ function hideConnectOverlay() {
 function setStatus(s) { uiConn.val = s; }
 
 // ── Movement ──────────────────────────────────────────────────────
+let lastMoveSent = 0;
 function move(dir) {
   if (typeof invertedInputTurns !== 'undefined' && invertedInputTurns > 0) dir = (dir + 3) % 6;
   if (myId >= 0 && players[myId]?.ll === 0) {
@@ -114,7 +115,7 @@ function move(dir) {
   if (now - lastMoveSent < moveCooldownMs - 30) {
     document.querySelectorAll('.dir-btn[data-dir]').forEach(b => {
       b.classList.remove('on-cooldown');
-      void b.offsetWidth;
+      void b.offsetWidth; // force reflow to restart CSS animation
       b.classList.add('on-cooldown');
     });
     return;
@@ -124,7 +125,7 @@ function move(dir) {
 }
 
 document.querySelectorAll('.dir-btn[data-dir]').forEach(btn => {
-  const dir = parseInt(btn.dataset.dir);
+  const dir = Number.parseInt(btn.dataset.dir);
   btn.addEventListener('pointerdown', e => {
     e.preventDefault(); btn.classList.add('pressed'); move(dir);
   });
@@ -169,8 +170,8 @@ document.addEventListener('keydown', e => {
   if (dir === undefined) return;
   e.preventDefault();
   if (!heldKeys.has(e.code)) {
-    move(parseInt(dir));
-    heldKeys.set(e.code, setInterval(() => move(parseInt(dir)), 200));
+    move(Number.parseInt(dir));
+    heldKeys.set(e.code, setInterval(() => move(Number.parseInt(dir)), 200));
   }
   // Keep keyboard focus on the game canvas so subsequent keys land here
   document.getElementById('canvas-wrap')?.focus({ preventScroll: true });

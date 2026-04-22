@@ -7,12 +7,9 @@
 function handleCollect(ev, ctx) {
   const me = ctx.myId >= 0 ? ctx.players[ctx.myId] : null;
   if (me && ctx.hexDistWrap(me.q, me.r, ev.q, ev.r) <= ctx.myVisionR) {
-    if (ctx.gameMap[ev.r] && ctx.gameMap[ev.r][ev.q]) {
-      ctx.gameMap[ev.r][ev.q] = {
-        ...ctx.gameMap[ev.r][ev.q],
-        resource: 0,
-        amount: 0
-      };
+    const cell = ctx.gameMap[ev.r]?.[ev.q];
+    if (cell) {
+      ctx.gameMap[ev.r][ev.q] = { ...cell, resource: 0, amount: 0 };
     }
   }
 
@@ -36,12 +33,9 @@ function handleCollect(ev, ctx) {
  * @param {Object} ctx - Context { gameMap, ... }
  */
 function handleResourceSpawn(ev, ctx) {
-  if (ctx.gameMap[ev.r] && ctx.gameMap[ev.r][ev.q]) {
-    ctx.gameMap[ev.r][ev.q] = {
-      ...ctx.gameMap[ev.r][ev.q],
-      resource: ev.res,
-      amount: ev.amt
-    };
+  const cell = ctx.gameMap[ev.r]?.[ev.q];
+  if (cell) {
+    ctx.gameMap[ev.r][ev.q] = { ...cell, resource: ev.res, amount: ev.amt };
   }
 }
 
@@ -66,9 +60,6 @@ function handleMovement(ev, ctx) {
   pm.q = ev.q;
   pm.r = ev.r;
 
-  // Clear surveyed cells on player move
-  if (ev.pid === ctx.myId) ctx.surveyedCells.clear();
-
   // Record footprint for animation
   if (ctx.gameMap[ev.r]?.[ev.q]) {
     const c = ctx.gameMap[ev.r][ev.q];
@@ -79,8 +70,7 @@ function handleMovement(ev, ctx) {
   }
   ctx.footprintTimestamps.set(`${ev.q}_${ev.r}_${ev.pid}`, Date.now());
 
-  // Handle radiation exposure
-  if (ev.radd && ev.radd > 0) {
+  if (ev.radd > 0) {
     pm.rad = ev.rad ?? pm.rad;
     if (ev.pid === ctx.myId) {
       ctx.uiRad.val = pm.rad;
@@ -89,21 +79,23 @@ function handleMovement(ev, ctx) {
     }
   }
 
-  // Exploration bonus
-  if (ev.exploD && ev.exploD > 0 && ev.pid === ctx.myId) {
-    ctx.addLog(`<span class="log-mv">⭐ New hex — +${ev.exploD} exploration pt</span>`);
-  }
-
-  // Narrate position for accessibility
   if (ev.pid === ctx.myId) {
-    const TNAME = ['Open Scrub', 'Ash Dunes', 'Rust Forest', 'Marsh', 'Broken Urban',
-                   'Flooded Ruins', 'Glass Fields', 'Rolling Hills', 'Mountain', 'Settlement', 'Nuke Crater', 'River Channel'];
-    const cell = ctx.gameMap[ev.r]?.[ev.q];
-    const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
-    const shelterNote = cell?.shelter ? ' Shelter present.' : '';
-    const exploNote = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
-    ctx.narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}${exploNote}`);
+    ctx.surveyedCells.clear();
+    if (ev.exploD > 0) {
+      ctx.addLog(`<span class="log-mv">⭐ New hex — +${ev.exploD} exploration pt</span>`);
+    }
+    _narrateMovement(ev, ctx);
   }
+}
+
+function _narrateMovement(ev, ctx) {
+  const TNAME = ['Open Scrub', 'Ash Dunes', 'Rust Forest', 'Marsh', 'Broken Urban',
+                 'Flooded Ruins', 'Glass Fields', 'Rolling Hills', 'Mountain', 'Settlement', 'Nuke Crater', 'River Channel'];
+  const cell = ctx.gameMap[ev.r]?.[ev.q];
+  const tName = TNAME[cell?.terrain ?? 0] ?? 'Unknown';
+  const shelterNote = cell?.shelter ? ' Shelter present.' : '';
+  const exploNote = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
+  ctx.narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}${exploNote}`);
 }
 
 /**
@@ -216,7 +208,7 @@ function handleTradeOffer(ev, ctx) {
   const wantTxt  = ev.want.map((v, i) => v > 0 ? RES_SHORT[i] + '\u00d7' + v : null).filter(Boolean).join(' ') || '\u2014';
   ctx.addLog(`<span class="log-col">\u21C4 ${ctx.escHtml(fromName)} offers ${ctx.escHtml(toName)}: ${giveTxt} for ${wantTxt}</span>`);
   if (ev.to === ctx.myId) {
-    window._openTradeOffer?.(ev.from, ev.give, ev.want);
+    globalThis._openTradeOffer?.(ev.from, ev.give, ev.want);
   }
 }
 
@@ -234,7 +226,7 @@ function handleTradeResult(ev, ctx) {
   ctx.addLog(`<span class="${cls}">\u21C4 Trade ${label}: ${ctx.escHtml(fromName)} \u2194 ${ctx.escHtml(toName)}</span>`);
   if (ev.from === ctx.myId || ev.to === ctx.myId) {
     ctx.showToast('\u21C4 Trade ' + label);
-    window._closeTradeOverlay?.();
+    globalThis._closeTradeOverlay?.();
     ctx.updateSidebar();
   }
 }

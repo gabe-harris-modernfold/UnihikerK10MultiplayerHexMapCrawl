@@ -74,7 +74,7 @@ const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
 function loadTerrainVariants(vc) {
   for (let t = 0; t < NUM_TERRAIN; t++) {
     const name = TERRAIN_IMG_NAMES[t];
-    const count = (vc && vc[t]) || 0;
+    const count = vc?.[t] || 0;
     terrainImgVariants[t] = Array.from(
       { length: count },
       (_, v) => createImageWithLoadTracking(`/img/hex${name}${v}.png`)
@@ -103,12 +103,12 @@ function loadForrageAnimalImgs(count) {
 // ── Shelter images ────────────────────────────────────────────────
 // Naming: /img/shelterBasic<N>.png, /img/shelterImproved<N>.png
 // shelterImgs[0] = basic variants, shelterImgs[1] = improved variants
-const shelterImgs = [[], []];
+const shelterImgs = [];
 const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
 
 function loadShelterVariants(sv) {
   for (let s = 0; s < 2; s++) {
-    const count = (sv && sv[s]) || 0;
+    const count = sv?.[s] || 0;
     shelterImgs[s] = Array.from(
       { length: count },
       (_, v) => createImageWithLoadTracking(`/img/${SHELTER_IMG_NAMES[s]}${v}.png`)
@@ -119,7 +119,7 @@ function loadShelterVariants(sv) {
 // ── State ───────────────────────────────────────────────────────
 let myId = -1;
 // gameMap[r][q] = { terrain, resource, amount } or null (fogged/unknown)
-let gameMap = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(null));
+let gameMap = Array.from({ length: MAP_ROWS }, () => new Array(MAP_COLS).fill(null));
 let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
   inv: [0,0,0,0,0], sp: 0, st: 0,
@@ -128,8 +128,8 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   arch: 0, is: 8,
   sk: [0,0,0,0,0],
   wd: [0,0,0],
-  it: Array(12).fill(0),
-  iq: Array(12).fill(0),
+  it: new Array(12).fill(0),
+  iq: new Array(12).fill(0),
   // §4 Resource economy
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
@@ -156,7 +156,7 @@ function buildAgentState() {
       }
     }
   }
-  window.__gameState = {
+  globalThis.__gameState = {
     myId,
     day:     gameState.dc,
     tc:      gameState.tc,

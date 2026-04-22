@@ -109,13 +109,11 @@ body::after{
   width:14px;flex-shrink:0;margin-right:4px
 }
 .hud-ll-val{
-  font-size:var(--fs-d);color:var(--gold-hi);min-width:10px;
+  font-size:var(--fs-d);color:#A84040;min-width:10px;
   text-align:right;font-family:'Courier New',monospace
 }
 #hud-ll .track-boxes{gap:2px}
 #hud-ll .track-box{width:9px;height:9px;border-radius:1px}
-/* LL boxes — dark red */
-.hud-ll-val{color:#A84040}
 #hud-ll-track .track-box.filled{background:#7A2A2A;border-color:#A84040}
 /* MP boxes — olive green */
 #hud-mp-track .track-box.filled{background:#3A5A1A;border-color:#6A9A30}
@@ -156,7 +154,7 @@ canvas{display:block;width:100%;height:100%}
 #fab-col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;padding-bottom:6px;flex-shrink:0;width:54px}
 #players-content{overflow-y:auto}
 .player-row{display:flex;align-items:center;gap:4px;margin-bottom:4px;font-size:14px}
-.p-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.p-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--pc,#666)}
 .p-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
 .p-name.me{color:var(--gold-hi);font-weight:bold}
 .p-sc{color:var(--gold);font-size:14px;white-space:nowrap}
@@ -164,6 +162,7 @@ canvas{display:block;width:100%;height:100%}
 /*──────────────────────── Terrain Card ─────────────────────────*/
 #terrain-card{
   position:absolute;top:40px;right:8px;width:196px;
+  font:inherit;text-align:left;
   background:var(--bg-card);border:1px solid var(--bdr-mid);
   border-radius:2px;cursor:pointer;z-index:16;
   transition:border-color 0.2s;
@@ -775,6 +774,7 @@ canvas{display:block;width:100%;height:100%}
 .track-row{display:flex;align-items:center;gap:6px;margin:5px 0;width:100%}
 .track-label{font-size:var(--fs-l);letter-spacing:var(--ls-l);color:var(--ash);width:80px;font-family:var(--stencil);flex-shrink:0;text-align:left}
 .track-boxes{display:flex;gap:2px;flex:1}
+meter.track-boxes{appearance:none;-webkit-appearance:none}
 .track-box{
   flex:1;max-width:28px;min-width:10px;height:13px;border:1px solid #302A20;border-radius:1px;
   background:var(--bg-deep);position:relative
@@ -940,7 +940,6 @@ canvas{display:block;width:100%;height:100%}
 #cd-arc.cd-active{stroke:var(--gold)}
 
 /*──────────── Player dot (colour set via CSS custom property) ──*/
-.p-dot{background:var(--pc,#666)}
 
 /*══════════ Character Selection Overlay ════════════════════════*/
 #char-select-overlay{
@@ -994,9 +993,8 @@ canvas{display:block;width:100%;height:100%}
   padding:10px;
   display:flex;flex-direction:column;gap:7px;
   transition:border-color 0.15s;
-  width:240px;height:320px
+  width:240px;height:320px;cursor:pointer
 }
-.arch-card{cursor:pointer}
 .arch-card:hover{
   border-color:var(--arch-color,var(--gold))
 }
@@ -1074,23 +1072,23 @@ canvas{display:block;width:100%;height:100%}
 .settings-danger-label{font-size:var(--fs-l);color:#A02828}
 .settings-danger-desc{font-size:var(--fs-d);color:var(--txt-dim);font-style:italic}
 .menu-regen-btn{
-  width:100%;background:#200808;color:#A02828;
+  width:100%;background:#200808;color:#FF7070;
   border:1px solid #A02828;border-radius:2px;
   font-family:'Courier New',monospace;font-size:var(--fs-b);
   letter-spacing:var(--ls-b);padding:9px 12px;margin-top:8px;
   cursor:pointer;transition:background 0.15s,border-color 0.15s
 }
-.menu-regen-btn:hover{background:#3a0a0a;border-color:#A03030;color:#A03030}
+.menu-regen-btn:hover{background:#3a0a0a;border-color:#FF7070;color:#FF7070}
 .erase-slot-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .menu-erase-slot-btn{
   flex:1 1 calc(33.33% - 4px);min-width:calc(33.33% - 4px);
-  background:#200808;color:#A02828;
+  background:#200808;color:#FF7070;
   border:1px solid #A02828;border-radius:2px;
   font-family:'Courier New',monospace;font-size:var(--fs-d);
   letter-spacing:var(--ls-b);text-transform:uppercase;
   padding:7px 4px;cursor:pointer;transition:background 0.15s,border-color 0.15s
 }
-.menu-erase-slot-btn:hover{background:#3a0a0a;border-color:#A03030;color:#A03030}
+.menu-erase-slot-btn:hover{background:#3a0a0a;border-color:#FF7070;color:#FF7070}
 
 
 /* ── Help / Agent Instructions Overlay ──────────────────────────────── */
@@ -1324,9 +1322,9 @@ canvas{display:block;width:100%;height:100%}
   font-family:'Courier New',monospace;margin-top:1px
 }
 .cat-consumable{background:#2A3A0A;color:#8ABB30}
-.cat-equipment {background:#0A1F3A;color:#3A88C8}
-.cat-material  {background:#2A1A00;color:#C87828}
-.cat-key       {background:#3A0A1A;color:#C83060}
+.cat-equipment {background:#0A1F3A;color:#5AACE8}
+.cat-material  {background:#2A1A00;color:#E89A40}
+.cat-key       {background:#3A0A1A;color:#E85080}
 
 /* Item action context menu */
 #item-action-menu{

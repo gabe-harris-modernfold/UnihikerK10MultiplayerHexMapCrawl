@@ -9,25 +9,23 @@
  * Encapsulates nightFade, displayMP, footprint animations, and related logic.
  */
 class AnimationManager {
+  nightFade = 0;
+  mpTarget = 6;
+  isResting = false;
+  isPaused = false;
+  footprintTimestamps = new Map(); // key: 'q_r_pid' → Date.now()
+
   constructor(config = {}) {
     // Time-of-day overlay fade (post-dawn rest effect)
-    this.nightFade = 0;
     this.nightFadeDecayRate = config.nightFadeDecayRate || 0.004;
     this.nightFadeInit = config.nightFadeInit || 0.72;
 
     // MP display smoothing
     this.displayMP = config.initialMP || 6;
-    this.mpTarget = 6;
     this.restingLerpRate = config.restingLerpRate || 0.003;
     this.movingLerpRate = config.movingLerpRate || 0.08;
-    this.isResting = false;
 
-    // Footprint tracking
-    this.footprintTimestamps = new Map(); // key: 'q_r_pid' → Date.now()
     this.footprintFadeMs = config.footprintFadeMs || 4000;
-
-    // Pause support
-    this.isPaused = false;
   }
 
   /**

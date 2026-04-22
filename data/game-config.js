@@ -53,7 +53,7 @@ const GAME_CONFIG = {
       innerAlpha: 0.78,           // inner fog ring opacity (more visible)
       outerAlpha: 0.92,           // outer fog ring opacity
       shadowAlpha: 0.72,          // character name label background opacity
-      groundShadowAlpha: 0.40,    // ground shadow under characters
+      groundShadowAlpha: 0.4,     // ground shadow under characters
     },
   },
 

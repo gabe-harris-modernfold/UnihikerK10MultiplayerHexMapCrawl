@@ -121,11 +121,6 @@ function gameStateReducer(state, event) {
     }
 
     case 'ENC_BANK':
-      return {
-        ...state,
-        encounters: { ...state.encounters, [event.pid]: undefined },
-      };
-
     case 'ENC_END':
       return {
         ...state,
@@ -160,7 +155,7 @@ function createInitialState(maxPlayers = 6, mapRows = 19, mapCols = 25) {
       inv: [0, 0, 0, 0, 0],
       nm: `Survivor${i}`,
     })),
-    map: Array.from({ length: mapRows }, () => Array(mapCols).fill(null)),
+    map: Array.from({ length: mapRows }, () => new Array(mapCols).fill(null)),
     shared: {
       tc: 0,  // Threat clock
       dc: 0,  // Day counter
@@ -247,7 +242,7 @@ class GameState {
    * @private
    */
   notifyListeners() {
-    const lastEvent = this.events[this.events.length - 1];
+    const lastEvent = this.events.at(-1);
     for (const listener of this.listeners) {
       listener(this.state, lastEvent);
     }

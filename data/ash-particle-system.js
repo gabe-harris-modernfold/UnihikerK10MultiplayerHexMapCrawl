@@ -20,7 +20,7 @@ class AshParticleSystem {
     this.maxDistanceHexes = cfg.maxDistanceHexes ?? 3;
     this.countPerTerrain  = cfg.countPerTerrain  ?? 2;
     this.radiusMin        = cfg.radiusMin        ?? 1.5;
-    this.radiusMax        = cfg.radiusMax        ?? 3.0;
+    this.radiusMax        = cfg.radiusMax        ?? 3;
     this.particles = [];
     this._nextId = 0;
   }
@@ -35,9 +35,7 @@ class AshParticleSystem {
       p.prevNow = now;
       p.driftOffsetX += p.driftVX * dt;
       p.driftOffsetY += p.driftVY * dt;
-      const dist = Math.sqrt(
-        p.driftOffsetX * p.driftOffsetX + p.driftOffsetY * p.driftOffsetY
-      );
+      const dist = Math.hypot(p.driftOffsetX, p.driftOffsetY);
       const fadeIn = Math.min(1, (now - p.spawnTime) / this.fadeInMs);
       p.currentAlpha = p.maxAlpha * fadeIn * Math.max(0, 1 - dist / maxDistPx);
       p.dead = dist >= maxDistPx;
@@ -98,7 +96,7 @@ class AshParticleSystem {
   _spawnNear(originQ, originR, hexSz, now) {
     // Random outward direction
     const angle = Math.random() * Math.PI * 2;
-    const speed = this.driftSpeed * (0.5 + Math.random() * 1.0);
+    const speed = this.driftSpeed * (0.5 + Math.random());
 
     // Small random initial offset so particles don't all pop from exact center
     const spawnDist = hexSz * 0.4 * Math.random();
@@ -116,7 +114,7 @@ class AshParticleSystem {
       prevNow:      now,
       wobblePhaseX: Math.random() * Math.PI * 2,
       wobblePhaseY: Math.random() * Math.PI * 2,
-      wobbleAmp:    this.wobbleAmp * (0.5 + Math.random() * 1.0),
+      wobbleAmp:    this.wobbleAmp * (0.5 + Math.random()),
       wobbleFreq:   this.wobbleFreq * (0.7 + Math.random() * 0.6),
       radius:       hexSz * (this.radiusMin + Math.random() * (this.radiusMax - this.radiusMin)),
       maxAlpha:     this.maxAlpha * (0.6 + Math.random() * 0.4),
