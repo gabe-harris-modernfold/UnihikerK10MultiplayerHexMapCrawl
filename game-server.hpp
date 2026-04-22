@@ -461,10 +461,14 @@ static void setupWiFiAndServer() {
                       ? request->getParam("dest")->value()
                       : "/data/" + filename;
         if (!dest.startsWith("/")) dest = "/" + dest;
+        Serial.printf("[UPLOAD] Receiving: %s\n", dest.c_str());
         uploadFile = SD.open(dest.c_str(), FILE_WRITE);
       }
       if (uploadFile) { uploadFile.write(data, len); uploadFile.flush(); yield(); }
-      if (final && uploadFile) uploadFile.close();
+      if (final && uploadFile) {
+        uploadFile.close();
+        Serial.printf("[UPLOAD] Done: %s (%u bytes)\n", filename.c_str(), index + len);
+      }
     }
   );
 

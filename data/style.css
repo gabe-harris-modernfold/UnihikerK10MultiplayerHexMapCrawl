@@ -114,9 +114,11 @@ body::after{
 }
 #hud-ll .track-boxes{gap:2px}
 #hud-ll .track-box{width:9px;height:9px;border-radius:1px}
-#hud-ll-track .track-box.filled{background:#7A2A2A;border-color:#A84040}
-/* MP boxes — olive green */
-#hud-mp-track .track-box.filled{background:#3A5A1A;border-color:#6A9A30}
+#hud-ll-track .track-box{border-color:#6A2020}
+#hud-ll-track .track-box.filled{background:#CC2222;border-color:#FF4444}
+/* MP boxes — green */
+#hud-mp-track .track-box{border-color:#1A4A10}
+#hud-mp-track .track-box.filled{background:#2A8A20;border-color:#44CC33}
 
 /*──────────────────────────── Main layout ──────────────────────*/
 #main{display:flex;flex:1;overflow:hidden;position:relative}

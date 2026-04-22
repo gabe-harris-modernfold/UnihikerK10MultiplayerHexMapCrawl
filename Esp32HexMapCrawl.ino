@@ -85,13 +85,17 @@
 #include <esp_wifi.h>
 #include <FS.h>
 #include <SD.h>
-#include <LovyanGFX.hpp>
-#include "lgfx_config.h"
 #include <ESPAsyncWebServer.h>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
 #pragma GCC diagnostic pop
+// Tell LovyanGFX that LVGL is already included (UNIHIKER K10 pulls in LVGL v8).
+// Without this, LovyanGFX includes its own LVGL v9 stubs and the two sets of
+// type definitions conflict fatally.
+#define M5GFX_USING_REAL_LVGL 1
+#include <LovyanGFX.hpp>
+#include "lgfx_config.h"
 
 static const char* AP_SSID = "WASTELAND";
 

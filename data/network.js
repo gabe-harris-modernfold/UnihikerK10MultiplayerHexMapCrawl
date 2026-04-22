@@ -105,7 +105,6 @@ const Diag = (() => {
 })();
 
 // ── Move cooldown tracking (client-side estimate) ─────────────────
-let lastMoveSent   = 0;   // Date.now() of last move sent
 let moveCooldownMs = MOVE_COOLDOWN_BASE_MS; // mirrors server MOVE_CD_MS × current terrain MC
 let restSent       = false; // guard against REST double-click before server ack
 
