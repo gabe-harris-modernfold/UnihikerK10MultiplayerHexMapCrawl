@@ -9,6 +9,9 @@ static uint32_t lobbyIds[MAX_PLAYERS] = {0};
 
 // ── Skill check broadcast ─────────────────────────────────────────────────────
 static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
+  Log.notice("CHECK pid=%d skill=%d dn=%d r1=%d r2=%d sv=%d mod=%d tot=%d suc=%d",
+             pid, (int)skill, (int)r.dn, (int)r.r1, (int)r.r2,
+             (int)r.skillVal, (int)r.mods, (int)r.total, r.success ? 1 : 0);
   char buf[128]; int len;
   len = snprintf(buf, sizeof(buf),
     "{\"t\":\"ev\",\"k\":\"chk\",\"pid\":%d,\"sk\":%d,\"dn\":%d,"
@@ -21,6 +24,7 @@ static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
 // ── Build lobby message for one client ───────────────────────────────────────
 // {"t":"lobby","avail":[0,1,2,4,5]}  — indices of unconnected archetype slots
 static void sendLobbyMsg(AsyncWebSocketClient* client) {
+  Log.verbose("Lobby unicast id=%u", (unsigned)client->id());
   char buf[72]; int pos;
   pos = snprintf(buf, sizeof(buf), "{\"t\":\"lobby\",\"avail\":[");
   bool first = true;
@@ -62,18 +66,23 @@ static void broadcastLobbyUpdate() {
   memcpy(snapIds, lobbyIds, sizeof(snapIds));
   taskEXIT_CRITICAL(&evtMux);
 
+  int recipients = 0;
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!snapIds[i]) continue;
     AsyncWebSocketClient* cl = ws.client(snapIds[i]);
-    if (cl) cl->text(buf, len);
+    if (cl) { cl->text(buf, len); recipients++; }
   }
+  Log.verbose("Lobby broadcast to %d clients", recipients);
 }
 
 // ── Sync message (unicast to one client on connect) ──────────────────────────
 // Buffer: map=475×4=1900 + header~55 + players~1200 + footer = ~3160 chars
 static void sendSync(AsyncWebSocketClient* client, int pid) {
   static char buf[6400];  // expanded: +equip[5] per player + ground items list
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+    Log.warning("sendSync pid=%d: G.mutex timeout - skipped", pid);
+    return;
+  }
 
   Player& me = G.players[pid];
   int visR; bool maskRes;
@@ -148,9 +157,12 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     terrainVariantCount[9],  terrainVariantCount[10], terrainVariantCount[11],
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount);
+  int mapBytesLog = mapLen;
+  int totalBytesLog = pos;
   xSemaphoreGive(G.mutex);
 
-
+  Log.notice("SYNC pid=%d tick=%lu mapBytes=%d totalBytes=%d",
+             pid, (unsigned long)G.tickId, mapBytesLog, totalBytesLog);
   client->text(buf, (size_t)pos);
 }
 
@@ -159,7 +171,15 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
 // to safely accommodate it[12]+iq[12]+eq[5] per player (~125 chars × 6 = 750).
 static void broadcastState() {
   static char buf[2500];
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+    static uint32_t lastBusyLogMs = 0;
+    uint32_t nowMs = millis();
+    if (nowMs - lastBusyLogMs >= 1000) {
+      lastBusyLogMs = nowMs;
+      Log.verbose("broadcastState: G.mutex busy (rate-limited)");
+    }
+    return;
+  }
 
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"s\",\"tk\":%lu,\"p\":[", (unsigned long)G.tickId);

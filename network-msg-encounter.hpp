@@ -2,6 +2,7 @@
 // ── Encounter message handlers: enc_start, enc_choice, enc_bank, enc_abort ───
 
 static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* qp = strstr(data, "\"q\""); if (!qp) return;
   const char* qv = strchr(qp + 3, ':');  if (!qv) return;
   const char* rp = strstr(data, "\"r\""); if (!rp) return;
@@ -74,6 +75,7 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
 }
 
 static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   // {"t":"enc_choice","ci":0,"cost_ll":0,"cost_rad":0,"cost_food":0,
   //  "cost_water":0,"cost_resolve":0,"base_risk":35,"skill":2,
   //  "loot":[0,0,0,1,0],"lt":"urban_common","can_bank":true,
@@ -216,6 +218,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
 }
 
 static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int pid = findSlot(client->id());
     if (pid >= 0 && encounters[pid].active) {
@@ -287,6 +290,7 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
 }
 
 static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int pid = findSlot(client->id());
     if (pid >= 0 && encounters[pid].active) {

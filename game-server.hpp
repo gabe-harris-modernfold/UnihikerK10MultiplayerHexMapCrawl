@@ -5,6 +5,9 @@
 
 // ── Game loop task (Core 1) ────────────────────────────────────
 static void gameLoopTask(void* param) {
+  Log.notice("gameLoopTask running core=%d prio=%d stack_free=%u",
+             (int)xPortGetCoreID(), (int)uxTaskPriorityGet(NULL),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
   TickType_t lastWake = xTaskGetTickCount();
   uint32_t lastWatermarkMs = 0;
   for (;;) {
@@ -12,8 +15,13 @@ static void gameLoopTask(void* param) {
     uint32_t loopMs = millis();
     if (loopMs - lastWatermarkMs >= 5000) {
       lastWatermarkMs = loopMs;
+      Log.verbose("gameLoop wm: stack_free=%u heap=%uKB psram=%uKB tickId=%lu connected=%d",
+                  (unsigned)uxTaskGetStackHighWaterMark(NULL),
+                  (unsigned)(ESP.getFreeHeap() / 1024),
+                  (unsigned)(ESP.getFreePsram() / 1024),
+                  (unsigned long)G.tickId, (int)G.connectedCount);
     }
-    uint32_t t0tick = millis();
+    [[maybe_unused]] uint32_t t0tick = millis();
     tickGame();
     drainEvents();
     // ── Trade offer expiry sweep ──────────────────────────────────
@@ -23,6 +31,8 @@ static void gameLoopTask(void* param) {
         if (tradeOffers[ti].active && nowMs >= tradeOffers[ti].expiresMs) {
           if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(2)) == pdTRUE) {
             if (tradeOffers[ti].active && nowMs >= tradeOffers[ti].expiresMs) {
+              Log.notice("Trade expired: from=%d to=%d",
+                         (int)tradeOffers[ti].fromPid, (int)tradeOffers[ti].toPid);
               GameEvent tev = {};
               tev.type        = EVT_TRADE_RESULT;
               tev.pid         = tradeOffers[ti].fromPid;
@@ -44,6 +54,7 @@ static void gameLoopTask(void* param) {
 // Called from setup() after loadWebFilesToRAM(). Populates terrainVariantCount[],
 // shelterVariantCount[], and forrageAnimalCount by scanning cached filenames.
 static void setupVariantCounts() {
+  Log.notice("Variant scan start: imgCacheCount=%d", (int)imgCacheCount);
   for (int i = 0; i < imgCacheCount; i++) {
     String fname = String(imgCache[i].name);
     for (int t = 0; t < NUM_TERRAIN; t++) {
@@ -101,6 +112,12 @@ static void setupVariantCounts() {
       }
     }
   }
+  Log.notice("Variant counts: terrain=[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d] shelter=[%d,%d] forrageAnimal=%d",
+             (int)terrainVariantCount[0],(int)terrainVariantCount[1],(int)terrainVariantCount[2],
+             (int)terrainVariantCount[3],(int)terrainVariantCount[4],(int)terrainVariantCount[5],
+             (int)terrainVariantCount[6],(int)terrainVariantCount[7],(int)terrainVariantCount[8],
+             (int)terrainVariantCount[9],(int)terrainVariantCount[10],(int)terrainVariantCount[11],
+             (int)shelterVariantCount[0],(int)shelterVariantCount[1],(int)forrageAnimalCount);
 }
 
 // ── Cache-Control policy per asset ──────────────────────────────
@@ -113,41 +130,52 @@ static const char* cacheControlFor(const char* url, const char* mime) {
 // ── WiFi, HTTP routes, and WebSocket setup ──────────────────────
 // Extracted from setup() to keep that function concise.
 static void setupWiFiAndServer() {
+  Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID);
+  Log.notice("AP start SSID=%s", AP_SSID);
   {
     wifi_config_t staCfg = {};
     if (esp_wifi_get_config(WIFI_IF_STA, &staCfg) == ESP_OK && staCfg.sta.ssid[0]) {
       strlcpy(savedSsid, (char*)staCfg.sta.ssid, sizeof(savedSsid));
+      Log.notice("Saved STA creds found ssid=%s -> joining", savedSsid);
       splashAdd("Joining saved WiFi...", 0x4080C0);
       WiFi.begin();
+      Log.notice("STA connect attempt (saved creds)");
       bootWifiPending = true;
       bootWifiStartMs = millis();
     } else {
+      Log.verbose("No saved STA creds");
     }
   }
   { char wb[30]; snprintf(wb, 30, "AP: %s", WiFi.softAPIP().toString().c_str());
-    splashAdd(wb, 0x60A040); }
+    splashAdd(wb, 0x60A040);
+    Log.notice("AP IP=%s mac=%s", WiFi.softAPIP().toString().c_str(), WiFi.softAPmacAddress().c_str()); }
 
   ws.onEvent(onWsEvent); ws.enable(true); server.addHandler(&ws);
+  Log.notice("WS handler registered path=/ws");
 
   // Static web assets served from PSRAM
   for (int i = 0; i < WEB_FILE_COUNT; i++) {
     server.on(WEB_FILES[i].url, HTTP_GET, [i](AsyncWebServerRequest* req) {
       if (!WEB_FILES[i].buf) {
+        Log.error("HTTP 503: web file not cached %s", WEB_FILES[i].url);
         req->send(503, "text/plain", "Web file not cached - check SD & reboot");
         return;
       }
       const char* cc = cacheControlFor(WEB_FILES[i].url, WEB_FILES[i].mime);
       if (req->hasHeader("If-None-Match") &&
           req->getHeader("If-None-Match")->value() == WEB_FILES[i].etag) {
+        Log.verbose("HTTP 304 %s etag match", WEB_FILES[i].url);
         AsyncWebServerResponse* r = req->beginResponse(304);
         r->addHeader("ETag", WEB_FILES[i].etag);
         r->addHeader("Cache-Control", cc);
         req->send(r);
         return;
       }
+      Log.verbose("HTTP GET %s -> %s (%u B)",
+                  WEB_FILES[i].url, WEB_FILES[i].mime, (unsigned)WEB_FILES[i].len);
       AsyncWebServerResponse* resp = req->beginResponse(
           200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
       resp->addHeader("ETag", WEB_FILES[i].etag);
@@ -155,10 +183,16 @@ static void setupWiFiAndServer() {
       req->send(resp);
     });
   }
-  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) { req->send(204); });
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) {
+    Log.verbose("HTTP 204 /favicon.ico");
+    req->send(204);
+  });
 
   // Captive-portal redirects
-  auto toGame = [](AsyncWebServerRequest* req) { req->redirect("/"); };
+  auto toGame = [](AsyncWebServerRequest* req) {
+    Log.verbose("HTTP redirect %s -> /", req->url().c_str());
+    req->redirect("/");
+  };
   server.on("/generate_204",              HTTP_GET, toGame);
   server.on("/gen_204",                   HTTP_GET, toGame);
   server.on("/hotspot-detect.html",       HTTP_GET, toGame);
@@ -174,6 +208,8 @@ static void setupWiFiAndServer() {
       "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater","River Channel"
     };
     static const char* RES_NAME_L[6] = {"none","water","food","fuel","medicine","scrap"};
+    Log.verbose("HTTP /state pid=%s",
+                req->hasParam("pid") ? req->getParam("pid")->value().c_str() : "-");
     String j;
     j.reserve(10240);
     if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
@@ -325,6 +361,7 @@ static void setupWiFiAndServer() {
       j += "}";
       xSemaphoreGive(G.mutex);
     } else {
+      Log.warning("HTTP /state mutex timeout");
       j = "{\"error\":\"mutex timeout\"}";
     }
     AsyncWebServerResponse* resp = req->beginResponse(200, "application/json", j);
@@ -336,25 +373,30 @@ static void setupWiFiAndServer() {
   // /enc?biome=X&id=Y — serve encounter JSON from SD card
   server.on("/enc", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!req->hasParam("biome") || !req->hasParam("id")) {
+      Log.warning("HTTP /enc 400 reason=missing");
       req->send(400, "text/plain", "Missing biome or id"); return;
     }
     String biome = req->getParam("biome")->value();
     String id    = req->getParam("id")->value();
+    Log.notice("HTTP /enc biome=%s id=%s", biome.c_str(), id.c_str());
     // Validate: only allow alphanumeric + underscore in both params (prevent path traversal)
     for (unsigned i = 0; i < biome.length(); i++) {
       char c = biome[i];
-      if (!isAlphaNumeric(c) && c != '_') { req->send(400, "text/plain", "Invalid biome"); return; }
+      if (!isAlphaNumeric(c) && c != '_') {
+        Log.warning("HTTP /enc 400 reason=invalid_biome=%s", biome.c_str());
+        req->send(400, "text/plain", "Invalid biome"); return;
+      }
     }
     for (unsigned i = 0; i < id.length(); i++) {
       char c = id[i];
-      if (!isDigit(c)) { req->send(400, "text/plain", "Invalid id"); return; }
+      if (!isDigit(c)) {
+        Log.warning("HTTP /enc 400 reason=invalid_id=%s", id.c_str());
+        req->send(400, "text/plain", "Invalid id"); return;
+      }
     }
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
     uint32_t t0 = millis();
-    // Read under mutex to prevent SPI bus contention with persistence saves.
-    // req->send(SD, path) streams asynchronously on the web-server task and races
-    // with any concurrent SD.open() on the game task — causes a watchdog reset.
     String content;
     bool found = false;
     bool mutexOk = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(500)) == pdTRUE);
@@ -368,22 +410,32 @@ static void setupWiFiAndServer() {
           found = true;
           content = f.readString();
           f.close();
+          Log.notice("SD READ: %s size=%u took=%ums",
+                     path, (unsigned)fsz, (unsigned)(millis() - tsd));
         } else {
+          Log.error("SD OPEN FAIL: %s", path);
         }
+      } else {
+        Log.warning("SD MISSING: %s (via /enc)", path);
       }
       xSemaphoreGive(G.mutex);
     } else {
+      Log.warning("HTTP /enc 503: mutex timeout path=%s", path);
       req->send(503, "text/plain", "Server busy"); return;
     }
     if (!found) {
+      Log.warning("HTTP /enc 404 path=%s", path);
       req->send(404, "text/plain", "Encounter not found"); return;
     }
+    Log.verbose("HTTP /enc 200 path=%s len=%u took=%ums",
+                path, (unsigned)content.length(), (unsigned)(millis() - t0));
     req->send(200, "application/json", content);
   });
 
   // /img/*.png served from PSRAM imgCache
   server.onNotFound([](AsyncWebServerRequest* req) {
     String url = req->url();
+    Log.verbose("HTTP 404-check %s", url.c_str());
     if (url.startsWith("/img/")) {
       String filename = url.substring(5);
       for (int i = 0; i < imgCacheCount; i++) {
@@ -394,12 +446,14 @@ static void setupWiFiAndServer() {
             mimeType = "image/jpeg";
           if (req->hasHeader("If-None-Match") &&
               req->getHeader("If-None-Match")->value() == imgCache[i].etag) {
+            Log.verbose("HTTP 304 /img/%s", filename.c_str());
             AsyncWebServerResponse* r = req->beginResponse(304);
             r->addHeader("ETag", imgCache[i].etag);
             r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
             req->send(r);
             return;
           }
+          Log.verbose("HTTP /img/ hit %s (%u B)", filename.c_str(), (unsigned)imgCache[i].len);
           AsyncWebServerResponse* resp = req->beginResponse(
               200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("ETag", imgCache[i].etag);
@@ -408,33 +462,55 @@ static void setupWiFiAndServer() {
           return;
         }
       }
-      req->send(204); return; // image not cached — silent no-content, no client error
+      Log.warning("IMG MISSING: %s (served 204)", filename.c_str());
+      req->send(204); return;
     }
+    Log.warning("HTTP 404 %s", url.c_str());
     req->send(404, "text/plain", "Not found: " + url);
   });
 
   server.on("/upload", HTTP_POST,
     [](AsyncWebServerRequest* request) {
+      Log.notice("UPLOAD request filename=%s",
+                 request->hasParam("filename", true)
+                   ? request->getParam("filename", true)->value().c_str()
+                   : "-");
       request->send(200, "text/plain", "OK");
     },
     [](AsyncWebServerRequest* request, const String& filename,
        size_t index, uint8_t* data, size_t len, bool final) {
       static File uploadFile;
+      static size_t totalLen = 0;
+      static String destPath;
       if (index == 0) {
         String dest = request->hasParam("dest")
                       ? request->getParam("dest")->value()
                       : "/data/" + filename;
         if (!dest.startsWith("/")) dest = "/" + dest;
+        destPath = dest;
+        totalLen = 0;
+        Log.notice("UPLOAD start dest=%s", dest.c_str());
         uploadFile = SD.open(dest.c_str(), FILE_WRITE);
+        if (uploadFile) Log.notice("SD WRITE OPEN: %s", dest.c_str());
+        else            Log.error("SD WRITE FAIL: %s", dest.c_str());
       }
-      if (uploadFile) { uploadFile.write(data, len); uploadFile.flush(); yield(); }
+      if (uploadFile) {
+        uploadFile.write(data, len); uploadFile.flush(); yield();
+        totalLen += len;
+        Log.verbose("UPLOAD chunk idx=%u len=%u final=%d",
+                    (unsigned)index, (unsigned)len, (int)final);
+      }
       if (final && uploadFile) {
         uploadFile.close();
+        Log.notice("UPLOAD complete dest=%s total=%u",
+                   destPath.c_str(), (unsigned)totalLen);
       }
     }
   );
 
   server.begin();
+  Log.notice("HTTP server listening port=80 heap=%uKB",
+             (unsigned)(ESP.getFreeHeap() / 1024));
   { char hb[30]; snprintf(hb, 30, "Heap: %ukB free", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd("HTTP+WS ready", 0x60A040);
     splashAdd(hb, 0x406030); }

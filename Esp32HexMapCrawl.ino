@@ -86,6 +86,7 @@
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
+#include "logging.hpp"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
@@ -262,7 +263,7 @@ static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -
 static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0 };
 
 // ── Debug label tables ─────────────────────────────────────────
-static const char* T_NAME[NUM_TERRAIN] = {
+[[maybe_unused]] static const char* T_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes ", "RustForst", "Marsh    ",
   "BrknUrban", "FloodRuin", "GlassFlds", "RolngHill",
   "Mountain ", "Settlment", "NukeCratr", "RiverChnl"
@@ -275,10 +276,10 @@ static const char* TERRAIN_IMG_NAME[NUM_TERRAIN] = {
   "BrokenUrban", "FloodedDistrict", "GlassFields",
   "Ridge", "Mountain", "Settlement", "NukeCrater", "RiverChannel"
 };
-static const char* VIS_LABEL[6] = { "BLIND", "PENLT", "LOW  ", "STD  ", "HIGH ", "VHIGH" };
-static const char* RES_NAME[6]  = { "None","Water","Food ","Fuel ","Med  ","Scrap" };
-static const char* DIR_NAME[6]  = { "SE","NE","N ","NW","SW","S " };
-static const char* SKILL_NAME[NUM_SKILLS] = {
+[[maybe_unused]] static const char* VIS_LABEL[6] = { "BLIND", "PENLT", "LOW  ", "STD  ", "HIGH ", "VHIGH" };
+[[maybe_unused]] static const char* RES_NAME[6]  = { "None","Water","Food ","Fuel ","Med  ","Scrap" };
+[[maybe_unused]] static const char* DIR_NAME[6]  = { "SE","NE","N ","NW","SW","S " };
+[[maybe_unused]] static const char* SKILL_NAME[NUM_SKILLS] = {
   "Navigate","Forage  ","Scavenge","Shelter ","Endure  "
 };
 
@@ -665,8 +666,15 @@ static uint32_t  g_bootNonce   = 0;
 
 // ── Setup ──────────────────────────────────────────────────────
 void setup() {
+  uint32_t _bootT0 = millis();
   { unsigned long t0 = millis(); while (!Serial && millis()-t0 < 3000) delay(10); }
   delay(200);
+
+  logInit(115200);
+  Log.notice("==== BOOT ==== sketch=%uKB freeHeap=%uKB freePSRAM=%uKB",
+             (unsigned)(ESP.getSketchSize() / 1024),
+             (unsigned)(ESP.getFreeHeap() / 1024),
+             (unsigned)(ESP.getFreePsram() / 1024));
 
   // ── Reset reason ─────────────────────────────────────────────
   { esp_reset_reason_t rr = esp_reset_reason();
@@ -683,14 +691,19 @@ void setup() {
       case ESP_RST_DEEPSLEEP:rs = "DEEPSLEEP"; break;
       default:               rs = "UNKNOWN";   break;
     }
+    Log.notice("reset reason=%s", rs);
   }
 
   // ── K10 hardware init (buttons, LEDs, audio) ─────────────────
+  Log.notice("K10 hw init start");
   k10.begin();
+  Log.notice("K10 hw init ok");
   loadK10Prefs();
+  Log.notice("K10 prefs loaded: audioVol=%d ledBright=%d", (int)s_audioVol, (int)s_ledBright);
 
   // ── LovyanGFX display init ────────────────────────────────────
   // k10.begin() turns backlight off (XL9535 P0.0=LOW). Enable it via Wire.
+  Log.verbose("I2C begin SDA=47 SCL=48");
   Wire.begin(47, 48);  // SDA=47, SCL=48 (K10 I2C bus)
   {
     // Config P0.0 as output
@@ -702,26 +715,29 @@ void setup() {
     Wire.requestFrom((uint8_t)0x20, (uint8_t)1); uint8_t out0 = Wire.read();
     Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(out0 | 0x01); Wire.endTransmission();
   }
+  Log.verbose("XL9535 backlight enabled");
   tft.init();
   tft.setRotation(s_screenFlip ? 0 : 2);
+  Log.notice("Display init ok rotation=%d", s_screenFlip ? 0 : 2);
   canvas.setPsram(true);
   canvas.setColorDepth(16);
   canvas.createSprite(240, 320);
   canvas.fillScreen(0x0000);
   canvas.pushSprite(0, 0);
+  Log.notice("Sprite 240x320 16bpp in PSRAM");
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
 
   // Print terrain reference table
   for (int t = 0; t < NUM_TERRAIN; t++) {
-    const char* visTxt = (TERRAIN_VIS[t] >= 2)   ? "+2 VHIGH "
+    [[maybe_unused]] const char* visTxt = (TERRAIN_VIS[t] >= 2)   ? "+2 VHIGH "
                        : (TERRAIN_VIS[t] == 1)  ? "+1 HIGH  "
                        : (TERRAIN_VIS[t] == 0)  ? "standard "
                        : (TERRAIN_VIS[t] == -1) ? "LOW r2   "
                        : (TERRAIN_VIS[t] == -2) ? "PENALTY  "
                        :                          "BLIND    ";
     char mcBuf[4] = {(char)('0'+TERRAIN_MC[t]), 0};
-    const char* mcStr = (TERRAIN_MC[t] == 255) ? "∞" : mcBuf;
+    [[maybe_unused]] const char* mcStr = (TERRAIN_MC[t] == 255) ? "∞" : mcBuf;
     switch (t) {
       case 0:   break;
       case 1:   break;
@@ -739,7 +755,8 @@ void setup() {
 
   // ── Mutex + game state init ───────────────────────────────────
   G.mutex = xSemaphoreCreateMutex();
-  if (!G.mutex) {  for (;;) delay(1000); }
+  if (!G.mutex) { Log.fatal("Game mutex create FAILED — halting"); for (;;) delay(1000); }
+  Log.notice("Game mutex created");
 
   G.tickId = 0; G.connectedCount = 0;
   G.threatClock = 0; G.crisisState = false;
@@ -773,68 +790,93 @@ void setup() {
   }
 
   for (int i = 0; i < NUM_ARCHETYPES; i++) {
-    const uint8_t* sk = ARCHETYPE_SKILLS[i];
+    [[maybe_unused]] const uint8_t* sk = ARCHETYPE_SKILLS[i];
   }
 
   // ── SD card mount ─────────────────────────────────────────────
   splashAdd("Mounting SD card...");
+  Log.notice("SD mount start");
   if (!SD.begin()) {
+    Log.fatal("SD.begin() FAILED — halting");
     splashAdd("SD FAIL - insert card!", 0xC04020);
     for (;;) delay(1000);
   }
   {
     uint64_t tot = SD.totalBytes() / (1024*1024);
     uint64_t use = SD.usedBytes()  / (1024*1024);
+    Log.notice("SD mount OK total=%uMB used=%uMB", (unsigned)tot, (unsigned)use);
     char sdBuf[30]; snprintf(sdBuf, 30, "SD %uMB/%uMB used", (unsigned)tot, (unsigned)use);
     splashAdd(sdBuf, 0x406030);
   }
   if (!SD.exists("/data/index.html")) {
+    Log.warning("SD MISSING: /data/index.html");
     splashAdd("WARN: no index.html!", 0xC89030);
   } else {
+    Log.notice("index.html found");
     splashAdd("index.html OK", 0x60A040);
   }
 
+  Log.notice("Web cache start");
   loadWebFilesToRAM();
   g_bootNonce = esp_random();
+  Log.verbose("Boot nonce=%08lx", (unsigned long)g_bootNonce);
   for (int i = 0; i < WEB_FILE_COUNT; i++)
     snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
   for (int i = 0; i < imgCacheCount; i++)
     snprintf(imgCache[i].etag, sizeof(imgCache[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, imgCache[i].len);
+  Log.notice("Web cache complete: %d web files, %d images, freeHeap=%uKB",
+             (int)WEB_FILE_COUNT, (int)imgCacheCount,
+             (unsigned)(ESP.getFreeHeap() / 1024));
   { char hb[36]; snprintf(hb, 36, "Web: %ukB in PSRAM", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd(hb, 0x406030); }
 
   // ── USB drive mode (hold Button A during SD mount splash) ───────────────────
   if (k10.buttonA && k10.buttonA->isPressed()) {
+    Log.notice("ButtonA held — entering USB MSC mode");
     splashAdd("USB DRIVE MODE!", 0x0070C0);
     delay(200);
     enterUSBDriveMode(k10);
     // never returns
+  } else {
+    Log.notice("ButtonA not held, normal boot");
   }
 
   setupVariantCounts();
 
+  Log.verbose("Effect table init");
   initEffectTable();
+  Log.notice("Items load start");
   splashAdd("Loading items...");
   loadItemRegistry();
+  Log.notice("Items loaded: %d", (int)itemCount);
   { char ib[30]; snprintf(ib, 30, "Items: %d loaded", (int)itemCount);
     splashAdd(ib, 0x60A040); }
 
+  Log.notice("Encounter index load start");
   splashAdd("Loading encounters...");
   loadEncounterIndex();
   loadLootTables();
+  Log.notice("Encounters: %d loot tables", (int)lootTableCount);
   { char eb[30]; snprintf(eb, 30, "Enc: %d tables", (int)lootTableCount);
     splashAdd(eb, 0x60A040); }
 
   splashAdd("Generating map...");
+  Log.notice("Save load attempt");
   if (!tryLoadSave()) {
+    Log.notice("No save found, generating map");
     generateMap();
+  } else {
+    Log.notice("Save loaded: map+players");
   }
+  Log.notice("Map ready %dx%d", (int)MAP_COLS, (int)MAP_ROWS);
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
 
   setupWiFiAndServer();
 
   xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 24576, NULL, 2, NULL, 1);
+  Log.notice("gameLoopTask spawned core=1 prio=2 stack=24KB");
+  Log.notice("==== BOOT COMPLETE elapsed=%ums ====", (unsigned)(millis() - _bootT0));
 }
 
 void loop() {
@@ -848,15 +890,21 @@ void loop() {
       bootWifiPending = false;
       strlcpy(savedSsid, WiFi.SSID().c_str(), sizeof(savedSsid));
       strlcpy(savedPass, WiFi.psk().c_str(),  sizeof(savedPass));
+      Log.notice("Boot STA connected ssid=%s ip=%s rssi=%d elapsed=%ums",
+                 savedSsid, WiFi.localIP().toString().c_str(),
+                 (int)WiFi.RSSI(), (unsigned)(now - bootWifiStartMs));
       k10ScreenLast = 255;  // force title redraw after WiFi splash would have disrupted it
       char buf[88];
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
       ws.textAll(buf, (size_t)blen);
+      Log.notice("NTP configTime(pool.ntp.org, time.nist.gov) called");
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
                now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
       bootWifiPending = false;
+      Log.warning("Boot STA FAIL ssid=%s status=%d elapsed=%ums",
+                  savedSsid, (int)wst, (unsigned)(now - bootWifiStartMs));
       savedSsid[0] = '\0';
     }
   }
@@ -888,6 +936,9 @@ void loop() {
 
   if (now - lastStatusMs >= STATUS_MS) {
     lastStatusMs = now;
+    Log.verbose("status: connected=%d tick=%lu freeHeap=%uKB",
+                (int)G.connectedCount, (unsigned long)G.tickId,
+                (unsigned)(ESP.getFreeHeap() / 1024));
     printStatus();
   }
   delay(100);

@@ -249,9 +249,9 @@ static void doRest(int pid, uint8_t terr, GameEvent& ev) {
   if (p.resting) return;  // already resting; prevent duplicate REST commands
   p.actUsed = true;
   p.resting = true;  // mark as resting; if all players rest, day ends early
-  uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=shelter, 2=improved shelter
+  [[maybe_unused]] uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=shelter, 2=improved shelter
   ev.actOut = AO_SUCCESS;
-  uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
+  [[maybe_unused]] uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
   // Count how many connected players are now resting (including this one)
   int restCount = 0, totalConn = 0;
   for (int k = 0; k < MAX_PLAYERS; k++) {

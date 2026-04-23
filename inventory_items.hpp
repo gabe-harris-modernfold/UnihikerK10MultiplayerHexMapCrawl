@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Item system strings ───────────────────────────────────────────────────
-static const char* EQUIP_SLOT_NAMES[6] = {
+[[maybe_unused]] static const char* EQUIP_SLOT_NAMES[6] = {
   "None","Head","Body","Hand","Feet","Vehicle"
 };
 
@@ -200,7 +200,6 @@ static bool unequipItem(int pid, uint8_t eslot) {
       // Clamp LL to new effective ceiling now that the item is no longer equipped
       uint8_t newCap = effectiveMaxLL(pid);
       if (p.ll > newCap) p.ll = newCap;
-      const ItemDef* def = getItemDef(itemId);
       return true;
     }
   }
@@ -245,7 +244,6 @@ static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
   groundItems[gslot].itemType = itemId;
   groundItems[gslot].qty      = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
 
-  const ItemDef* def = getItemDef(itemId);
   return true;
 }
 

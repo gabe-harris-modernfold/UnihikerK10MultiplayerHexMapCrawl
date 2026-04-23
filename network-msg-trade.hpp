@@ -2,6 +2,7 @@
 // ── Trade message handlers: offer, accept, decline ───────────────────────────
 
 static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* top = strstr(data, "\"to\""); if (!top) return;
   const char* tov = strchr(top + 4, ':');  if (!tov) return;
   int toPid = atoi(tov + 1);
@@ -76,6 +77,7 @@ static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size
 }
 
 static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* fp = strstr(data, "\"from\""); if (!fp) return;
   const char* fv = strchr(fp + 6, ':');      if (!fv) return;
   int fromPid = atoi(fv + 1);
@@ -112,6 +114,7 @@ static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, siz
 }
 
 static void handleMsg_trade_decline(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* fp = strstr(data, "\"from\""); if (!fp) return;
   const char* fv = strchr(fp + 6, ':');      if (!fv) return;
   int fromPid = atoi(fv + 1);

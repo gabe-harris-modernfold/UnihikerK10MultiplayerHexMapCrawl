@@ -6,7 +6,7 @@
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
 static void loadWebFilesToRAM() {
   File dir = SD.open("/data");
-  if (!dir) {  return; }
+  if (!dir) { Log.error("SD OPEN FAIL: /data"); return; }
   File f = dir.openNextFile();
   while (f) {
     String fname = String(f.name());
@@ -28,8 +28,11 @@ static void loadWebFilesToRAM() {
                 imgCache[imgCacheCount].name[39] = 0;
                 imgCache[imgCacheCount].buf = buf;
                 imgCache[imgCacheCount].len = sz;
+                Log.verbose("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
                 imgCacheCount++;
               } else {
+                Log.error("IMG cache ps_malloc FAIL size=%u name=%s/%s",
+                          (unsigned)sz, subDirName.c_str(), subFile.name());
               }
             }
             subFile.close();
@@ -44,8 +47,10 @@ static void loadWebFilesToRAM() {
             imgCache[imgCacheCount].name[39] = 0;
             imgCache[imgCacheCount].buf = buf;
             imgCache[imgCacheCount].len = sz;
+            Log.verbose("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
             imgCacheCount++;
           } else {
+            Log.error("IMG cache ps_malloc FAIL size=%u name=%s", (unsigned)sz, imgFile.name());
           }
         }
         imgFile.close();
@@ -60,7 +65,10 @@ static void loadWebFilesToRAM() {
             size_t got = f.read(buf, sz);
             WEB_FILES[i].buf = buf;
             WEB_FILES[i].len = got;
+            Log.notice("WEB cache: %s (%u B)", WEB_FILES[i].sdName, (unsigned)got);
           } else {
+            Log.error("WEB cache ps_malloc FAIL size=%u name=%s",
+                      (unsigned)sz, WEB_FILES[i].sdName);
           }
           break;
         }
@@ -82,9 +90,9 @@ static void printStatus() {
     uint8_t  archetype;
     uint8_t  skills[NUM_SKILLS];
   } snap[MAX_PLAYERS];
-  uint32_t tick = 0;
-  uint8_t  snapTC = 0;
-  uint16_t snapDay = 0;
+  [[maybe_unused]] uint32_t tick = 0;
+  [[maybe_unused]] uint8_t  snapTC = 0;
+  [[maybe_unused]] uint16_t snapDay = 0;
   uint32_t nowMs = millis();
 
   uint16_t mapRes[6] = {0};
@@ -115,17 +123,17 @@ static void printStatus() {
     }
   xSemaphoreGive(G.mutex);
 
-  uint32_t upSec = nowMs / 1000;
+  [[maybe_unused]] uint32_t upSec = nowMs / 1000;
 
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!snap[i].on) continue;
     uint8_t  t      = snap[i].terrain < NUM_TERRAIN ? snap[i].terrain : 0;
     int8_t   vl     = TERRAIN_VIS[t];
-    int      effVR  = (vl <= -3) ? 0 : (vl == -2) ? 1 : (vl == -1) ? 2 : (vl == 0) ? VISION_R : (vl == 1) ? VISION_R + 1 : VISION_R + 2;
+    [[maybe_unused]] int      effVR  = (vl <= -3) ? 0 : (vl == -2) ? 1 : (vl == -1) ? 2 : (vl == 0) ? VISION_R : (vl == 1) ? VISION_R + 1 : VISION_R + 2;
     uint32_t sessMs = nowMs - snap[i].connectMs;
-    uint32_t sessSec = sessMs / 1000;
-    uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
+    [[maybe_unused]] uint32_t sessSec = sessMs / 1000;
+    [[maybe_unused]] uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
 
   }
 }
@@ -163,6 +171,8 @@ static void commitItem(ItemDef& cur, bool& hasItem) {
   if (itemCount < MAX_ITEMS) {
     itemRegistry[itemCount++] = cur;
   } else {
+    Log.warning("Item registry FULL at %d — dropping id=%d name=%s",
+                (int)MAX_ITEMS, (int)cur.id, cur.name);
   }
   hasItem = false;
   cur = ItemDef{};
@@ -174,8 +184,10 @@ static void loadItemRegistry() {
 
   File f = SD.open("/data/items.cfg");
   if (!f) {
+    Log.warning("SD MISSING: /data/items.cfg");
     return;
   }
+  Log.notice("Items load: /data/items.cfg size=%u", (unsigned)f.size());
 
   ItemDef cur = {};
   bool hasItem = false;
@@ -288,10 +300,11 @@ static bool  jsonStr(const char* p, char* buf, int bufLen) {
 // Load /data/encounters/index.json → encPools[0..9]
 static void loadEncounterIndex() {
   File f = SD.open("/data/encounters/index.json");
-  if (!f) {  return; }
+  if (!f) { Log.warning("SD MISSING: /data/encounters/index.json"); return; }
+  Log.notice("Encounter index load: size=%u", (unsigned)f.size());
   size_t sz = min((size_t)f.size(), (size_t)512);
   char* buf = (char*)malloc(sz + 1);
-  if (!buf) { f.close(); return; }
+  if (!buf) { Log.error("encounter index malloc FAIL size=%u", (unsigned)(sz+1)); f.close(); return; }
   f.read((uint8_t*)buf, sz);
   buf[sz] = 0;
   f.close();
@@ -314,11 +327,12 @@ static void loadEncounterIndex() {
 // Load /encounters/loot_tables.json → lootTables[0..19]
 static void loadLootTables() {
   File f = SD.open("/data/encounters/loot_tables.json");
-  if (!f) {  return; }
+  if (!f) { Log.warning("SD MISSING: /data/encounters/loot_tables.json"); return; }
+  Log.notice("Loot tables load: size=%u", (unsigned)f.size());
   size_t sz = f.size();
   char* buf = (char*)ps_malloc(sz + 1);
   if (!buf) buf = (char*)malloc(sz + 1);
-  if (!buf) { f.close(); return; }
+  if (!buf) { Log.error("loot tables malloc FAIL size=%u", (unsigned)(sz+1)); f.close(); return; }
   f.read((uint8_t*)buf, sz);
   buf[sz] = 0;
   f.close();

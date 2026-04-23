@@ -2,6 +2,7 @@
 // ── Player message handlers: pick, move, name, wifi, check, regen, erase, act, settings ──
 
 static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* ap = strstr(data, "\"arch\""); if (!ap) return;
   const char* av = strchr(ap + 6, ':');      if (!av) return;
   int arch = atoi(av + 1);
@@ -147,6 +148,7 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 }
 
 static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* dp = strstr(data, "\"d\""); if (!dp) return;
   const char* dv = strchr(dp + 3, ':');  if (!dv) return;
   int dir = atoi(dv + 1);
@@ -177,6 +179,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
 }
 
 static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* np = strstr(data, "\"name\""); if (!np) return;
   const char* nv = strchr(np + 6, '"');      if (!nv) return; nv++;
   const char* ne = strchr(nv, '"');          if (!ne) return;
@@ -206,6 +209,7 @@ static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len)
 }
 
 static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* sp = strstr(data, "\"ssid\""); if (!sp) return;
   const char* sv = strchr(sp + 6, '"');      if (!sv) return; sv++;
   const char* se = strchr(sv, '"');          if (!se) return;
@@ -239,6 +243,7 @@ static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len)
 }
 
 static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* skp = strstr(data, "\"sk\""); if (!skp) return;
   const char* skv = strchr(skp + 4, ':');   if (!skv) return;
   int sk = atoi(skv + 1);
@@ -271,7 +276,9 @@ static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len
 }
 
 static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    Log.notice("Regen: removing %s and %s", SAVE_MAP_F, SAVE_PLY_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
     generateMap();
@@ -295,6 +302,7 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
 }
 
 static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* ap = strstr(data, "\"arch\""); if (!ap) return;
   const char* av = strchr(ap + 6, ':');      if (!av) return;
   int arch = atoi(av + 1);
@@ -360,6 +368,7 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
 }
 
 static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   // Note: "cnd" field (condTgt) removed — Treat action no longer exists
   const char* ap = strstr(data, "\"a\""); if (!ap) return;
   const char* av = strchr(ap + 3, ':');   if (!av) return;
@@ -392,6 +401,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
 }
 
 static void handleMsg_settings(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* avp = strstr(data, "\"audioVol\"");
   if (avp) { const char* avv = strchr(avp + 10, ':'); if (avv) {
     int v = atoi(avv + 1);

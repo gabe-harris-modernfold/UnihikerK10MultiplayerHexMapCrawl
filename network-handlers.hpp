@@ -3,10 +3,20 @@
 // Included from Esp32HexMapCrawl.ino after all network-msg-*.hpp files.
 
 static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) {
-  const char* tp = strstr(data, "\"t\""); if (!tp) return;
-  const char* tv = strchr(tp + 3, '"');   if (!tv) return; tv++;
-  const char* te = strchr(tv, '"');       if (!te) return;
+  const char* tp = strstr(data, "\"t\"");
+  if (!tp) {
+    Log.warning("WS malformed msg id=%u (no \"t\" key) head=%.20s",
+                (unsigned)client->id(), data);
+    return;
+  }
+  const char* tv = strchr(tp + 3, '"');
+  if (!tv) { Log.warning("WS malformed msg id=%u (no t-value open quote)", (unsigned)client->id()); return; }
+  tv++;
+  const char* te = strchr(tv, '"');
+  if (!te) { Log.warning("WS malformed msg id=%u (no t-value close quote)", (unsigned)client->id()); return; }
   size_t tl = (size_t)(te - tv);
+
+  Log.verbose("WS msg id=%u len=%u type=%.*s", (unsigned)client->id(), (unsigned)len, (int)tl, tv);
 
   if      (strncmp(tv, "pick",          tl) == 0) handleMsg_pick(client, data, len);
   else if (strncmp(tv, "m",             tl) == 0) handleMsg_move(client, data, len);
@@ -29,10 +39,24 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (strncmp(tv, "enc_choice",    tl) == 0) handleMsg_enc_choice(client, data, len);
   else if (strncmp(tv, "enc_bank",      tl) == 0) handleMsg_enc_bank(client, data, len);
   else if (strncmp(tv, "enc_abort",     tl) == 0) handleMsg_enc_abort(client, data, len);
+  else {
+    Log.warning("WS unknown msg type=%.*s id=%u", (int)tl, tv, (unsigned)client->id());
+  }
 }
 
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
+  const char* tn;
+  switch (type) {
+    case WS_EVT_CONNECT:    tn = "CONNECT"; break;
+    case WS_EVT_DISCONNECT: tn = "DISCONNECT"; break;
+    case WS_EVT_DATA:       tn = "DATA"; break;
+    case WS_EVT_PONG:       tn = "PONG"; break;
+    case WS_EVT_ERROR:      tn = "ERROR"; break;
+    default:                tn = "?"; break;
+  }
+  Log.verbose("WS event id=%u type=%s", (unsigned)client->id(), tn);
+
   switch (type) {
     case WS_EVT_CONNECT:    handleConnect(client); break;
     case WS_EVT_DISCONNECT: handleDisconnect(client); break;
@@ -41,7 +65,15 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
       if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
         data[len] = 0;
         handleMessage(client, (char*)data, len);
+      } else {
+        Log.warning("WS frame drop id=%u final=%d idx=%u len=%u opcode=%d",
+                    (unsigned)client->id(), (int)info->final,
+                    (unsigned)info->index, (unsigned)info->len, (int)info->opcode);
       }
+      break;
+    }
+    case WS_EVT_ERROR: {
+      Log.error("WS ERROR id=%u len=%u", (unsigned)client->id(), (unsigned)len);
       break;
     }
     default: break;

@@ -27,6 +27,8 @@ static void drainEvents() {
       }
     }
     xSemaphoreGive(G.mutex);
+  } else {
+    Log.warning("drainEvents: G.mutex timeout - using stale player snapshot");
   }
 
   // Atomically snapshot the event queue so Core-0 connect/disconnect handlers
@@ -39,6 +41,8 @@ static void drainEvents() {
   pendingCount = 0;
   taskEXIT_CRITICAL(&evtMux);
 
+  if (snapCount > 0) Log.verbose("drainEvents: %d pending", snapCount);
+
   char buf[256];
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
@@ -46,25 +50,34 @@ static void drainEvents() {
     switch (ev.type) {
 
       case EVT_COLLECT:
+        Log.notice("EVT col pid=%d q=%d r=%d res=%d amt=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"col\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
           ev.pid, ev.q, ev.r, ev.res, ev.amt);
         ws.textAll(buf, len);
         break;
 
-      case EVT_RESPAWN:
+      case EVT_RESPAWN: {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"rsp\",\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
           ev.q, ev.r, ev.res, ev.amt);
+        int rcpt = 0;
         for (int pid = 0; pid < MAX_PLAYERS; pid++) {
           if (!conn[pid]) continue;
           if (hexDistWrap(pq[pid], pr[pid], ev.q, ev.r) > visR[pid]) continue;
           AsyncWebSocketClient* cl = ws.client(wsId[pid]);
-          if (cl) cl->text(buf, len);
+          if (cl) { cl->text(buf, len); rcpt++; }
         }
+        Log.verbose("EVT rsp q=%d r=%d res=%d amt=%d recipients=%d",
+                    (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt, rcpt);
         break;
+      }
 
       case EVT_MOVE:
+        Log.verbose("EVT mv pid=%d ->(%d,%d) rad=%d explo=%d mp=%d",
+                    (int)ev.pid, (int)ev.q, (int)ev.r,
+                    (int)ev.radR, (int)ev.exploD, (int)ev.moveMP);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"radd\":%d,\"rad\":%d,\"exploD\":%d,\"mp\":%d}",
           ev.pid, ev.q, ev.r, (int)ev.radD, (int)ev.radR, (int)ev.exploD, (int)ev.moveMP);
@@ -72,6 +85,7 @@ static void drainEvents() {
         break;
 
       case EVT_JOINED: {
+        Log.notice("EVT join pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"join\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
@@ -82,6 +96,7 @@ static void drainEvents() {
       }
 
       case EVT_LEFT: {
+        Log.notice("EVT left pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
@@ -91,6 +106,9 @@ static void drainEvents() {
       }
 
       case EVT_DAWN: {
+        Log.notice("EVT dawn day=%d pid=%d f=%d w=%d ll=%d mp=%d",
+                   (int)ev.dawnDay, (int)ev.pid, (int)ev.dawnF,
+                   (int)ev.dawnW, (int)ev.dawnLL, (int)ev.dawnMP);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
@@ -110,6 +128,9 @@ static void drainEvents() {
       }
 
       case EVT_DUSK:
+        Log.notice("EVT dusk pid=%d out=%d dn=%d tot=%d ll=%d",
+                   (int)ev.pid, (int)ev.actOut, (int)ev.actDn,
+                   (int)ev.actTot, (int)ev.actNewLL);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dusk\",\"pid\":%d,\"out\":%d,"
           "\"dn\":%d,\"tot\":%d,\"ll\":%d,\"lld\":%d,\"rad\":%d}",
@@ -123,6 +144,10 @@ static void drainEvents() {
         // K10 event log — brief action summary
         static const char* ACT_SHORT[8] = {"FORAGE","WATER","?","SCAV","SHELTER","?","SURVEY","REST"};
         const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
+        Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d mp=%d fd=%d wd=%d scoreD=%d",
+                   (int)ev.pid, aShort, (int)ev.actType, (int)ev.actOut,
+                   (int)ev.actNewLL, (int)ev.actNewMP,
+                   (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actScoreD);
         { char lb[34]; snprintf(lb, sizeof(lb), "P%d: %s%s",
             (int)ev.pid, aShort, ev.actOut ? " OK" : " FAIL");
           k10LogAdd(lb); }
@@ -141,6 +166,8 @@ static void drainEvents() {
         break;
 
       case EVT_DOWNED: {
+        Log.warning("EVT downed pid=%d wsId=%u lobby-moved",
+                    (int)ev.pid, (unsigned)ev.evWsId);
         // 1. Send targeted "downed" message to the player's client
         {
           len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", (int)ev.pid);
@@ -177,14 +204,22 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
         ws.textAll(buf, len);
         k10Play(MOTIF_POWER_DOWN);
+        int synced = 0;
         for (AsyncWebSocketClient& cl : ws.getClients()) {
           int slot = findSlot(cl.id());
-          if (slot >= 0) sendSync(&cl, slot);
+          if (slot >= 0) { sendSync(&cl, slot); synced++; }
         }
+        Log.notice("EVT regen - broadcasting full sync to %d clients", synced);
         break;
       }
 
       case EVT_TRADE_OFFER: {
+        Log.notice("EVT trd_off from=%d to=%d give=[%d,%d,%d,%d,%d] want=[%d,%d,%d,%d,%d]",
+                   (int)ev.pid, (int)ev.tradeTo,
+                   ev.tradeGive[0], ev.tradeGive[1], ev.tradeGive[2],
+                   ev.tradeGive[3], ev.tradeGive[4],
+                   ev.tradeWant[0], ev.tradeWant[1], ev.tradeWant[2],
+                   ev.tradeWant[3], ev.tradeWant[4]);
         char tbuf[192]; int tlen;
         tlen = snprintf(tbuf, sizeof(tbuf),
           "{\"t\":\"ev\",\"k\":\"trd_off\","
@@ -203,6 +238,10 @@ static void drainEvents() {
       }
 
       case EVT_TRADE_RESULT: {
+        static const char* TRL[4] = {"?","DONE","DECLINED","EXPIRED"};
+        Log.notice("EVT trd_res from=%d to=%d result=%s",
+                   (int)ev.pid, (int)ev.tradeTo,
+                   (ev.tradeResult < 4) ? TRL[ev.tradeResult] : "?");
         char tbuf[96]; int tlen;
         tlen = snprintf(tbuf, sizeof(tbuf),
           "{\"t\":\"ev\",\"k\":\"trd_res\","
@@ -218,9 +257,12 @@ static void drainEvents() {
       }
 
       case EVT_NAME:
+        Log.verbose("EVT name pid=%d (piggybacks on state broadcast)", (int)ev.pid);
         break; // name changes broadcast via broadcastState(); no dedicated event message needed
 
       case EVT_ENC_START:
+        Log.notice("EVT enc_start pid=%d q=%d r=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
           ev.pid, (int)ev.q, (int)ev.r);
@@ -235,6 +277,13 @@ static void drainEvents() {
         break;
 
       case EVT_ENC_RESULT: {
+        {
+          static const char* SK[5] = {"NAV","FORAGE","SCAV","SHELT","ENDURE"};
+          Log.notice("EVT enc_res pid=%d skill=%s out=%d dn=%d total=%d ends=%d penLL=%d penRad=%d",
+                     (int)ev.pid, (ev.encSkill < 5) ? SK[ev.encSkill] : "?",
+                     (int)ev.encOut, (int)ev.encDN, (int)ev.encTotal,
+                     (int)ev.encEnds, (int)ev.encPenLL, (int)ev.encPenRad);
+        }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
@@ -268,6 +317,8 @@ static void drainEvents() {
       }
 
       case EVT_ENC_BANK: {
+        Log.notice("EVT enc_bank pid=%d q=%d r=%d scoreD=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.actScoreD);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_bank\",\"pid\":%d,\"q\":%d,\"r\":%d,"
           "\"loot\":[%d,%d,%d,%d,%d],\"scoreD\":%d}",
@@ -289,6 +340,10 @@ static void drainEvents() {
       case EVT_ENC_END: {
         static const char* REASON[] = {"hazard","abort","dawn","downed","disconnect"};
         const char* reason = (ev.encOut < 5) ? REASON[ev.encOut] : "?";
+        if (ev.encOut == 3 || ev.encOut == 4)
+          Log.warning("EVT enc_end pid=%d reason=%s", (int)ev.pid, reason);
+        else
+          Log.notice("EVT enc_end pid=%d reason=%s", (int)ev.pid, reason);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_end\",\"pid\":%d,\"q\":%d,\"r\":%d,\"reason\":\"%s\"}",
           ev.pid, (int)ev.q, (int)ev.r, reason);
@@ -308,6 +363,8 @@ static void drainEvents() {
 
       case EVT_WEATHER: {
         static const char* WX[4] = {"CLEAR","RAIN","STORM","CHEM"};
+        Log.notice("EVT weather phase=%s ticks=%d",
+                   (ev.q < 4) ? WX[ev.q] : "?", (int)ev.r);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
           (int)ev.q, (int)ev.r);
@@ -317,7 +374,11 @@ static void drainEvents() {
         if (ev.q == WEATHER_STORM) k10Play(MOTIF_MUTANT_BREATH); else k10Play(MOTIF_DISTANT_THUD);
         break;
       }
+      default:
+        Log.error("EVT UNKNOWN type=%d pid=%d", (int)ev.type, (int)ev.pid);
+        break;
     }
   }
+  if (snapCount > 0) Log.verbose("drainEvents: dispatched=%d", snapCount);
   // pendingCount was already reset to 0 inside the spinlock snapshot above.
 }

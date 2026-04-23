@@ -6,6 +6,7 @@
 // from different message types are safe (each function has its own static).
 
 static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
   if (!sp) return;
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
@@ -47,6 +48,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
 }
 
 static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
   if (!sp) return;
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
@@ -81,6 +83,7 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
 }
 
 static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* ep = strstr(data, "\"eslot\"");
   if (!ep) return;
   const char* ev = strchr(ep + 7, ':'); if (!ev) return;
@@ -115,6 +118,7 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
 }
 
 static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
   if (!sp) return;
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
@@ -173,6 +177,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
 }
 
 static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
   const char* gp = strstr(data, "\"gslot\"");
   if (!gp) return;
   const char* gv = strchr(gp + 7, ':'); if (!gv) return;

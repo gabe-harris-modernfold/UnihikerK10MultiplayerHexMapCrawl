@@ -263,7 +263,7 @@ static void movePlayer(int pid, int dir) {
   if (now - p.lastMoveMs < cd) return;  // cooldown — silent, normal behaviour
   p.lastMoveMs = now;
 
-  int16_t oldQ = p.q, oldR = p.r;
+  [[maybe_unused]] int16_t oldQ = p.q, oldR = p.r;
   p.q = (int16_t)nq;
   p.r = (int16_t)nr;
   p.steps++;
@@ -280,7 +280,7 @@ static void movePlayer(int pid, int dir) {
 
   // Compute vision params at new position for the debug line
   int8_t  visLvl  = (destTerrain < NUM_TERRAIN) ? TERRAIN_VIS[destTerrain] : 0;
-  int     effVisR = (visLvl <= -3) ? 0 : (visLvl == -2) ? 1 : (visLvl == -1) ? 2 : (visLvl == 0) ? VISION_R : (visLvl == 1) ? VISION_R + 1 : VISION_R + 2;
+  [[maybe_unused]] int     effVisR = (visLvl <= -3) ? 0 : (visLvl == -2) ? 1 : (visLvl == -1) ? 2 : (visLvl == 0) ? VISION_R : (visLvl == 1) ? VISION_R + 1 : VISION_R + 2;
   // Deduct movement cost from daily MP budget
   p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
 
