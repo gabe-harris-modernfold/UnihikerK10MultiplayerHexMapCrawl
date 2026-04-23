@@ -120,10 +120,9 @@ function initActionPanel() {
   document.getElementById('action-trade-send').addEventListener('click', () => {
     if (myId < 0 || tradeTargetPid < 0) return;
     const allZero = tradeGive.every(v => v === 0) && tradeWant.every(v => v === 0);
-    if (allZero) { showToast('\u2297 Offer must include at least one resource'); return; }
+    if (allZero) return;
     send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
     closeActionPanel();
-    showToast('\u21C4 Trade offer sent');
   });
 
   function closeActionPanel() {
@@ -176,14 +175,10 @@ function initActionPanel() {
   function openActionPanel() {
     if (myId < 0) return;
     if (players[myId]?.ll === 0) {
-      showToast('☠ You have been downed — select a new survivor');
       addLog('<span class="log-check-fail">☠ Cannot act — you have been downed.</span>');
       return;
     }
-    if (players[myId]?.enc) {
-      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
-      return;
-    }
+    if (players[myId]?.enc) return;
     const me   = players[myId];
     const cell = gameMap[me.r]?.[me.q];
     const terr        = cell?.terrain ?? null;
@@ -281,18 +276,7 @@ function initActionPanel() {
         `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
 
       btn.addEventListener('click', () => {
-        if (!canAct) {
-          let toastMsg;
-          if (!available) {
-            toastMsg = '\u2297 Not available here';
-          } else if (hasMP) {
-            toastMsg = '\u2297 Need scrap to build';
-          } else {
-            toastMsg = '\u2297 Insufficient MP';
-          }
-          showToast(toastMsg);
-          return;
-        }
+        if (!canAct) return;
         if (def.id === ACT_WATER) {
           waterMpVal = Math.min(3, mp);
           document.getElementById('action-water-v').textContent = waterMpVal;
@@ -325,15 +309,9 @@ function initActionPanel() {
   document.getElementById('action-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeActionPanel(); } });
 
   document.getElementById('fab-rest-btn').addEventListener('click', () => {
-    if (myId >= 0 && players[myId]?.ll === 0) {
-      showToast('☠ You have been downed — select a new survivor');
-      return;
-    }
-    if (myId >= 0 && players[myId]?.enc) {
-      showToast('\u26D4 Inside encounter \u2014 complete or bank first');
-      return;
-    }
-    if (uiResting.val || restSent) { showToast('\u2297 Already resting'); return; }
+    if (myId >= 0 && players[myId]?.ll === 0) return;
+    if (myId >= 0 && players[myId]?.enc) return;
+    if (uiResting.val || restSent) return;
     restSent = true; // NOSONAR — declared in network.js
     updateRestIndicator();
     send({ t: 'act', a: ACT_REST });
@@ -796,7 +774,6 @@ function initMenuSystem() {
               if (!nm) return;
               send({ t: 'n', name: nm });
               if (myId >= 0) { players[myId].nm = nm; updateSidebar(); }
-              showToast(`Call sign: ${nm}`);
             }
           }, 'CONFIRM')
         )
@@ -911,11 +888,10 @@ function initMenuSystem() {
           onclick: () => {
             const ssid = document.getElementById('wifi-ssid')?.value.trim();
             const pass = document.getElementById('wifi-pass')?.value ?? '';
-            if (!ssid) { showToast('Enter a network name'); return; }
+            if (!ssid) return;
             localStorage.setItem('wifi_ssid', ssid);
             localStorage.setItem('wifi_pass', pass);
             send({ t: 'wifi', ssid, pass });
-            showToast('Credentials saved \u2014 connecting...');
           }
         }, '\u25B6 CONNECT TO NETWORK')
       ),
@@ -933,7 +909,7 @@ function initMenuSystem() {
             onclick: () => {
               if (confirm(`Erase ${a.name}?\nAll progress, score and saved data will be permanently deleted.`)) {
                 send({ t: 'eraseslot', arch: i });
-                showToast(`☠ ${a.name} erased.`);
+                showToast(`☠ ${a.name} is scrubbed from the wastes. Nothing remains.`);
               }
             }
           }, a.name)
@@ -1026,7 +1002,6 @@ function initCharSelect() {
               pickTimeoutId = setTimeout(() => { // NOSONAR — declared in ui-state.js
                 if (uiPickPending.val) {
                   uiPickPending.val = false;
-                  showToast('\u26A0 Server did not respond \u2014 please try selecting again.');
                 }
                 pickTimeoutId = null;
               }, 8000);

@@ -22,7 +22,6 @@ function handleCollect(ev, ctx) {
     if (idx >= 0 && idx < 5) {
       ctx.players[ctx.myId].inv[idx] = (ctx.players[ctx.myId].inv[idx] ?? 0) + ev.amt;
     }
-    ctx.showToast(`+${ev.amt} ${ctx.RES_NAMES[ev.res]}`);
     ctx.updateSidebar();
   }
 }
@@ -74,7 +73,7 @@ function handleMovement(ev, ctx) {
     pm.rad = ev.rad ?? pm.rad;
     if (ev.pid === ctx.myId) {
       ctx.uiRad.val = pm.rad;
-      ctx.showToast(`☢ +${ev.radd} Radiation (R:${pm.rad})`);
+      ctx.showToast(`☢ The air hums. Radiation seeps into your bones. (+${ev.radd})`);
       ctx.addLog(`<span class="log-check-fail">☢ Entered rad zone +${ev.radd}R → R:${pm.rad}</span>`);
     }
   }
@@ -191,7 +190,7 @@ function handleDawn(ev, ctx) {
   ctx.gameState.dc = ev.dc ?? ctx.gameState.dc; // Update day counter
   ctx.gameState.tc = ev.tc ?? ctx.gameState.tc; // Update threat clock
 
-  ctx.showToast('☀ DAWN');
+  ctx.showToast(`☀ Day ${ctx.gameState.dc} — the sun returns. The wastes endure, and so do you.`);
   ctx.updateSidebar();
 }
 
@@ -225,7 +224,6 @@ function handleTradeResult(ev, ctx) {
   const cls         = ev.res === 1 ? 'log-col' : 'log-check-fail';
   ctx.addLog(`<span class="${cls}">\u21C4 Trade ${label}: ${ctx.escHtml(fromName)} \u2194 ${ctx.escHtml(toName)}</span>`);
   if (ev.from === ctx.myId || ev.to === ctx.myId) {
-    ctx.showToast('\u21C4 Trade ' + label);
     globalThis._closeTradeOverlay?.();
     ctx.updateSidebar();
   }

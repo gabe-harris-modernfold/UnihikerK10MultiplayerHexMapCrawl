@@ -14,7 +14,7 @@ function escHtml(s) {
 // ── Toast stack ───────────────────────────────────────────────────
 const toastStack = document.getElementById('toast-stack');
 const TOAST_MAX   = 3;      // max toasts visible simultaneously
-const TOAST_LIFE  = 1800;   // ms before fade starts
+const TOAST_LIFE  = 3200;   // ms before fade starts
 const TOAST_FADE  = 300;    // ms fade-out duration
 let   toastQueue  = [];     // pending messages
 let   toastActive = 0;      // currently visible count
@@ -94,23 +94,13 @@ let lastMoveSent = 0;
 function move(dir) {
   if (typeof invertedInputTurns !== 'undefined' && invertedInputTurns > 0) dir = (dir + 3) % 6;
   if (myId >= 0 && players[myId]?.ll === 0) {
-    showToast('☠ You have been downed — select a new survivor');
     addLog('<span class="log-check-fail">☠ Cannot move — you have been downed.</span>');
     return;
   }
-  if (myId >= 0 && players[myId]?.enc) {
-    showToast('\u26D4 Inside encounter \u2014 complete or bank first');
-    return;
-  }
-  if (myId >= 0 && uiMP.val <= 0) {
-    showToast('\u26A0 Exhausted \u2014 wait for dawn');
-    return;
-  }
+  if (myId >= 0 && players[myId]?.enc) return;
+  if (myId >= 0 && uiMP.val <= 0) return;
   const vm = myId >= 0 ? (players[myId].vm ?? 0x3F) : 0x3F;
-  if (!(vm & (1 << dir))) {
-    showToast('\u26D4 Impassable \u2014 direction blocked');
-    return;
-  }
+  if (!(vm & (1 << dir))) return;
   const now = Date.now();
   if (now - lastMoveSent < moveCooldownMs - 30) {
     document.querySelectorAll('.dir-btn[data-dir]').forEach(b => {

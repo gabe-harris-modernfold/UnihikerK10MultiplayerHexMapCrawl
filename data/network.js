@@ -164,7 +164,6 @@ function checkAutoRest() {
   if (others.length === 0) return;          // solo — don't auto-rest
   if (others.every(p => p.rest)) {
     // All other connected players are resting — auto-rest
-    showToast('\ud83d\ude34 Auto-rest — all others are down');
     send({ t: 'act', a: ACT_REST });
   }
 }
@@ -183,7 +182,7 @@ function _checkDownedState() {
     myId = -1;
     pendingLobbyRedirect = true;
     addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you.</span>');
-    showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
+    showToast('☠ The wasteland claims you. Your story ends in the dust.');
     socket.close();  // triggers server slot reset + auto-reconnect → re-enter lobby
     setTimeout(() => { pendingLobbyRedirect = false; showCharSelect(); }, 3500);
   }
@@ -323,11 +322,6 @@ function _handleSelfVis() {
   // If the current hex still has a resource after the move, collection was
   // blocked. The only server-side reason is a full inventory — notify the player.
   const _cur = gameMap[_me.r]?.[_me.q];
-  if (_cur?.resource > 0) {
-    const _totalInv = (_me.inv ?? [0,0,0,0,0]).reduce((a, b) => a + (b || 0), 0);
-    if (_totalInv >= (_me.sp ?? 6))
-      showToast(`\u22a0 Inventory full \u2014 ${RES_NAMES[_cur.resource] ?? 'resource'} left behind`);
-  }
   // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
   if (_cur?.poi) {
     globalThis._lastEncStartT = Date.now();
@@ -362,12 +356,6 @@ function _msgWifi(msg) {
     serverHasWifiCreds = true;
     if (msg.ssid) localStorage.setItem('wifi_ssid', msg.ssid);
     if (msg.pass !== undefined) localStorage.setItem('wifi_pass', msg.pass);
-  } else {
-    let wifiToast;
-    if      (msg.status === 'ok')   wifiToast = `\u25CF WiFi connected  ${msg.ip ?? ''}`.trim();
-    else if (msg.status === 'fail') wifiToast = '\u25CB WiFi failed \u2014 check credentials';
-    else                            wifiToast = `WiFi: ${msg.status ?? 'unknown'}`;
-    showToast(wifiToast);
   }
 }
 
@@ -399,11 +387,9 @@ function handleMsg(msg) {
       break;
     case 'enc_dbg':
       console.warn('[ENC/DBG] server diagnostic:', msg.msg, 't='+Date.now());
-      showToast(`\u26A0 ENC DEBUG: ${msg.msg}`);
       break;
     case 'err':
       console.warn('[ENC/ERR] Server error:', msg);
-      showToast(`\u22a0 ${msg.msg ?? 'Server error'}`);
       break;
   }
   buildAgentState();
@@ -425,7 +411,6 @@ function _evCol(ev) {
     // before the next 's' broadcast confirms the server-side inv state.
     const idx = ev.res - 1;
     if (idx >= 0 && idx < 5) players[myId].inv[idx] = (players[myId].inv[idx] ?? 0) + ev.amt;
-    showToast(`+${ev.amt} ${RES_NAMES[ev.res]}`);
     updateSidebar();
   }
 }
@@ -434,8 +419,8 @@ function _handleRadiation(ev, pm) {
   pm.rad = ev.rad ?? pm.rad;
   if (ev.pid !== myId) return;
   uiRad.val = pm.rad;
-  showToast(`\u2622 +${ev.radd} Radiation (R:${pm.rad})`);
-  addLog(`<span class="log-check-fail">\u2622 Entered rad zone +${ev.radd}R → R:${pm.rad}</span>`);
+  showToast(`☢ The air hums. Radiation seeps into your bones. (+${ev.radd})`);
+  addLog(`<span class="log-check-fail">☢ Entered rad zone +${ev.radd}R → R:${pm.rad}</span>`);
 }
 
 function _narrateMove(ev) {
@@ -476,7 +461,7 @@ function _evDowned(ev) {
   console.log('[downed] received — starting 3.5s timer');
   globalThis._onEncEnd?.();  // close encounter overlay if open when player is downed
   addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
-  showToast('☠ YOU HAVE BEEN DOWNED — re-selecting survivor...');
+  showToast('☠ The wasteland claims you. Your story ends in the dust.');
   setTimeout(() => {
     pendingLobbyRedirect = false;
     console.log('[downed] timer fired — lobbyAvail=%o', lobbyAvail.val);
@@ -499,10 +484,6 @@ function _evChk(ev) {
   const icon = ev.suc ? '\u25CF' : '\u25CB';
   const cls  = ev.suc ? 'log-check-ok' : 'log-check-fail';
   addLog(`<span class="${cls}">${icon} ${escHtml(who)} ${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt}=${ev.tot} vs DN${ev.dn}</span>`);
-  if (ev.pid === myId) {
-    // Show the roll result only — action outcome (incl. PARTIAL) arrives in the 'act' event
-    showToast(`${skNm}: ${ev.r1}+${ev.r2}+${ev.sv}${modTxt}=${ev.tot} vs DN${ev.dn}`);
-  }
 }
 
 function _applyDawnToPlayer(ev) {
@@ -532,10 +513,11 @@ function _buildLlLogTxt(dll) {
 }
 
 function _toastDawnSelf(ev) {
-  let llTxt = '';
-  if (ev.dll < 0)      llTxt = ` LL${ev.dll}`;
-  else if (ev.dll > 0) llTxt = ` LL+${ev.dll}`;
-  showToast(`\u2600 Day ${ev.day}${llTxt} F:${ev.f} W:${ev.w}`);
+  let dawnMsg;
+  if (ev.dll < 0)      dawnMsg = `☀ Day ${ev.day} — you wake weaker. The wastes take another piece.`;
+  else if (ev.dll > 0) dawnMsg = `☀ Day ${ev.day} — you wake mended. The sun feels kind for once.`;
+  else                 dawnMsg = `☀ Day ${ev.day} — the sun returns. The wastes endure, and so do you.`;
+  showToast(dawnMsg);
   const _ap = document.getElementById('action-panel');
   if (_ap?.classList.contains('open')) setTimeout(openActionPanel, 0);
 }
@@ -582,25 +564,13 @@ function _handleRestSuccess(ev, who) {
   players[ev.pid].rest = true;
   if (ev.pid === myId) uiResting.val = true;
   checkAutoRest();
-  const msg = ev.pid === myId ? 'Resting — waiting for dawn' : `${escHtml(who)} is resting`;
-  showToast(`\ud83d\ude34 ${msg}`);
-  addLog(`<span class="log-mv">\ud83d\ude34 ${escHtml(who)} is now waiting for dawn</span>`);
+  addLog(`<span class="log-mv">${escHtml(who)} is now waiting for dawn</span>`);
 }
 
-function _handleShelterSuccess(ev, who) {
-  const shelterName = ev.cnd === 2 ? 'an improved shelter 🏠' : 'a shelter ⛺';
-  const msg = ev.pid === myId ? `Built ${shelterName}!` : `${escHtml(who)} built ${shelterName}`;
-  showToast(`🔨 ${msg}`);
+function _handleShelterSuccess(ev) {
   // Update local gameMap immediately so the shelter icon renders without waiting for next move
   const sp = players[ev.pid];
   if (sp && gameMap[sp.r]?.[sp.q] != null) gameMap[sp.r][sp.q].shelter = ev.cnd;
-}
-
-function _toastActResult(ev, actNm) {
-  if      (ev.out === AO_BLOCKED) showToast(`\u2297 ${actNm}: not available`);
-  else if (ev.out === AO_SUCCESS) showToast(`\u25CF ${actNm}: success`);
-  else if (ev.out === AO_PARTIAL) showToast(`\u25D1 ${actNm}: partial success`);
-  else                            showToast(`\u25CB ${actNm}: failed`);
 }
 
 function _narrateActResult(ev, actNm) {
@@ -624,10 +594,8 @@ function _evAct(ev) {
   const { outTx, outCl } = _buildActOutcome(ev.out);
   const detail = _buildActDetail(ev);
   addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
-  // Special toasts for REST and SHELTER
-  if (ev.a === ACT_REST && ev.out === AO_SUCCESS)        _handleRestSuccess(ev, who);
-  else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) _handleShelterSuccess(ev, who);
-  else if (ev.pid === myId)                               _toastActResult(ev, actNm);
+  if (ev.a === ACT_REST && ev.out === AO_SUCCESS)         _handleRestSuccess(ev, who);
+  else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) _handleShelterSuccess(ev);
   // Apply scrap delta for ALL actions (SCAV gives +1, SHELTER spends -1/-2)
   if (ev.sd !== undefined && ev.sd !== 0)
     players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
@@ -650,7 +618,6 @@ function _evSurv(ev) {
         surveyedCells.add(`${sq}_${sr}`);
       }
     }
-    if (ev.pid === myId) showToast('\u25CE Survey: outer ring revealed');
   } catch(e) { console.error('surv event error', e); }
 }
 
@@ -668,8 +635,8 @@ function _evDusk(ev) {
   const lldTxt = ev.lld < 0 ? ` LL${ev.lld} +Wound` : '';
   addLog(`<span class="${cls}">\u2622 DUSK ${escHtml(who)}: Endure ${totTxt} → ${pass ? 'PASS' : 'FAIL'}${lldTxt}</span>`);
   if (ev.pid === myId) {
-    if (pass) showToast('\u2622 Dusk Endure: passed');
-    else      showToast(`\u2622 Dusk Endure: FAILED — LL${ev.lld}, +Major Wound`);
+    if (pass) showToast('☢ You outlast the rads. Your skin stops crawling.');
+    else      showToast('☢ The radiation wins. You bleed from places you forgot you had.');
     updateSidebar();
   }
 }
@@ -695,7 +662,6 @@ function _evTrdRes(ev) {
   const cls   = ev.res === 1 ? 'log-col' : 'log-check-fail';
   addLog(`<span class="${cls}">\u21C4 Trade ${label}: ${escHtml(fromName)} \u2194 ${escHtml(toName)}</span>`);
   if (ev.from === myId || ev.to === myId) {
-    showToast('\u21C4 Trade ' + label);
     globalThis._closeTradeOverlay?.();
     updateSidebar();
   }
@@ -704,11 +670,8 @@ function _evTrdRes(ev) {
 function _evItemResult(ev) {
   // Server ack for use_item / equip_item / unequip_item
   if (ev.ok) {
-    if (ev.msg) showToast(ev.msg);
     // Dispatch client-side narrative effects
     if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
-  } else {
-    showToast('\u2297 ' + (ev.msg || 'Action failed'));
   }
   // Always apply server ground-truth state (server sends current state regardless of ok/fail)
   if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
@@ -747,7 +710,7 @@ function _evEncRes(ev) {
         if (cur > 0) { const take = Math.min(cur, toDeduct); players[apid].inv[ri] = cur - take; toDeduct -= take; }
       }
       if (apid === myId) {
-        showToast(`\uD83D\uDC41 You shared supplies with ${escHtml(ldrName)}.`);
+        showToast(`◉ You press supplies into ${escHtml(ldrName)}'s hand. The debt is shared.`);
         updateSidebar();
       }
     });
@@ -759,7 +722,7 @@ function _evEncBank(ev) {
   const lootSum = (ev.loot ?? []).reduce((a, b) => a + b, 0);
   addLog(`<span class="log-col">\u25a0 ${escHtml(who)} secured loot (${lootSum} items, +${ev.scoreD} pts)</span>`);
   if (ev.pid === myId) {
-    showToast(`\u25a0 Loot secured! +${ev.scoreD} pts`);
+    showToast(`★ You drag the spoils from the ruin. +${ev.scoreD}`);
     globalThis._onEncBank?.(ev);
     updateSidebar();
   }
@@ -771,7 +734,14 @@ function _evEncEnd(ev) {
   const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
   addLog(`<span class="log-check-fail">\u25a0 ${escHtml(who)} encounter ended (${reasonTxt})</span>`);
   if (ev.pid === myId) {
-    showToast(`\u25a0 Encounter ended: ${reasonTxt}`);
+    const ENC_END_FLAVOR = {
+      hazard:     '☠ The place turns on you. You break off, bloodied.',
+      abort:      '☠ You back out of the ruin. Better alive than brave.',
+      dawn:       '☀ Dawn finds you still rummaging. The moment is gone.',
+      downed:     '☠ You fall where you stand. The ruin keeps its secrets.',
+      disconnect: '☠ The thread snaps. The scene dissolves around you.',
+    };
+    showToast(ENC_END_FLAVOR[ev.reason] ?? `☠ The scene closes: ${reasonTxt}.`);
     globalThis._onEncEnd?.(ev);
     updateSidebar();
   }
@@ -796,7 +766,7 @@ function handleEvent(ev) {
       addLog(`<span class="log-join">&#x25B6; Survivor ${ev.pid} appeared</span>`);
       break;
     case 'regen':
-      showToast('☠ Wasteland reborn. Survivors scattered.');
+      showToast('☠ The wasteland reshapes itself. Every bearing is lost.');
       addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, survivor.</span>');
       break;
     case 'downed':      _evDowned(ev);     break;

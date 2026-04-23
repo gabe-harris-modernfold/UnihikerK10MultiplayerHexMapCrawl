@@ -50,17 +50,17 @@ function handleNarrativeEffect(param) {
     case 11: // Trippy Juice — UI hue-scramble for 3 turns
       document.body.classList.add('trippy');
       _trippyTurns = 3;
-      showToast('\uD83C\uDF00 Reality bends. The map will look... different for a while.');
+      showToast('✦ Reality slips its leash. The map no longer holds still.');
       break;
     case 12: // Cursed Device — reverse movement keys for 5 turns
       invertedInputTurns = 5;
-      showToast('\u26A0\uFE0F Movement keys reversed for 5 turns.');
+      showToast('◌ Your senses flip inside out. North is south, and south mocks you.');
       break;
     case 27: // Jar of Sweats — vomit, lose turn
-      showToast('\uD83E\uDD22 Your body rejects the experience. You lose your next turn.');
+      showToast('☠ Your gut heaves. You retch the next turn into the dirt.');
       break;
     case 29: // Uranium Hard Candy — warn about LL ceiling
-      showToast('\u2622\uFE0F The radiation settles in permanently. Your maximum health has decreased.');
+      showToast('☢ The rads settle into your marrow. You will never be whole again.');
       break;
     default:
       break;

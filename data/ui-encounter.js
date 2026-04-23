@@ -134,7 +134,6 @@ function initEncounterOverlay() {
     const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
     const t0 = Date.now();
     console.log(`[ENC/FETCH] >>> ${url}  t=${t0}  _startEncounterFetch defined:${typeof globalThis._startEncounterFetch}`);
-    showToast(`\u23F3 Loading encounter ${biome}/${id}\u2026`);
     fetch(url)
       .then(r => {
         console.log(`[ENC/FETCH] HTTP ${r.status}  t+${Date.now()-t0}ms`);
@@ -155,7 +154,6 @@ function initEncounterOverlay() {
       })
       .catch(e => {
         console.error(`[ENC/FETCH] FAILED: ${e.message}  t+${Date.now()-t0}ms  — sending enc_abort to free server slot`);
-        showToast(`\u2297 Encounter load failed: ${e.message}`);
         send({ t: 'enc_abort' });
       });
   };

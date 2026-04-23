@@ -274,7 +274,6 @@ document.getElementById('cs-name-btn').addEventListener('click', () => {
   if (!nm) return;
   send({ t: 'n', name: nm });
   if (myId >= 0) { players[myId].nm = nm; updateSidebar(); }
-  showToast(`Call sign set: ${nm}`);
 });
 document.getElementById('cs-name-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('cs-name-btn').click();

@@ -177,7 +177,6 @@ function renderHexGroundItems(q, r) {
       ` <span class="gp-plus">+</span>`;
     span.addEventListener('click', () => {
       send({ t: 'pickup_item', gslot: gi.g });
-      showToast(`Picking up: ${name}`);
     });
     list.appendChild(span);
   });
