@@ -107,26 +107,116 @@ No blocking calls between cores; game logic never stalls network communication.
 
 ### Hardware Requirements
 - **Unihiker K10** development board
-- **USB-C power supply** (5V/2A or higher)
+- **USB-C power supply** (5V/2A or higher recommended)
+- **MicroSD card** — FAT32 formatted, any size (even 1 GB is more than enough)
 - **WiFi-enabled device** (phone, tablet, or laptop) for each player
+
+### SD Card — Required
+
+**The game will not boot without an SD card inserted.** If the card is missing or unreadable, the display shows `SD FAIL - insert card!` and halts.
+
+The SD card serves two purposes:
+
+1. **Web assets** — all HTML, CSS, JS, images, and JSON data are loaded from the card into PSRAM at boot and served to connected players' browsers.
+2. **Save data** — the game writes `map.bin` and `players.bin` to a `/save/` directory on the card to persist world state between sessions. This directory is created automatically on first run.
+
+#### Preparing the SD Card
+
+Format the card as **FAT32**. Copy the entire `data/` folder from this repository to the **root** of the card, preserving the directory structure exactly:
+
+```
+SD card root/
+├── data/
+│   ├── index.html
+│   ├── style.css
+│   ├── items.cfg
+│   ├── engine.js
+│   ├── game-data.js
+│   ├── game-config.js
+│   ├── state-manager.js
+│   ├── animation-manager.js
+│   ├── event-handlers.js
+│   ├── ui-state.js
+│   ├── ui-utils.js
+│   ├── ui-hud.js
+│   ├── ui-panels.js
+│   ├── ui-items.js
+│   ├── ui-encounter.js
+│   ├── network.js
+│   ├── map-decoder.js
+│   ├── renderer.js
+│   ├── ash-particle-system.js
+│   ├── weather-particle-system.js
+│   ├── van.js
+│   ├── van-ui.js
+│   ├── sw.js
+│   ├── img/
+│   │   ├── hex*.png              (terrain tile variants)
+│   │   ├── shelter*.png
+│   │   ├── forrage*.png
+│   │   ├── wastelandTitle0.png
+│   │   ├── survivors/            (archetype portraits + pawns)
+│   │   └── items/
+│   └── encounters/
+│       ├── index.json            (encounter pool manifest — required)
+│       ├── loot_tables.json      (loot drop tables — required)
+│       ├── dunes/
+│       ├── flooded/
+│       ├── forest/
+│       ├── glass/
+│       ├── marsh/
+│       ├── mountain/
+│       ├── ridge/
+│       ├── scrub/
+│       ├── settlement/
+│       └── urban/
+└── save/                         (created automatically by the game)
+    ├── map.bin
+    └── players.bin
+```
+
+Missing `index.html` triggers a boot warning. Missing `encounters/index.json` or `loot_tables.json` disables encounters silently (the game still runs).
+
+#### USB Drive Mode — Easy File Transfer
+
+If you need to update SD card files without removing the card:
+
+1. While the boot splash is showing **"Hold [A] now = USB drive"**, hold **Button A**.
+2. The K10 mounts the SD card as a USB mass storage device. The display shows `USB DRIVE MODE`.
+3. On your PC, the card appears as a removable drive — copy the `data/` folder normally.
+4. Safely eject the drive on your PC, then reboot the K10 (unplug and replug power).
+
+The game does not start while in USB drive mode.
 
 ### Installation
 
 1. Install the **UNIHIKER board package** in Arduino IDE (via Boards Manager)
 2. Upload `Esp32HexMapCrawl.ino` to the K10 via USB-C
-3. Once booted, the K10 displays "WASTELAND CRAWL" splash screen
-4. Players connect to WiFi `WASTELAND` and open `http://192.168.4.1/`
+3. Insert a prepared MicroSD card (see above)
+4. Once booted, the K10 displays "WASTELAND CRAWL" splash screen
+5. Players connect to WiFi `WASTELAND` and open `http://192.168.4.1/`
 
-### File Structure
+### Repository File Structure
 
 ```
 Esp32HexMapCrawl/
 ├── Esp32HexMapCrawl.ino          # Main sketch
-├── data/
-│   ├── index.html                # SPA HTML
-│   ├── style.css                 # Themed stylesheet
-│   └── (game client JavaScript)
-└── README.md                      # This file
+├── boot-assets.hpp               # SD→PSRAM loader, item registry
+├── hex-map.hpp                   # Hex math, map generation, fog of war
+├── ui-display.hpp                # K10 display, LED, audio, boot splash
+├── usb_drive.h                   # USB mass storage mode
+├── network-*.hpp                 # WebSocket sync, events, session handling
+├── actions_game_loop.hpp         # Action handlers (forage, scavenge, shelter…)
+├── survival_state.hpp            # Day cycle, movement, resource collection
+├── inventory_items.hpp           # Item effects, equipment, trade
+├── data/                         # All files that must be copied to SD card
+│   ├── index.html
+│   ├── style.css
+│   ├── items.cfg
+│   ├── *.js                      # Game client modules
+│   ├── img/                      # Terrain tiles, survivor art
+│   └── encounters/               # Encounter JSON + loot tables
+└── README.md
 ```
 
 ---
