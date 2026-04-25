@@ -98,7 +98,7 @@ function initEncounterOverlay() {
       is_terminal: nextKey === '' ? 1 : 0,
     });
     pendingNextKey = nextKey;
-    choiceList.querySelectorAll('.enc-choice-btn').forEach(b => b.disabled = true);
+    choiceList.innerHTML = '';
   }
 
   function openEncounter(enc) {
@@ -219,7 +219,7 @@ function initEncounterOverlay() {
       } else if (currentNode) {
         renderNode(currentNode);
       }
-    }, 2200);
+    }, 4000);
   };
 
   globalThis._onEncBank = function() { closeEncounter(); };

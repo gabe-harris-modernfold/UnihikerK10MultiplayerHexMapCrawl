@@ -39,37 +39,7 @@
   <div id="canvas-wrap" role="application" aria-label="game map">
     <canvas id="hexCanvas" tabindex="0"></canvas>
 
-    <!-- Terrain card (upper-right of canvas) -->
-    <button id="terrain-card" title="Click for hex details" aria-label="current terrain — click for hex details" aria-expanded="false">
-      <div id="tc-header">
-        <div id="tc-text">
-          <div id="tc-name">Unknown</div>
-          <div id="tc-sub">Scanning...</div>
-          <div id="tc-vis-badge"></div>
-        </div>
-        <div id="tc-arrow">&#x25B6;</div>
-      </div>
-    </button>
 
-    <!-- Expanded hex info panel -->
-    <div id="hex-info">
-      <button id="hex-close" aria-label="close hex info panel">&#x2715;</button>
-      <h2><span id="hi-title">HEX DATA</span></h2>
-      <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
-      <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
-      <div class="hi-row"><span class="hi-label">Vision</span><span class="hi-val" id="hi-vis">—</span></div>
-      <div class="hi-row"><span class="hi-label">Actions</span>
-        <div><div id="hi-actions"></div></div>
-      </div>
-      <div class="hi-row"><span class="hi-label">Resource</span>
-        <div><div id="hi-res-list"></div></div>
-      </div>
-      <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
-      <div class="hi-row hi-ground-row" id="hi-ground-row" style="display:none">
-        <span class="hi-label">On Ground</span>
-        <div><div id="hi-ground-list"></div></div>
-      </div>
-    </div>
 
   </div>
 
@@ -91,6 +61,25 @@
       <div id="players-content">
         <h3>Survivors</h3>
         <div id="player-list"></div>
+      </div>
+    </div>
+    <!-- Expanded hex info panel -->
+    <div id="hex-info">
+      <button id="hex-close" aria-label="close hex info panel">&#x2715;</button>
+      <h2><span id="hi-title">HEX DATA</span></h2>
+      <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
+      <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
+      <div class="hi-row"><span class="hi-label">Vision</span><span class="hi-val" id="hi-vis">—</span></div>
+      <div class="hi-row"><span class="hi-label">Actions</span>
+        <div><div id="hi-actions"></div></div>
+      </div>
+      <div class="hi-row"><span class="hi-label">Resource</span>
+        <div><div id="hi-res-list"></div></div>
+      </div>
+      <div class="hi-row"><span class="hi-label">Hazard</span><span class="hi-val" id="hi-hazard">—</span></div>
+      <div class="hi-row hi-ground-row" id="hi-ground-row" style="display:none">
+        <span class="hi-label">On Ground</span>
+        <div><div id="hi-ground-list"></div></div>
       </div>
     </div>
     <div id="fab-col">

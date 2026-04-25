@@ -100,7 +100,7 @@ static void dawnUpkeep() {
       uint8_t terr   = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
       uint8_t sv     = TERRAIN_SV[terr];
       uint8_t shelt  = G.map[p.r][p.q].shelter;
-      bool    covered = (shelt > 0) || (sv >= 2);
+      bool    covered = (shelt > 0) || (sv >= 2) || (p.archetype == 5);  // Endurer needs no shelter
       if (!covered) {
         llDelta--;
         expDelta = -1;
@@ -114,7 +114,7 @@ static void dawnUpkeep() {
     }
 
     // ── Rest recovery: resting with adequate supplies → +1 LL ───────────
-    if (p.resting && p.food >= 4 && p.water >= 3 && p.ll < (uint8_t)effectiveMaxLL(pid))
+    if (p.resting && p.food >= 4 && p.water >= 1 && p.ll < (uint8_t)effectiveMaxLL(pid))
       llDelta++;
 
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────

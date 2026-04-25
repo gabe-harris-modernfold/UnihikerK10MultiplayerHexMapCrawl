@@ -1,12 +1,12 @@
 function getShelterDesc(shelterMaxed, shelterLevel, scrap, mp) {
   if (shelterMaxed) return 'Improved shelter already here — nothing to build';
   if (shelterLevel === 1 && scrap === 0) return 'Shelter here — needs scrap to upgrade';
-  if (shelterLevel === 1 && scrap >= 2 && mp >= 2) return '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
-  if (shelterLevel === 1) return '1 scrap → upgrade to improved \uD83C\uDFE0 (1 MP, +4 pts)';
+  if (shelterLevel === 1 && scrap >= 2 && mp >= 2) return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
+  if (shelterLevel === 1) return '1 scrap → upgrade to improved \u2302 (1 MP, +4 pts)';
   if (scrap === 0) return 'Needs scrap — none in pack';
-  if (scrap === 1) return '1 scrap → shelter \u26FA (1 MP, +4 pts)';
-  if (mp < 2) return '1 scrap → shelter \u26FA (1 MP, +4 pts) — not enough MP for improved';
-  return '2 scrap → improved shelter \uD83C\uDFE0 (2 MP, +8 pts)';
+  if (scrap === 1) return '1 scrap → shelter \u2302 (1 MP, +4 pts)';
+  if (mp < 2) return '1 scrap → shelter \u2302 (1 MP, +4 pts) — not enough MP for improved';
+  return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
 }
 
 function getBlockReason(def, shelterLevel, available, hasMP, slotFree, mp, scrap) {
@@ -226,7 +226,7 @@ function initActionPanel() {
       { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
       { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u26FA', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_SHELTER, icon: '\u2302', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
     ];
     // Scout-exclusive: SURVEY is hidden for non-Scouts

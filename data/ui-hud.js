@@ -72,14 +72,6 @@ function populateHexInfo(q, r, cell) {
   new ResizeObserver(update).observe(hud);
 })();
 
-document.getElementById('terrain-card').addEventListener('click', () => {
-  if (myId < 0) return;
-  const me   = players[myId];
-  const cell = gameMap[me.r]?.[me.q];
-  if (!cell) return;
-  if (!uiHexInfoOpen.val) populateHexInfo(me.q, me.r, cell);
-  uiHexInfoOpen.val = !uiHexInfoOpen.val;
-});
 
 document.getElementById('hex-close').addEventListener('click', e => {
   e.stopPropagation();
@@ -93,7 +85,7 @@ document.getElementById('hex-close').addEventListener('keydown', e => {
 function updateWeatherHUD() {
   const el = document.getElementById('hud-weather');
   if (!el) return;
-  const icons   = ['\u2600', '\uD83C\uDF27', '\u26A1', '\u2623'];
+  const icons   = ['\u2600', '\u26C6', '\u26A1', '\u2623'];
   const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem'];
   const phase = (typeof weatherPhase === 'undefined') ? 0 : weatherPhase;
   el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
@@ -498,38 +490,16 @@ function initCharSheetBindings() {
 }
 
 function initMapBindings() {
-  // Hex-info overlay visibility — driven by uiHexInfoOpen state
+  // Hex-info — auto-open and populate whenever the current cell changes
   const hexInfo = document.getElementById('hex-info');
-  const terrainCard = document.getElementById('terrain-card');
   van.derive(() => {
     hexInfo.classList.toggle('open', uiHexInfoOpen.val);
-    terrainCard.classList.toggle('expanded', uiHexInfoOpen.val);
-    terrainCard.setAttribute('aria-expanded', uiHexInfoOpen.val ? 'true' : 'false');
   });
-  terrainCard.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); terrainCard.click(); }
-  });
-
-  // Terrain card — reactive repaint from uiCurrentCell
   van.derive(() => {
     const cc = uiCurrentCell.val;
     if (!cc) return;
-    const t     = TERRAIN[cc.terrain] || TERRAIN[0];
-    const mcStr = t.mc === 255 ? 'IMPASSABLE' : `MC:${t.mc}  SV:${t.sv}`;
-    document.getElementById('tc-name').textContent = t.name;
-    terrainCard.setAttribute('aria-label', `${t.name} — click for hex details`);
-    document.getElementById('tc-sub').textContent  =
-      (cc.resource > 0 && cc.amount > 0)
-        ? `${RES_NAMES[cc.resource]} ×${cc.amount}`
-        : mcStr;
-    const badge = document.getElementById('tc-vis-badge');
-    let badgeClass = '';
-    let badgeText  = '';
-    if (t.vis > 0)      { badgeClass = 'vis-high';    badgeText = '◉ HIGH VIS +2'; }
-    else if (t.vis < 0) { badgeClass = 'vis-penalty'; badgeText = '◎ VIS PENALTY'; }
-    badge.className   = badgeClass;
-    badge.textContent = badgeText;
-    if (uiHexInfoOpen.val) populateHexInfo(cc.q, cc.r, cc);
+    populateHexInfo(cc.q, cc.r, cc);
+    uiHexInfoOpen.val = true;
   });
 
   // Cooldown SVG ring — own rAF loop, separate from the canvas render loop

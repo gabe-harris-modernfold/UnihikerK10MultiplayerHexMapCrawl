@@ -624,6 +624,21 @@ function renderNightFade() {
   nightFade = Math.max(0, nightFade - NIGHT_FADE_DECAY_RATE); // ~3 s at 60fps
 }
 
+// ── Render layers (drawn in order, bottom-to-top) ────────────────
+// To disable a layer temporarily: add  enabled: false.
+// To add a new layer: push a { name, draw } entry at the right position.
+const LAYERS = [
+  { name: 'terrain',      draw: (cam) => renderHexTerrain(cam) },
+  { name: 'grid',         draw: (cam) => renderGridLines(cam) },
+  { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
+  { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
+  { name: 'characters',   draw: (cam) => renderCharacters(cam) },
+  { name: 'weather',      draw: (_)   => renderWeatherOverlay() },
+  { name: 'ash',          draw: (cam) => { if (ashParticles) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
+  { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
+  { name: 'night_fade',   draw: (_)   => renderNightFade() },
+];
+
 // ── Render ──────────────────────────────────────────────────────
 function render() {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
@@ -633,21 +648,9 @@ function render() {
   lerpPlayerPositions();
   const cam = buildCamera();
 
-  renderHexTerrain(cam);
-  renderGridLines(cam);
-  renderPOIOutlines(cam);
-  renderCurrentHex(cam);
-  renderCharacters(cam);
-  renderWeatherOverlay();
-
-  // ── Pass 3: Ash particle overlay ─────────────────────────────
-  if (ashParticles) {
-    ashParticles.update(gameMap, HEX_SZ);
-    ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ);
+  for (const layer of LAYERS) {
+    if (layer.enabled !== false) layer.draw(cam);
   }
-
-  renderTimeOfDay();
-  renderNightFade();
 
   requestAnimationFrame(render);
 }

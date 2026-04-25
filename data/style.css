@@ -162,41 +162,20 @@ canvas{display:block;width:100%;height:100%}
 .p-name.me{color:var(--gold-hi);font-weight:bold}
 .p-sc{color:var(--gold);font-size:14px;white-space:nowrap}
 
-/*──────────────────────── Terrain Card ─────────────────────────*/
-#terrain-card{
-  position:absolute;top:40px;right:8px;width:196px;
-  font:inherit;text-align:left;
-  background:var(--bg-card);border:1px solid var(--bdr-mid);
-  border-radius:2px;cursor:pointer;z-index:16;
-  transition:border-color 0.2s;
-  box-shadow:inset 0 0 0 1px rgba(92,60,22,0.2)
-}
-#terrain-card:hover{border-color:var(--gold)}
-#tc-header{display:flex;align-items:center;gap:6px;padding:6px 8px}
-#tc-text{flex:1;min-width:0}
-#tc-name{
-  font-size:var(--fs-b);color:var(--gold);font-weight:bold;line-height:1.2;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:var(--ls-b)
-}
-#tc-sub{font-size:var(--fs-d);color:var(--txt-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#tc-vis-badge{font-size:var(--fs-d);letter-spacing:var(--ls-d);margin-top:1px;display:none}
-#tc-arrow{margin-left:auto;font-size:var(--fs-d);color:var(--bdr-hi);transition:transform 0.2s;flex-shrink:0}
-#terrain-card.expanded #tc-arrow{transform:rotate(90deg)}
 
 /*──────────────────────── Hex Info Popup ───────────────────────*/
 #hex-info{
-  position:absolute;top:84px;right:8px;width:196px;
-  background:var(--bg-card);border:1px solid var(--bdr-hi);
-  border-radius:2px;padding:12px;z-index:17;display:none;
-  max-height:calc(85dvh - 96px);overflow-y:auto;
-  box-shadow:0 4px 28px rgba(0,0,0,0.65)
+  background:var(--bg-card);border-top:1px solid var(--bdr-mid);
+  padding:10px 8px;display:none;flex-shrink:0;
+  overflow-y:auto;flex:1;min-height:0;
+  --fs-h:17px;--fs-l:12px;--fs-b:14px;--fs-v:14px;--fs-d:12px;
 }
-#hex-info.open{display:block}
-/* terrain card stays visible; hex-info drops below it */
+#hex-info.open{display:flex;flex-direction:column}
 
 /* ── Action panel modal overlay ──────────────────────────────── */
 #action-panel{
   position:fixed;inset:0;
+  width:100%;height:100%;max-width:100%;max-height:100%;margin:0;padding:0;border:none;
   background:rgba(4,3,2,0.88);
   display:none;align-items:center;justify-content:center;
   z-index:18
@@ -206,7 +185,7 @@ canvas{display:block;width:100%;height:100%}
   background:var(--bg-panel);border:1px solid var(--bdr-hi);
   border-radius:2px;padding:22px 28px;
   width:min(480px,94vw);max-height:90dvh;overflow-y:auto;
-  position:relative;
+  position:relative;margin:auto;
   box-shadow:0 0 48px rgba(0,0,0,0.85),inset 0 0 0 1px rgba(92,60,22,0.2);
   animation:action-in 0.15s ease-out
 }
@@ -463,9 +442,9 @@ canvas{display:block;width:100%;height:100%}
 }
 .dir-btn{
   background:var(--bg-panel);border:1px solid var(--bdr-mid);
-  color:var(--gold);font-size:18px;border-radius:3px;cursor:pointer;
+  color:var(--gold);font-size:23px;border-radius:3px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  width:36px;height:36px;flex-shrink:0;
+  width:45px;height:45px;flex-shrink:0;
   touch-action:manipulation;
   box-shadow:0 2px 0 var(--bdr),inset 0 1px 0 rgba(255,255,255,0.04)
 }
@@ -744,7 +723,7 @@ canvas{display:block;width:100%;height:100%}
 #cd-center{overflow:visible}
 #cd-center svg{display:block;overflow:visible}
 #cd-center.cd-disconnected svg{visibility:hidden}
-#cd-center.cd-disconnected::after{content:'⏳';font-size:16px;line-height:1;position:absolute}
+#cd-center.cd-disconnected::after{content:'⧗';font-size:16px;line-height:1;position:absolute}
 
 /*──────────────────────────── Responsive ───────────────────────*/
 /* Mobile HUD resource/score labels — hidden on desktop, shown on mobile */
@@ -764,13 +743,12 @@ canvas{display:block;width:100%;height:100%}
   #sidebar{flex-direction:column;width:100%;min-width:unset;border-left:none;border-top:1px solid var(--bdr-mid);max-height:200px;overflow-y:auto}
   #hud-score-wrap{display:inline-flex}
   #hud-score{display:block}
-  .dir-btn{width:40px;height:40px;font-size:20px}
-  #terrain-card{width:min(170px,calc(100vw - 16px))}
-  #hex-info{width:min(170px,calc(100vw - 16px))}
+  .dir-btn{width:50px;height:50px;font-size:25px}
+
   #action-box{width:min(400px,90vw)}
 }
 @media(max-height:480px){
-  .dir-btn{width:30px;height:30px;font-size:15px}
+  .dir-btn{width:38px;height:38px;font-size:19px}
 }
 
 /*──────────────────────── Survival Tracks (§4) ─────────────────*/
@@ -856,9 +834,6 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
 /*──────────── Hex info — no-resource placeholder ───────────────*/
 .res-none-label{color:var(--txt-dim)}
 
-/*──────────── Terrain card vis-badge states ─────────────────────*/
-#tc-vis-badge.vis-high   {display:block;color:#448866;letter-spacing:var(--ls-d)}
-#tc-vis-badge.vis-penalty{display:block;color:#A05030;letter-spacing:var(--ls-d)}
 
 /*──────────── Hi-badge tag colours ─────────────────────────────*/
 .hi-badge.tag-HighVis   {color:#448866;border-color:#448866}

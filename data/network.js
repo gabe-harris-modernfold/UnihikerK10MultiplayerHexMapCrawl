@@ -110,6 +110,29 @@ let restSent       = false; // guard against REST double-click before server ack
 
 // ── WebSocket ────────────────────────────────────────────────────
 const wsUrl = `ws://${location.host}/ws`;
+
+const CONN_LOST_QUIPS = [
+  '☠ The signal dies. The wasteland keeps no promises of uptime.',
+  '☢ Connection lost. Somewhere, a server breathes its last in the ash.',
+  '📡 Dead air. Even the ghosts of the old internet have moved on.',
+  '☠ The wire goes cold. Raiders got the repeater again.',
+  '☢ Your packets dissolved into the fallout. Lost, like everything else.',
+  '☠ Connection severed. The bandwidth died without last rites.',
+  '📻 You reach out. Nothing answers but the hum of dead frequencies.',
+  '⚡ The handshake fails. Trust is hard to come by after the collapse.',
+  '☢ Signal lost. Not even cockroaches get reception out here.',
+  '☠ Dropped. Like everything else worth keeping before the bombs fell.',
+  '🔌 The plug got pulled. Probably on purpose.',
+  '☠ Silence. The kind that follows an explosion.',
+  '📡 The tower is down. Someone always shoots the tower.',
+  '☢ Timeout. The server achieved a state of peaceful non-existence.',
+  '☠ No carrier. No hope. No signal.',
+  '⚡ The relay burned out. Third one this month.',
+  '📻 Static swallows everything. Including you, apparently.',
+  '☢ Lost in the noise. The wasteland is lousy with interference.',
+  '☠ Connection refused. Even the machines have given up.',
+  '📡 The uplink is gone. Ashes, mostly.',
+];
 let socket;
 
 // Set to true once server confirms it has saved creds; prevents redundant auto-sends.
@@ -138,6 +161,7 @@ function connect() {
   socket.onclose   = (ev) => {
     const msSinceEnc = globalThis._lastEncStartT ? (Date.now() - globalThis._lastEncStartT) : '—';
     console.warn(`[DIAG] WS closed  code=${ev.code}  wasClean=${ev.wasClean}  reason="${ev.reason}"  msSinceEncStart=${msSinceEnc}`);
+    showToast(CONN_LOST_QUIPS[Math.floor(Math.random() * CONN_LOST_QUIPS.length)]);
     Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS);
   };
   socket.onerror   = (event) => {
@@ -689,7 +713,7 @@ function _evItemResult(ev) {
 function _evEncRes(ev) {
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
   const outClass = ev.out ? 'log-col' : 'log-check-fail';
-  addLog(`<span class="${outClass}">\uD83D\uDC41 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}</span>`);
+  addLog(`<span class="${outClass}">\u2299 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}</span>`);
   if (ev.pid === myId) {
     const p = players[myId];
     if (p) {
@@ -793,7 +817,7 @@ function handleEvent(ev) {
       if (gameMap[ev.r]?.[ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
       const encWho = players[ev.pid]?.nm || `P${ev.pid}`;
-      addLog(`<span class="log-col">\uD83D\uDC41 ${escHtml(encWho)} enters encounter (${ev.q},${ev.r})</span>`);
+      addLog(`<span class="log-col">\u2299 ${escHtml(encWho)} enters encounter (${ev.q},${ev.r})</span>`);
       updateSidebar();
       break;
     }
