@@ -14,7 +14,7 @@ Three dynamic world features share a common need: stateful things that live on t
 |---|---|---|
 | Caravan | Single mobile entity, 1 per world | World tick |
 | Fire | Hex-owned intensity, up to ~20 hexes | World tick |
-| Death God | Single mobile entity, awareness-driven | World tick |
+| Creeping Doom | Single mobile entity, awareness-driven | World tick |
 
 All three are owned by a single `WorldSystem` struct defined in `world-system.hpp` and ticked from inside `tickGame()` in `Esp32HexMapCrawl.ino`. No virtual dispatch. No inheritance. Fixed entity counts.
 
@@ -64,17 +64,17 @@ struct Caravan {
     uint8_t  restockTimer;  // world ticks until inventory refills
 };
 
-struct DeathGod {
+struct CreepingDoom {
     int16_t q, r;
     uint8_t awareness;      // 0–100; drives detection radius and behavior
 };
 
 struct WorldSystem {
-    Caravan  caravan;
-    DeathGod deathGod;
+    Caravan     caravan;
+    CreepingDoom creepingDoom;
 };
 
-static WorldSystem W;       // zero-initialised; activated via wInit()
+static WorldSystem W;         // zero-initialised; activated via wInit()
 ```
 
 `W` is a single global, parallel to `G` (the `GameState`). Both are held by `G.mutex` during the world tick.
@@ -97,7 +97,7 @@ static WorldSystem W;       // zero-initialised; activated via wInit()
 Called once per world tick, with `G.mutex` held:
 
 ```
-1. tickDeathGod()       — read tracks → move → act (may ignite hexes)
+1. tickCreepingDoom()    — read tracks → move → act (may ignite hexes)
 2. decayTracks()        — reduce all W_hex[r][q].track by TRACK_DECAY_RATE
 3. spreadFire()         — advance fire state (double-buffered to avoid cascade)
 4. tickCaravan()        — advance toward waypoint, flee fire/god if adjacent
@@ -105,7 +105,7 @@ Called once per world tick, with `G.mutex` held:
 6. enqWorldEvents()     — push resulting GameEvents into the queue
 ```
 
-Order is load-bearing. The god reads tracks **before** decay so single-action heat (Forage = ~4) is still smellable above `SCENT_THRESHOLD` on the next world tick. Fire settles before entities move into or away from it.
+Order is load-bearing. Creeping Doom reads tracks **before** decay so single-action heat (Forage = ~4) is still smellable above `SCENT_THRESHOLD` on the next world tick. Fire settles before entities move into or away from it.
 
 ---
 
@@ -171,7 +171,7 @@ void tickCaravan() {
 
 ### Waypoint Bias
 
-`pickCaravanWaypoint()` samples 8 random hexes and picks the candidate with the lowest combined score of: `fire_intensity * 10 + hexDistWrap(to death god) < 3 ? 50 : 0`. Caravan prefers open ground away from the god and away from fire.
+`pickCaravanWaypoint()` samples 8 random hexes and picks the candidate with the lowest combined score of: `fire_intensity * 10 + hexDistWrap(to creeping doom) < 3 ? 50 : 0`. Caravan prefers open ground away from Creeping Doom and away from fire.
 
 ### Trade
 
@@ -205,7 +205,7 @@ void wIgnite(int16_t q, int16_t r, uint8_t intensity = 1) {
 }
 ```
 
-Ignition sources in v1: Death God `ACTING` behavior, and future player/event triggers.
+Ignition sources in v1: Creeping Doom `ACTING` behavior, and future player/event triggers.
 
 ### Spread and Decay
 
@@ -251,7 +251,7 @@ Emits `EVT_FIRE_DAMAGE` with `pid`, `q`, `r`, `intensity`. Client plays an audio
 
 ---
 
-## Entity: Death God
+## Entity: Creeping Doom
 
 ### Awareness
 
@@ -266,43 +266,43 @@ Emits `EVT_FIRE_DAMAGE` with `pid`, `q`, `r`, `intensity`. Client plays an audio
 | 100 | Locks adjacent to player; effect every world tick | 6 |
 
 ```cpp
-int godDetectionRadius() {
-    return 2 + (W.deathGod.awareness / 25);  // 2 at 0, 6 at 100
+int doomDetectionRadius() {
+    return 2 + (W.creepingDoom.awareness / 25);  // 2 at 0, 6 at 100
 }
 ```
 
 ### Tick Logic
 
 ```cpp
-void tickDeathGod() {
+void tickCreepingDoom() {
     // Awareness == 100: lock to nearest connected player (overrides scent path)
-    if (W.deathGod.awareness >= 100) {
-        int tgt = nearestConnectedPlayer(W.deathGod.q, W.deathGod.r);  // -1 if none
+    if (W.creepingDoom.awareness >= 100) {
+        int tgt = nearestConnectedPlayer(W.creepingDoom.q, W.creepingDoom.r);  // -1 if none
         if (tgt >= 0) {
-            stepAdjacentTo(W.deathGod.q, W.deathGod.r,
+            stepAdjacentTo(W.creepingDoom.q, W.creepingDoom.r,
                            G.players[tgt].q, G.players[tgt].r);
-            wIgnite(W.deathGod.q, W.deathGod.r, 2);
+            wIgnite(W.creepingDoom.q, W.creepingDoom.r, 2);
             return;
         }
         // No player connected — fall through to scent path and let awareness decay
     }
 
-    int radius = godDetectionRadius();
-    HexCoord hotspot = hottestTrackWithin(W.deathGod.q, W.deathGod.r, radius);
+    int radius = doomDetectionRadius();
+    HexCoord hotspot = hottestTrackWithin(W.creepingDoom.q, W.creepingDoom.r, radius);
 
     if (W_hex[hotspot.r][hotspot.q].track >= SCENT_THRESHOLD) {
         // Found scent — close in
-        stepToward(W.deathGod.q, W.deathGod.r, hotspot.q, hotspot.r);
-        W.deathGod.awareness = (uint8_t)min(100, (int)W.deathGod.awareness + AWARENESS_GAIN);
+        stepToward(W.creepingDoom.q, W.creepingDoom.r, hotspot.q, hotspot.r);
+        W.creepingDoom.awareness = (uint8_t)min(100, (int)W.creepingDoom.awareness + AWARENESS_GAIN);
     } else {
         // Lost scent — wander and fade
-        randomWalk(W.deathGod.q, W.deathGod.r);
-        W.deathGod.awareness = (uint8_t)max(0, (int)W.deathGod.awareness - AWARENESS_DECAY);
+        randomWalk(W.creepingDoom.q, W.creepingDoom.r);
+        W.creepingDoom.awareness = (uint8_t)max(0, (int)W.creepingDoom.awareness - AWARENESS_DECAY);
     }
 
     // High-awareness act: ignite current hex
-    if (W.deathGod.awareness >= 76)
-        wIgnite(W.deathGod.q, W.deathGod.r, 2);
+    if (W.creepingDoom.awareness >= 76)
+        wIgnite(W.creepingDoom.q, W.creepingDoom.r, 2);
 }
 ```
 
@@ -320,13 +320,13 @@ Handled in `resolveProximity()`. Effect escalates with awareness:
 
 ### Player Resting as Counter
 
-`ACT_REST` sets `p.resting = true` and `p.actUsed = true` but does **not** call `spendMP` — therefore the rest action lays no track via the `spendMP` hook. Track intensity on the resting hex still decays each world tick. After 2–3 consecutive days of rest, all of a player's recent hexes decay below `SCENT_THRESHOLD` and god awareness drops via `AWARENESS_DECAY` — resting is the natural counter to the god's attention.
+`ACT_REST` sets `p.resting = true` and `p.actUsed = true` but does **not** call `spendMP` — therefore the rest action lays no track via the `spendMP` hook. Track intensity on the resting hex still decays each world tick. After 2–3 consecutive days of rest, all of a player's recent hexes decay below `SCENT_THRESHOLD` and Creeping Doom's awareness drops via `AWARENESS_DECAY` — resting is the natural counter to Creeping Doom's attention.
 
 ---
 
 ## Proximity & Encounter-Lock Rules
 
-`resolveProximity()` is the per-player effect pass. Two cross-cutting rules apply to **every** effect it can produce (fire damage, caravan trade prompt, god warning/act):
+`resolveProximity()` is the per-player effect pass. Two cross-cutting rules apply to **every** effect it can produce (fire damage, caravan trade prompt, Creeping Doom warning/act):
 
 1. **Skip players in active encounters.** If `encounters[pid].active` (set by `enc_start` and cleared on bank/abort/dawn), no world effect lands on that player this tick. The encounter system already freezes the player's input loop (`actions_game_loop.hpp` action dispatcher early-returns); world effects must respect that contract or the encounter UI desyncs.
 
@@ -341,16 +341,16 @@ Fire damage and god effects are level-triggered (per-tick) by design — being o
 Append to `EvtType` enum starting at 20. The existing enum is `… EVT_ENC_END = 17, EVT_WEATHER = 19` — value **18 is currently unused**; new world events start at 20 to leave 18 reserved for any future encounter-related event:
 
 ```cpp
-EVT_FIRE_DAMAGE   = 20,   // player took fire damage: pid, q, r, amt (intensity)
-EVT_FIRE_SPREAD   = 21,   // hex caught fire: q, r, intensity (broadcast to nearby players)
-EVT_CARAVAN_TRADE = 22,   // caravan trade available: pid (co-located player)
-EVT_GOD_WARNING   = 23,   // death god adjacent, low threshold: pid
-EVT_GOD_ACT       = 24,   // death god destroyed resource / drained LL: pid, q, r, actLLD
+EVT_FIRE_DAMAGE      = 20,   // player took fire damage: pid, q, r, amt (intensity)
+EVT_FIRE_SPREAD      = 21,   // hex caught fire: q, r, intensity (broadcast to nearby players)
+EVT_CARAVAN_TRADE    = 22,   // caravan trade available: pid (co-located player)
+EVT_DOOM_WARNING     = 23,   // creeping doom adjacent, low threshold: pid
+EVT_DOOM_ACT         = 24,   // creeping doom destroyed resource / drained LL: pid, q, r, actLLD
 ```
 
-`EVT_FIRE_SPREAD` and `EVT_GOD_ACT` use the existing range-filter in `drainEvents()` — only players within vision radius of the affected hex receive them.
+`EVT_FIRE_SPREAD` and `EVT_DOOM_ACT` use the existing range-filter in `drainEvents()` — only players within vision radius of the affected hex receive them.
 
-`EVT_GOD_WARNING` is sent to all connected players regardless of position — the god is a world-level threat, not a local one.
+`EVT_DOOM_WARNING` is sent to all connected players regardless of position — Creeping Doom is a world-level threat, not a local one.
 
 ---
 
@@ -361,7 +361,7 @@ EVT_GOD_ACT       = 24,   // death god destroyed resource / drained LL: pid, q, 
 ```json
 "world": {
   "caravan": { "q": 12, "r": 7, "active": true },
-  "god":     { "q": 4,  "r": 2, "awareness": 63 },
+  "doom":    { "q": 4,  "r": 2, "awareness": 63 },
   "fire":    [[q, r, intensity], ...]
 }
 ```
@@ -410,8 +410,8 @@ All in static RAM alongside other globals. Well within ESP32-S3 budget.
 
 ## v1 Scope
 
-- One caravan, one death god, fire system: all active from `wInit()`
+- One caravan, one Creeping Doom, fire system: all active from `wInit()`
 - Caravan trade via dedicated `handleMsg_caravan_trade` handler (not the player-to-player trade table)
 - Fire cap enforced (no runaway burn)
-- Persistence: `W.caravan` (q, r, restockTimer, inv) and `W.deathGod` (q, r, awareness) added to `SaveHeader` extension; bumps `SAVE_VERSION` from 9 to 10. **Existing v9 saves will fail the version check in `tryLoadSave()` and be ignored — boot will fall through to `generateMap()`.** This is a deliberate one-shot reset; no migration path is provided. Document in release notes.
+- Persistence: `W.caravan` (q, r, restockTimer, inv) and `W.creepingDoom` (q, r, awareness) added to `SaveHeader` extension; bumps `SAVE_VERSION` from 9 to 10. **Existing v9 saves will fail the version check in `tryLoadSave()` and be ignored — boot will fall through to `generateMap()`.** This is a deliberate one-shot reset; no migration path is provided. Document in release notes.
 - `W_hex` (track + fire) is **not** persisted. Tracks decay in seconds anyway, and fires extinguish on power cycle (parity with player respawn).
