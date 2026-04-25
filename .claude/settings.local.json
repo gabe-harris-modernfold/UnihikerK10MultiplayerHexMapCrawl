@@ -72,7 +72,11 @@
       "Bash(curl -s -I \"http://localhost:8080/style.css\")",
       "Bash(python _strip_serial.py)",
       "Bash(python -c ' *)",
-      "mcp__Claude_in_Chrome__tabs_context_mcp"
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(grep -E \"^d|package.json|\\\\.ino$|makefile|CMakeLists\")",
+      "Bash(grep -E \"\\\\.hpp$|\\\\.h$\")",
+      "Bash(node .claude/dev-server.js)",
+      "Bash(npx kill-port *)"
     ]
   }
 }

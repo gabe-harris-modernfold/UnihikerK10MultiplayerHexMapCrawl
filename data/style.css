@@ -127,7 +127,7 @@ canvas{display:block;width:100%;height:100%}
 
 /*──────────────────────────── Sidebar ──────────────────────────*/
 #sidebar{
-  width:152px;min-width:152px;
+  width:200px;min-width:200px;
   background:var(--bg-panel);
   border-left:1px solid var(--bdr-mid);
   display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
@@ -167,7 +167,7 @@ canvas{display:block;width:100%;height:100%}
 #hex-info{
   background:var(--bg-card);border-top:1px solid var(--bdr-mid);
   padding:10px 8px;display:none;flex-shrink:0;
-  overflow-y:auto;flex:1;min-height:0;
+  overflow-y:auto;flex:3;min-height:0;
   --fs-h:17px;--fs-l:12px;--fs-b:14px;--fs-v:14px;--fs-d:12px;
 }
 #hex-info.open{display:flex;flex-direction:column}
@@ -276,9 +276,9 @@ canvas{display:block;width:100%;height:100%}
   display:flex;align-items:center;gap:8px;
   text-shadow:0 0 10px rgba(196,140,10,0.35)
 }
-.hi-row{display:flex;gap:6px;margin-bottom:5px;font-size:var(--fs-d);align-items:flex-start}
-.hi-label{color:var(--txt-dim);min-width:72px;flex-shrink:0;letter-spacing:var(--ls-d)}
-.hi-val{color:var(--txt);flex:1;word-break:break-word;font-size:var(--fs-b)}
+.hi-row{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;font-size:var(--fs-d)}
+.hi-label{color:var(--txt-dim);letter-spacing:var(--ls-d);text-transform:uppercase}
+.hi-val{color:var(--txt);word-break:break-word;font-size:var(--fs-b)}
 #hi-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
 #hi-res-list{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
 .hi-badge{font-size:var(--fs-d);padding:2px 6px;border-radius:10px;border:1px solid;color:#888;border-color:#888}

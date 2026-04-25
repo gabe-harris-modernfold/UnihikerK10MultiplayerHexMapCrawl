@@ -1,6 +1,22 @@
 #pragma once
 // ── Player message handlers: pick, move, name, wifi, check, regen, erase, act, settings ──
 
+// ── TEST: fill inventory with random items on spawn ──────────────────────────
+// To remove: delete this #define and the two #ifdef TEST_FILL_INV blocks below
+#define TEST_FILL_INV
+#ifdef TEST_FILL_INV
+static void debugFillInventory(Player& p) {
+  if (itemCount == 0) return;
+  for (int s = 0; s < p.invSlots; s++) {
+    uint8_t idx     = (uint8_t)(esp_random() % itemCount);
+    const ItemDef& it = itemRegistry[idx];
+    p.invType[s] = it.id;
+    p.invQty[s]  = (it.maxStack > 1) ? (uint8_t)((esp_random() % it.maxStack) + 1) : 1;
+  }
+}
+#endif
+// ─────────────────────────────────────────────────────────────────────────────
+
 static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* ap = strstr(data, "\"arch\""); if (!ap) return;
@@ -68,6 +84,9 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         p.encPenApplied = false;
         p.radClean     = true;
         { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
+        #ifdef TEST_FILL_INV
+        debugFillInventory(p);
+        #endif
         p.score = savedScore;
         p.steps = savedSteps;
       } else if (!isReconnect) {
@@ -104,6 +123,9 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         p.encPenApplied = false;
         p.radClean     = true;
         { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
+        #ifdef TEST_FILL_INV
+        debugFillInventory(p);
+        #endif
       } else {
         // Reconnecting player: preserve score, position, inventory — just clear transient state
         p.actUsed      = false;

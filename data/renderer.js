@@ -53,11 +53,10 @@ let HEX_SZ    = 56;
 let cssWidth  = 0;
 let cssHeight = 0;
 
-/**
- * Recalculate hex size and canvas resolution based on viewport size.
- * Scales the canvas buffer by devicePixelRatio for crisp rendering on
- * HiDPI / Retina screens while keeping all draw coordinates in CSS pixels.
- */
+const ZOOM_STEP_PX  = 4;
+const ZOOM_STEP_MAX = 6;
+let   zoomStep      = 0;
+
 function resize() {
   const wrap = document.getElementById('canvas-wrap');
   const dpr  = window.devicePixelRatio || 1;
@@ -68,9 +67,18 @@ function resize() {
   canvas.style.width  = cssWidth  + 'px';
   canvas.style.height = cssHeight + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);  // reset any prior transform then scale
-  HEX_SZ = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(cssWidth / HEX_SZ_VIEWPORT_DIVISOR)));
+  const base = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(cssWidth / HEX_SZ_VIEWPORT_DIVISOR)));
+  HEX_SZ = Math.max(HEX_SZ_MIN - ZOOM_STEP_PX * ZOOM_STEP_MAX,
+                    Math.min(HEX_SZ_MAX + ZOOM_STEP_PX * ZOOM_STEP_MAX,
+                             base + zoomStep * ZOOM_STEP_PX));
 }
 window.addEventListener('resize', resize);
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomStep = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX,
+    zoomStep + (e.deltaY > 0 ? -1 : 1)));
+  resize();
+}, { passive: false });
 resize();
 
 /**
