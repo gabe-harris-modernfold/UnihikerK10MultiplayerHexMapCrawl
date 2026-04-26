@@ -229,7 +229,7 @@ const ITEMS = [
   { id:5,  name:'Panic Juice',      category:0, slot:0,
     img:'img/items/item_5.png',  icon:'img/items/icon_5.png',
     preUse:  'The needle goes in. Your heart immediately disagrees.',
-    postUse: 'Wired. Alert. Slightly insane. -4 Fatigue, -1 Food.',
+    postUse: 'Wired. Alert. Slightly insane. Burns through reserves. -1 Food.',
     story:   null },
   { id:6,  name:'Sweet Oblivion',   category:0, slot:0,
     img:'img/items/item_6.png',  icon:'img/items/icon_6.png',

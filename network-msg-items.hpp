@@ -14,6 +14,8 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
   static char ack[320];
   bool ok = false;
+  int capturedSlot = -1;
+  uint8_t revealParam = 0;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
@@ -21,9 +23,14 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
       uint8_t narParam = 0;
       if (slotIdx < INV_SLOTS_MAX && pl.invType[slotIdx]) {
         const ItemDef* preDef = getItemDef(pl.invType[slotIdx]);
-        if (preDef && preDef->effectId == EFX_NARRATIVE) narParam = preDef->effectParam;
+        if (preDef) {
+          if (preDef->effectId  == EFX_NARRATIVE)  narParam    = preDef->effectParam;
+          if (preDef->effectId  == EFX_REVEAL_FOG) revealParam = preDef->effectParam;
+          if (preDef->effectId2 == EFX_REVEAL_FOG) revealParam = preDef->effectParam2;
+        }
       }
       ok = useItem(mySlot, (uint8_t)slotIdx);
+      capturedSlot = mySlot;
       snprintf(ack, sizeof(ack),
         "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"use\",\"slot\":%d,\"pid\":%d,"
         "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
@@ -45,6 +52,19 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   // saveGame and client->text called outside mutex so saveGame can acquire it
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
+  // EFX_REVEAL_FOG items: send a fresh vis disk so the client sees newly revealed cells
+  if (ok && capturedSlot >= 0 && revealParam >= 2) {
+    static char visBuf[1100];
+    int visLen = 0;
+    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      int vr; bool mr;
+      playerVisParams(capturedSlot, &vr, &mr);
+      visLen = buildVisDisk(visBuf, sizeof(visBuf),
+                            G.players[capturedSlot].q, G.players[capturedSlot].r, vr, mr);
+      xSemaphoreGive(G.mutex);
+    }
+    if (visLen > 0) client->text(visBuf);
+  }
 }
 
 static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_t len) {
