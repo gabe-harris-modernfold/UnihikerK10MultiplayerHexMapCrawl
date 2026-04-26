@@ -149,8 +149,10 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
     addScore(p, ev, 3);
     ev.actOut   = AO_SUCCESS;
   } else if (cr.total >= (int)dn - 1) {
-    p.inv[1]    = (uint8_t)min((int)p.inv[1] + 2, 99);
-    ev.actFoodD = 2;
+    uint8_t partYield = 2;
+    if (p.equip[EQUIP_HAND - 1] == 29) partYield = 4;
+    p.inv[1]    = (uint8_t)min((int)p.inv[1] + partYield, 99);
+    ev.actFoodD = (int8_t)partYield;
     addScore(p, ev, 1);
     ev.actOut   = AO_PARTIAL;
   } else {
