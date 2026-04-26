@@ -25,7 +25,6 @@ function populateHexInfo(q, r, cell) {
   document.getElementById('hi-vis').textContent = visLabels[t.vis + 3] ?? 'STANDARD';
 
   // Hazard
-  document.getElementById('hi-hazard').textContent = t.hazard || 'None';
 
   // Available actions for this terrain
   const actionList = document.getElementById('hi-actions');
@@ -50,10 +49,12 @@ function populateHexInfo(q, r, cell) {
   // Resource tokens on this hex
   const resList = document.getElementById('hi-res-list');
   resList.innerHTML = '';
-  if (cell.resource > 0 && cell.amount > 0) {
+  if (cell.resource > 0) {
     const b = document.createElement('span');
     b.className = RES_BADGE_CLASS[cell.resource] || 'hi-badge';
-    b.textContent = `${RES_NAMES[cell.resource]} ×${cell.amount}`;
+    b.textContent = cell.amount > 0
+      ? `${RES_NAMES[cell.resource]} ×${cell.amount}`
+      : RES_NAMES[cell.resource];
     resList.appendChild(b);
   } else {
     resList.innerHTML = '<span class="res-none-label">None visible</span>';
@@ -72,14 +73,6 @@ function populateHexInfo(q, r, cell) {
   new ResizeObserver(update).observe(hud);
 })();
 
-
-document.getElementById('hex-close').addEventListener('click', e => {
-  e.stopPropagation();
-  uiHexInfoOpen.val = false;
-});
-document.getElementById('hex-close').addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); uiHexInfoOpen.val = false; }
-});
 
 // ── Weather HUD indicator ─────────────────────────────────────────────────────
 function updateWeatherHUD() {
@@ -100,7 +93,7 @@ function updateSidebar() {
   uiScore.val   = me.sc;
   uiPos.val     = `Q:${me.q}  R:${me.r}`;
   uiSteps.val  = me.sp ?? 0;
-  uiVision.val = myVisionR;
+  uiVision.val = getEffectiveVR();
   uiLL.val      = me.ll   ?? 6;
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;

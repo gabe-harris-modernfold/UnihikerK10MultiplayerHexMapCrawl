@@ -107,6 +107,24 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
 }
 
 /**
+ * Draw resource icon centered on a hex cell.
+ * Used for Water, Fuel, Medicine, Scrap (Food uses forage-animal PNG instead).
+ */
+function drawResourceIcon(ctx, cx, cy, hexSz, resourceType) {
+  const icon = RES_ICONS[resourceType];
+  if (!icon) return;
+  const sz = Math.max(10, hexSz * ICON_SIZE_SCALE);
+  ctx.save();
+  ctx.globalAlpha  = 0.3;
+  ctx.font         = `${sz}px serif`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle    = '#FFF';
+  ctx.fillText(icon, cx, cy);
+  ctx.restore();
+}
+
+/**
  * Draw character/player icon on the hex grid.
  * Includes head, torso, name label, and ground shadow.
  * @param {CanvasRenderingContext2D} ctx - Canvas context
@@ -334,13 +352,18 @@ function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
 }
 
 function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
-  // Food resource — forage animal PNG centred on hex (resource type 2 = food)
-  if (cell.resource === 2 && forrageAnimalImgs.length > 0) {
-    const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
-    const fImg = forrageAnimalImgs[v];
-    if (fImg?.loaded) {
-      const sz = HEX_SZ * 0.45;
-      ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
+  if (cell.resource > 0) {
+    if (cell.resource === 2 && forrageAnimalImgs.length > 0) {
+      const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
+      const fImg = forrageAnimalImgs[v];
+      if (fImg?.loaded) {
+        const sz = HEX_SZ * 0.45;
+        ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
+      } else {
+        drawResourceIcon(ctx, cx, cy, HEX_SZ, cell.resource);
+      }
+    } else {
+      drawResourceIcon(ctx, cx, cy, HEX_SZ, cell.resource);
     }
   }
 
@@ -358,14 +381,14 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
   }
 }
 
-function applyHexFill(cell, dist, visible, surveyed) {
+function applyHexFill(cell, dist, visible, surveyed, vr) {
   if (visible || surveyed) {
     ctx.globalAlpha = surveyed ? 0.7 : 1;
     ctx.fillStyle   = TERRAIN[cell.terrain]?.fill || '#2A2010';
-  } else if (dist === myVisionR + 1) {
+  } else if (dist === vr + 1) {
     ctx.globalAlpha = FOG_INNER_ALPHA;
     ctx.fillStyle   = '#141008';
-  } else if (dist === myVisionR + 2) {
+  } else if (dist === vr + 2) {
     ctx.globalAlpha = 0.92;
     ctx.fillStyle   = '#141008';
   } else {
@@ -382,7 +405,7 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
     const imgSz = HEX_SZ * 2;
     ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
   } else {
-    if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
+    if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, cell.resource > 0);
     if (cell.terrain === 11) drawRiverRipples(cx, cy);
   }
   ctx.globalAlpha = 1;
@@ -393,6 +416,7 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
 // ── Pass 1: Hex fills + terrain icons + resources ─────────────────
 function renderHexTerrain(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR, meAct } = cam;
+  const effectiveVR = getEffectiveVR();
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
@@ -409,11 +433,11 @@ function renderHexTerrain(cam) {
 
       const dist     = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
       const cell     = gameMap[mapR][mapQ];
-      const visible  = dist <= myVisionR && cell !== null;
+      const visible  = dist <= effectiveVR && cell !== null;
       const surveyed = !visible && cell !== null && surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158 — populated in network.js
 
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
-      applyHexFill(cell, dist, visible, surveyed);
+      applyHexFill(cell, dist, visible, surveyed, effectiveVR);
       ctx.fill();
       ctx.globalAlpha = 1;
 
@@ -447,7 +471,8 @@ function isPOIRenderable(mapQ, mapR, meAct) {
   const cell = gameMap[mapR]?.[mapQ];
   if (!cell?.poi) return false;
   const dist = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
-  return dist <= myVisionR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
+  const effectiveVR = getEffectiveVR();
+  return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
 }
 
 // ── POI hex outline (yellow, pulsing, visible cells only) ──────────
@@ -501,6 +526,18 @@ function closestWrapCoords(rp, meRp) {
 // ── Pass 2: Character icons ────────────────────────────────────────
 function renderCharacters(cam) {
   const { ox, oy, meRp } = cam;
+
+  // Group active players by their snapped hex key so co-located players
+  // can be spread into a small cluster instead of stacking on one point.
+  const hexGroups = new Map(); // "q_r" -> [playerIndex, ...]
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    if (!players[i].on) continue;
+    const { vq, vr } = closestWrapCoords(renderPos[i], meRp);
+    const key = `${Math.round(vq)}_${Math.round(vr)}`;
+    if (!hexGroups.has(key)) hexGroups.set(key, []);
+    hexGroups.get(key).push(i);
+  }
+
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i];
     if (!p.on) continue;
@@ -512,14 +549,24 @@ function renderCharacters(cam) {
     if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
     if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
 
-    const _archColor = ARCHETYPE_COLORS[players[i].arch ?? 0] ?? PLAYER_COLORS[i];
-    drawCharIcon(ctx, pcx, pcy, HEX_SZ, {
+    // Cluster offset: solo player stays centred; 2+ players spread in a ring.
+    const key     = `${Math.round(vq)}_${Math.round(vr)}`;
+    const group   = hexGroups.get(key);
+    const n       = group.length;
+    const idx     = group.indexOf(i);
+    const clusterR = HEX_SZ * 0.38;  // ring radius as fraction of hex size
+    const angle   = (idx / n) * Math.PI * 2; // right-first (horizontal)
+    const offX    = n > 1 ? Math.cos(angle) * clusterR : 0;
+    const offY    = n > 1 ? Math.sin(angle) * clusterR : 0;
+
+    const _archColor = ARCHETYPE_COLORS[p.arch ?? 0] ?? PLAYER_COLORS[i];
+    drawCharIcon(ctx, pcx + offX, pcy + offY, HEX_SZ, {
       color: _archColor,
       label: i,
       isMe:  i === myId,
-      nm:    players[i].nm,
-      arch:  players[i].arch ?? 0,
-      sc:    players[i].sc   ?? 0,
+      nm:    p.nm,
+      arch:  p.arch ?? 0,
+      sc:    p.sc   ?? 0,
     });
   }
 }

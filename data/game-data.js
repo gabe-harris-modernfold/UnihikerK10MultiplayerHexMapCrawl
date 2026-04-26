@@ -4,8 +4,6 @@ const MAP_ROWS    = 19;
 const MAX_PLAYERS = 6;
 const VISION_R    = 1;   // base vision radius (server may send higher/lower via vr field)
 const SQRT3       = Math.sqrt(3);
-const LERP        = 0.26;
-
 // ── 11 Terrain types ─────────────────────────────────────────────
 // vis: +1=HIGH(+2 range), 0=STANDARD, -1=PENALTY(resources masked)
 // mc : movement cost (255 = impassable)
@@ -14,62 +12,50 @@ const TERRAIN = [
   { name:'Open Scrub',      mc:1,   sv:0, vis: 1, icon:'🌾',
     fill:'#2E2210', stroke:'#504030',   /* cracked-earth tan */
     tags:['Open Horizon','Forage','Hunting Ground'],
-    hazard:'Radiation drift',
     desc:'Wind-scoured flats of pale scrub and cracked earth. Small game — birds, feral rabbits, scavenger rodents — move through the open ground. A successful hunt yields 2 food. The open horizon grants long sight lines, but the animals can see you coming.' },
   { name:'Ash Dunes',       mc:2,   sv:0, vis: 0, icon:'🏜',
     fill:'#201E16', stroke:'#3C3A2C',   /* desaturated ash grey */
     tags:['Radiation'],
-    hazard:'Radioactive ash fall',
     desc:'Rolling dunes of grey volcanic ash laced with fallout. Fuel caches and scrap lie buried beneath the drifts. Prolonged exposure without a mask is hazardous.' },
   { name:'Rust Forest',     mc:2,   sv:1, vis:-1, icon:'🌲',
     fill:'#1A2808', stroke:'#344A18',   /* dark rust-tinged green */
     tags:['Forage','Wild Game','Blind Ground'],
-    hazard:'Toxic spore clouds',
     desc:'Skeletal trees coated in rust-red fungus. The dense canopy blocks all sight lines. A full Forage success here yields 2 food — the root networks are rich with edible fungi. Partial success still yields 1. Visibility drops to near zero.' },
   { name:'Marsh',           mc:3,   sv:0, vis: 0, icon:'🌿',
     fill:'#081A10', stroke:'#183428',   /* very dark brackish green */
     tags:['Water','Treacherous'],
-    hazard:'Quicksand, infection',
     desc:'Brackish wetlands and salt flats. Water is abundant beneath the surface but undrinkable. Treacherous footing slows movement to a crawl. Avoid after dark.' },
   { name:'Broken Urban',    mc:2,   sv:1, vis:-1, icon:'🏚',
     fill:'#1A1814', stroke:'#34302A',   /* cold concrete grey */
     tags:['Salvage','Blind Ground'],
-    hazard:'Structural collapse',
     desc:'Collapsed hab-blocks and fractured infrastructure. Salvage and medicine lie in the rubble. Every crumbled wall cuts line-of-sight. Watch for floor voids and gas pockets.' },
   { name:'Flooded District',mc:3,   sv:1, vis:-1, icon:'🌊',
     fill:'#08121E', stroke:'#142030',   /* cold steel blue-grey */
     tags:['Water','Treacherous','Blind Ground'],
-    hazard:'Submerged debris, current',
     desc:'Former city streets drowned under murky floodwater. Water is plentiful here, but stay clear of craters and glass fields or it will be tainted. Visibility drops to zero beneath the surface. Every step is blind.' },
   { name:'Glass Fields',    mc:3,   sv:0, vis: 1, icon:'✨',
     fill:'#121A22', stroke:'#243444',   /* iridescent cold blue */
     tags:['Salvage','Open Horizon','Radiation'],
-    hazard:'Cutting edges, radiation',
     desc:'Fused earth and melted debris from a detonation event. The flat reflective surface gives an unobstructed view for kilometres. Scrap can be carefully extracted from the glass.' },
   { name:'Ridge',           mc:2,   sv:1, vis: 1, icon:'⛰',
     fill:'#1E1A12', stroke:'#3C3424',   /* warm slag-stone */
     tags:['Vantage','Open Horizon'],
-    hazard:'Exposure, rockfall',
     desc:'Elevated ridgelines of compressed slag-stone. A superior vantage point — the surrounding terrain is visible in detail. Exposed to wind, lightning, and distant sight lines.' },
   { name:'Mountain',        mc:4,   sv:2, vis: 0, icon:'🗻',
     fill:'#14141C', stroke:'#28283A',   /* cold dark mineral */
     tags:['Vantage','Waypoint'],
-    hazard:'Altitude, rockslide',
     desc:'Towering slag-mountains and pre-war excavation sites. Heavy going, but caves and overhangs offer excellent shelter. Medicine and scrap can be found deep in the tunnels.' },
   { name:'Settlement',      mc:1,   sv:3, vis: 0, icon:'🏕',
     fill:'#1A1206', stroke:'#382814',   /* warm amber glow */
     tags:['Haven','Barter'],
-    hazard:'None',
     desc:'A fortified survivor camp with trading posts and basic shelter. All resource types can be found or traded here. The only true safe zone on the wasteland.' },
   { name:'Nuke Crater',     mc:255, sv:0, vis: 0, icon:'☢',
     fill:'#0A0E04', stroke:'#1A2008',   /* scorched void, green-black */
     tags:['Dead Zone','Radiation'],
-    hazard:'Lethal radiation, unstable ground',
     desc:'A direct-strike detonation crater. The ground is fused glass and irradiated rubble. Radiation at the rim is immediately lethal. No one goes in. No one comes back.' },
   { name:'River Channel',   mc:255, sv:0, vis:-3, icon:'〰',
     fill:'#0B1E0F', stroke:'#162B18',   /* brackish murky green — wasteland water */
     tags:['Impassable'],
-    hazard:'Impassable current',
     desc:'A fast-moving river cutting through the wasteland. The current is too dangerous to cross. Navigate around it or find a ford. Water is visible but unreachable from the banks.' }
 ];
 const NUM_TERRAIN = TERRAIN.length;
@@ -95,6 +81,8 @@ const TAG_CLASS = {
 const RES_COLOR = ['','#2A5C8A','#4A7828','#8C4418','#7A1E1E','#5C5448'];
 const RES_LABEL = ['','≈','#','Ω','+','%'];
 const RES_NAMES = ['','Water','Food','Fuel','Medicine','Scrap'];
+// Canvas emoji icons per resource type (null = food uses forage-animal PNG instead)
+const RES_ICONS = ['', '〰', null, '🛢', '✚', '⚙'];
 // Resource badge class names (matches .hi-badge.res-X in style.css)
 const RES_BADGE_CLASS = ['','hi-badge res-water','hi-badge res-food','hi-badge res-fuel','hi-badge res-med','hi-badge res-scrap'];
 
@@ -432,6 +420,40 @@ const ITEMS = [
 const ITEM_IMG_PLACEHOLDER  = 'img/items/item_placeholder.png';
 const ITEM_ICON_PLACEHOLDER = 'img/items/icon_placeholder.png';
 
+// ── Equipment stat modifiers ────────────────────────────────────────────────
+// Mirrors stat fields in /data/items.cfg (mp, ll, slots, rad, vision, *_cost).
+// Used by the character sheet to display equipped-item bonuses to the player.
+// NOTE: Display only — actual stat calculations are authoritative on the server.
+//   mp/ll/slots/vision/rad : passive modifier while equipped
+//   fuelCost/waterCost/etc : tokens consumed at dawn while equipped
+//   note                   : qualitative effect (terrain unlock, special)
+const ITEM_MODS = {
+  11: { ll: +2 },                                                  // Dent Absorber
+  12: { rad: -1, note: 'Unlocks toxic terrain traversal' },        // Glow Suit
+  13: { note: 'Unlocks toxic terrain traversal' },                 // Wheeze Filter
+  14: { vision: +1 },                                              // Dark Goggles
+  15: { mp: +1 },                                                  // Trudge Stompers
+  16: { slots: +4 },                                               // Hoarder's Rig
+  17: { mp: +4, fuelCost: 1 },                                     // Rust Rocket
+  18: { note: 'Unlocks River Channel traversal' },                 // Floaty Disaster
+  19: { note: 'Unlocks cliff traversal' },                         // Vertical Regret
+  20: { note: 'Reveals rad levels on adjacent hexes' },            // Doom Clicker
+  26: { mp: +5, fuelCost: 2 },                                     // Motorbike
+  27: { note: 'Doubles scrap from SCAVENGE' },                     // Portable Forge
+  28: { note: 'Doubles river forage yield' },                      // Fishing Pole
+  29: { note: 'Doubles land food forage yield' },                  // Compound Bow
+  32: { note: 'Auto-upgrades camp shelter on REST' },              // Fire Starter
+  33: { note: 'Reduces ambush threat' },                           // Intimidate Mask
+  34: { ll: +2, note: 'Cold weather immunity' },                   // Bear Skin Cape
+  40: { ll: +1, note: 'Shock charge bonus on hit' },               // Shock Knuckles
+  41: { note: 'Reduces ambush threat, slip immunity' },            // Squatch Sliprs
+  42: { note: '20% chance of self-damage on use' },                // Knife-Wrench
+  45: { vision: +1 },                                              // Glow Dentures
+  47: { mp: -1, rad: -5 },                                         // Lead Snuggie
+};
+
+function getItemMods(id) { return ITEM_MODS[id] || null; }
+
 // Get item definition by ID. Returns undefined if not found.
 function getItemById(id) { return ITEMS.find(i => i.id === id); }
 
@@ -445,37 +467,17 @@ function getItemIcon(id) {
   return item ? item.icon : ITEM_ICON_PLACEHOLDER;
 }
 
-// Get narrative text. phase: 'preUse' | 'postUse' | 'story'. Returns null if not set.
-function getItemNarrative(id, phase) {
-  const item = getItemById(id);
-  return item ? (item[phase] ?? null) : null;
-}
-
 // Short skill labels for display
 const SK_SHORT = ['Nav', 'For', 'Scav', 'Trt', 'Shel', 'End'];
 
 // ── Skill check constants (mirrors server SK_* / SKILL_NAME) ─────
 const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
-// Suggested DN per skill index, indexed by terrain type 0-11
-// terrain:        0   1   2   3   4   5   6   7   8   9  10  11  99
-const SK_DN = [
-  [ 5,  5,  7,  7,  7,  7,  5,  5,  7,  5, 99,  6, 99], // 0 Navigate
-  [ 7,  9,  6,  8,  8,  8,  8,  8,  8,  8, 99, 99, 99], // 1 Forage (River impassable)
-  [ 8,  8,  8,  8,  6,  8,  8,  8,  8,  8, 99, 99, 99], // 2 Scavenge
-  [ 9,  9,  9,  9,  9,  9,  9,  9,  9,  9, 99,  9, 99], // 3 Treat
-  [ 8,  8,  8,  8,  8,  8,  8,  8,  8,  8, 99, 99, 99], // 4 Shelter
-  [ 7,  7,  7,  7,  7,  7,  7,  7,  9,  7, 99,  7, 99], // 5 Endure
-];
-function suggestDN(skill, terrain) {
-  if (terrain == null || terrain > 11) return 7;
-  return SK_DN[skill]?.[terrain] ?? 7;
-}
 
 // ── Weather system constants (must stay byte-for-byte identical to C++ tables) ─
 // Phase IDs: 0=Clear 1=Rain 2=Storm 3=Chem-Storm
 const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM'];
 // Visibility subtracted from server visR per phase (floored at 0)
-const WEATHER_VIS_PENALTY = [0, 2, 4, 6];
+const WEATHER_VIS_PENALTY = [0, 1, 4, 6];
 // Terrain intensity [phase][terrain idx 0-11] — matches C++ WEATHER_INTENSITY exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain

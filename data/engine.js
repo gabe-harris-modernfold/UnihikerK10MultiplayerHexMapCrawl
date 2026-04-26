@@ -4,6 +4,20 @@ let myVisionR = VISION_R;
 // ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem; updated from server gs.wp) ─
 let weatherPhase = 0;
 
+// Effective vision radius after weather penalty. Use this everywhere visibility
+// is calculated — never raw myVisionR — so weather shrinks the rendered view,
+// the char sheet display, and the AI-agent state object consistently.
+//   Clear : full myVisionR
+//   Rain  : myVisionR - 1  (one ring lost)
+//   Storm : capped at 1    (your hex + immediate ring only)
+//   Chem  : capped at 1    (same as storm)
+function getEffectiveVR() {
+  // Storm/Chem: always show own hex + 1 ring regardless of what server sends.
+  // Server may send vr=0 for these phases; we override client-side to vr=1.
+  if (weatherPhase === 2 || weatherPhase === 3) return 1;
+  return Math.max(0, myVisionR - (WEATHER_VIS_PENALTY[weatherPhase] ?? 0));
+}
+
 // ── Magic number constants ────────────────────────────────────────
 // Animation & timing
 const LERP_RATE              = 0.26;    // per-frame position interpolation (higher = snappier)
@@ -160,7 +174,7 @@ function buildAgentState() {
     myId,
     day:     gameState.dc,
     tc:      gameState.tc,
-    visR:    myVisionR,
+    visR:    getEffectiveVR(),
     me: me ? {
       q: me.q, r: me.r,
       ll: me.ll, food: me.food, water: me.water,

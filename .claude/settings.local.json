@@ -76,7 +76,12 @@
       "Bash(grep -E \"^d|package.json|\\\\.ino$|makefile|CMakeLists\")",
       "Bash(grep -E \"\\\\.hpp$|\\\\.h$\")",
       "Bash(node .claude/dev-server.js)",
-      "Bash(npx kill-port *)"
+      "Bash(npx kill-port *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 22092 /F)",
+      "PowerShell(Stop-Process -Id 22092 -Force)",
+      "Bash(grep -E \"\\\\.\\(png|jpg|jpeg|gif|svg|webp|ico\\)$\")",
+      "Bash(grep -E \"\\\\.\\(js|html\\)$\")"
     ]
   }
 }

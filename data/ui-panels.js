@@ -811,6 +811,15 @@ function initMenuSystem() {
         mp({ class: 'settings-val' }, () => uiConn.val)
       ),
 
+      md({ class: 'settings-row' },
+        mp({ class: 'settings-label' }, 'Diagnostics'),
+        mb({
+          class: 'menu-item-btn',
+          style: 'padding:3px 10px;font-size:var(--fs-d);',
+          onclick: () => openMenu('assets')
+        }, '◈  VIEW ASSETS')
+      ),
+
       sec('K10 Hardware',
         md({ class: 'settings-row' },
           mp({ class: 'settings-label' }, 'K10 Volume'),
@@ -934,6 +943,115 @@ function initMenuSystem() {
         }
       }, '☠ REGENERATE WORLD')
     );
+
+    if (page === 'assets') {
+      const assetProgress = van.state({ done: 0, total: 0 });
+      const assetResults  = van.state(null);
+
+      setTimeout(() => {
+        const entries = [];
+
+        // Survivor portraits + pawns
+        for (const a of ARCHETYPES) {
+          const n = a.name.toLowerCase();
+          entries.push({ group: 'Survivor', label: a.name + ' Portrait', path: `img/survivors/${n}.jpg` });
+          entries.push({ group: 'Survivor', label: a.name + ' Pawn',    path: `img/survivors/${n}Pawn.jpg` });
+        }
+
+        // Title screen
+        entries.push({ group: 'UI', label: 'Title Screen', path: 'img/wastelandTitle0.png' });
+
+        // Terrain variants (populated after server sync)
+        for (const variants of terrainImgVariants) {
+          for (const img of variants) {
+            const p = new URL(img.src, window.location.href).pathname;
+            entries.push({ group: 'Terrain', label: p.split('/').pop(), path: p });
+          }
+        }
+
+        // Forage animal images
+        for (const img of forrageAnimalImgs) {
+          const p = new URL(img.src, window.location.href).pathname;
+          entries.push({ group: 'Forage', label: p.split('/').pop(), path: p });
+        }
+
+        // Shelter variants
+        for (const variants of shelterImgs) {
+          for (const img of (variants || [])) {
+            const p = new URL(img.src, window.location.href).pathname;
+            entries.push({ group: 'Shelter', label: p.split('/').pop(), path: p });
+          }
+        }
+
+        // Item illustrations + badge icons
+        for (const item of ITEMS) {
+          entries.push({ group: 'Item Img',  label: item.name, path: item.img });
+          entries.push({ group: 'Item Icon', label: item.name, path: item.icon });
+        }
+
+        assetProgress.val = { done: 0, total: entries.length };
+        let completedCount = 0;
+
+        Promise.all(entries.map(async entry => {
+          const t0 = performance.now();
+          let ok = false, size = 0;
+          try {
+            const resp = await fetch(entry.path, { cache: 'no-store' });
+            if (resp.ok) { const blob = await resp.blob(); ok = true; size = blob.size; }
+          } catch (_) {}
+          const elapsed = Math.round(performance.now() - t0);
+          completedCount++;
+          assetProgress.val = { done: completedCount, total: entries.length };
+          return { ...entry, ok, size, elapsed };
+        })).then(results => { assetResults.val = results; });
+      }, 0);
+
+      return wrap(
+        back('settings'),
+        mh2({ class: 'menu-sub-title' }, 'ASSET VIEWER'),
+        () => {
+          const prog    = assetProgress.val;
+          const results = assetResults.val;
+
+          if (prog.total === 0) return ms({ class: 'asset-scanning' }, 'Preparing scan...');
+
+          if (!results) return md({ class: 'asset-scanning' },
+            mp({ class: 'asset-prog-label' }, `Downloading ${prog.done} / ${prog.total} assets...`),
+            md({ class: 'asset-prog-bar' },
+              md({ class: 'asset-prog-fill', style: `width:${(prog.done / prog.total * 100).toFixed(0)}%` })
+            )
+          );
+
+          const totalKB  = (results.reduce((s, r) => s + r.size, 0) / 1024).toFixed(1);
+          const missing  = results.filter(r => !r.ok).length;
+          const slowest  = results.reduce((m, r) => r.elapsed > m ? r.elapsed : m, 0);
+
+          return md({ class: 'asset-viewer' },
+            md({ class: 'asset-summary' },
+              ms({}, `${results.length} assets  ·  ${totalKB} KB`),
+              missing > 0 ? ms({ class: 'asset-miss-badge' }, ` · ${missing} MISSING`) : ms(),
+              ms({ class: 'asset-slow' }, `  ·  slowest ${slowest} ms`)
+            ),
+            md({ class: 'asset-table' },
+              md({ class: 'asset-table-head' },
+                ms({ class: 'atc atc-grp' }, 'Group'),
+                ms({ class: 'atc atc-lbl' }, 'Asset'),
+                ms({ class: 'atc atc-sz'  }, 'Size'),
+                ms({ class: 'atc atc-ms'  }, 'Time'),
+              ),
+              ...results.map(r =>
+                md({ class: `asset-row${r.ok ? '' : ' asset-row-miss'}` },
+                  ms({ class: 'atc atc-grp' }, r.group),
+                  ms({ class: 'atc atc-lbl' }, r.label),
+                  ms({ class: 'atc atc-sz'  }, r.ok ? (r.size / 1024).toFixed(1) + ' KB' : '—'),
+                  ms({ class: 'atc atc-ms'  }, r.ok ? r.elapsed + ' ms' : 'MISSING'),
+                )
+              )
+            )
+          );
+        }
+      );
+    }
 
     if (page === 'about') return wrap(
       back('main'),

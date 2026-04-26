@@ -59,10 +59,28 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
   }
 }
 
+// EFX_REVEAL_FOG — param==1 is a passive vision bonus handled in playerVisParams().
+// param>=2: one-shot reveal — mark all cells within radius in surveyedMap.
+// param==99: reveal entire map.
+static void efxRevealFog(int pid, uint8_t itemId, uint8_t param) {
+  (void)itemId;
+  if (param < 2) return;
+  Player& p = G.players[pid];
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int q = 0; q < MAP_COLS; q++) {
+      if (param == 99 || hexDistWrap((int)p.q, (int)p.r, q, r) <= (int)param) {
+        int idx = r * MAP_COLS + q;
+        p.surveyedMap[idx / 8] |= (uint8_t)(1 << (idx % 8));
+      }
+    }
+  }
+}
+
 static void initEffectTable() {
   effectTable[EFX_THREAT_MOD]  = efxThreatMod;
   effectTable[EFX_CURE_STATUS] = efxCureStatus;
   effectTable[EFX_NARRATIVE]   = efxNarrative;
+  effectTable[EFX_REVEAL_FOG]  = efxRevealFog;
 }
 
 static void dispatchEffect(int pid, const ItemDef& item) {
@@ -106,6 +124,15 @@ static void applyDawnItemCosts(int pid) {
       // choice: equipment stays on, but fuel-gated bonuses are dormant.
     }
   }
+  // Passive EFX_THREAT_MOD from equipped items — applied each dawn to keep TC suppressed
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    uint8_t eid = p.equip[s];
+    if (!eid) continue;
+    const ItemDef* def = getItemDef(eid);
+    if (!def) continue;
+    if (def->effectId  == EFX_THREAT_MOD) G.threatClock = (uint8_t)constrain((int)G.threatClock + (int)(int8_t)def->effectParam,  0, 20);
+    if (def->effectId2 == EFX_THREAT_MOD) G.threatClock = (uint8_t)constrain((int)G.threatClock + (int)(int8_t)def->effectParam2, 0, 20);
+  }
 }
 
 // ── useItem ───────────────────────────────────────────────────────────────
@@ -123,12 +150,20 @@ static bool useItem(int pid, uint8_t slotIdx) {
   if (def->category == ITEM_EQUIPMENT) return false;
 
 
-  // Apply stat modifiers
-  if (def->statMods[STAT_LL])      p.ll        = (uint8_t)constrain((int)p.ll      + def->statMods[STAT_LL],      0, (int)effectiveMaxLL(pid));
-  if (def->statMods[STAT_FOOD])    p.food      = (uint8_t)constrain((int)p.food    + def->statMods[STAT_FOOD],    1, 6);
-  if (def->statMods[STAT_WATER])   p.water     = (uint8_t)constrain((int)p.water   + def->statMods[STAT_WATER],   1, 6);
-  if (def->statMods[STAT_RAD])     p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD],   0, 10);
-  if (def->statMods[STAT_MP])      p.movesLeft = (int8_t)max(0, (int)p.movesLeft   + def->statMods[STAT_MP]);
+  // Apply stat modifiers — food/water via threshold-aware steps to propagate LL events
+  int llDelta = 0;
+  if (def->statMods[STAT_FOOD]) {
+    int steps = (int)def->statMods[STAT_FOOD];
+    for (int i = 0; i < abs(steps); i++) applyFStep(p, steps > 0 ? 1 : -1, llDelta);
+  }
+  if (def->statMods[STAT_WATER]) {
+    int steps = (int)def->statMods[STAT_WATER];
+    for (int i = 0; i < abs(steps); i++) applyWStep(p, steps > 0 ? 1 : -1, llDelta);
+  }
+  llDelta += (int)def->statMods[STAT_LL];
+  if (llDelta != 0) p.ll = (uint8_t)constrain((int)p.ll + llDelta, 0, (int)effectiveMaxLL(pid));
+  if (def->statMods[STAT_RAD]) p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD], 0, 10);
+  if (def->statMods[STAT_MP])  p.movesLeft = (int8_t)max(0, (int)p.movesLeft + def->statMods[STAT_MP]);
 
   // Dispatch effects
   dispatchEffect(pid, *def);

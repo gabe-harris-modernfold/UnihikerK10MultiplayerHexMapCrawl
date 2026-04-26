@@ -62,6 +62,9 @@ function handleNarrativeEffect(param) {
     case 29: // Uranium Hard Candy — warn about LL ceiling
       showToast('☢ The rads settle into your marrow. You will never be whole again.');
       break;
+    case 25: // Knife-Wrench — catastrophic failure, self-damage
+      showToast('✦ The Knife-Wrench turns on you. You take the damage yourself.');
+      break;
     default:
       break;
   }
