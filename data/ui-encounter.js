@@ -35,7 +35,7 @@ function initEncounterOverlay() {
 
 
   function renderNode(node) {
-    console.log(`[ENC/RENDER] renderNode  nodeKeys=${Object.keys(node).join(',')}  choices=${node.choices?.length??0}  can_bank=${node.can_bank}  nodeText_el=${!!nodeText}  choiceList_el=${!!choiceList}`);
+    console.log('%c[ENC] renderNode', 'color:#c0f', `keys=[${Object.keys(node).join(',')}] choices=${node.choices?.length ?? 0} can_bank=${node.can_bank ?? false}`);
     currentNode = node;
     nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
 
@@ -55,6 +55,7 @@ function initEncounterOverlay() {
   }
 
   function sendChoice(ch) {
+    console.log('%c[ENC] sendChoice', 'color:#c0f', `label="${ch.label}" success_node="${ch.success_node ?? ''}" base_risk=${ch.base_risk ?? 50} hazard=${ch.hazard_id ?? 'none'}`);
     const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
     pendingHazText = haz.text ? resolveText(haz.text, currentEnc.placeholders) : '';
     const hazPen = haz.penalty ?? {};
@@ -102,18 +103,18 @@ function initEncounterOverlay() {
   }
 
   function openEncounter(enc) {
-    console.log(`[ENC/OPEN] openEncounter  id=${enc.id}  start_node=${enc.start_node}  nodeCount=${Object.keys(enc.nodes??{}).length}  overlay_el=${!!overlay}  nodeText_el=${!!nodeText}`);
+    console.log('%c[ENC] openEncounter', 'color:#c0f;font-weight:bold', `id=${enc.id} start_node=${enc.start_node} nodeCount=${Object.keys(enc.nodes ?? {}).length}`);
     currentEnc  = enc;
     pendingLoot = [0,0,0,0,0];
     overlay.classList.add('open');
     overlay.style.display = '';
     const startNode = enc.nodes?.[enc.start_node] ?? Object.values(enc.nodes ?? {})[0];
-    console.log(`[ENC/OPEN] startNode=${startNode ? Object.keys(startNode).join(',') : 'NOT FOUND'}  overlay.display=${overlay.style.display}  overlay.class=${overlay.className}`);
     if (startNode) renderNode(startNode);
-    else console.error('[ENC/OPEN] No start node found — dialog will be empty');
+    else console.error('[ENC] No start node found — encounter dialog will be empty', enc);
   }
 
   function closeEncounter() {
+    console.log('%c[ENC] closeEncounter', 'color:#c0f', `id=${currentEnc?.id ?? 'none'} pendingLoot=${JSON.stringify(pendingLoot)}`);
     overlay.classList.remove('open');
     overlay.style.display = 'none';
     currentEnc     = null;
@@ -132,28 +133,27 @@ function initEncounterOverlay() {
   // Called from network.js enc_path handler
   globalThis._startEncounterFetch = function(biome, id) {
     const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
-    const t0 = Date.now();
-    console.log(`[ENC/FETCH] >>> ${url}  t=${t0}  _startEncounterFetch defined:${typeof globalThis._startEncounterFetch}`);
+    const t0  = Date.now();
+    console.log('%c[ENC] fetch start', 'color:#c0f', `GET ${url}`);
     fetch(url)
       .then(r => {
-        console.log(`[ENC/FETCH] HTTP ${r.status}  t+${Date.now()-t0}ms`);
+        console.log('[ENC] fetch response', `HTTP ${r.status} t+${Date.now()-t0}ms`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
       })
       .then(txt => {
-        console.log(`[ENC/FETCH] body ${txt.length} bytes  t+${Date.now()-t0}ms`);
+        console.log('[ENC] fetch body', `${txt.length} bytes t+${Date.now()-t0}ms`);
         let enc;
         try { enc = JSON.parse(txt); }
         catch(error_) {
-          console.error('[ENC/FETCH] JSON parse error:', error_, 'body=', txt.slice(0,200));
+          console.error('[ENC] JSON parse error:', error_, 'body=', txt.slice(0, 200));
           throw new Error(`JSON parse: ${error_.message}`);
         }
-        console.log(`[ENC/FETCH] parsed ok  nodes=${Object.keys(enc.nodes??{}).length}  start_node=${enc.start_node}  t+${Date.now()-t0}ms`);
+        console.log('[ENC] parsed ok', `nodes=${Object.keys(enc.nodes ?? {}).length} start_node=${enc.start_node} t+${Date.now()-t0}ms`);
         openEncounter(enc);
-        console.log(`[ENC/FETCH] openEncounter returned  overlay.display=${overlay?.style.display}  overlay.classes=${overlay?.className}  t+${Date.now()-t0}ms`);
       })
       .catch(e => {
-        console.error(`[ENC/FETCH] FAILED: ${e.message}  t+${Date.now()-t0}ms  — sending enc_abort to free server slot`);
+        console.error('[ENC] Fetch failed — sending enc_abort:', e.message, `t+${Date.now()-t0}ms`);
         send({ t: 'enc_abort' });
       });
   };
@@ -165,6 +165,7 @@ function initEncounterOverlay() {
 
   // Called from engine.js enc_res handler — show outcome then advance or stay
   globalThis._onEncResult = function(ev) {
+    console.log('%c[ENC] _onEncResult', 'color:#c0f', `out=${ev.out} ends=${ev.ends} penLL=${ev.penLL ?? 0} penRad=${ev.penRad ?? 0} loot=${JSON.stringify(ev.loot)}`);
     if (ev.ends) { closeEncounter(); return; }
 
     const nextKey = pendingNextKey;

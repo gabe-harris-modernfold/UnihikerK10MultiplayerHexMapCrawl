@@ -31,15 +31,14 @@ const Diag = (() => {
   }
 
   function report() {
-    const now   = Date.now();
-    const upSec = d.lastConnectedAt ? Math.round((now - d.lastConnectedAt) / 1000) : null;
+    const now    = Date.now();
+    const upSec  = d.lastConnectedAt ? Math.round((now - d.lastConnectedAt) / 1000) : null;
     const ageSec = Math.round((now - d.sessionStart) / 1000);
     const lastMsgAgo = d.lastMsgAt ? Math.round((now - d.lastMsgAt) / 1000) + 's ago' : '—';
     const myPos = (typeof myId !== 'undefined' && myId >= 0 &&
                    typeof players !== 'undefined' && players[myId])
                   ? `q:${players[myId].q} r:${players[myId].r}` : '—';
-    const connCount = players === undefined ? '—' : players.filter(p => p?.on).length;
-
+    const connCount = typeof players !== 'undefined' ? players.filter(p => p?.on).length : '—';
     console.group('%c[DIAG] Wasteland Crawl — Client Diagnostics', 'color:#4fc;font-weight:bold');
     console.log(`Session age      : ${ageSec}s`);
     console.log(`WS state         : ${wsState()}`);
@@ -48,7 +47,7 @@ const Diag = (() => {
     console.log(`Dropped sends    : ${d.droppedSends}`);
     console.log(`Msgs sent        : ${d.msgSent}  |  Received: ${d.msgReceived}`);
     console.log(`Last msg recv    : ${lastMsgAgo}`);
-    console.log(`Avg RTT (action→sync): ${avgRtt() == null ? '—' : avgRtt() + 'ms'}  (${d.responseTimes.length} samples)`);
+    console.log(`Avg RTT          : ${avgRtt() == null ? '—' : avgRtt() + 'ms'}  (${d.responseTimes.length} samples)`);
     console.log(`Min / Max RTT    : ${d.responseTimes.length ? Math.min(...d.responseTimes) + 'ms / ' + Math.max(...d.responseTimes) + 'ms' : '—'}`);
     console.log(`Player ID        : ${myId === undefined ? '—' : myId}`);
     console.log(`My position      : ${myPos}`);
@@ -64,7 +63,7 @@ const Diag = (() => {
 
   function onDropped() {
     d.droppedSends++;
-    console.warn(`[DIAG] Dropped send — socket not open (total dropped: ${d.droppedSends}, ws: ${wsState()})`);
+    console.warn('%c[WS ⚠] Dropped send — socket not open', 'color:#fa0', `total=${d.droppedSends} state=${wsState()}`);
   }
 
   function onMsg(t) {
@@ -82,19 +81,19 @@ const Diag = (() => {
   function onConnect() {
     d.wsConnections++;
     d.lastConnectedAt = Date.now();
-    console.info(`[DIAG] WS connected (#${d.wsConnections}) at ${new Date().toISOString()} — prior disconnects: ${d.wsDisconnects}`);
+    console.info('%c[WS ▲] Connected', 'color:#4fc;font-weight:bold', `#${d.wsConnections} at ${new Date().toISOString()} — prior disconnects: ${d.wsDisconnects}`);
   }
 
   function onDisconnect() {
     d.wsDisconnects++;
     d.lastDisconnectedAt = Date.now();
-    console.warn(`[DIAG] WS closed (#${d.wsDisconnects}) — dropped sends total: ${d.droppedSends}`);
+    console.warn('%c[WS ▼] Disconnected', 'color:#fa0;font-weight:bold', `#${d.wsDisconnects} — total dropped sends: ${d.droppedSends}`);
     report();
   }
 
   function onError(ev) {
     d.wsErrors++;
-    console.error(`[DIAG] WS error #${d.wsErrors} at ${new Date().toISOString()}`, ev);
+    console.error(`[WS ✖] Error #${d.wsErrors} at ${new Date().toISOString()}`, ev);
     report();
   }
 
@@ -160,7 +159,7 @@ function connect() {
   };
   socket.onclose   = (ev) => {
     const msSinceEnc = globalThis._lastEncStartT ? (Date.now() - globalThis._lastEncStartT) : '—';
-    console.warn(`[DIAG] WS closed  code=${ev.code}  wasClean=${ev.wasClean}  reason="${ev.reason}"  msSinceEncStart=${msSinceEnc}`);
+    console.warn('%c[WS ▼] Closed', 'color:#fa0;font-weight:bold', `code=${ev.code} wasClean=${ev.wasClean} reason="${ev.reason}" msSinceEncStart=${msSinceEnc}`);
     showToast(CONN_LOST_QUIPS[Math.floor(Math.random() * CONN_LOST_QUIPS.length)]);
     Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS);
   };
@@ -173,6 +172,7 @@ function connect() {
 function send(obj) {
   if (socket?.readyState === WebSocket.OPEN) {
     Diag.onSend(obj);
+    console.log('%c→ TX [%s]', 'color:#0c0;font-weight:bold', obj.t, obj);
     socket.send(JSON.stringify(obj));
   } else {
     Diag.onDropped();
@@ -221,9 +221,10 @@ function _applyGameState(gs) {
 
 function _msgAsgn(msg) {
   if (typeof msg.id !== 'number' || msg.id < 0 || msg.id >= MAX_PLAYERS) {
-    console.warn('Invalid assignment: bad player ID', msg.id);
+    console.warn('[ASGN] Invalid player ID:', msg.id);
     return;
   }
+  console.log('%c[ASGN] Assigned slot %d', 'color:#09f;font-weight:bold', msg.id, `(prev myId=${myId})`);
   myId = msg.id;
   _clearPickTimeout();
   uiPickPending.val = false;
@@ -235,37 +236,32 @@ function _msgLobby(msg) {
   lobbyAvail.val = Array.isArray(msg.avail) ? msg.avail : [];
   _clearPickTimeout();
   uiPickPending.val = false;
-  console.log('[lobby] avail=%o myId=%d pendingLobbyRedirect=%s', lobbyAvail.val, myId, pendingLobbyRedirect);
-  if (pendingLobbyRedirect) {
-    console.log('[lobby] suppressed by pendingLobbyRedirect');
-  } else if (myId >= 0 && lobbyAvail.val.includes(myId)) {
-    // Already assigned and slot still free: auto-repick same slot on reconnect (BUG-01)
-    console.log('[lobby] auto-repick myId=%d', myId);
-    send({ t: 'pick', arch: myId });
+  console.log('%c[LOBBY] avail=%o myId=%d pendingLobbyRedirect=%s', 'color:#09f;font-weight:bold', lobbyAvail.val, myId, pendingLobbyRedirect);
+  if (!pendingLobbyRedirect) {
+    if (myId >= 0 && lobbyAvail.val.includes(myId)) {
+      // Already assigned and slot still free: auto-repick same slot on reconnect (BUG-01)
+      console.log('[LOBBY] auto-repick slot %d', myId);
+      send({ t: 'pick', arch: myId });
+    } else {
+      // Slot taken or unassigned — show character select
+      if (myId >= 0) { console.log('[LOBBY] slot %d taken — resetting myId, showing char select', myId); myId = -1; }
+      else console.log('[LOBBY] unassigned — showing char select');
+      showCharSelect();
+    }
   } else {
-    // Slot taken or unassigned — show character select
-    if (myId >= 0) { console.log('[lobby] slot taken, resetting myId'); myId = -1; }
-    showCharSelect();
+    console.log('[LOBBY] suppressed — pendingLobbyRedirect active');
   }
 }
 
 function _msgSync(msg) {
+  console.log('%c[SYNC] id=%s vr=%s mapLen=%d playerCount=%d', 'color:#09f', msg.id ?? '(unchanged)', msg.vr ?? '(unchanged)', msg.map?.length ?? 0, msg.p?.length ?? 0);
   if (msg.id  !== undefined) myId = msg.id;
   if (msg.vr  !== undefined) myVisionR = msg.vr;
-  if (typeof msg.map !== 'string') {
-    console.warn('Sync message: missing or invalid map data');
-    return;
-  }
+  if (typeof msg.map !== 'string') return;
   parseMapFog(msg.map);
-  if (!Array.isArray(msg.p)) {
-    console.warn('Sync message: player array invalid');
-    return;
-  }
+  if (!Array.isArray(msg.p)) return;
   msg.p.forEach(p => {
-    if (typeof p.id !== 'number' || p.id < 0 || p.id >= MAX_PLAYERS) {
-      console.warn('Sync: invalid player ID', p.id);
-      return;
-    }
+    if (typeof p.id !== 'number' || p.id < 0 || p.id >= MAX_PLAYERS) return;
     Object.assign(players[p.id], p);
     players[p.id].rest = !!p.rt;  // map rt → rest (mirrors 's' handler)
     if (p.on) { renderPos[p.id].q = p.q; renderPos[p.id].r = p.r; }
@@ -292,15 +288,9 @@ function _msgSync(msg) {
 }
 
 function _msgState(msg) {
-  if (!Array.isArray(msg.p)) {
-    console.warn('State update: player array invalid');
-    return;
-  }
+  if (!Array.isArray(msg.p)) return;
   msg.p.forEach((pd, i) => {
-    if (i < 0 || i >= MAX_PLAYERS) {
-      console.warn('State update: player index out of bounds', i);
-      return;
-    }
+    if (i < 0 || i >= MAX_PLAYERS) return;
     const p = players[i];
     const wasOn = p.on;
     p.on = pd.on; p.q = pd.q; p.r = pd.r; p.sc = pd.sc;
@@ -346,12 +336,14 @@ function _handleSelfVis() {
   // If the current hex still has a resource after the move, collection was
   // blocked. The only server-side reason is a full inventory — notify the player.
   const _cur = gameMap[_me.r]?.[_me.q];
+  if (_cur?.resource > 0 && _cur?.amount > 0) {
+    showToast('Carry limit reached — drop or use items to collect resources.');
+  }
   // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
   if (_cur?.poi) {
     globalThis._lastEncStartT = Date.now();
-    console.log(`[ENC] sending enc_start q=${_me.q} r=${_me.r} t=${globalThis._lastEncStartT}  wsState=${socket?.readyState ?? '?'}  buffered=${socket?.bufferedAmount ?? '?'}`);
+    console.log('%c[ENC] POI detected — sending enc_start', 'color:#c0f;font-weight:bold', `q=${_me.q} r=${_me.r} t=${globalThis._lastEncStartT}`);
     send({ t: 'enc_start', q: _me.q, r: _me.r });
-    console.log(`[ENC] enc_start send() returned  wsState=${socket?.readyState ?? '?'}  buffered=${socket?.bufferedAmount ?? '?'}`);
   }
 }
 
@@ -387,9 +379,10 @@ function _msgWifi(msg) {
 
 function handleMsg(msg) {
   if (!msg?.t) {
-    console.warn('Invalid message: missing type field', msg);
+    console.warn('[RX] Message missing type field', msg);
     return;
   }
+  console.log('%c← RX [%s]', 'color:#0cf;font-weight:bold', msg.t, msg);
 
   switch (msg.t) {
     case 'asgn':          _msgAsgn(msg);         break;
@@ -400,20 +393,21 @@ function handleMsg(msg) {
     case 'ev':            handleEvent(msg);      break;
     case 'ground_update': _msgGroundUpdate(msg); break;
     case 'full':
+      console.warn('[RX] Server full — all slots taken');
       document.getElementById('connect-box').innerHTML =
         '<h2>SERVER FULL</h2><p>All 6 slots taken.<br>Try again later.</p>' +
         '<button onclick="location.reload()" class="server-full-retry-btn">\u21BA RETRY</button>';
       break;
     case 'wifi':    _msgWifi(msg); break;
     case 'enc_path':
-      console.log(`[ENC] enc_path recv biome=${msg.biome} id=${msg.id} t=${Date.now()}  msSinceEncStart=${globalThis._lastEncStartT ? Date.now()-globalThis._lastEncStartT : '—'}  wsState=${Diag.wsState()}`);
+      console.log('%c[ENC] enc_path received', 'color:#c0f;font-weight:bold', `biome=${msg.biome} id=${msg.id} msSinceEncStart=${globalThis._lastEncStartT ? Date.now()-globalThis._lastEncStartT : '—'}`);
       globalThis._startEncounterFetch?.(msg.biome, msg.id);
       break;
     case 'enc_dbg':
-      console.warn('[ENC/DBG] server diagnostic:', msg.msg, 't='+Date.now());
+      console.warn('[ENC] Server diagnostic:', msg.msg);
       break;
     case 'err':
-      console.warn('[ENC/ERR] Server error:', msg);
+      console.error('[ERR] Server error:', msg);
       break;
   }
   buildAgentState();
@@ -482,17 +476,18 @@ function _evDowned(ev) {
   // Server has reset our slot — show death message then redirect to char selection
   myId = -1;
   pendingLobbyRedirect = true;
-  console.log('[downed] received — starting 3.5s timer');
+  console.log('%c[DOWNED] Received — starting 3.5s redirect timer', 'color:#f44;font-weight:bold', `lobbyAvail=${JSON.stringify(lobbyAvail.val)}`);
   globalThis._onEncEnd?.();  // close encounter overlay if open when player is downed
   addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
   showToast('☠ The wasteland claims you. Your story ends in the dust.');
   setTimeout(() => {
     pendingLobbyRedirect = false;
-    console.log('[downed] timer fired — lobbyAvail=%o', lobbyAvail.val);
+    console.log('[DOWNED] Timer fired — lobbyAvail=%o', lobbyAvail.val);
     if (lobbyAvail.val.length > 0) {
+      console.log('[DOWNED] Slots available — showing char select');
       showCharSelect();
     } else {
-      console.log('[downed] avail empty — forcing reconnect');
+      console.log('[DOWNED] No slots available — forcing reconnect via socket.close()');
       socket.close();  // onclose → reconnect → sendLobbyMsg → lobby handler calls showCharSelect()
     }
   }, 3500);
@@ -642,7 +637,7 @@ function _evSurv(ev) {
         surveyedCells.add(`${sq}_${sr}`);
       }
     }
-  } catch(e) { console.error('surv event error', e); }
+  } catch(e) { console.error('[SURV] Event processing error:', e); }
 }
 
 function _evDusk(ev) {
@@ -692,17 +687,20 @@ function _evTrdRes(ev) {
 }
 
 function _evItemResult(ev) {
+  console.log('%c[INV] _evItemResult', 'color:#fc0;font-weight:bold', `act=${ev.act} ok=${ev.ok} pid=${ev.pid} efxp=${ev.efxp ?? 'none'}`, ev);
   // Server ack for use_item / equip_item / unequip_item
   if (ev.ok) {
     // Dispatch client-side narrative effects
     if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
+  } else {
+    console.warn('[INV] item action rejected by server', `act=${ev.act} pid=${ev.pid}`);
   }
   // Always apply server ground-truth state (server sends current state regardless of ok/fail)
   if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
     const p = players[ev.pid];
-    if (ev.it) p.it = ev.it;
+    if (ev.it) { console.log('[INV] applying server inv state', ev.it); p.it = ev.it; }
     if (ev.iq) p.iq = ev.iq;
-    if (ev.eq) p.eq = ev.eq;
+    if (ev.eq) { console.log('[INV] applying server eq state', ev.eq); p.eq = ev.eq; }
   }
   // Always refresh char-sheet inventory/equipment — ghost-tap on mobile can close
   // char-overlay between item-menu dismiss and server ack, causing the open-check to fail
@@ -746,6 +744,11 @@ function _evEncBank(ev) {
   const lootSum = (ev.loot ?? []).reduce((a, b) => a + b, 0);
   addLog(`<span class="log-col">\u25a0 ${escHtml(who)} secured loot (${lootSum} items, +${ev.scoreD} pts)</span>`);
   if (ev.pid === myId) {
+    if (Array.isArray(ev.loot)) {
+      ev.loot.forEach((v, i) => {
+        if (i >= 0 && i < 5 && v > 0) players[myId].inv[i] = (players[myId].inv[i] ?? 0) + v;
+      });
+    }
     showToast(`★ You drag the spoils from the ruin. +${ev.scoreD}`);
     globalThis._onEncBank?.(ev);
     updateSidebar();

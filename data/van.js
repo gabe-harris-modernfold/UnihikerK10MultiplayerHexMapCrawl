@@ -15,7 +15,6 @@ let runAndCaptureDeps = (f, deps, arg) => {
   try {
     return f(arg)
   } catch (e) {
-    console.error(e)
     return arg
   } finally {
     curDeps = prevDeps

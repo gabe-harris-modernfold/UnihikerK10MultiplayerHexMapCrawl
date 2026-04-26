@@ -69,7 +69,6 @@ function createImageWithLoadTracking(src) {
   img.onload = () => { img.loaded = true; };
   img.onerror = () => {
     img.loaded = false;
-    console.warn(`Failed to load image: ${src}`);
   };
   return img;
 }

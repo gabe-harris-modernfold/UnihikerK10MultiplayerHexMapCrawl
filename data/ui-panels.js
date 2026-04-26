@@ -121,6 +121,7 @@ function initActionPanel() {
     if (myId < 0 || tradeTargetPid < 0) return;
     const allZero = tradeGive.every(v => v === 0) && tradeWant.every(v => v === 0);
     if (allZero) return;
+    console.log('%c[TRADE] Sending trade_offer', 'color:#fc0;font-weight:bold', `to=${tradeTargetPid} give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
     send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
     closeActionPanel();
   });
@@ -336,6 +337,7 @@ function initTradeOverlay() {
   let expireEnd        = 0;
 
   globalThis._openTradeOffer = function(fromPid, give, want) {
+    console.log('%c[TRADE] Incoming trade offer', 'color:#fc0;font-weight:bold', `from=${fromPid} give=${JSON.stringify(give)} want=${JSON.stringify(want)}`);
     pendingTradeFrom = fromPid;
     expireEnd = Date.now() + 30000;
     const fromName = players[fromPid]?.nm || 'P' + fromPid;
@@ -356,6 +358,7 @@ function initTradeOverlay() {
   };
 
   function _closeTradeOverlay() {
+    console.log('[TRADE] closeTradeOverlay — from=%d', pendingTradeFrom);
     pendingTradeFrom = -1;
     clearInterval(expireInterval);
     overlay.classList.remove('open');
@@ -365,11 +368,13 @@ function initTradeOverlay() {
 
   document.getElementById('trade-accept-btn').addEventListener('click', () => {
     if (pendingTradeFrom < 0) return;
+    console.log('%c[TRADE] Accepting trade from %d', 'color:#fc0;font-weight:bold', pendingTradeFrom);
     send({ t: 'trade_accept', from: pendingTradeFrom });
     _closeTradeOverlay();
   });
   document.getElementById('trade-decline-btn').addEventListener('click', () => {
     if (pendingTradeFrom < 0) return;
+    console.log('[TRADE] Declining trade from %d', pendingTradeFrom);
     send({ t: 'trade_decline', from: pendingTradeFrom });
     _closeTradeOverlay();
   });
@@ -402,7 +407,7 @@ function populateSlider(sliderId, labelId, storageKey, defaultVal, offLabel) {
 }
 
 function initMenuSystem() {
-  const { div: md, span: ms, button: mb, h2: mh2, h3: mh3, p: mp, input: minput, br: mbr } = van.tags;
+  const { div: md, span: ms, button: mb, h2: mh2, h3: mh3, p: mp, input: minput, br: mbr, img: mimg } = van.tags;
 
   const menuOverlay = document.getElementById('menu-overlay');
   van.derive(() => { menuOverlay.classList.toggle('open', uiMenuPage.val !== null); });
@@ -1034,17 +1039,19 @@ function initMenuSystem() {
             ),
             md({ class: 'asset-table' },
               md({ class: 'asset-table-head' },
-                ms({ class: 'atc atc-grp' }, 'Group'),
-                ms({ class: 'atc atc-lbl' }, 'Asset'),
-                ms({ class: 'atc atc-sz'  }, 'Size'),
-                ms({ class: 'atc atc-ms'  }, 'Time'),
+                ms({ class: 'atc atc-grp'  }, 'Group'),
+                ms({ class: 'atc atc-lbl'  }, 'Asset'),
+                ms({ class: 'atc atc-prev' }, ''),
+                ms({ class: 'atc atc-sz'   }, 'Size'),
+                ms({ class: 'atc atc-ms'   }, 'Time'),
               ),
               ...results.map(r =>
                 md({ class: `asset-row${r.ok ? '' : ' asset-row-miss'}` },
-                  ms({ class: 'atc atc-grp' }, r.group),
-                  ms({ class: 'atc atc-lbl' }, r.label),
-                  ms({ class: 'atc atc-sz'  }, r.ok ? (r.size / 1024).toFixed(1) + ' KB' : '—'),
-                  ms({ class: 'atc atc-ms'  }, r.ok ? r.elapsed + ' ms' : 'MISSING'),
+                  ms({ class: 'atc atc-grp'  }, r.group),
+                  ms({ class: 'atc atc-lbl'  }, r.label),
+                  ms({ class: 'atc atc-prev' }, r.ok ? mimg({ src: r.path, class: 'asset-thumb' }) : ''),
+                  ms({ class: 'atc atc-sz'   }, r.ok ? (r.size / 1024).toFixed(1) + ' KB' : '—'),
+                  ms({ class: 'atc atc-ms'   }, r.ok ? r.elapsed + ' ms' : 'MISSING'),
                 )
               )
             )
@@ -1082,7 +1089,7 @@ function initCharSelect() {
     const avail   = lobbyAvail.val;
     const pending = uiPickPending.val;
     const availSet = new Set(avail);
-    console.log('[initCharSelect] reactive render — avail=%o', avail);
+    console.log('[LOBBY] char-select render — avail=%o pending=%s', avail, pending);
 
     return div({ class: 'cs-page' },
       h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),

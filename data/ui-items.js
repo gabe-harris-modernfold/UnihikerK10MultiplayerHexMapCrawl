@@ -18,6 +18,8 @@ function renderInventory() {
   const me = players[myId];
   const arch = me.arch ?? 0;
   const slots = ARCHETYPES[arch]?.invSlots ?? 8;
+  const occupied = (me.it ?? []).filter(id => id > 0).length;
+  console.log('%c[INV] renderInventory', 'color:#fc0', `myId=${myId} slots=${slots} occupied=${occupied}`);
   grid.innerHTML = '';
   for (let i = 0; i < slots; i++) {
     const typeId = me.it?.[i] ?? 0;
@@ -85,8 +87,9 @@ function renderEquipment() {
   if (!grid || myId < 0) return;
   const me = players[myId];
   const eqKey = JSON.stringify(me.eq ?? []);
-  if (eqKey === _lastEqKey) return;
+  if (eqKey === _lastEqKey) { console.log('[INV] renderEquipment — cache hit, skip'); return; }
   _lastEqKey = eqKey;
+  console.log('%c[INV] renderEquipment', 'color:#fc0', `myId=${myId} eq=${eqKey}`);
   const SLOT_LABELS = ['NOGGIN', 'HIDE', 'MITTS', 'HOOVES', 'RUST BUCKET'];
   grid.innerHTML = '';
   for (let s = 0; s < 5; s++) {
@@ -148,6 +151,8 @@ function openItemMenu(slotIdx, isEquipped) {
     itemQty = me.iq?.[slotIdx] ?? 0;
   }
   if (!itemId) return;
+  const _itemName = getItemById?.(itemId)?.name ?? ('Item #' + itemId);
+  console.log('%c[INV] openItemMenu', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${_itemName}" qty=${itemQty} isEquipped=${isEquipped}`);
 
   const item   = getItemById?.(itemId);
   const name   = item?.name ?? ('Item #' + itemId);
@@ -178,23 +183,27 @@ function openItemMenu(slotIdx, isEquipped) {
     addBtn('\u25B6 Choke Down' + (preUse ? ' — ' + preUse : ''), '', () => {
       closeItemMenu();
       if (item?.postUse) showBanner(item.postUse, null);
+      console.log('%c[INV] use_item', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${name}"`);
       send({ t: 'use_item', slot: slotIdx });
     });
   }
   if (isEquip) {
     addBtn('\u25A3 Strap On', '', () => {
+      console.log('%c[INV] equip_item', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${name}"`);
       closeItemMenu();
       send({ t: 'equip_item', slot: slotIdx });
     });
   }
   if (isEquipped) {
     addBtn('\u25A1 Tear Off', '', () => {
+      console.log('%c[INV] unequip_item', 'color:#fc0;font-weight:bold', `eslot=${slotIdx} itemId=${itemId} name="${name}"`);
       closeItemMenu();
       send({ t: 'unequip_item', eslot: slotIdx });
     });
   }
   if (!isEquipped && item?.category !== 3) { // KEY items not shown drop button
     addBtn('\u25BC Abandon', 'danger', () => {
+      console.log('%c[INV] drop_item', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${name}" qty=${itemQty}`);
       closeItemMenu();
       send({ t: 'drop_item', slot: slotIdx, qty: itemQty });
     });
@@ -207,6 +216,7 @@ function openItemMenu(slotIdx, isEquipped) {
 }
 
 function closeItemMenu() {
+  console.log('[INV] closeItemMenu');
   document.getElementById('item-action-menu')?.classList.remove('open');
   document.getElementById('item-menu-backdrop')?.classList.remove('open');
 }
@@ -218,6 +228,7 @@ function renderHexGroundItems(q, r) {
   if (!list || !row) return;
   const here = (typeof groundItems === 'undefined' ? [] : groundItems)
     .filter(gi => gi.q === q && gi.r === r && gi.id > 0);
+  console.log('[INV] renderHexGroundItems', `q=${q} r=${r} itemsFound=${here.length}`);
   if (here.length === 0) {
     row.style.display = 'none';
     list.innerHTML = '';
@@ -237,6 +248,7 @@ function renderHexGroundItems(q, r) {
       (gi.n > 1 ? ` \u00d7${gi.n}` : '') +
       ` <span class="gp-plus">+</span>`;
     span.addEventListener('click', () => {
+      console.log('%c[INV] pickup_item', 'color:#fc0;font-weight:bold', `gslot=${gi.g} itemId=${gi.id} name="${name}" qty=${gi.n ?? 1}`);
       send({ t: 'pickup_item', gslot: gi.g });
     });
     list.appendChild(span);

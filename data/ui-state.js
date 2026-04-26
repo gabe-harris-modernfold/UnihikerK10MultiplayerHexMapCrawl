@@ -45,6 +45,7 @@ function narrateState(msg) {
 let _trippyTurns = 0;       // turns remaining with .trippy class active
 let invertedInputTurns = 0; // turns remaining with reversed WASD
 function handleNarrativeEffect(param) {
+  console.log('[INV] handleNarrativeEffect param=%d', param);
   if (!param || param === 0) return;
   switch (param) {
     case 11: // Trippy Juice — UI hue-scramble for 3 turns
@@ -84,10 +85,10 @@ let pickTimeoutId = null;               // safety: auto-clear uiPickPending if s
 function showCharSelect() {
   // Guard: never show char-select while a live survivor exists
   if (myId >= 0 && players[myId]?.on) {
-    console.log('[charSelect] BLOCKED by guard: myId=%d on=%s', myId, players[myId]?.on);
+    console.log('[LOBBY] showCharSelect blocked — live survivor exists myId=%d on=%s', myId, players[myId]?.on);
     return;
   }
-  console.log('[charSelect] SHOW — myId=%d lobbyAvail=%o', myId, lobbyAvail.val);
+  console.log('%c[LOBBY] showCharSelect', 'color:#09f;font-weight:bold', `myId=${myId} lobbyAvail=${JSON.stringify(lobbyAvail.val)}`);
   // Hide the connecting overlay (behind char-select anyway, but clean it up)
   const co = document.getElementById('connect-overlay');
   if (co) { co.classList.add('fading-out'); setTimeout(() => { co.classList.remove('fading-out'); co.classList.add('hidden'); }, 400); }
