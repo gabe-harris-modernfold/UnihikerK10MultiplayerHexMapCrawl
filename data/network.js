@@ -382,7 +382,7 @@ function handleMsg(msg) {
     console.warn('[RX] Message missing type field', msg);
     return;
   }
-  console.log('%c← RX [%s]', 'color:#0cf;font-weight:bold', msg.t, msg);
+  if (msg.t !== 's') console.log('%c← RX [%s]', 'color:#0cf;font-weight:bold', msg.t, msg);
 
   switch (msg.t) {
     case 'asgn':          _msgAsgn(msg);         break;
