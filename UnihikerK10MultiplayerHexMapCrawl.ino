@@ -381,6 +381,7 @@ enum EvtType : uint8_t {
   EVT_ENC_RESULT   = 15,
   EVT_ENC_BANK     = 16,
   EVT_ENC_END      = 17,
+  EVT_COLLECT_FAIL = 18,
   EVT_WEATHER      = 19
 };
 
@@ -914,17 +915,25 @@ void loop() {
 
   bool screenChanged = (k10Screen != k10ScreenLast);
   k10ScreenLast = k10Screen;
-  if (screenChanged || k10Dirty || (now - lastScreenMs >= SCREEN_MS)) {
+  bool uploadActive = UploadUI::isActive();
+  // Repaint faster while an upload is streaming so the bar/byte counter animate.
+  unsigned long screenInterval = uploadActive ? 100UL : (unsigned long)SCREEN_MS;
+  if (screenChanged || k10Dirty || uploadActive || (now - lastScreenMs >= screenInterval)) {
     lastScreenMs = now;
     k10Dirty = false;
-    switch (k10Screen) {
-      case 2:  drawEventLogScreen();   break;
-      case 3:  drawResourceScreen();   break;
-      case 4:  drawEncounterScreen();  break;
-      case 5:  drawMapScreen();        break;
-      default: drawPlayerScreen();     break;  // case 1
+    if (uploadActive) {
+      drawUploadScreen();
+    } else {
+      switch (k10Screen) {
+        case 2:  drawEventLogScreen();   break;
+        case 3:  drawResourceScreen();   break;
+        case 4:  drawEncounterScreen();  break;
+        case 5:  drawMapScreen();        break;
+        default: drawPlayerScreen();     break;  // case 1
+      }
     }
     canvas.pushSprite(0, 0);
+    if (!uploadActive) k10ScreenLast = k10Screen; else k10ScreenLast = 255;  // force repaint when leaving upload
   }
 
   if (g_ledEndMs && now >= g_ledEndMs) {

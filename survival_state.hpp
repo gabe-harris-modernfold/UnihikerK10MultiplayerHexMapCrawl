@@ -167,9 +167,17 @@ static void dawnUpkeep() {
 }
 
 // ── Resource collection ───────────────────────────────────────────────────────
+// Failure reason codes (sent in EVT_COLLECT_FAIL.amt as a reason byte)
+static constexpr uint8_t COL_FAIL_DESYNC   = 1; // server has no resource here (client/server out of sync)
+static constexpr uint8_t COL_FAIL_INV_FULL = 2; // inventory at cap
+
 static void collectResource(int pid, int q, int r) {
   HexCell& cell = G.map[r][q];
-  if (cell.resource == 0 || cell.amount == 0) return;
+  if (cell.resource == 0 || cell.amount == 0) {
+    Log.notice("col SKIP desync pid=%d q=%d r=%d cellRes=%d cellAmt=%d",
+               pid, q, r, (int)cell.resource, (int)cell.amount);
+    return;
+  }
   Player&  p    = G.players[pid];
   uint8_t  idx  = cell.resource - 1;
   uint8_t  gain = cell.amount;
@@ -178,30 +186,47 @@ static void collectResource(int pid, int q, int r) {
   int totalInv = 0;
   for (int k = 0; k < 5; k++) totalInv += (int)p.inv[k];
   if (totalInv >= (int)p.invSlots) {
-    return;  // inventory full, cannot collect
+    Log.notice("col SKIP inv-full pid=%d q=%d r=%d res=%d totalInv=%d/%d",
+               pid, q, r, (int)cell.resource, totalInv, (int)p.invSlots);
+    GameEvent ev = {}; ev.type = EVT_COLLECT_FAIL; ev.pid = (uint8_t)pid;
+    ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = COL_FAIL_INV_FULL;
+    enqEvt(ev);
+    return;  // cell stays untouched — icon correctly remains visible
   }
   // Collect only as many as there is room for
   int room = (int)p.invSlots - totalInv;
   gain = (uint8_t)min((int)gain, room);
-  if (gain == 0) return;
+  if (gain == 0) {
+    Log.notice("col SKIP no-room pid=%d q=%d r=%d", pid, q, r);
+    return;
+  }
 
   p.inv[idx] = (uint8_t)min((int)p.inv[idx] + gain, 99);
   p.score   += gain * 10;
-  { GameEvent ev = {}; ev.type = EVT_COLLECT; ev.pid = (uint8_t)pid;
-    ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = gain;
-    enqEvt(ev); }
 
-
-  cell.amount = 0; cell.resource = 0;
-  cell.respawnTimer = RESPAWN_TICKS;
-
-  // ── Encumbrance check (§5): if inv > invSlots, deduct 1 MP once per day ─
-  int totalInvAfter = 0;
-  for (int k = 0; k < 5; k++) totalInvAfter += (int)p.inv[k];
-  if (totalInvAfter > (int)p.invSlots && !p.encPenApplied) {
-    p.encPenApplied = true;
-    if (p.movesLeft > 0) p.movesLeft--;
+  // Partial-pickup leak fix: only zero the cell when we drained it. If we
+  // took less than was there (inv room < pile size), leave the remainder
+  // on the hex so it isn't deleted from the world.
+  uint8_t remaining = (uint8_t)((int)cell.amount - (int)gain);
+  cell.amount = remaining;
+  if (remaining == 0) {
+    cell.resource     = 0;
+    cell.respawnTimer = RESPAWN_TICKS;
   }
+
+  { GameEvent ev = {}; ev.type = EVT_COLLECT; ev.pid = (uint8_t)pid;
+    ev.q = (int16_t)q; ev.r = (int16_t)r;
+    ev.res = (uint8_t)(idx + 1);   // original resource type (1-5)
+    ev.amt = gain;
+    // Reuse dawnLL to carry post-pickup remaining amount (0 = hex now empty).
+    // dawnLL is unused for collect events; lets the client update gameMap.amount
+    // for partial pickups without a second event.
+    ev.dawnLL = remaining;
+    enqEvt(ev); }
+  // Note: §5 encumbrance penalty isn't applied here — gain is clamped to
+  // remaining inv room above, so totalInv can never exceed invSlots via
+  // collection. Encounter loot / trades are the only paths that can push
+  // inv over the cap; those apply encumbrance themselves.
 }
 
 // ── Valid move bitmask ────────────────────────────────────────────────────────

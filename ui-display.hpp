@@ -7,3 +7,4 @@
 #include "ui-leds.hpp"
 #include "ui-audio.hpp"
 #include "ui-screens.hpp"
+#include "ui-upload.hpp"

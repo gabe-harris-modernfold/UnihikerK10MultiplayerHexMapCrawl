@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WASTELAND</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="game-narrator" aria-live="polite" aria-atomic="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden"></div>
@@ -53,7 +53,7 @@
       <div class="res-row"><div class="res-dot dot-med"></div><span class="res-val" id="inv3">0</span><span class="res-name">Medicine</span></div>
       <div class="res-row"><div class="res-dot dot-scrap"></div><span class="res-val" id="inv4">0</span><span class="res-name">Scrap</span></div>
     </div>
-    <div class="side-panel">
+    <div class="side-panel" id="score-panel">
       <h3>Score</h3>
       <div id="score-wrap"><div id="my-score">0</div></div>
     </div>
@@ -436,20 +436,20 @@
 </dialog>
 
 <!-- ─────────────────────────── Script ────────────────────────────────── -->
-<script type="text/javascript" src="/van.js"></script>
-<script type="text/javascript" src="/game-data.js"></script>
-<script type="text/javascript" src="/ash-particle-system.js"></script>
-<script type="text/javascript" src="/weather-particle-system.js"></script>
-<script type="text/javascript" src="/engine.js"></script>       <!-- constants, state, image loading -->
-<script type="text/javascript" src="/ui-state.js"></script>     <!-- Van.js reactive state, char-select -->
-<script type="text/javascript" src="/network.js"></script>      <!-- Diag, WebSocket, message handlers -->
-<script type="text/javascript" src="/map-decoder.js"></script>  <!-- decodeCell, parseMapFog, applyVisDisk -->
-<script type="text/javascript" src="/renderer.js"></script>     <!-- hex math, canvas, render loop -->
-<script type="text/javascript" src="/ui-utils.js"></script>
-<script type="text/javascript" src="/ui-hud.js"></script>
-<script type="text/javascript" src="/ui-panels.js"></script>
-<script type="text/javascript" src="/ui-items.js"></script>
-<script type="text/javascript" src="/ui-encounter.js"></script>
+<script type="text/javascript" src="van.js"></script>
+<script type="text/javascript" src="game-data.js"></script>
+<script type="text/javascript" src="ash-particle-system.js"></script>
+<script type="text/javascript" src="weather-particle-system.js"></script>
+<script type="text/javascript" src="engine.js"></script>       <!-- constants, state, image loading -->
+<script type="text/javascript" src="ui-state.js"></script>     <!-- Van.js reactive state, char-select -->
+<script type="text/javascript" src="network.js"></script>      <!-- Diag, WebSocket, message handlers -->
+<script type="text/javascript" src="map-decoder.js"></script>  <!-- decodeCell, parseMapFog, applyVisDisk -->
+<script type="text/javascript" src="renderer.js"></script>     <!-- hex math, canvas, render loop -->
+<script type="text/javascript" src="ui-utils.js"></script>
+<script type="text/javascript" src="ui-hud.js"></script>
+<script type="text/javascript" src="ui-panels.js"></script>
+<script type="text/javascript" src="ui-items.js"></script>
+<script type="text/javascript" src="ui-encounter.js"></script>
 <script>
 (function(){
   var ov    = document.getElementById('help-overlay');

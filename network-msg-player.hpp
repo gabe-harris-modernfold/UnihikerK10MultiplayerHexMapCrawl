@@ -371,8 +371,8 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
     if (wasConn && evictId) {
       evLen = snprintf(evBuf, sizeof(evBuf),
         "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", arch);
-      for (AsyncWebSocketClient& cl : ws.getClients()) {
-        if (cl.id() == evictId) { cl.text(evBuf, evLen); break; }
+      if (AsyncWebSocketClient* cl = ws.client(evictId)) {
+        cl->text(evBuf, evLen);
       }
       taskENTER_CRITICAL(&evtMux);
       for (int i = 0; i < MAX_PLAYERS; i++) {

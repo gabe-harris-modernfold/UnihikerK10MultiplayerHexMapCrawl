@@ -204,8 +204,7 @@ canvas{display:block;width:100%;height:100%}
   display:block;font-family:var(--stencil);font-size:var(--fs-l);
   color:var(--txt-dim);letter-spacing:var(--ls-l);opacity:0.72;margin-top:1px
 }
-#action-close{position:absolute;top:12px;right:14px;cursor:pointer;
-  color:var(--txt-dim);font-size:var(--fs-b);line-height:1}
+#action-close{position:absolute;top:12px;right:14px;cursor:pointer;font-size:var(--fs-b);color:var(--bdr-hi);z-index:1;background:none;border:none;padding:0;line-height:1}
 #action-close:hover{color:var(--gold)}
 #action-status-bar{
   display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
@@ -765,7 +764,16 @@ canvas{display:block;width:100%;height:100%}
   #sidebar{flex-direction:column;width:100%;min-width:unset;border-left:none;border-top:1px solid var(--bdr-mid);max-height:200px;overflow-y:auto}
   #hud-score-wrap{display:inline-flex}
   #hud-score{display:block}
-  .dir-btn{width:50px;height:50px;font-size:25px}
+  #score-panel{display:none}
+  #players-panel{display:none}
+  #hex-info,#hex-info.open{display:none}
+  .side-panel:has(> h3 + .res-row){display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:5px 7px}
+  .side-panel:has(> h3 + .res-row) > h3{margin:0;flex-shrink:0}
+  .side-panel:has(> h3 + .res-row) .res-row{margin:0;gap:3px}
+  .side-panel:has(> h3 + .res-row) .res-name{display:none}
+  .side-panel:has(> h3 + .res-row) .res-val{min-width:unset}
+  #controls{gap:4px;padding:4px}
+  .dir-btn{width:42px;height:42px;font-size:21px}
 
   #action-box{width:min(400px,90vw)}
 }

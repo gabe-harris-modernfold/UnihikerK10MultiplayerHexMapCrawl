@@ -54,10 +54,26 @@ function applyVisDisk(cells) {
     const vv = Number.parseInt(cells.substr(i + 8, 2), 16);
     if (r < MAP_ROWS && q < MAP_COLS) {
       const cell = decodeCell(tt, dd, vv);
-      // Preserve locally-cleared resource — col event may arrive before vis disk
-      if (collectedCells.has(`${q}_${r}`) && cell && cell.resource > 0) {
-        cell.resource = 0;
-        cell.amount   = 0;
+      const key  = `${q}_${r}`;
+      if (collectedCells.has(key)) {
+        if (cell && cell.resource > 0) {
+          // Server says resource is back (respawned, or original col event was
+          // for a different state). Trust the fresh visdisk and drop the
+          // stale local guard so the icon can render.
+          collectedCells.delete(key);
+          console.log('[MAP] collectedCells cleared by fresh visdisk at', q, r);
+        } else if (cell) {
+          // Preserve locally-cleared resource — col event may arrive before vis
+          cell.resource = 0;
+          cell.amount   = 0;
+        }
+      }
+      // Visdisk doesn't carry `amount` — preserve it from the previous cell when
+      // the resource type is unchanged. Without this, partial-pickup hexes lose
+      // their amount field on the next visdisk and the HUD shows "×undefined".
+      const prev = gameMap[r][q];
+      if (cell && prev && cell.resource > 0 && cell.resource === prev.resource && prev.amount != null) {
+        cell.amount = prev.amount;
       }
       gameMap[r][q] = cell;
       // Collect notable decoded values for logging

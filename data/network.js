@@ -258,6 +258,10 @@ function _msgSync(msg) {
   if (msg.id  !== undefined) myId = msg.id;
   if (msg.vr  !== undefined) myVisionR = msg.vr;
   if (typeof msg.map !== 'string') return;
+  // Sync replaces gameMap wholesale — drop stale locally-cached collect/survey
+  // markers so they don't override the fresh server state.
+  collectedCells.clear();
+  surveyedCells.clear();
   parseMapFog(msg.map);
   if (!Array.isArray(msg.p)) return;
   msg.p.forEach(p => {
@@ -416,12 +420,20 @@ function handleMsg(msg) {
 // ── handleEvent sub-handlers ─────────────────────────────────────────────────
 
 function _evCol(ev) {
-  // Clear resource unconditionally — mutate in-place so cached cell refs stay valid
+  // `rem` (post-pickup remaining amount on hex, 0 = drained) was added with the
+  // partial-pickup leak fix. Older servers that don't send it default to 0,
+  // matching pre-fix behavior.
+  const rem = ev.rem ?? 0;
   if (gameMap[ev.r]?.[ev.q]) {
-    gameMap[ev.r][ev.q].resource = 0;
-    gameMap[ev.r][ev.q].amount   = 0;
+    gameMap[ev.r][ev.q].resource = rem > 0 ? ev.res : 0;
+    gameMap[ev.r][ev.q].amount   = rem;
+  } else {
+    console.log('[COL] gameMap miss — no cached cell at', ev.q, ev.r, '(client never had it in vision)');
   }
-  collectedCells.add(`${ev.q}_${ev.r}`);
+  // Only mark the hex as "locally collected" when fully drained; otherwise the
+  // map-decoder guard in applyVisDisk would force-zero a still-present resource.
+  if (rem === 0) collectedCells.add(`${ev.q}_${ev.r}`);
+  else           collectedCells.delete(`${ev.q}_${ev.r}`);
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
   if (ev.pid === myId) {
@@ -430,6 +442,25 @@ function _evCol(ev) {
     const idx = ev.res - 1;
     if (idx >= 0 && idx < 5) players[myId].inv[idx] = (players[myId].inv[idx] ?? 0) + ev.amt;
     updateSidebar();
+  }
+}
+
+function _evColFail(ev) {
+  if (ev.pid !== myId) return;
+  // reason: 1 = desync (client thought hex had a resource, server says no),
+  //         2 = inventory full
+  if (ev.reason === 2) {
+    showToast('🎒 Inventory full — drop or use items first.');
+    addLog('<span class="log-col">🎒 Pickup blocked: inventory full.</span>');
+  } else {
+    // Desync: server's hex is empty but our gameMap still showed a resource.
+    // Clear our stale icon so future renders match server truth.
+    if (gameMap[ev.r]?.[ev.q]) {
+      gameMap[ev.r][ev.q].resource = 0;
+      gameMap[ev.r][ev.q].amount   = 0;
+    }
+    collectedCells.add(`${ev.q}_${ev.r}`);
+    console.warn('[COL] desync at', ev.q, ev.r, '— cleared stale icon');
   }
 }
 
@@ -779,6 +810,7 @@ function _evEncEnd(ev) {
 function handleEvent(ev) {
   switch (ev.k) {
     case 'col':         _evCol(ev);        break;
+    case 'col_fail':    _evColFail(ev);    break;
     case 'rsp':
       if (gameMap[ev.r]?.[ev.q])
         gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: ev.res, amount: ev.amt };

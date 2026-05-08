@@ -176,7 +176,7 @@ static void setupWiFiAndServer() {
       }
       Log.verbose("HTTP GET %s -> %s (%u B)",
                   WEB_FILES[i].url, WEB_FILES[i].mime, (unsigned)WEB_FILES[i].len);
-      AsyncWebServerResponse* resp = req->beginResponse(
+      AsyncWebServerResponse* resp = req->beginResponse_P(
           200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
       resp->addHeader("ETag", WEB_FILES[i].etag);
       resp->addHeader("Cache-Control", cc);
@@ -454,7 +454,7 @@ static void setupWiFiAndServer() {
             return;
           }
           Log.verbose("HTTP /img/ hit %s (%u B)", filename.c_str(), (unsigned)imgCache[i].len);
-          AsyncWebServerResponse* resp = req->beginResponse(
+          AsyncWebServerResponse* resp = req->beginResponse_P(
               200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("ETag", imgCache[i].etag);
           resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -493,17 +493,23 @@ static void setupWiFiAndServer() {
         uploadFile = SD.open(dest.c_str(), FILE_WRITE);
         if (uploadFile) Log.notice("SD WRITE OPEN: %s", dest.c_str());
         else            Log.error("SD WRITE FAIL: %s", dest.c_str());
+        UploadUI::begin(dest.c_str());
       }
       if (uploadFile) {
         uploadFile.write(data, len); uploadFile.flush(); yield();
         totalLen += len;
+        UploadUI::chunk(totalLen);
         Log.verbose("UPLOAD chunk idx=%u len=%u final=%d",
                     (unsigned)index, (unsigned)len, (int)final);
       }
-      if (final && uploadFile) {
-        uploadFile.close();
-        Log.notice("UPLOAD complete dest=%s total=%u",
-                   destPath.c_str(), (unsigned)totalLen);
+      if (final) {
+        bool ok = (bool)uploadFile;
+        if (uploadFile) {
+          uploadFile.close();
+          Log.notice("UPLOAD complete dest=%s total=%u",
+                     destPath.c_str(), (unsigned)totalLen);
+        }
+        UploadUI::end(ok);
       }
     }
   );

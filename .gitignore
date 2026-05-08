@@ -1,3 +1,7 @@
 /.vs
 /.claude
 /.vscode
+/mock-server/node_modules
+/mock-server/uploads
+/node_modules
+/data/.upload-manifest.json

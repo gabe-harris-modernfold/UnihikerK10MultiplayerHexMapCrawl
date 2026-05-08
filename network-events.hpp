@@ -50,27 +50,37 @@ static void drainEvents() {
     switch (ev.type) {
 
       case EVT_COLLECT:
-        Log.notice("EVT col pid=%d q=%d r=%d res=%d amt=%d",
-                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
+        Log.notice("EVT col pid=%d q=%d r=%d res=%d amt=%d rem=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt, (int)ev.dawnLL);
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"col\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
-          ev.pid, ev.q, ev.r, ev.res, ev.amt);
+          "{\"t\":\"ev\",\"k\":\"col\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d,\"rem\":%d}",
+          ev.pid, ev.q, ev.r, ev.res, ev.amt, (int)ev.dawnLL);
         ws.textAll(buf, len);
         break;
 
+      case EVT_COLLECT_FAIL:
+        Log.notice("EVT col_fail pid=%d q=%d r=%d res=%d reason=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
+        // Sent only to the player who attempted the pickup — others don't need to know.
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"col_fail\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"reason\":%d}",
+          ev.pid, ev.q, ev.r, ev.res, ev.amt);
+        if (ev.pid < MAX_PLAYERS && conn[ev.pid]) {
+          AsyncWebSocketClient* cl = ws.client(wsId[ev.pid]);
+          if (cl) cl->text(buf, len);
+        }
+        break;
+
       case EVT_RESPAWN: {
+        // Broadcast to all clients (no vision cull) so out-of-range players
+        // clear their stale `collectedCells` Set entry — without this the
+        // hex's icon never returns when they walk back into vision.
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"rsp\",\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
           ev.q, ev.r, ev.res, ev.amt);
-        int rcpt = 0;
-        for (int pid = 0; pid < MAX_PLAYERS; pid++) {
-          if (!conn[pid]) continue;
-          if (hexDistWrap(pq[pid], pr[pid], ev.q, ev.r) > visR[pid]) continue;
-          AsyncWebSocketClient* cl = ws.client(wsId[pid]);
-          if (cl) { cl->text(buf, len); rcpt++; }
-        }
-        Log.verbose("EVT rsp q=%d r=%d res=%d amt=%d recipients=%d",
-                    (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt, rcpt);
+        ws.textAll(buf, len);
+        Log.verbose("EVT rsp q=%d r=%d res=%d amt=%d (broadcast)",
+                    (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
         break;
       }
 
@@ -171,8 +181,8 @@ static void drainEvents() {
         // 1. Send targeted "downed" message to the player's client
         {
           len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", (int)ev.pid);
-          for (AsyncWebSocketClient& cl : ws.getClients()) {
-            if (cl.id() == ev.evWsId) { cl.text(buf, len); break; }
+          if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) {
+            cl->text(buf, len);
           }
         }
         // 2. Broadcast EVT_LEFT so all clients remove the player icon
@@ -205,9 +215,12 @@ static void drainEvents() {
         ws.textAll(buf, len);
         k10Play(MOTIF_POWER_DOWN);
         int synced = 0;
-        for (AsyncWebSocketClient& cl : ws.getClients()) {
-          int slot = findSlot(cl.id());
-          if (slot >= 0) { sendSync(&cl, slot); synced++; }
+        for (const auto& cl : ws.getClients()) {
+          uint32_t cid = cl.id();
+          int slot = findSlot(cid);
+          if (slot >= 0) {
+            if (AsyncWebSocketClient* mut = ws.client(cid)) { sendSync(mut, slot); synced++; }
+          }
         }
         Log.notice("EVT regen - broadcasting full sync to %d clients", synced);
         break;
