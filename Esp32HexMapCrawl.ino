@@ -7,7 +7,7 @@
  *
  * Libraries: ESPAsyncWebServer, AsyncTCP
  *
- * Hex Grid : Flat-top axial coordinates, 25×19 toroidal wraparound
+ * Hex Grid : Flat-top axial coordinates, 75×57 toroidal wraparound
  * Fog      : Each player sees cells within their effective vision radius.
  *            encodeMapFog() sends 0xFF (terrain byte) for invisible cells.
  *            On every move the server sends a full fresh vision-disk ("vis").
@@ -121,8 +121,9 @@ static bool checkRtcReady() {
 }
 
 // ── Constants ──────────────────────────────────────────────────
-static constexpr int      MAP_COLS      = 25;
-static constexpr int      MAP_ROWS      = 19;
+static constexpr int      MAP_COLS      = 75;
+static constexpr int      MAP_ROWS      = 57;
+static constexpr int      SURVEYED_BYTES = (MAP_ROWS * MAP_COLS + 7) / 8;
 static constexpr int      MAX_PLAYERS   = 6;
 static constexpr int      VISION_R      = 3;
 static constexpr int      NUM_TERRAIN   = 12;
@@ -352,7 +353,7 @@ struct Player {
   bool     resting;
   bool     radClean;
 
-  uint8_t  surveyedMap[60];
+  uint8_t  surveyedMap[SURVEYED_BYTES];
 };
 
 // ── Tone sequences and motifs ────────────────────────────────────────────────
@@ -498,7 +499,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 9;
+static constexpr uint8_t  SAVE_VERSION = 10;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -530,7 +531,7 @@ struct __attribute__((packed)) SavePlayer {
   uint8_t  fThreshBelow;
   uint8_t  wThreshBelow;
   uint8_t  used;
-  uint8_t  surveyedMap[60];
+  uint8_t  surveyedMap[SURVEYED_BYTES];
 };
 
 struct __attribute__((packed)) SaveGroundItem {

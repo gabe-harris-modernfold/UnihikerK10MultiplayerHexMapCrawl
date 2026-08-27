@@ -1,6 +1,6 @@
 // ── Constants (must match .ino) ─────────────────────────────────
-const MAP_COLS    = 25;
-const MAP_ROWS    = 19;
+const MAP_COLS    = 75;
+const MAP_ROWS    = 57;
 const MAX_PLAYERS = 6;
 const VISION_R    = 1;   // base vision radius (server may send higher/lower via vr field)
 const SQRT3       = Math.sqrt(3);

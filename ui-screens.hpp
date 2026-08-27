@@ -310,7 +310,7 @@ static void drawMapScreen() {
     0x080402,  // 10 Nuke Crater
   };
 
-  uint8_t terr[MAP_ROWS][MAP_COLS];
+  static uint8_t terr[MAP_ROWS][MAP_COLS];
   struct { int16_t q, r; bool on; } ps[MAX_PLAYERS];
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
@@ -324,14 +324,16 @@ static void drawMapScreen() {
   }
   xSemaphoreGive(G.mutex);
 
-  // cells 9×16, odd-col y-offset 8 (= CH/2)
-  static const int CW =  9;
-  static const int CH = 16;
-  static const int XS =  9;
-  static const int YS = 16;
-  static const int OY =  8;
-  static const int MX =  7;
-  static const int MY =  4;
+  // shrink-to-fit: derive cell size from screen + map dims (240×320 LCD)
+  static constexpr int MAP_PX_W = 234;
+  static constexpr int MAP_PX_H = 304;
+  static constexpr int XS = MAP_PX_W / MAP_COLS;
+  static constexpr int YS = MAP_PX_H / (MAP_ROWS + 1);   // +1 row of slack for odd-col offset
+  static constexpr int CW = XS;
+  static constexpr int CH = YS;
+  static constexpr int OY = YS / 2;
+  static constexpr int MX = (240 - MAP_COLS * XS) / 2;
+  static constexpr int MY = 6;
 
   canvas.fillScreen(0x0000);
 
@@ -341,21 +343,31 @@ static void drawMapScreen() {
       int py = MY + r * YS + (q & 1) * OY;
       uint8_t t = terr[r][q];
       uint32_t col = (t < 11) ? TERR_COL[t] : 0x3A1808;
-      canvas.fillRect(px, py, CW - 1, CH - 1, c16(col));
+      // at small cell sizes, drop the 1-px gap so cells read as a continuous map
+      int rectW = (CW > 2) ? CW - 1 : CW;
+      int rectH = (CH > 2) ? CH - 1 : CH;
+      canvas.fillRect(px, py, rectW, rectH, c16(col));
     }
   }
 
-  canvas.setTextSize(2);
+  // Player marker: at small cell sizes a digit no longer fits; draw a bright filled
+  // square sized to the cell. Fall back to a digit when cells are big enough.
+  bool bigCells = (CW >= 8 && CH >= 12);
+  if (bigCells) canvas.setTextSize(2);
   for (int i = 0; i < MAX_PLAYERS; i++) {
     if (!ps[i].on) continue;
     int q = ps[i].q, r = ps[i].r;
     if (q < 0 || q >= MAP_COLS || r < 0 || r >= MAP_ROWS) continue;
     int px = MX + q * XS;
     int py = MY + r * YS + (q & 1) * OY;
-    char num[2] = { (char)('1' + i), 0 };
-    canvas.setTextColor(c16(0xD06818));
-    canvas.setCursor(px, py);
-    canvas.print(num);
+    if (bigCells) {
+      char num[2] = { (char)('1' + i), 0 };
+      canvas.setTextColor(c16(0xD06818));
+      canvas.setCursor(px, py);
+      canvas.print(num);
+    } else {
+      canvas.fillRect(px, py, CW, CH, c16(0xFFD060));
+    }
   }
 
   int bx1 = MX - 1;

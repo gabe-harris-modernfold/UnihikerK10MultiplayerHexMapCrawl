@@ -139,7 +139,7 @@ static void generateMap() {
   {
     static const uint8_t AXIS_A[3] = { 0, 1, 2 };
     static const uint8_t AXIS_B[3] = { 3, 4, 5 };
-    int numBelts = 4 + (int)(esp_random() % 3);
+    int numBelts = 36 + (int)(esp_random() % 9);
     for (int b = 0; b < numBelts; b++) {
       int bRow    = (int)(esp_random() % MAP_ROWS);
       int bCol    = (int)(esp_random() % MAP_COLS);
@@ -256,7 +256,7 @@ static void generateMap() {
     const uint8_t T_RIVER = 11;
     const uint8_t DIR_W[6] = { 20, 0, 0, 0, 20, 60 };
 
-    int numRivers = 1 + (int)(esp_random() % 2);
+    int numRivers = 9 + (int)(esp_random() % 6);
     for (int ri = 0; ri < numRivers; ri++) {
       int rq = (int)(esp_random() % MAP_COLS);
       int rr = 0;
@@ -364,8 +364,8 @@ static void generateMap() {
 
   // ── Phase 2.9: Guaranteed minimums for Settlement and Nuke Crater ───────────
   {
-    const uint8_t MIN_SETTLE = 3;
-    const uint8_t MIN_CRATER = 2;
+    const uint8_t MIN_SETTLE = 27;
+    const uint8_t MIN_CRATER = 18;
 
     uint8_t nSettle = 0, nCrater = 0;
     for (int r = 0; r < MAP_ROWS; r++)
@@ -375,7 +375,7 @@ static void generateMap() {
         if (t == 10) nCrater++;
       }
 
-    for (uint8_t attempt = 0; nSettle < MIN_SETTLE && attempt < 200; attempt++) {
+    for (uint16_t attempt = 0; nSettle < MIN_SETTLE && attempt < 1800; attempt++) {
       int r = (int)(esp_random() % MAP_ROWS);
       int c = (int)(esp_random() % MAP_COLS);
       if (G.map[r][c].terrain != 0) continue;
@@ -389,7 +389,7 @@ static void generateMap() {
       nSettle++;
     }
 
-    for (uint8_t attempt = 0; nCrater < MIN_CRATER && attempt < 200; attempt++) {
+    for (uint16_t attempt = 0; nCrater < MIN_CRATER && attempt < 1800; attempt++) {
       int r = (int)(esp_random() % MAP_ROWS);
       int c = (int)(esp_random() % MAP_COLS);
       if (G.map[r][c].terrain != 0) continue;

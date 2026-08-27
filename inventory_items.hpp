@@ -35,7 +35,7 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
     // teleport_random — move player to a random surveyed hex
     // surveyedMap bitmask: bit (r*MAP_COLS+q) => q = idx%MAP_COLS, r = idx/MAP_COLS
     static constexpr int totalCells = MAP_ROWS * MAP_COLS;
-    uint16_t surveyed[totalCells];
+    static uint16_t surveyed[totalCells];
     int count = 0;
     const Player& pl = G.players[pid];
     for (int idx = 0; idx < totalCells; idx++) {

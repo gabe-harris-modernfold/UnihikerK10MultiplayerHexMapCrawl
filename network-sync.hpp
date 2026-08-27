@@ -76,9 +76,9 @@ static void broadcastLobbyUpdate() {
 }
 
 // ── Sync message (unicast to one client on connect) ──────────────────────────
-// Buffer: map=475×4=1900 + header~55 + players~1200 + footer = ~3160 chars
+// Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin
 static void sendSync(AsyncWebSocketClient* client, int pid) {
-  static char buf[6400];  // expanded: +equip[5] per player + ground items list
+  static char buf[40000];  // sized for 75×57 map fog encoding (encodeMapFog: 6 chars/cell)
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
     Log.warning("sendSync pid=%d: G.mutex timeout - skipped", pid);
     return;

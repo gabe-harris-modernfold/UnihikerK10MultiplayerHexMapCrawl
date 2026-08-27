@@ -17,6 +17,23 @@ const nameWidthCache = new Array(MAX_PLAYERS).fill(null);
 const surveyedCells = new Set(); // 'q_r' keys — populated from network.js (cross-file; ignore S4158)
 /* global displayMP, nightFade */
 
+// Stable 1..N permutation keyed by (q,r) — non-positional reference number.
+const hexLabel = (() => {
+  const N = MAP_COLS * MAP_ROWS;
+  const arr = new Array(N);
+  for (let i = 0; i < N; i++) arr[i] = i + 1;
+  let seed = 0x9E3779B1;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+  for (let i = N - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+})();
+
 // ── Hex math (flat-top) ─────────────────────────────────────────
 function hexToPixel(q, r, size) {
   return { x: size * 1.5 * q, y: size * (SQRT3 / 2 * q + SQRT3 * r) };
@@ -475,6 +492,33 @@ function isPOIRenderable(mapQ, mapR, meAct) {
   return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
 }
 
+// ── Pass 1c: Faint per-hex integer label (top-inside-border) ─────
+function renderHexLabels(cam) {
+  const { ox, oy, centreQ, centreR, viewQ, viewR } = cam;
+  const fontPx = Math.max(8, Math.round(HEX_SZ * 0.18));
+  ctx.save();
+  ctx.font         = `${fontPx}px sans-serif`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle    = 'rgba(160,160,160,0.5)';
+  for (let dr = -viewR; dr <= viewR; dr++) {
+    for (let dq = -viewQ; dq <= viewQ; dq++) {
+      const vq   = centreQ + dq;
+      const vr   = centreR + dr;
+      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
+      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      const px = hexToPixel(vq, vr, HEX_SZ);
+      const cx = px.x + ox;
+      const cy = px.y + oy;
+      if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+      if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+      const ty = cy - HEX_SZ * 0.78;
+      ctx.fillText(hexLabel[mapR * MAP_COLS + mapQ], cx, ty);
+    }
+  }
+  ctx.restore();
+}
+
 // ── POI hex outline (yellow, pulsing, visible cells only) ──────────
 function renderPOIOutlines(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR, meAct } = cam;
@@ -685,6 +729,7 @@ function renderNightFade() {
 const LAYERS = [
   { name: 'terrain',      draw: (cam) => renderHexTerrain(cam) },
   { name: 'grid',         draw: (cam) => renderGridLines(cam) },
+  { name: 'hex_labels',   draw: (cam) => renderHexLabels(cam) },
   { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
   { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },

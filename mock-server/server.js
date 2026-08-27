@@ -9,7 +9,7 @@ const { WebSocketServer } = require('ws');
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
 const PORT     = 8765;
 
-const MAP_COLS = 25, MAP_ROWS = 19, MAX_PLAYERS = 6;
+const MAP_COLS = 75, MAP_ROWS = 57, MAX_PLAYERS = 6;
 
 const hex2 = (n) => n.toString(16).padStart(2, '0');
 

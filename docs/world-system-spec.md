@@ -23,7 +23,7 @@ All three are owned by a single `WorldSystem` struct defined in `world-system.hp
 ## Map & Tick Context
 
 ```
-MAP_COLS = 25, MAP_ROWS = 19 → 475 hexes (toroidal wrap)
+MAP_COLS = 75, MAP_ROWS = 57 → 4275 hexes (toroidal wrap)
 TICK_MS  = 100 ms
 DAY_TICKS = 3000 ticks  (5 minutes real time per game-day)
 
@@ -306,7 +306,7 @@ void tickCreepingDoom() {
 }
 ```
 
-`hottestTrackWithin()` is a greedy scan: iterate all hexes within `hexDistWrap <= radius`, return the coord with the highest `W_hex[r][q].track`. No A* — O(475) worst case, fast on ESP32.
+`hottestTrackWithin()` is a greedy scan: iterate all hexes within `hexDistWrap <= radius`, return the coord with the highest `W_hex[r][q].track`. No A* — O(MAP_ROWS·MAP_COLS) worst case, fast on ESP32.
 
 ### Proximity Effect (awareness ≥ 51, adjacent to player)
 
@@ -398,8 +398,8 @@ static constexpr uint8_t  CARAVAN_PID          = 254;  // sentinel for EVT_TRADE
 
 | | Bytes |
 |---|---|
-| `HexDynamic W_hex[19][25]` | 2 × 475 = **950 bytes** |
-| `static HexDynamic next[19][25]` (spreadFire double-buffer) | **950 bytes** |
+| `HexDynamic W_hex[57][75]` | 2 × 4275 = **8550 bytes** |
+| `static HexDynamic next[57][75]` (spreadFire double-buffer) | **8550 bytes** |
 | `WorldSystem W` (Caravan + DeathGod) | ~30 bytes |
 | `lastCaravanHex[MAX_PLAYERS]` (proximity debounce) | ~24 bytes |
 | **Total added** | **~1.95 KB** |

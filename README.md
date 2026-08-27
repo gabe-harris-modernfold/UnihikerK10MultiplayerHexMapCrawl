@@ -91,7 +91,7 @@ Players connect via WiFi and open a browser to `http://192.168.4.1/` to join the
 ### Data Encoding
 
 To minimize bandwidth, hex cells are encoded as byte pairs.
-This allows a 25×19 grid to be transmitted in ~1 KB.
+This allows a 75×57 grid to be transmitted in ~26 KB.
 
 ### Dual-Core Execution
 

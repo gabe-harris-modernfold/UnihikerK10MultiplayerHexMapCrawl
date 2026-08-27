@@ -457,7 +457,7 @@ function initMenuSystem() {
 
       sec('The Mission',
         mp({ class: 'menu-text-body' },
-          'Six survivors share a 25×19 toroidal wasteland. The map wraps — walk far enough ' +
+          'Six survivors share a 75×57 toroidal wasteland. The map wraps — walk far enough ' +
           'in any direction and you come back around. Explore hexes to reveal terrain, collect ' +
           'resources, and keep each other alive. A game day lasts 5 minutes. Survive as many ' +
           'days as you can.'
