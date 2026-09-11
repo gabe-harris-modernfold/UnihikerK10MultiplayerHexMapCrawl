@@ -380,14 +380,14 @@ static void drainEvents() {
       }
 
       case EVT_WEATHER: {
-        static const char* WX[4] = {"CLEAR","RAIN","STORM","CHEM"};
+        static const char* WX[6] = {"CLEAR","RAIN","STORM","CHEM","STRANGLE FOG","FOG"};
         Log.notice("EVT weather phase=%s ticks=%d",
-                   (ev.q < 4) ? WX[ev.q] : "?", (int)ev.r);
+                   (ev.q < 6) ? WX[ev.q] : "?", (int)ev.r);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
           (int)ev.q, (int)ev.r);
         ws.textAll(buf, len);
-        char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 4) ? WX[ev.q] : "?");
+        char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 6) ? WX[ev.q] : "?");
         k10LogAdd(lb);
         if (ev.q == WEATHER_STORM) k10Play(MOTIF_MUTANT_BREATH); else k10Play(MOTIF_DISTANT_THUD);
         break;

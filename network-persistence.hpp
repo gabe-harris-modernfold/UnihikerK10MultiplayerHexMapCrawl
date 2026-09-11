@@ -139,7 +139,7 @@ bool tryLoadSave() {
   f.close();
   G.dayCount        = hdr.dayCount;
   G.threatClock     = hdr.threatClock;
-  G.weatherPhase    = (hdr.weatherPhase < 4) ? hdr.weatherPhase : WEATHER_CLEAR;
+  G.weatherPhase    = (hdr.weatherPhase < 6) ? hdr.weatherPhase : WEATHER_CLEAR;
   G.weatherCounter  = hdr.weatherCounter;
   G.dayTick         = (hdr.dayTick < DAY_TICKS) ? hdr.dayTick : 0;
   G.badWeatherTicks = hdr.badWeatherTicks;

@@ -1,6 +1,32 @@
 // ── Weather particle system ───────────────────────────────────────
 const weatherParticles = (typeof WeatherParticleSystem === 'undefined')
   ? null : new WeatherParticleSystem();
+const lightningSystem = (typeof LightningSystem === 'undefined')
+  ? null : new LightningSystem();
+const quakeField = (typeof QuakeField === 'undefined')
+  ? null : new QuakeField();
+
+// Storm hexes ({x, y, spread, intensity} in screen space) collected during
+// this frame's terrain pass — consumed by renderWeatherOverlay() afterward
+// so rain/lightning only ever appear over the clumps the storm field
+// actually darkened, never the whole screen.
+let stormyHexesThisFrame = [];
+// Quake fault-line pixel positions collected the same way: quakeId -> array
+// of {x, y} indexed by the cell's order along the line (gaps where a cell
+// isn't currently on screen), consumed by renderQuakeOverlay() afterward.
+let quakePixelsThisFrame = new Map();
+// Pixel positions of hexes the quake leveled from Settlement to Open Scrub —
+// these get an extra, heavier burst of dust on top of the regular fault-line
+// dust to sell "a settlement just got flattened" rather than an ordinary shake.
+let quakeConvertedPixelsThisFrame = [];
+let weatherNow = Date.now();
+
+const LIGHTNING_MIN_GAP_MS   = 3200;
+const LIGHTNING_STRIKE_CHANCE = 0.02; // rolled once per eligible frame after the gap elapses
+const ARC_MIN_GAP_MS   = 4200;
+const ARC_STRIKE_CHANCE = 0.02; // chem storm's hex-to-hex arc, same cadence idea as the sky strike
+const QUAKE_DUST_CHANCE = 0.28; // rolled twice per frame per active quake
+const QUAKE_CONVERTED_DUST_CHANCE = 0.8; // rolled several times per frame per leveled-settlement hex
 
 // ── Smooth animation state ────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0 }));
@@ -317,11 +343,18 @@ function buildCamera() {
   const meRp  = myId >= 0 ? renderPos[myId] : { q: 0, r: 0 };
   const meAct = myId >= 0 ? players[myId]   : { q: 0, r: 0 };
   const cp    = hexToPixel(meRp.q, meRp.r, HEX_SZ);
+  // Whole-view quake shake — applied to the shared camera offset so every
+  // layer (terrain, grid, characters, ...) trembles together, not just the
+  // fault-line hexes themselves.
+  const shake = quakeField ? quakeField.peakEnvelope() : 0;
+  const shakeMag = shake * 7;
+  const shakeX = shake > 0 ? (Math.random() - 0.5) * shakeMag : 0;
+  const shakeY = shake > 0 ? (Math.random() - 0.5) * shakeMag : 0;
   return {
     meRp,
     meAct,
-    ox:      cssWidth  / 2 - cp.x,
-    oy:      cssHeight / 2 - cp.y,
+    ox:      cssWidth  / 2 - cp.x + shakeX,
+    oy:      cssHeight / 2 - cp.y + shakeY,
     centreQ: Math.round(meRp.q),
     centreR: Math.round(meRp.r),
     viewQ:   Math.ceil(cssWidth  / (HEX_SZ * 1.5)) + 2,
@@ -398,10 +431,66 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
 
   if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
 
-  // Weather glyph — small rain cloud in upper-left corner of each visible hex
-  if (weatherPhase > 0) {
-    drawGlyph(ctx, GLYPH.RAIN, cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48,
-              Math.max(8, Math.round(HEX_SZ * 0.28)), '#FFF', 0.75);
+  // Storm clump darkening — only hexes the moving squall line currently
+  // covers go dark; deeper into a clump's core (and worse the phase) means
+  // darker. Untouched hexes stay fully lit even while it's raining nearby.
+  // Rain storm gets a neon-blue tint on top of the dark fill; chem storm
+  // (phase 3) reuses the exact same clump mechanic with a radioactive-green
+  // tint instead, fog (phase 4) reuses it again with its own slow travel
+  // speed and a steep "pop" onset curve (see popIn in STORM_PHASE_CFG), and
+  // mist (phase 5) reuses it once more with no tintColor at all and darkMax
+  // near 1 — but mist alone renders as a soft radial wash (see cfg.soft
+  // below) instead of a hex-clipped flat fill, so covered patches blend into
+  // one fuzzy blob instead of a mosaic of crisp hexagon tiles.
+  if (weatherPhase === 1 || weatherPhase === 2 || weatherPhase === 3 || weatherPhase === 4 || weatherPhase === 5) {
+    const intensity = stormIntensityAt(mapQ, mapR, weatherPhase, weatherNow);
+    if (intensity > 0.04) {
+      const cfg = STORM_PHASE_CFG[weatherPhase];
+      if (cfg.soft) {
+        // Radius extends well past this hex's own edge so neighboring
+        // covered hexes' gradients overlap and merge — no hard hexagon
+        // boundary anywhere, unlike the clip+fillRect path below. A second
+        // wash (tintRGB/tintAlpha) layers the same way as the flat path's
+        // tintColor, for phases like Strangle Fog that need both a base
+        // wash and a colored one, not just a single flat color like mist's.
+        const r = HEX_SZ * 1.9;
+        const drawWash = (rgb, alpha) => {
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          g.addColorStop(0,    `rgba(${rgb},${alpha})`);
+          g.addColorStop(0.55, `rgba(${rgb},${alpha * 0.75})`);
+          g.addColorStop(1,    `rgba(${rgb},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        ctx.save();
+        drawWash(cfg.softRGB, intensity * cfg.darkMax);
+        if (cfg.tintRGB) drawWash(cfg.tintRGB, intensity * cfg.tintAlpha);
+        ctx.restore();
+      } else {
+        ctx.save();
+        drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+        ctx.clip();
+        ctx.globalAlpha = intensity * cfg.darkMax;
+        ctx.fillStyle   = cfg.baseColor;
+        ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
+        if (cfg.tintColor) {
+          ctx.globalAlpha = intensity * cfg.tintAlpha;
+          ctx.fillStyle   = cfg.tintColor;
+          ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
+        }
+        ctx.restore();
+      }
+      // Only rain/storm get the little raindrop glyph — chem gets its
+      // radioactive pulses instead and fog/mist get their own particle
+      // treatment (or none, for mist), neither of which reads as rain.
+      if ((weatherPhase === 1 || weatherPhase === 2) && intensity > 0.3) {
+        drawGlyph(ctx, GLYPH.RAIN, cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48,
+                  Math.max(8, Math.round(HEX_SZ * 0.28)), '#FFF', 0.55 + 0.3 * intensity);
+      }
+      stormyHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity });
+    }
   }
 }
 
@@ -465,7 +554,20 @@ function renderHexTerrain(cam) {
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      if (visible || surveyed) renderHexContent(cx, cy, cell, mapQ, mapR, surveyed);
+      if (visible || surveyed) {
+        let ccx = cx, ccy = cy;
+        const qinfo = quakeField?.cellInfo(mapQ, mapR);
+        if (qinfo) {
+          let pts = quakePixelsThisFrame.get(qinfo.id);
+          if (!pts) { pts = []; quakePixelsThisFrame.set(qinfo.id, pts); }
+          pts[qinfo.order] = { x: cx, y: cy }; // stable, unjittered — crack path anchor
+          if (qinfo.converted) quakeConvertedPixelsThisFrame.push({ x: cx, y: cy });
+          const mag = qinfo.env * HEX_SZ * 0.1;
+          ccx += (Math.random() - 0.5) * mag;
+          ccy += (Math.random() - 0.5) * mag;
+        }
+        renderHexContent(ccx, ccy, cell, mapQ, mapR, surveyed);
+      }
     }
   }
 }
@@ -622,84 +724,71 @@ function renderCharacters(cam) {
   }
 }
 
-// ── Pass 2.5: Rain drops helper ────────────────────────────────────
-function drawRainDrops(count, dropLen, sinA, color, speedMs) {
-  const wNow = Date.now();
-  const cosA    = Math.sqrt(Math.max(0, 1 - sinA * sinA));
-  const cycle   = cssHeight + dropLen;
-  const scrollY = (wNow / speedMs * cycle) % cycle;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth   = 1;
-  for (let i = 0; i < count; i++) {
-    const seed = i * 137.508;                           // golden-angle spread
-    const x    = seed % cssWidth;
-    const y    = ((seed * 0.618 + scrollY) % cycle) - dropLen;
-    ctx.globalAlpha = 0.18 + (i % 13) / 13 * 0.5;    // vary 0.18–0.68 per drop
-    ctx.beginPath();
-    ctx.moveTo(x,               y);
-    ctx.lineTo(x + dropLen * sinA, y + dropLen * cosA);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// ── Pass 2.5: Chem-storm overlay ──────────────────────────────────
-function drawChemStorm() {
-  const wNow = Date.now();
-  const cx2  = cssWidth / 2, cy2 = cssHeight / 2;
-  const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2,
-    Math.max(cssWidth, cssHeight) * 0.8);
-  grad.addColorStop(0,   'rgba(60,120,20,0.18)');
-  grad.addColorStop(0.6, 'rgba(30,80,10,0.10)');
-  grad.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.save(); ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
-  // Radiation pulse (4 s cycle)
-  const rc = wNow % 4000;
-  let pa = 0;
-  if      (rc < 100)  pa = (rc / 100)          * 0.12;
-  else if (rc < 150)  pa = ((150 - rc) / 50)   * 0.06;
-  else if (rc < 220)  pa = ((rc - 150) / 70)   * 0.12;
-  else if (rc >= 2500 && rc < 2650) pa = ((rc - 2500) / 150) * 0.2;
-  else if (rc >= 2650) pa = ((4000 - rc) / 1350) * 0.2;
-  if (pa > 0) {
-    ctx.save(); ctx.globalAlpha = pa; ctx.fillStyle = '#44BB22';
-    ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
-  }
-  if (weatherParticles) weatherParticles.emit(6, 3, cssWidth, cssHeight);
-}
-
 // ── Pass 2.5: Weather overlay + particles ─────────────────────────
+// Hex darkening for every phase already happened per-hex during the terrain
+// pass (drawCellOverlays) — this just spawns rain/fog/radioactive pulses over
+// the storm hexes it found, and occasionally fires lightning: a sky-strike
+// for rain storms, a hex-to-hex arc for chem storms, or a little faint
+// static-energy flicker for creeping fog. Mist (phase 5) gets none of this —
+// just the flat opaque hex fill from drawCellOverlays(), no particles at all.
 function renderWeatherOverlay() {
   if (weatherPhase <= 0) return;
-  const wNow = Date.now();
 
-  if (weatherPhase === 1) {
-    ctx.save(); ctx.globalAlpha = 0.09; ctx.fillStyle = '#667799';
-    ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
-    drawRainDrops(60, 12, 0.18, '#AACCEE', 1800);
-    if (weatherParticles) weatherParticles.emit(2, 1, cssWidth, cssHeight);
-
-  } else if (weatherPhase === 2) {
-    ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#334455';
-    ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
-    drawRainDrops(130, 20, 0.28, '#7799BB', 1000);
-    // Lightning (3 s cycle: 0–100ms flash, 100–150ms dark, 150–200ms secondary)
-    const lc = wNow % 3000;
-    if (lc < 100) {
-      ctx.save(); ctx.globalAlpha = Math.sin(lc / 100 * Math.PI) * 0.55;
-      ctx.fillStyle = '#DDEEFF'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
-    } else if (lc >= 150 && lc < 200) {
-      ctx.save(); ctx.globalAlpha = (1 - (lc - 150) / 50) * 0.25;
-      ctx.fillStyle = '#BBCCEE'; ctx.fillRect(0, 0, cssWidth, cssHeight); ctx.restore();
+  const cfg     = STORM_PHASE_CFG[weatherPhase];
+  const anchors = stormyHexesThisFrame;
+  if (weatherParticles) {
+    if (weatherPhase === 4) {
+      // Fog has its own particle look entirely (heavy drifting puffs + rare
+      // faint sparks) rather than the rain-line/radioactive-circle emit()
+      // used by rain/storm/chem.
+      weatherParticles.emitCreepingFog(0.16, anchors);
+      if (cfg.staticBursts) weatherParticles.emitStatic(0.03, anchors);
+    } else if (weatherPhase !== 5) {
+      const count = weatherPhase === 1 ? 2 : weatherPhase === 2 ? 4 : 5;
+      weatherParticles.emit(count, weatherPhase, cssWidth, cssHeight, anchors);
+      if (weatherPhase === 1 || weatherPhase === 2) {
+        weatherParticles.emitFog(weatherPhase === 1 ? 0.06 : 0.1, anchors);
+      }
     }
-    if (weatherParticles) weatherParticles.emit(4, 2, cssWidth, cssHeight);
-
-  } else {
-    drawChemStorm();
   }
-  if (weatherParticles) { weatherParticles.update(); weatherParticles.render(ctx); }
+  if (cfg.lightning && lightningSystem) {
+    lightningSystem.maybeStrike(anchors, weatherNow, LIGHTNING_MIN_GAP_MS, LIGHTNING_STRIKE_CHANCE);
+  }
+  if (cfg.arcLightning && lightningSystem) {
+    lightningSystem.maybeArc(anchors, weatherNow, ARC_MIN_GAP_MS, ARC_STRIKE_CHANCE);
+  }
+
+  if (lightningSystem) {
+    lightningSystem.update(weatherNow);
+    lightningSystem.render(ctx, weatherNow, HEX_SZ, cssWidth, cssHeight);
+  }
+}
+
+// ── Pass 2.5: Quake overlay — fault-line dust ─────────────────────
+// Per-hex shake jitter and the whole-view camera shake already happened
+// earlier (renderHexTerrain / buildCamera); this just kicks up dust along
+// the fault line. Individual dust motes outlive the quake itself (long ttl
+// in _spawnDust) so the cloud keeps drifting and dissipating for a couple
+// seconds after the shaking has already stopped.
+// NOTE: weatherParticles.update()/render() are NOT called from here or from
+// renderWeatherOverlay() — a quake can happen in clear weather, so ticking
+// the shared particle pool must not depend on weatherPhase being active.
+// See the 'weather_particles' layer below.
+function renderQuakeOverlay() {
+  if (!quakeField || !quakeField.quakes.length || !weatherParticles) return;
+  for (const quake of quakeField.quakes) {
+    if (quake.env <= 0.02) continue;
+    const pts = quakePixelsThisFrame.get(quake.id);
+    if (!pts) continue;
+    const anchors = pts.filter(Boolean).map(p => ({ x: p.x, y: p.y, spread: HEX_SZ }));
+    for (let i = 0; i < 2; i++) weatherParticles.emitDust(QUAKE_DUST_CHANCE * quake.env, anchors);
+  }
+  // Extra, heavier dust specifically over hexes the quake leveled from
+  // Settlement to Open Scrub — on top of the regular fault-line dust above.
+  if (quakeConvertedPixelsThisFrame.length) {
+    const convertedAnchors = quakeConvertedPixelsThisFrame.map(p => ({ x: p.x, y: p.y, spread: HEX_SZ }));
+    for (let i = 0; i < 6; i++) weatherParticles.emitDust(QUAKE_CONVERTED_DUST_CHANCE, convertedAnchors);
+  }
 }
 
 // ── Time-of-day tint overlay ──────────────────────────────────────
@@ -741,6 +830,10 @@ const LAYERS = [
   { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   { name: 'weather',      draw: (_)   => renderWeatherOverlay() },
+  { name: 'quake',        draw: (_)   => renderQuakeOverlay() },
+  // Ticks unconditionally — shared by weather (gated above) and quake dust
+  // (not weather-gated), so it must run regardless of weatherPhase.
+  { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.update(); weatherParticles.render(ctx); } } },
   { name: 'ash',          draw: (cam) => { if (ashParticles) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },
@@ -751,6 +844,12 @@ function render() {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   ctx.fillStyle = '#050301';
   ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+  weatherNow = Date.now();
+  stormyHexesThisFrame = [];
+  quakePixelsThisFrame = new Map();
+  quakeConvertedPixelsThisFrame = [];
+  if (quakeField) quakeField.update(weatherNow);
 
   lerpPlayerPositions();
   const cam = buildCamera();

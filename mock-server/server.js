@@ -7,11 +7,46 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
-const PORT     = 8765;
+const PORT     = process.env.PORT || 8765;
 
 const MAP_COLS = 75, MAP_ROWS = 57, MAX_PLAYERS = 6;
 
 const hex2 = (n) => n.toString(16).padStart(2, '0');
+
+// ── Derive image variant counts from data/img — mirrors setupVariantCounts()
+// in game-server.hpp so the client loads the same hex<Name><N>.png set the
+// firmware would find on the SD card.
+const TERRAIN_IMG_NAMES = [
+  'OpenScrub', 'AshDunes', 'RustForest', 'Marsh',
+  'BrokenUrban', 'FloodedDistrict', 'GlassFields',
+  'Ridge', 'Mountain', 'Settlement', 'NukeCrater', 'RiverChannel',
+];
+const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
+
+function scanVariantCounts() {
+  let files = [];
+  try {
+    files = fs.readdirSync(path.join(DATA_DIR, 'img'));
+  } catch {
+    // no img dir — leave everything at 0
+  }
+  const countFor = (prefix) => {
+    let max = 0;
+    for (const fname of files) {
+      if (!fname.startsWith(prefix) || !fname.endsWith('.png')) continue;
+      const numStr = fname.slice(prefix.length, -4);
+      if (numStr.length === 0 || !/^\d+$/.test(numStr)) continue;
+      max = Math.max(max, parseInt(numStr, 10) + 1);
+    }
+    return max;
+  };
+  const vc = TERRAIN_IMG_NAMES.map((name) => countFor(`hex${name}`));
+  const sv = SHELTER_IMG_NAMES.map((name) => countFor(name));
+  const fa = countFor('forrageAnimal');
+  console.log(`[variants] terrain=${JSON.stringify(vc)} shelter=${JSON.stringify(sv)} forrageAnimal=${fa}`);
+  return { vc, sv, fa };
+}
+const VARIANT_COUNTS = scanVariantCounts();
 
 // ── Resource state ──────────────────────────────────────────────────────────
 // "q_r" -> { res: 1-5 (0 = empty), amt, respawnTimer }
@@ -47,8 +82,22 @@ const MAP_HEX = buildMap();
 // POIs consumed by enc_start ("q_r"). Cleared from the 0x80 bit in every
 // map/visdisk we send so the eye disappears like it does on the firmware.
 const consumedPoi = new Set();
+// Shelters destroyed by a quake fault line ("q_r"). Cleared from the 0x40
+// bit the same way — permanent, same as a consumed POI.
+const destroyedShelters = new Set();
+// Terrain overwritten by a quake ("q_r" -> new terrain index). MAP_HEX is a
+// static baked string, so — same trick as the two Sets above — this overlay
+// is consulted everywhere terrain is read instead of mutating MAP_HEX itself.
+const terrainOverrides = new Map();
 function ddFor(c, r, ddNum) {
-  return consumedPoi.has(`${c}_${r}`) ? (ddNum & ~0x80) : ddNum;
+  let out = ddNum;
+  if (consumedPoi.has(`${c}_${r}`))       out &= ~0x80;
+  if (destroyedShelters.has(`${c}_${r}`)) out &= ~0x40;
+  return out;
+}
+function ttFor(c, r, ttNum) {
+  const ov = terrainOverrides.get(`${c}_${r}`);
+  return ov === undefined ? ttNum : ov;
 }
 
 // Live snapshot of current map state — encodes cells with up-to-date resource
@@ -58,14 +107,14 @@ function liveMapHex() {
   for (let r = 0; r < MAP_ROWS; r++) {
     for (let c = 0; c < MAP_COLS; c++) {
       const baseIdx = (r * MAP_COLS + c) * 6;
-      const tt = MAP_HEX.substr(baseIdx,     2);
+      const ttNum = ttFor(c, r, parseInt(MAP_HEX.substr(baseIdx, 2), 16));
       const dd = MAP_HEX.substr(baseIdx + 2, 2);
       const ddNum = ddFor(c, r, parseInt(dd, 16));
       const cell = resources[`${c}_${r}`];
       const variant = baseIdx & 0x0F;
       const res     = cell ? cell.res : 0;
       const vv = hex2((res << 4) | (variant & 0x0F));
-      s += tt + hex2(ddNum) + vv;
+      s += hex2(ttNum) + hex2(ddNum) + vv;
     }
   }
   return s;
@@ -81,7 +130,7 @@ function buildVisDisk(pq, pr, vr) {
       const cq = ((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
       const cr = ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
       const baseIdx = (cr * MAP_COLS + cq) * 6;
-      const tt = MAP_HEX.substr(baseIdx,     2);
+      const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)));
       const dd = hex2(ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)));
       const cell = resources[`${cq}_${cr}`];
       const variant = baseIdx & 0x0F;
@@ -121,7 +170,7 @@ function makePlayer(id) {
     vm: 0x3F,
     rt: 0,
     it: [], iq: [],
-    eq: {},
+    eq: [0, 0, 0, 0, 0], // EQUIP_SLOTS=5 in Esp32HexMapCrawl.ino — array, not {}; 0 = empty slot
     arch: id,
     is: ARCHETYPE_INV_SLOTS[id] ?? 8,
     sk: (ARCHETYPE_SKILLS[id] ?? [0, 0, 0, 0, 0]).slice(),
@@ -226,7 +275,7 @@ let   threatClock = 0;
 let   forcedOutcome = null;   // dbg_force: null | 0 | 1 — overrides the next roll
 
 function terrainAt(q, r) {
-  return parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6, 2), 16);
+  return ttFor(q, r, parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6, 2), 16));
 }
 function hasPoi(q, r) {
   const dd = parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6 + 2, 2), 16);
@@ -247,6 +296,268 @@ function computeDN(p, baseRisk) {
 }
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
+// ── Day / dawn cycle — mirrors tickGame()'s early-dawn-on-all-resting check
+// (actions_game_loop.hpp) and dawnUpkeep() (survival_state.hpp) closely enough
+// to exercise REST end-to-end. Weather is a simplified 3-roll cycle, not the
+// firmware's full Markov chain with bad-weather-streak capping.
+const DAY_TICKS  = 3000;  // TICK_MS(100) x 3000 = 5 min/day, matches firmware
+const TICK_MS    = 100;
+const LL_CAP     = 7;     // effectiveMaxLL() base cap — mock has no equip stat mods
+const TERRAIN_SV = [0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 0]; // mirrors TERRAIN_SV[] in Esp32HexMapCrawl.ino
+const WEATHER_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM', 'STRANGLE FOG', 'FOG'];
+
+let dayTick      = 0;
+let dayCount     = 0;
+let weatherPhase = 0;
+
+function hasShelter(q, r) {
+  if (destroyedShelters.has(`${q}_${r}`)) return false;
+  const dd = parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6 + 2, 2), 16);
+  return (dd & 0x40) !== 0;
+}
+
+// Move the F/W track by dir (+1/-1), clamp [1,6], and flag an LL delta on each
+// threshold crossing — ports applyFStep()/applyWStep() from survival_skills.hpp.
+function applyFStep(p, dir, state) {
+  const oldF = p.food;
+  if (dir > 0) {
+    if (p.food < 6) p.food++;
+    if (oldF < 4 && p.food >= 4 && (p.fth & 1)) { p.fth &= ~1; state.llDelta++; }
+    if (oldF < 2 && p.food >= 2 && (p.fth & 2)) { p.fth &= ~2; state.llDelta++; }
+  } else {
+    if (p.food > 1) p.food--;
+    if (oldF >= 4 && p.food < 4 && !(p.fth & 1)) { p.fth |= 1; state.llDelta--; }
+    if (oldF >= 2 && p.food < 2 && !(p.fth & 2)) { p.fth |= 2; state.llDelta--; }
+  }
+}
+function applyWStep(p, dir, state) {
+  const oldW = p.water;
+  if (dir > 0) {
+    if (p.water < 6) p.water++;
+    if (oldW < 5 && p.water >= 5 && (p.wth & 1)) { p.wth &= ~1; state.llDelta++; }
+    if (oldW < 3 && p.water >= 3 && (p.wth & 2)) { p.wth &= ~2; state.llDelta++; }
+    if (oldW < 2 && p.water >= 2 && (p.wth & 4)) { p.wth &= ~4; state.llDelta++; }
+  } else if (p.water > 1) {
+    p.water--;
+    if (oldW >= 5 && p.water < 5 && !(p.wth & 1)) { p.wth |= 1; state.llDelta--; }
+    if (oldW >= 3 && p.water < 3 && !(p.wth & 2)) { p.wth |= 2; state.llDelta--; }
+  } else if (!(p.wth & 4)) {
+    p.wth |= 4; state.llDelta--;
+  }
+}
+
+function healWound(p, tier) {
+  if (!p.wnd[tier]) return false;
+  p.wnd[tier]--;
+  return true;
+}
+
+// Runs dawn upkeep for every connected player — mirrors dawnUpkeep() end to end
+// (food/water consumption, exposure, shelter-protects-rest, rest recovery),
+// then resets each player's resting flag and refills MP, and emits a proper
+// EVT_DAWN-shaped event so the client's day counter / toast / REST button reset.
+function dawnUpkeepAll() {
+  dayCount++;
+  if (threatClock > 0) threatClock--;
+  advanceWeather();
+
+  for (const idStr of Object.keys(players)) {
+    const id = Number(idStr);
+    const p  = players[id];
+    if (!p || p.ll === 0) continue; // downed — skipped, same as firmware
+
+    const state = { llDelta: 0 };
+    const inSettlement = terrainAt(p.q, p.r) === 9;
+
+    if (!inSettlement) {
+      if (p.inv[1] > 0) { p.inv[1]--; applyFStep(p, +1, state); }
+      else                applyFStep(p, -1, state);
+
+      const use = Math.min(p.inv[0], 2);
+      p.inv[0] -= use;
+      for (let i = 0; i < use;     i++) applyWStep(p, +1, state);
+      for (let i = 0; i < 2 - use; i++) applyWStep(p, -1, state);
+    }
+
+    let expDelta = 0;
+    const sv       = TERRAIN_SV[terrainAt(p.q, p.r)] ?? 0;
+    const covered  = hasShelter(p.q, p.r) || sv >= 2;
+    if (!covered) { state.llDelta--; expDelta = -1; }
+
+    // Shelter protection: resting under a shelter suppresses all LL loss this dawn.
+    if (p.rt && hasShelter(p.q, p.r) && state.llDelta < 0) {
+      state.llDelta = 0;
+      expDelta = 0;
+    }
+
+    // Rest recovery: resting with food>=4 and water>=3 → +1 LL and a minor wound heals.
+    const restedWell = !!p.rt && p.food >= 4 && p.water >= 3;
+    if (restedWell && p.ll < LL_CAP) state.llDelta++;
+    if (restedWell) healWound(p, 0);
+
+    const prevLL = p.ll;
+    if (state.llDelta < 0) {
+      for (let i = 0; i < -state.llDelta && p.ll > 0; i++) p.ll--;
+    } else if (state.llDelta > 0) {
+      p.ll = Math.min(p.ll + state.llDelta, LL_CAP);
+    }
+    const actualDelta = p.ll - prevLL;
+
+    p.mp = (p.ll === 0) ? 0 : Math.max(2, p.ll + 3 - p.wnd[1]);
+    p.rt = 0;
+
+    broadcast({
+      t: 'ev', k: 'dawn', pid: id, day: dayCount,
+      f: p.food, w: p.water, ll: p.ll, mp: p.mp, dll: actualDelta,
+      fth: p.fth, wth: p.wth, rad: p.rad, expd: expDelta, wnd: p.wnd.slice(),
+    });
+    console.log(`[dawn] day=${dayCount} pid=${id} f=${p.food} w=${p.water} ll=${p.ll} dll=${actualDelta}`);
+  }
+  broadcast(stateMsg());
+}
+
+function advanceWeather() {
+  const prev = weatherPhase;
+  const roll = Math.random() * 100;
+  switch (weatherPhase) {
+    case 0: weatherPhase = roll < 50 ? 1 : (roll < 70 ? 2 : (roll < 90 ? 5 : 4)); break;
+    case 1: weatherPhase = roll < 40 ? 2 : (roll < 75 ? 0 : 5); break;
+    case 2: weatherPhase = roll < 30 ? 3 : (roll < 55 ? 1 : (roll < 80 ? 0 : 4)); break;
+    case 3: weatherPhase = roll < 20 ? 0 : (roll < 45 ? 2 : (roll < 70 ? 1 : 4)); break;
+    case 4: weatherPhase = roll < 50 ? 0 : (roll < 75 ? 1 : 2); break;
+    default: weatherPhase = roll < 60 ? 0 : (roll < 85 ? 1 : 4); break; // 5=mist ("Fog")
+  }
+  if (weatherPhase !== prev) {
+    broadcast({ t: 'ev', k: 'weather', phase: weatherPhase, ticks: 0 });
+    console.log(`[weather] ${WEATHER_NAMES[prev]} -> ${WEATHER_NAMES[weatherPhase]}`);
+  }
+}
+
+// ── Quakes ───────────────────────────────────────────────────────────────
+// Occasional earthquake: ruptures a straight line of QUAKE_MIN_LEN..MAX_LEN
+// hexes near a connected player, permanently destroys any shelter caught on
+// it, and levels any Settlement on the line to Open Scrub. Server-
+// authoritative — the fault line's location and its losses come from here so
+// every client shakes the same hexes and sees the same losses, instead of
+// each browser rolling its own random line.
+const QUAKE_MIN_LEN = 7;
+const QUAKE_MAX_LEN = 10;
+const QUAKE_MIN_GAP_MS = 45000;
+const QUAKE_TRIGGER_CHANCE = 0.02; // rolled once per game tick (100ms) once the gap has elapsed
+const QUAKE_DIRS = [
+  { dq: 1, dr: 0 }, { dq: 1, dr: -1 }, { dq: 0, dr: -1 },
+  { dq: -1, dr: 0 }, { dq: -1, dr: 1 }, { dq: 0, dr: 1 },
+];
+const TERRAIN_SETTLEMENT = 9;
+const TERRAIN_SCRUB      = 0;
+const TERRAIN_HILLS      = 7;
+const TERRAIN_MOUNTAIN   = 8;
+let lastQuakeAt = 0;
+
+function isMountainous(q, r) {
+  const t = terrainAt(q, r);
+  return t === TERRAIN_HILLS || t === TERRAIN_MOUNTAIN;
+}
+
+// Samples a few candidate start points around (refQ, refR) and prefers one
+// that lands on Hills/Mountain — fault lines are drawn to real rough country
+// instead of landing uniformly at random.
+function pickQuakeOrigin(refQ, refR) {
+  let best = null;
+  for (let i = 0; i < 6; i++) {
+    const q = ((Math.round(refQ + (Math.random() - 0.5) * 16) % MAP_COLS) + MAP_COLS) % MAP_COLS;
+    const r = ((Math.round(refR + (Math.random() - 0.5) * 12) % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+    const mountainous = isMountainous(q, r);
+    if (!best) best = { q, r };
+    if (mountainous) return { q, r };
+  }
+  return best;
+}
+
+function triggerQuake(refQ, refR) {
+  const len = QUAKE_MIN_LEN + Math.floor(Math.random() * (QUAKE_MAX_LEN - QUAKE_MIN_LEN + 1));
+  const dir = QUAKE_DIRS[Math.floor(Math.random() * QUAKE_DIRS.length)];
+  const origin = pickQuakeOrigin(refQ, refR);
+  let q = origin.q;
+  let r = origin.r;
+  const cells = [];
+  const destroyed = [];
+  const converted = [];
+  for (let i = 0; i < len; i++) {
+    const cq = ((q % MAP_COLS) + MAP_COLS) % MAP_COLS;
+    const cr = ((r % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+    cells.push({ q: cq, r: cr });
+    if (hasShelter(cq, cr)) {
+      destroyedShelters.add(`${cq}_${cr}`);
+      destroyed.push({ q: cq, r: cr });
+    }
+    if (terrainAt(cq, cr) === TERRAIN_SETTLEMENT) {
+      terrainOverrides.set(`${cq}_${cr}`, TERRAIN_SCRUB);
+      converted.push({ q: cq, r: cr });
+    }
+    q += dir.dq; r += dir.dr;
+  }
+  lastQuakeAt = Date.now();
+  broadcast({ t: 'ev', k: 'quake', cells, destroyed, converted });
+  if (destroyed.length) broadcast(stateMsg());
+  console.log(`[quake] len=${len} destroyed=${destroyed.length} converted=${converted.length} cells=${JSON.stringify(cells)}`);
+}
+
+function maybeTriggerQuake(connected) {
+  if (Date.now() - lastQuakeAt < QUAKE_MIN_GAP_MS) return;
+  // Standing near Hills/Mountain makes a quake several times more likely —
+  // real fault country, not just a uniform roll anywhere on the map.
+  const nearMountain = connected.find((p) => isMountainous(p.q, p.r));
+  const chance = nearMountain ? QUAKE_TRIGGER_CHANCE * 3 : QUAKE_TRIGGER_CHANCE;
+  if (Math.random() > chance) return;
+  const ref = nearMountain || connected[Math.floor(Math.random() * connected.length)];
+  triggerQuake(ref.q, ref.r);
+}
+
+// ── Strangle Fog per-tick hazard ────────────────────────────────────────
+// Mirrors actions_game_loop.hpp's WEATHER_FOG block closely enough to feel
+// out the rates here before flashing: MP bleeds away steadily while standing
+// in fog, LL loss is far rarer. Same terrain shape as the firmware's
+// WEATHER_INTENSITY[WEATHER_FOG] row (worst in dense/wet terrain, weakest on
+// high dry ground); Settlement/Broken Urban are immune. Unlike the firmware,
+// this mock's map data doesn't distinguish basic vs improved shelter (just
+// shelter-or-not), so any shelter here only halves the rate rather than
+// granting the firmware's full immunity at the improved tier.
+const FOG_INTENSITY     = [0.45, 0.35, 0.7, 0.75, 0.25, 0.65, 0.5, 0.3, 0.2, 0.1, 0, 0];
+const FOG_MP_TICK_RATE  = 1 / 300;
+const FOG_LL_TICK_RATE  = 1 / 1800;
+function fogTick(connected) {
+  if (weatherPhase !== 4) return;
+  let changed = false;
+  for (const p of connected) {
+    if (p.ll === 0) continue;
+    const t = terrainAt(p.q, p.r);
+    if (t === 9 || t === 4) continue; // Settlement, Broken Urban — immune
+    let mpProb = (FOG_INTENSITY[t] ?? 0) * FOG_MP_TICK_RATE;
+    let llProb = (FOG_INTENSITY[t] ?? 0) * FOG_LL_TICK_RATE;
+    if (hasShelter(p.q, p.r)) { mpProb *= 0.5; llProb *= 0.5; }
+    if (p.mp > 0 && Math.random() < mpProb) { p.mp--; changed = true; }
+    if (Math.random() < llProb) { p.ll = Math.max(0, p.ll - 1); changed = true; }
+  }
+  if (changed) broadcast(stateMsg());
+}
+
+// Day tick — mirrors tickGame(): normal timeout OR (if anyone's connected) every
+// connected player resting triggers dawn immediately, same as the firmware,
+// which is what makes solo REST end the day right away.
+setInterval(() => {
+  const connected = Object.values(players);
+  if (connected.length === 0) return; // nobody connected — don't burn days
+  dayTick++;
+  const allResting = connected.every((p) => p.rt);
+  if (dayTick >= DAY_TICKS || allResting) {
+    dayTick = 0;
+    dawnUpkeepAll();
+  }
+  fogTick(connected);
+  maybeTriggerQuake(connected);
+}, TICK_MS);
+
 function encStart(ws, id, msg) {
   const p = players[id];
   if (!p) { send(ws, { t: 'enc_dbg', msg: 'no_slot' }); return; }
@@ -260,6 +571,23 @@ function encStart(ws, id, msg) {
   const encId = 1 + Math.floor(Math.random() * pool.count);
   openEncounter(ws, id, p, q, r, pool.path, encId, true);
 }
+
+// Ends an encounter without banking — mirrors endEncounter() in
+// encounter_engine.hpp. reason is one of the ENC_REASON_LABELS keys the
+// client already knows (hazard/abort/dawn/downed/disconnect/regen).
+// dawn/disconnect restore the POI (not the player's choice to leave);
+// the rest consume it for good, same as the firmware's restorePoi flag.
+function encEnd(id, reason) {
+  const e = encounters[id];
+  if (!e) return;
+  if (reason === 'dawn' || reason === 'disconnect') consumedPoi.delete(`${e.q}_${e.r}`);
+  delete encounters[id];
+  const p = players[id];
+  if (p) p.enc = false;
+  broadcast({ t: 'ev', k: 'enc_end', pid: id, q: e.q, r: e.r, reason });
+  console.log(`[enc] end pid=${id} reason=${reason}`);
+}
+
 function encChoice(ws, id, m) {
   const p = players[id], e = encounters[id];
   if (!p || !e || p.ll === 0) return;
@@ -404,8 +732,11 @@ function syncMsg(id) {
     vr: 4,
     map: liveMapHex(),
     p: Object.values(players),
-    gs: { wp: 0 },
+    gs: { wp: weatherPhase, dc: dayCount, tc: threatClock },
     gi: [],
+    vc: VARIANT_COUNTS.vc,
+    sv: VARIANT_COUNTS.sv,
+    fa: VARIANT_COUNTS.fa,
   };
 }
 
@@ -462,9 +793,9 @@ function stateMsg() {
     p[i] = players[i] || { on: false, q: 0, r: 0, sc: 0, inv: [0,0,0,0,0], sp: 0,
                            ll: 0, food: 0, water: 0, rad: 0,
                            mp: 0, fth: 0, wth: 0, vm: 0, rt: 0, wnd: [0, 0],
-                           it: [], iq: [], eq: {}, enc: false };
+                           it: [], iq: [], eq: [0, 0, 0, 0, 0], enc: false };
   }
-  return { t: 's', p, gs: { wp: 0 } };
+  return { t: 's', p, gs: { wp: weatherPhase, dc: dayCount, tc: threatClock } };
 }
 
 function lobbyMsg() {
@@ -607,10 +938,11 @@ wss.on('connection', (ws) => {
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p) break;
-        // ACT_REST=7
+        // ACT_REST=7 — idempotent like doRest(): once set, only dawnUpkeepAll()
+        // clears it. All-connected-players-resting is what ends the day early,
+        // so recovery comes from dawn upkeep, not an instant buff here.
         if (msg.a === 7) {
-          p.rt = p.rt ? 0 : 1;
-          if (p.rt) { p.mp = 6; p.food = Math.min(6, p.food + 1); p.water = Math.min(6, p.water + 1); }
+          p.rt = 1;
         } else {
           // Generic: drain a bit, give a resource.
           p.mp = Math.max(0, p.mp - (msg.mp || 1));
@@ -648,6 +980,28 @@ wss.on('connection', (ws) => {
         if (!p || !Array.isArray(msg.inv)) break;
         for (let i = 0; i < 5; i++) p.inv[i] = msg.inv[i] | 0;
         broadcast(stateMsg());
+        break;
+      }
+
+      case 'dbg_weather': {
+        // Test-only: force weatherPhase without waiting for a dawn roll.
+        // {"t":"dbg_weather","phase":2}  (0=clear 1=rain 2=storm 3=chem 4=strangle fog 5=mist/fog)
+        const phase = Math.max(0, Math.min(5, msg.phase | 0));
+        if (phase === weatherPhase) break;
+        weatherPhase = phase;
+        broadcast({ t: 'ev', k: 'weather', phase: weatherPhase, ticks: 0 });
+        broadcast(stateMsg());
+        console.log(`[weather] forced -> ${WEATHER_NAMES[weatherPhase]}`);
+        break;
+      }
+
+      case 'dbg_quake': {
+        // Test-only: force a quake near the sender immediately, ignoring the cooldown.
+        // {"t":"dbg_quake"}
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        triggerQuake(p.q, p.r);
         break;
       }
     }

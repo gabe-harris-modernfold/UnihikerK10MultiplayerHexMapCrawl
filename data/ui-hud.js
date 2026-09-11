@@ -75,11 +75,21 @@ function populateHexInfo(q, r, cell) {
 
 
 // ── Weather HUD indicator ─────────────────────────────────────────────────────
+// Set by network.js's 'quake' handler to briefly override the weather label
+// with "EARTHQUAKE" for the duration of the shake, then fall back to whatever
+// the real weather phase is once it clears.
+let quakeHudUntil = 0;
+
 function updateWeatherHUD() {
   const el = document.getElementById('hud-weather');
   if (!el) return;
-  const icons   = ['\u2600', '\u26C6', '\u26A1', '\u2623'];
-  const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem'];
+  if (Date.now() < quakeHudUntil) {
+    el.textContent = '\u26F0 EARTHQUAKE';
+    el.className   = 'hud-weather wx-quake';
+    return;
+  }
+  const icons   = ['\u2600', '\u26C6', '\u26A1', '\u2623', '\u2601', '\u2248'];
+  const classes = ['', 'wx-rain', 'wx-storm', 'wx-chem', 'wx-fog', 'wx-mist'];
   const phase = (typeof weatherPhase === 'undefined') ? 0 : weatherPhase;
   el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
   el.className = 'hud-weather ' + (classes[phase] ?? '');

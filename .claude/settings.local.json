@@ -100,7 +100,8 @@
       "Bash(powershell -ExecutionPolicy Bypass -File scripts\\\\build.ps1)",
       "PowerShell(.\\\\scripts\\\\build.ps1)",
       "Bash(node --check server.js)",
-      "Read(//c/SourceCode/**)"
+      "Read(//c/SourceCode/**)",
+      "Bash(cd mock-server *)"
     ]
   }
 }

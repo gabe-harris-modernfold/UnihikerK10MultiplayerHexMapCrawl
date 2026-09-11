@@ -501,19 +501,27 @@ const TREAT_DN    = 9;
 const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
 
 // ── Weather system constants (must stay byte-for-byte identical to C++ tables) ─
-// Phase IDs: 0=Clear 1=Rain 2=Storm 3=Chem-Storm
-const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM'];
+// Phase IDs: 0=Clear 1=Rain 2=Storm 3=Chem-Storm 4=Fog ("Strangle Fog")
+// 5=Mist ("Fog" — plain, cosmetic-only; MIST is the internal name, kept
+// distinct from FOG/"Strangle Fog" so the two are never confused in code)
+const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM', 'STRANGLE FOG', 'FOG'];
 // Visibility subtracted from server visR per phase (floored at 0)
-const WEATHER_VIS_PENALTY = [0, 1, 3, 5];
+const WEATHER_VIS_PENALTY = [0, 1, 3, 5, 4, 2];
 // Extra movement cost per hex in each phase — added to terrain MC by movePlayer()
-const WEATHER_MOVE_PENALTY = [0, 1, 2, 3];
+const WEATHER_MOVE_PENALTY = [0, 1, 2, 3, 1, 1];
 // Terrain intensity [phase][terrain idx 0-11] — matches C++ WEATHER_INTENSITY exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
 //           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+// Fog is worst in dense/wet terrain (Rust Forest, Marsh, Flooded Ruins) and
+// weakest on high dry ground (Rolling Hills, Mountain) — drives its own
+// per-tick MP/LL hazard on the firmware, same shape as chem's row. Mist's
+// row is all-zero: purely cosmetic, no per-tick hazard.
 const WEATHER_INTENSITY = [
   [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0   ],
   [0.5,  0.4,  0.6,  0.8,  0.4,  0.9,  0.5,  0.6,  0.7,  0.1,  0,    0   ],
   [0.7,  0.6,  0.7,  0.9,  0.5,  1.0,  0.8,  0.9,  1.0,  0.2,  0,    0   ],
   [0.95, 0.85, 0.75, 0.90, 0.6,  0.95, 0.90, 0.90, 0.85, 0.1,  0,    0   ],
+  [0.45, 0.35, 0.7,  0.75, 0.25, 0.65, 0.5,  0.3,  0.2,  0.1,  0,    0   ],
+  [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0   ],
 ];

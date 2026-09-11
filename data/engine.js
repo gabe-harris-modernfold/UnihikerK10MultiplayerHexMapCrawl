@@ -1,7 +1,7 @@
 // ── Vision radius (updated per vis/sync message from server) ─────
 let myVisionR = VISION_R;
 
-// ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem; updated from server gs.wp) ─
+// ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem 4=Fog aka "Strangle Fog" 5=Mist aka plain "Fog"; updated from server gs.wp) ─
 let weatherPhase = 0;
 
 // Effective vision radius. Use this everywhere visibility is calculated so the

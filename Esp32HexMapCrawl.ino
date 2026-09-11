@@ -187,23 +187,39 @@ static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 
 static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,1, 0 };
 
 // ── Weather system constants ──────────────────────────────────────────────────
-static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
-                           WEATHER_STORM = 2, WEATHER_CHEM  = 3;
+static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1, WEATHER_STORM = 2,
+                           WEATHER_CHEM  = 3, WEATHER_FOG  = 4, WEATHER_MIST  = 5;
 // Weather counter is in game-days; decremented once per dawn (not per tick).
-// CLEAR, RAIN, STORM, CHEM
-static const int8_t  WEATHER_VIS_PENALTY[4]  = { 0, 1, 3, 5 };
-static const uint8_t WEATHER_MOVE_PENALTY[4] = { 0, 1, 2, 3 };
-static const uint16_t WEATHER_DUR_MIN[4]     = { 3, 1, 1, 1 };
-static const uint16_t WEATHER_DUR_MAX[4]     = { 7, 3, 2, 1 };
+// CLEAR, RAIN, STORM, CHEM, FOG ("Strangle Fog"), MIST (plain "Fog" — see
+// WEATHER_PHASE_NAMES for display strings; MIST is the internal name only,
+// kept distinct from FOG/"Strangle Fog" so the two are never confused in code).
+// Strangle Fog is primarily a sight hazard (vis penalty close to chem's) with
+// only a light per-hex move penalty (near rain's) — but see the per-tick
+// MP/LL hazard below (search WEATHER_FOG in actions_game_loop.hpp) for the
+// "strangle" part: it bleeds MP steadily and, more rarely, LL too. Mist is
+// purely cosmetic — a plain, opaque whiteout with a mild vis penalty and no
+// per-tick hazard at all, the "everyday" fog as opposed to Strangle Fog's
+// dangerous variant.
+static const int8_t  WEATHER_VIS_PENALTY[6]  = { 0, 1, 3, 5, 4, 2 };
+static const uint8_t WEATHER_MOVE_PENALTY[6] = { 0, 1, 2, 3, 1, 1 };
+static const uint16_t WEATHER_DUR_MIN[6]     = { 3, 1, 1, 1, 1, 1 };
+static const uint16_t WEATHER_DUR_MAX[6]     = { 7, 3, 2, 1, 2, 3 };
 // Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
 //           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
-static const float WEATHER_INTENSITY[4][12] = {
+// Fog ("Strangle Fog") is worst in dense/wet terrain that tangles and
+// disorients you (Rust Forest, Marsh, Flooded Ruins) and weakest on high dry
+// ground where it thins out (Rolling Hills, Mountain) — drives its own
+// per-tick MP/LL hazard below, same shape as chem's row but a different feel.
+// Mist's row is all-zero: purely cosmetic, no per-tick hazard.
+static const float WEATHER_INTENSITY[6][12] = {
   { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { 0.5f, 0.4f, 0.6f, 0.8f, 0.4f, 0.9f, 0.5f, 0.6f, 0.7f, 0.1f, 0.0f, 0.0f },
   { 0.7f, 0.6f, 0.7f, 0.9f, 0.5f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.0f, 0.0f },
   { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f },
+  { 0.45f,0.35f,0.7f, 0.75f,0.25f,0.65f,0.5f, 0.3f, 0.2f, 0.1f, 0.0f, 0.0f },
+  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
 };
 
 
@@ -536,7 +552,7 @@ struct GameState {
   uint32_t dayTick;
   uint16_t dayCount;
 
-  uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem
+  uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem 4=fog(Strangle Fog) 5=mist(Fog)
   uint16_t weatherCounter;  // game-days remaining in current phase (decremented at dawn)
   uint16_t badWeatherTicks; // consecutive game-days in non-CLEAR phases
 };

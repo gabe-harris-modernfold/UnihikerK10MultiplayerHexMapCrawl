@@ -173,6 +173,8 @@ from the browser console:
 ```js
 send({ t: 'dbg_enc',   biome: 'urban', id: 3 });  // open a specific encounter JSON, ignoring position/POI
 send({ t: 'dbg_force', out: 0 });                 // force the NEXT roll to fail (out: 1 = succeed)
+send({ t: 'dbg_weather', phase: 2 });             // force weatherPhase (0 clear, 1 rain, 2 storm, 3 chem, 4 strangle fog, 5 mist/fog)
+send({ t: 'dbg_quake' });                         // force an earthquake near the sender, ignoring the cooldown
 ```
 
 Encounter JSON `skill` ids use the firmware's 5-skill enum — 0 NAVIGATE,

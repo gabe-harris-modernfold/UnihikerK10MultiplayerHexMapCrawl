@@ -874,5 +874,35 @@ function handleEvent(ev) {
       updateWeatherHUD();
       addLog(`<span class="log-mv">Weather: ${WEATHER_PHASE_NAMES?.[ev.phase] ?? ev.phase}</span>`);
       break;
+    case 'quake': {
+      // Server picks the fault line, any shelters it destroys, and any
+      // Settlement it levels to Open Scrub, so every client shakes the same
+      // hexes and sees the same losses — this just mirrors that into the
+      // local map and hands the line (plus which cells were leveled, for
+      // the extra dust) to the renderer.
+      for (const c of ev.destroyed ?? []) {
+        if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], shelter: 0 };
+      }
+      for (const c of ev.converted ?? []) {
+        if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], terrain: 0 };
+      }
+      quakeField.spawnFromEvent(ev.cells ?? [], ev.converted ?? []);
+      // Briefly override the HUD weather label with "EARTHQUAKE" for the
+      // duration of the shake, then let it fall back to the real weather.
+      quakeHudUntil = Date.now() + QUAKE_SHAKE_MS + QUAKE_FADE_MS;
+      updateWeatherHUD();
+      setTimeout(updateWeatherHUD, QUAKE_SHAKE_MS + QUAKE_FADE_MS);
+      if (ev.destroyed?.length) {
+        const n = ev.destroyed.length;
+        addLog(`<span class="log-check-fail">▪ The ground splits — ${n} shelter${n > 1 ? 's' : ''} destroyed.</span>`);
+        showToast('☠ The earth splits. A shelter collapses into the fault line.');
+      }
+      if (ev.converted?.length) {
+        const n = ev.converted.length;
+        addLog(`<span class="log-check-fail">▪ ${n} settlement${n > 1 ? 's' : ''} leveled to open scrub.</span>`);
+        showToast('☠ The quake swallows a settlement whole. Nothing left but scrub.');
+      }
+      break;
+    }
   }
 }

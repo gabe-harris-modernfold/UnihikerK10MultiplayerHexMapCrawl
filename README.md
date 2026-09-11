@@ -196,6 +196,35 @@ The game does not start while in USB drive mode.
 4. Once booted, the K10 displays "WASTELAND CRAWL" splash screen
 5. Players connect to WiFi `WASTELAND` and open `http://192.168.4.1/`
 
+### Development
+
+See **[docs/dev-loop.md](docs/dev-loop.md)** for the full build / flash /
+deploy reference (toolchain, library pinning, gotchas). Quick start on
+Windows + PowerShell with `arduino-cli`:
+
+```powershell
+pwsh .\scripts\build.ps1              # compile
+pwsh .\scripts\flash.ps1              # auto-detect COM port and upload
+pwsh .\scripts\sync_data.ps1 <board-ip>   # push data/ over HTTP without reflashing
+```
+
+`sync_data.ps1` (and its bash mirror `sync_data.sh`) pushes changed files in
+`data/` to a running board via the `/upload` HTTP endpoint, skipping unchanged
+files via a SHA-256 manifest. There's also a USB-MSC mode (hold **Button A**
+at boot) for copying the whole `data/` folder by hand — see
+[usb_drive.h](usb_drive.h).
+
+For offline UI work without a board, run the Node mock server:
+
+```bash
+cd mock-server
+npm install
+npm run dev
+```
+
+This serves `data/` on `http://localhost:8765/` and accepts the same
+`/upload` POSTs (written to `mock-server/uploads/`).
+
 ### Repository File Structure
 
 ```
@@ -216,6 +245,9 @@ Esp32HexMapCrawl/
 │   ├── *.js                      # Game client modules
 │   ├── img/                      # Terrain tiles, survivor art
 │   └── encounters/               # Encounter JSON + loot tables
+├── scripts/                      # build.ps1, flash.ps1, sync_data.ps1/.sh
+├── mock-server/                  # Node mock of /ws + /upload for offline UI work
+├── docs/dev-loop.md              # Build / flash / deploy reference
 └── README.md
 ```
 

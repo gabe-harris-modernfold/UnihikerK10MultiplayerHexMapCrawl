@@ -24,6 +24,20 @@ static int hexDistWrap(int q1, int r1, int q2, int r2) {
 // after this file).  Sums +1 per equipped item with EFX_REVEAL_FOG param 1.
 static int equipVisionBonus(int pid);
 
+// ── Group vision bonus ──────────────────────────────────────────
+// Survivors watching the same hex together see farther: +1 vision radius per
+// other connected player stacked on pid's hex, capped so a full party stack
+// stays within the wire-buffer budget buildVisDisk() callers allocate for.
+static constexpr int GROUP_VISION_CAP = 3;
+static int groupVisionBonus(int pid) {
+  int stacked = 0;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (i == pid || !G.players[i].connected) continue;
+    if (G.players[i].q == G.players[pid].q && G.players[i].r == G.players[pid].r) stacked++;
+  }
+  return min(stacked, GROUP_VISION_CAP);
+}
+
 // ── Wire encoding of one cell (shared by full map, vis disk, survey ring) ──
 // TT = terrain, with bit 6 set when the hex holds an improved (level 2)
 //      shelter.  Fog is 0xFF and is tested for equality before decoding.
@@ -50,6 +64,7 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   else               { *outVisR = VISION_R + 2; *outMaskRes = false; }
   if (G.players[pid].archetype == 4) *outVisR += 2;  // Scout: +2 vision radius
   *outVisR += equipVisionBonus(pid);  // EFX_REVEAL_FOG param 1 on equipped items
+  *outVisR += groupVisionBonus(pid);  // allies stacked on the same hex
   // ── Weather visibility penalty (applied after Scout and equipment bonuses) ──
   *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
 }

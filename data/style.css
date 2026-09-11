@@ -540,7 +540,7 @@ canvas{display:block;width:100%;height:100%}
 .toast-item{
   background:var(--bg-card);border:1px solid var(--bdr-hi);
   color:var(--gold-hi);padding:5px 14px;font-size:var(--fs-d);
-  border-radius:2px;white-space:nowrap;
+  border-radius:2px;white-space:normal;max-width:min(90vw,480px);text-align:center;
   letter-spacing:var(--ls-l);text-transform:uppercase;
   animation:toast-in 0.22s ease-out forwards
 }
@@ -1000,16 +1000,26 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
   text-align:center;letter-spacing:var(--ls-b);
   margin-bottom:16px;line-height:1.6
 }
+/* Short viewports (landscape phones): claim back space from the header
+   so the archetype grid below isn't squeezed to almost nothing. */
+@media(max-height:480px){
+  .cs-page{padding-top:8px}
+  .cs-sel-title{margin-bottom:2px}
+  .cs-sel-sub{margin-bottom:8px;line-height:1.3}
+}
 
-/*── Archetype grid ──────────────────────────────────────────────*/
+/*── Archetype grid ───────────────────────────────────────────────
+   Fluid column count (no hardcoded width breakpoints): tracks never
+   shrink below 240px (the card's internal skill-grid text needs that
+   much room), so narrow viewports fall back to one full-width column
+   and wider ones fit as many 240px+ columns as they can, stretched to
+   fill — instead of leaving dead space around fixed-width cards. */
 .arch-grid{
   display:grid;
-  grid-template-columns:repeat(3,240px);
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
   justify-content:center;
   gap:10px
 }
-@media(max-width:660px){.arch-grid{grid-template-columns:repeat(2,240px)}}
-@media(max-width:420px){.arch-grid{grid-template-columns:240px}}
 
 /*── Archetype card ──────────────────────────────────────────────*/
 .arch-card{
@@ -1023,7 +1033,7 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
   padding:10px;
   display:flex;flex-direction:column;gap:7px;
   transition:border-color 0.15s;
-  width:240px;height:320px;cursor:pointer
+  width:100%;aspect-ratio:3/4;max-height:min(320px,58vh);cursor:pointer
 }
 .arch-card:hover{
   border-color:var(--arch-color,var(--gold))
@@ -1548,6 +1558,9 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
 .hud-weather.wx-rain{color:#7EB8D0}
 .hud-weather.wx-storm{color:#99AACC;animation:hud-lightning-flicker 3s steps(1,end) infinite}
 .hud-weather.wx-chem{color:#88CC44;animation:hud-chem-pulse 4s ease-in-out infinite}
+.hud-weather.wx-fog{color:#5C7A63;animation:hud-fog-drift 6s ease-in-out infinite}
+.hud-weather.wx-mist{color:#B8BCB4}
+.hud-weather.wx-quake{color:#C08040;animation:hud-quake-shake 0.3s steps(2,end) infinite}
 @media(max-width:440px){.hud-weather{display:none}}
 
 @keyframes hud-lightning-flicker{
@@ -1560,6 +1573,19 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   25%{color:#AADE66;text-shadow:0 0 10px rgba(100,200,40,0.7)}
   63%{color:#CCEE88;text-shadow:0 0 14px rgba(140,220,60,0.9)}
   65%{color:#88CC44;text-shadow:none}
+}
+/* Mostly a slow, muted drift — with one brief, faint spark near the end of
+   the cycle standing in for the fog's little static-energy bursts. */
+@keyframes hud-fog-drift{
+  0%,100%{color:#5C7A63;text-shadow:none}
+  45%{color:#3E5A46;text-shadow:none}
+  92%{color:#8FE0A0;text-shadow:0 0 8px rgba(120,255,150,0.55)}
+  95%{color:#5C7A63;text-shadow:none}
+}
+@keyframes hud-quake-shake{
+  0%{transform:translate(0,0)}
+  50%{transform:translate(1px,1px)}
+  100%{transform:translate(-1px,0)}
 }
 
 /* ── Narrative item effects ─────────────────────────────────── */

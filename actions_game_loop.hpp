@@ -19,11 +19,21 @@ static void updateWeatherPhase() {
     uint32_t roll = esp_random() % 100;
     next = G.weatherPhase;
     switch (G.weatherPhase) {
-      case WEATHER_CLEAR: next = (roll < 70) ? WEATHER_RAIN  : WEATHER_STORM; break;
-      case WEATHER_RAIN:  next = (roll < 50) ? WEATHER_STORM : WEATHER_CLEAR; break;
+      // Plain mist is the common, everyday fog — rolls in out of clear
+      // skies or after rain, usually just burns off, but can occasionally
+      // thicken into the dangerous Strangle Fog. Strangle Fog itself only
+      // arrives directly from clear skies or as a storm/chem cloud breaking
+      // up — otherwise it mostly just resolves back to clear or rain.
+      case WEATHER_CLEAR: next = (roll < 50) ? WEATHER_RAIN  : (roll < 70) ? WEATHER_STORM : (roll < 90) ? WEATHER_MIST : WEATHER_FOG; break;
+      case WEATHER_RAIN:  next = (roll < 40) ? WEATHER_STORM : (roll < 75) ? WEATHER_CLEAR : WEATHER_MIST; break;
       case WEATHER_STORM:
-        next = (roll < 30) ? WEATHER_CHEM : (roll < 65) ? WEATHER_RAIN : WEATHER_CLEAR; break;
-      case WEATHER_CHEM:  next = (roll < 20) ? WEATHER_CLEAR : (roll < 60) ? WEATHER_STORM : WEATHER_RAIN; break;
+        next = (roll < 30) ? WEATHER_CHEM : (roll < 55) ? WEATHER_RAIN : (roll < 80) ? WEATHER_CLEAR : WEATHER_FOG; break;
+      case WEATHER_CHEM:
+        next = (roll < 20) ? WEATHER_CLEAR : (roll < 45) ? WEATHER_STORM : (roll < 70) ? WEATHER_RAIN : WEATHER_FOG; break;
+      case WEATHER_FOG:
+        next = (roll < 50) ? WEATHER_CLEAR : (roll < 75) ? WEATHER_RAIN : WEATHER_STORM; break;
+      case WEATHER_MIST:
+        next = (roll < 60) ? WEATHER_CLEAR : (roll < 85) ? WEATHER_RAIN : WEATHER_FOG; break;
     }
   }
 
@@ -35,6 +45,140 @@ static void updateWeatherPhase() {
   GameEvent ev = {}; ev.type = EVT_WEATHER;
   ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
   enqEvt(ev);
+}
+
+// ── Quakes ─────────────────────────────────────────────────────────────────
+// Occasional earthquake: ruptures a straight line of QUAKE_MIN_LEN..MAX_LEN
+// hexes near a connected player, destroys any shelter caught on it, and
+// levels any Settlement on the line to Open Scrub (terrain 9 -> 0; see
+// TERRAIN_IMG_NAME / TERRAIN_NAME index order above). Mirrors mock-server/
+// server.js's triggerQuake()/maybeTriggerQuake() closely enough that the
+// wire message ("t":"ev","k":"quake",...) is byte-identical between the mock
+// and the firmware. Built directly here rather than through GameEvent/
+// enqEvt/drainEvents (the same way sendSync() hand-rolls its own JSON)
+// because a variable-length cell list doesn't fit the fixed-size GameEvent
+// struct without bloating every queued event for every other type.
+static constexpr uint8_t  QUAKE_MIN_LEN     = 7;
+static constexpr uint8_t  QUAKE_MAX_LEN     = 10;
+static constexpr uint32_t QUAKE_MIN_GAP_MS  = 45000;
+static constexpr uint8_t  QUAKE_TRIGGER_PCT = 2;  // rolled once per tick (100 ms) once the gap has elapsed
+static uint32_t lastQuakeMs = 0;
+
+static inline bool isMountainous(int q, int r) {
+  uint8_t t = G.map[r][q].terrain;
+  return t == 7 || t == 8;  // Rolling Hills, Mountain
+}
+
+// Samples a few candidate start points around (refQ, refR) and prefers one
+// that lands on Hills/Mountain — fault lines are drawn to real rough country
+// instead of landing uniformly at random. Mirrors mock-server/server.js's
+// pickQuakeOrigin().
+static void pickQuakeOrigin(int16_t refQ, int16_t refR, int* outQ, int* outR) {
+  int fallbackQ = 0, fallbackR = 0;
+  for (uint8_t i = 0; i < 6; i++) {
+    int q = wrapQ((int)refQ + (int)(esp_random() % 17) - 8);
+    int r = wrapR((int)refR + (int)(esp_random() % 13) - 6);
+    if (i == 0) { fallbackQ = q; fallbackR = r; }
+    if (isMountainous(q, r)) { *outQ = q; *outR = r; return; }
+  }
+  *outQ = fallbackQ; *outR = fallbackR;
+}
+
+struct QuakeResult {
+  bool    fired;
+  uint8_t len;
+  int16_t cellQ[QUAKE_MAX_LEN], cellR[QUAKE_MAX_LEN];
+  uint8_t destroyedCount;
+  int16_t destQ[QUAKE_MAX_LEN], destR[QUAKE_MAX_LEN];
+  uint8_t convertedCount;
+  int16_t convQ[QUAKE_MAX_LEN], convR[QUAKE_MAX_LEN];
+};
+
+// Walks a straight fault line from (refQ, refR) ± a random offset in a random
+// hex direction, clearing G.map[...].shelter and leveling any Settlement to
+// Open Scrub on anything it crosses. Call while holding G.mutex — out.fired's
+// JSON is broadcast by the caller after releasing it (see tickGame()).
+static void triggerQuake(int16_t refQ, int16_t refR, QuakeResult& out) {
+  uint8_t len = QUAKE_MIN_LEN + (uint8_t)(esp_random() % (QUAKE_MAX_LEN - QUAKE_MIN_LEN + 1));
+  uint8_t dir = (uint8_t)(esp_random() % 6);
+  int q, r;
+  pickQuakeOrigin(refQ, refR, &q, &r);
+
+  out.len = len;
+  out.destroyedCount = 0;
+  out.convertedCount = 0;
+  for (uint8_t i = 0; i < len; i++) {
+    int cq = wrapQ(q), cr = wrapR(r);
+    out.cellQ[i] = (int16_t)cq;
+    out.cellR[i] = (int16_t)cr;
+    HexCell& cell = G.map[cr][cq];
+    if (cell.shelter) {
+      cell.shelter = 0;
+      out.destQ[out.destroyedCount] = (int16_t)cq;
+      out.destR[out.destroyedCount] = (int16_t)cr;
+      out.destroyedCount++;
+    }
+    if (cell.terrain == 9) {  // Settlement -> Open Scrub
+      cell.terrain = 0;
+      out.convQ[out.convertedCount] = (int16_t)cq;
+      out.convR[out.convertedCount] = (int16_t)cr;
+      out.convertedCount++;
+    }
+    q += DQ[dir]; r += DR[dir];
+  }
+  out.fired = true;
+  lastQuakeMs = millis();
+}
+
+// Rolls a chance (once the cooldown has elapsed) to rupture a fault line near
+// a connected player. Call once per tick while holding G.mutex. Standing near
+// Hills/Mountain makes it several times more likely — real fault country, not
+// a uniform roll anywhere on the map — mirroring the mock's maybeTriggerQuake().
+static void maybeTriggerQuake(QuakeResult& out) {
+  if (millis() - lastQuakeMs < QUAKE_MIN_GAP_MS) return;
+  uint8_t candidates[MAX_PLAYERS], n = 0;
+  int8_t  nearMountainIdx = -1;
+  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+    if (!G.players[i].connected) continue;
+    candidates[n++] = i;
+    if (nearMountainIdx < 0 && isMountainous(G.players[i].q, G.players[i].r)) nearMountainIdx = (int8_t)i;
+  }
+  if (n == 0) return;
+  uint8_t chancePct = (nearMountainIdx >= 0) ? (uint8_t)(QUAKE_TRIGGER_PCT * 3) : QUAKE_TRIGGER_PCT;
+  if ((esp_random() % 100) >= chancePct) return;
+  Player& ref = (nearMountainIdx >= 0) ? G.players[nearMountainIdx] : G.players[candidates[esp_random() % n]];
+  triggerQuake(ref.q, ref.r, out);
+}
+
+// Builds and broadcasts the quake's JSON. Call OUTSIDE G.mutex (does WS I/O),
+// mirroring how saveGame() is deferred until after tickGame() releases it.
+static void broadcastQuake(const QuakeResult& q) {
+  char buf[768];
+  int len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"quake\",\"cells\":[");
+  for (uint8_t i = 0; i < q.len; i++)
+    len += snprintf(buf + len, sizeof(buf) - len, "%s{\"q\":%d,\"r\":%d}",
+                     i ? "," : "", (int)q.cellQ[i], (int)q.cellR[i]);
+  len += snprintf(buf + len, sizeof(buf) - len, "],\"destroyed\":[");
+  for (uint8_t i = 0; i < q.destroyedCount; i++)
+    len += snprintf(buf + len, sizeof(buf) - len, "%s{\"q\":%d,\"r\":%d}",
+                     i ? "," : "", (int)q.destQ[i], (int)q.destR[i]);
+  len += snprintf(buf + len, sizeof(buf) - len, "],\"converted\":[");
+  for (uint8_t i = 0; i < q.convertedCount; i++)
+    len += snprintf(buf + len, sizeof(buf) - len, "%s{\"q\":%d,\"r\":%d}",
+                     i ? "," : "", (int)q.convQ[i], (int)q.convR[i]);
+  len += snprintf(buf + len, sizeof(buf) - len, "]}");
+  ws.textAll(buf, len);
+  Log.notice("EVT quake len=%d destroyed=%d converted=%d start=(%d,%d)",
+             (int)q.len, (int)q.destroyedCount, (int)q.convertedCount, (int)q.cellQ[0], (int)q.cellR[0]);
+  char lb[34];
+  if (q.convertedCount > 0)
+    snprintf(lb, sizeof(lb), "Quake leveled %d settlement%s", (int)q.convertedCount, q.convertedCount > 1 ? "s" : "");
+  else if (q.destroyedCount > 0)
+    snprintf(lb, sizeof(lb), "Quake destroyed %d shelter%s", (int)q.destroyedCount, q.destroyedCount > 1 ? "s" : "");
+  else
+    snprintf(lb, sizeof(lb), "Earthquake!");
+  k10LogAdd(lb);
+  k10Play(MOTIF_DISTANT_THUD);
 }
 
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────
@@ -127,8 +271,55 @@ static void tickGame() {
     }
   }
 
+  // ── Strangle Fog per-tick hazard ──────────────────────────────────────────
+  // Fog costs you two different ways: MP bleeds away steadily (turned around,
+  // fighting through it — no LED/sound cue, it'd be constant noise at this
+  // cadence) while LL loss is far rarer, a real but occasional risk of
+  // getting properly lost rather than a steady bleed like chem's.
+  // FOG_MP_TICK_RATE ~= 1 MP lost per 30s of full exposure on the worst
+  // terrain — enough to strand a lingering survivor well before a 300s day
+  // is out. FOG_LL_TICK_RATE ~= 1 LL per 3 real minutes at worst, rarely more
+  // than 1 LL across a whole day spent in it. Same shelter/terrain immunity
+  // shape as chem: basic shelter halves both, improved shelter/Settlement/
+  // Broken Urban are immune.
+  if (G.weatherPhase == WEATHER_FOG) {
+    static constexpr float FOG_MP_TICK_RATE = 1.0f / 300.0f;
+    static constexpr float FOG_LL_TICK_RATE = 1.0f / 1800.0f;
+    for (int pid = 0; pid < MAX_PLAYERS; pid++) {
+      Player& p = G.players[pid];
+      if (!p.connected || (p.ll == 0)) continue;
+      uint8_t t = G.map[p.r][p.q].terrain;
+      if (t >= NUM_TERRAIN) t = 0;
+      if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
+      uint8_t shelter = G.map[p.r][p.q].shelter;
+      if (shelter >= 2) continue;
+      float intensity = WEATHER_INTENSITY[WEATHER_FOG][t];
+      float mpProb = intensity * FOG_MP_TICK_RATE;
+      float llProb = intensity * FOG_LL_TICK_RATE;
+      if (shelter == 1) { mpProb *= 0.5f; llProb *= 0.5f; }
+      if (p.movesLeft > 0 && esp_random() < (uint32_t)(mpProb * 0xFFFFFFFFul)) {
+        p.movesLeft--;
+      }
+      if (esp_random() < (uint32_t)(llProb * 0xFFFFFFFFul)) {
+        if (p.ll > 0) { p.ll--; ledFlash(30, 55, 40); k10Play(MOTIF_CREEPING_RUST); }
+        if (p.ll == 0) {
+          p.movesLeft = 0;
+          GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.evWsId = p.wsClientId; enqEvt(dev);
+        }
+      }
+    }
+  }
+
+  // ── Quakes ───────────────────────────────────────────────────────────────
+  // Checked every tick (like the mock), not gated behind dawnOccurred — an
+  // earthquake is an independent hazard, not tied to the weather/day cycle.
+  QuakeResult quakeResult = {};
+  maybeTriggerQuake(quakeResult);
+
   xSemaphoreGive(G.mutex);
   if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
+  if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
 }
 
 // ── §5 Per-action handlers ────────────────────────────────────────────────────
