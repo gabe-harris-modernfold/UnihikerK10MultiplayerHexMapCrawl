@@ -1,0 +1,136 @@
+{
+  "id": "settlement_bathhouse_01",
+  "title": "The {{adjective}} Bathhouse",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Steam over the rooftops, and a queue of very relaxed people carrying towels. The bathhouse is the pride of the settlement: three tiled pools fed by a hot spring that comes up through the floor of the old municipal baths, free at the point of use, open from dawn. Everyone here looks fantastic. Clear skin, good colour, no coughs, no limps — in a wasteland where everyone is grey and chipped, this town glows. The attendant waves you in without charge. First soak is on the house.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take the free soak. You have earned it.",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 0,
+          "success_node": "the_changing_room",
+          "hazard_id": "the_heat"
+        },
+        {
+          "label": "Stay dressed and look at the plumbing",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "the_changing_room",
+          "hazard_id": "the_grate"
+        }
+      ]
+    },
+    "the_changing_room": {
+      "text": "The changing room is a hundred numbered lockers and about sixty of them have not been opened in years — packs, coats, boots, the belongings of travellers who came in for a soak and stayed in the town, because everybody who tries this water stays in the town. There is a fortune in there. There is also the maintenance cupboard, which holds the settlement's tools, lamp oil and medical stock, because the bathhouse is the building they trust. The spring comes up through a grate in the floor of the hot pool. The grate is not municipal ironwork. The grate is ribbed, and the ribs are not evenly spaced, and they flex very slightly with the flow.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask the attendant how long people usually stay",
+          "cost": {},
+          "base_risk": 31,
+          "skill": 3,
+          "success_node": "the_spring",
+          "hazard_id": "the_answer"
+        },
+        {
+          "label": "Get the grate up and look at the source",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_spring",
+          "hazard_id": "the_source"
+        }
+      ]
+    },
+    "the_spring": {
+      "text": "The spring is a digestive tract. The old baths were built over something enormous and patient that has spent sixty years very slowly dissolving a town from the outside in, and the water is what it secretes, and the water is — this is the part nobody in this settlement will hear a word against — genuinely, measurably medicinal. It knits bone. It clears lungs. Four hundred people are the healthiest population in the region and every one of them is about eleven years from the point where the softening stops being cosmetic, and the ones who came first have started to go slightly out of shape at the edges and are delighted with how supple they feel. The attendant, who is sixty per cent through this process and radiant about it, bottles you a crate of the stuff to take on the road. It will fix almost anything. You already know you are going to use it.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_heat": {
+      "text": "The hot pool is hotter than advertised and it goes through you in a way water should not — pleasantly, thoroughly, into places heat has no business reaching. You get out after ninety seconds feeling wonderful, and you keep feeling wonderful for about an hour, and then you find the first soft patch.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_grate": {
+      "text": "You crouch on the tiles to look through the grate and the grate closes. Not on you — you are fast enough — but the ribs come together across the gap where your hand was with the unhurried competence of something that has caught a hand before, and the edge of one takes your thumbnail with it.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_answer": {
+      "text": "\"Oh, forever,\" she says, warmly, and means it as the compliment it is, and while she says it she leans on the counter and her forearm spreads across the tiles slightly more than a forearm ought to and she does not notice and you cannot stop watching it.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_source": {
+      "text": "You get the grate up. What is under the bathhouse is warm, and vast, and it has been aware of every single person who has ever got into that water, and it has never had to reach for one before because they always come to it eventually. It reaches now. You lose a boot, most of a trouser leg, and the skin off one calf to a surface that is not acid and is not teeth and is somehow worse than either.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Municipal",
+      "Free",
+      "Medicinal",
+      "Steaming",
+      "Restorative",
+      "Well-Attended",
+      "Warm",
+      "Three-Pool"
+    ]
+  }
+}

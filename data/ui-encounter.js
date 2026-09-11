@@ -1,241 +1,528 @@
-// ── Encounter overlay + ally banner ──────────────────────────────
-function resolveText(text, placeholders) {
-  if (!placeholders) return text;
-  return text.replaceAll(/\{\{(\w+)\}\}/g, (_, key) => {
-    const opts = placeholders[key];
-    return (Array.isArray(opts) && opts.length) ? opts[Math.floor(Math.random() * opts.length)] : key;
-  });
+// ── Encounter overlay ─────────────────────────────────────────────
+//
+// One screen, one flow:
+//
+//   [title]                  ← encounter title + terrain kicker
+//   [result strip]           ← last roll: verdict, dice, hazard text, gains/losses
+//   [story text]
+//   [choice cards]           ← label + odds + skill + cost; disabled when unaffordable
+//   [haul tray] [LEAVE btn]  ← pending loot always visible; one exit button whose
+//                              label says exactly what leaving does
+//
+// No timers gate the player. A roll result appears inline and stays until the
+// next action. On success the next scene renders immediately beneath the
+// result. On a setback the same choices come back so the player can retry or
+// leave.
+//
+// The server is authoritative. `enc_choice` carries only the choice index;
+// the firmware reads costs, hazards, loot and can_bank from the same JSON file
+// (encounter_engine.hpp). The copy fetched here is for display only — the odds,
+// cost chips and haul tray are previews, and the `enc_res` event is the truth.
+
+// Resolve {{placeholders}} deterministically: pick one option per key up front
+// so the same name is used in title, text, and hazard copy for the whole visit.
+function pickPlaceholders(placeholders) {
+  const picked = {};
+  if (!placeholders) return picked;
+  for (const [key, opts] of Object.entries(placeholders)) {
+    picked[key] = (Array.isArray(opts) && opts.length)
+      ? opts[Math.floor(Math.random() * opts.length)]
+      : key;
+  }
+  return picked;
 }
 
+function resolveText(text, picked) {
+  if (!text) return '';
+  return String(text).replaceAll(/\{\{(\w+)\}\}/g, (_, key) => picked?.[key] ?? key);
+}
+
+// P(2d6 >= n)
+const ENC_P2D6 = { 2:36, 3:35, 4:33, 5:30, 6:26, 7:21, 8:15, 9:10, 10:6, 11:3, 12:1 };
+function encPct2d6(need) {
+  if (need <= 2)  return 100;
+  if (need > 12)  return 0;
+  return Math.round((ENC_P2D6[need] / 36) * 100);
+}
+
+// Mirror of the server's computeEncounterDN() (boot-assets.hpp) so the odds
+// shown on a card match what the server will actually roll against.
+function encComputeDN(me, baseRisk) {
+  const tc = gameState?.tc ?? 0;
+  let risk = Math.min(baseRisk, 100);
+  if (tc >= 5)  risk += 5;
+  if (tc >= 9)  risk += 5;
+  if (tc >= 13) risk += 5;
+  if (tc >= 17) risk += 5;
+  risk = Math.max(0, Math.min(100, risk));
+  let dn = 2 + Math.floor((risk * 10) / 100);
+  let bonus = 0;
+  const ll  = me?.ll  ?? 7;
+  const rad = me?.rad ?? 0;
+  if (ll > 4)  bonus += Math.floor((ll - 4) / 2);
+  if (rad > 3) dn    += Math.floor((rad - 3) / 2);
+  return Math.max(2, Math.min(12, dn - bonus));
+}
+
+// Encounter JSON skill ids match the firmware's 5-skill enum:
+// 0 NAVIGATE · 1 FORAGE · 2 SCAVENGE · 3 SHELTER · 4 ENDURE.
+// Anything out of range is treated as skill 0, exactly as resolveCheck() does.
+function encSkillSlot(skill) { return (skill >= 0 && skill < SK_NAMES.length) ? skill : 0; }
+function encSkillLabel(skill) { return SK_NAMES[encSkillSlot(skill)]; }
+
 function initEncounterOverlay() {
-  const overlay    = document.getElementById('enc-overlay');
-  const nodeText   = document.getElementById('enc-node-text');
+  const overlay   = document.getElementById('enc-overlay');
+  const titleEl   = document.getElementById('enc-title');
+  const kickerEl  = document.getElementById('enc-kicker');
+  const scrollEl  = document.getElementById('enc-scroll');
+  const resultEl  = document.getElementById('enc-result');
+  const resVerd   = document.getElementById('enc-res-verdict');
+  const resRoll   = document.getElementById('enc-res-roll');
+  const resText   = document.getElementById('enc-res-text');
+  const resDelta  = document.getElementById('enc-res-delta');
+  const nodeText  = document.getElementById('enc-node-text');
+  const choiceEl  = document.getElementById('enc-choices');
+  const haulItems = document.getElementById('enc-haul-items');
+  const haulEmpty = document.getElementById('enc-haul-empty');
+  const leaveBtn  = document.getElementById('enc-leave-btn');
+  const leaveHint = document.getElementById('enc-leave-hint');
 
-  const lootDisp   = document.getElementById('enc-loot-display');
-  const outcomeDiv = document.getElementById('enc-outcome');
-  const choiceList = document.getElementById('enc-choice-list');
-  const bankRow    = document.getElementById('enc-bank-row');
-  const bankBtn    = document.getElementById('enc-bank-btn');
-  const abortBtn   = document.getElementById('enc-abort-btn');
+  const RES_NAMES_ENC = ['Water', 'Food', 'Fuel', 'Meds', 'Scrap'];
+  const RES_DOT_CLASS = ['dot-water', 'dot-food', 'dot-fuel', 'dot-med', 'dot-scrap'];
+  const ROLL_TIMEOUT_MS = 8000;
 
-  const RES_NAMES_ENC = ['Water','Food','Fuel','Meds','Scrap'];
+  // ── State ───────────────────────────────────────────────────────
+  let enc          = null;    // loaded encounter JSON
+  let picked       = {};      // resolved placeholders for this visit
+  let node         = null;    // current node
+  let nodeKey      = '';
+  let phase        = 'idle';  // idle | reading | rolling | ejected
+  let pendingLoot  = [0, 0, 0, 0, 0];
+  let pendingItems = [];      // [{id, qty}] rolled from loot tables, banked on leave
+  let terminal     = false;   // reached a node with no choices
+  let pendingNext  = '';      // node key we move to if the pending roll succeeds
+  let pendingHaz   = '';      // hazard copy shown if the pending roll fails
+  let rollTimer    = 0;
+  let confirmTimer = 0;
+  let leaveArmed   = false;   // two-tap confirm when leaving would drop loot
 
-  // State for the active encounter
-  let currentEnc      = null;   // loaded encounter JSON
-  let currentNode     = null;   // current node object
-  let pendingLoot     = [0,0,0,0,0];
-  let canBank         = false;
-  let pendingNextKey  = '';     // next node key sent in enc_choice, consumed by _onEncResult
-  let pendingHazText  = '';     // resolved hazard narration, shown on failure
+  const me = () => (myId >= 0 ? players[myId] : null);
 
-  function renderLoot() {
-    const parts = pendingLoot.map((v, i) => v > 0 ? `${RES_NAMES_ENC[i]}×${v}` : null).filter(Boolean);
-    lootDisp.textContent = parts.length ? `Pending: ${parts.join('  ')}` : '';
+  // ── Helpers ─────────────────────────────────────────────────────
+  function haulCount() {
+    return pendingLoot.reduce((a, b) => a + b, 0) + pendingItems.reduce((a, it) => a + it.qty, 0);
   }
 
+  function canBankHere() { return terminal || !!(node?.can_bank); }
 
-  function renderNode(node) {
-    console.log('%c[ENC] renderNode', 'color:#c0f', `keys=[${Object.keys(node).join(',')}] choices=${node.choices?.length ?? 0} can_bank=${node.can_bank ?? false}`);
-    currentNode = node;
-    nodeText.textContent = resolveText(node.text, currentEnc.placeholders);
+  // Keys the server's encounter_engine.hpp understands, for the authoring warnings.
+  const COST_KEYS = new Set(['ll', 'radiation', 'food', 'water', 'scrap', 'med']);
+  const PEN_KEYS  = new Set(['ll', 'radiation', 'water', 'food', 'fuel', 'med', 'scrap']);
+  // Keys allowed on the hazard object itself (alongside `penalty`).
+  const HAZ_KEYS  = new Set(['text', 'penalty', 'wound', 'ends_encounter']);
 
-    choiceList.innerHTML = '';
-    (node.choices ?? []).forEach(ch => {
-      const btn = document.createElement('button');
-      btn.className = 'enc-choice-btn';
-      btn.innerHTML =
-        `<span>${escHtml(resolveText(ch.label, currentEnc.placeholders))}</span>`;
-      btn.addEventListener('click', () => sendChoice(ch));
-      choiceList.appendChild(btn);
-    });
-
-    canBank = node.can_bank ?? false;
-    bankRow.style.display = canBank ? '' : 'none';
-    renderLoot();
-  }
-
-  function sendChoice(ch) {
-    console.log('%c[ENC] sendChoice', 'color:#c0f', `label="${ch.label}" success_node="${ch.success_node ?? ''}" base_risk=${ch.base_risk ?? 50} hazard=${ch.hazard_id ?? 'none'}`);
-    const haz    = (ch.hazard_id && currentEnc.hazards) ? (currentEnc.hazards[ch.hazard_id] ?? {}) : {};
-    pendingHazText = haz.text ? resolveText(haz.text, currentEnc.placeholders) : '';
-    const hazPen = haz.penalty ?? {};
-
-    const cost   = ch.cost ?? {};
-    const nextKey = ch.success_node ?? '';
-
-    // Loot is defined on the destination node, not on the choice.
-    // Roll qty client-side; server trusts the values (SD is not player-modifiable).
-    const nextNode = nextKey ? currentEnc?.nodes?.[nextKey] : null;
-    const nodeLoot = [0,0,0,0,0];
-    if (nextNode?.loot) {
-      nextNode.loot.forEach(entry => {
-        const res = entry.res;
-        if (res >= 0 && res < 5 && Array.isArray(entry.qty)) {
-          const mn = entry.qty[0], mx = entry.qty[1] ?? entry.qty[0];
-          nodeLoot[res] += mn + Math.floor(Math.random() * (mx - mn + 1));
-        }
-      });
+  // Encounter JSON is hand-authored; an unrecognised key would otherwise be
+  // dropped in silence and the choice would simply be free. Say so instead.
+  function warnUnknownKeys(obj, allowed, where) {
+    for (const k of Object.keys(obj ?? {})) {
+      if (!allowed.has(k)) console.warn(`[enc] ${where}: unknown key "${k}" — ignored`);
     }
-    const lootTable = nextNode?.loot_table ?? '';
-
-    send({
-      t:           'enc_choice',
-      base_risk:   ch.base_risk  ?? 50,
-      skill:       ch.skill      ?? 2,
-      loot:        nodeLoot,
-      lt:          lootTable,
-      can_bank:    nextNode?.can_bank ?? false,
-      ci:          nextKey,
-      cost_ll:     cost.ll        ?? 0,
-      cost_rad:    cost.radiation ?? 0,
-      cost_food:   cost.food      ?? 0,
-      cost_water:  cost.water     ?? 0,
-      haz_ll:      hazPen.ll        ?? 0,
-      haz_rad:     hazPen.radiation ?? 0,
-      haz_st:      haz.status       ?? 0,
-      haz_wt:      0,
-      haz_wc:      0,
-      haz_ends:    haz.ends_encounter ? 1 : 0,
-      is_terminal: nextKey === '' ? 1 : 0,
-    });
-    pendingNextKey = nextKey;
-    choiceList.innerHTML = '';
   }
 
-  function openEncounter(enc) {
-    console.log('%c[ENC] openEncounter', 'color:#c0f;font-weight:bold', `id=${enc.id} start_node=${enc.start_node} nodeCount=${Object.keys(enc.nodes ?? {}).length}`);
-    currentEnc  = enc;
-    pendingLoot = [0,0,0,0,0];
+  function costChips(cost) {
+    // cost keys: ll, radiation, food, water, scrap, med. A negative cost is a gain.
+    const out = [];
+    const spend = (v, name) => { if (v) out.push({ txt: `${v > 0 ? '−' : '+'}${Math.abs(v)} ${name}`, bad: v > 0 }); };
+    spend(cost?.ll,    'Life');
+    spend(cost?.food,  'Food');
+    spend(cost?.water, 'Water');
+    spend(cost?.scrap, 'Scrap');
+    spend(cost?.med,   'Meds');
+    const rad = cost?.radiation ?? 0;
+    if (rad) out.push({ txt: `${rad > 0 ? '+' : '−'}${Math.abs(rad)} Rad`, bad: rad > 0 });
+    return out;
+  }
+
+  function canAfford(cost) {
+    const p = me(); if (!p) return true;
+    if ((cost?.ll ?? 0) > (p.ll ?? 0))                       return false;
+    if ((p.rad ?? 0) + (cost?.radiation ?? 0) > 10)          return false;
+    if ((cost?.food  ?? 0) > (p.inv?.[1] ?? 0))              return false;
+    if ((cost?.water ?? 0) > (p.inv?.[0] ?? 0))              return false;
+    if ((cost?.scrap ?? 0) > (p.inv?.[4] ?? 0))              return false;
+    if ((cost?.med   ?? 0) > (p.inv?.[3] ?? 0))              return false;
+    return true;
+  }
+
+  function oddsFor(choice) {
+    const p = me();
+    const dn = encComputeDN(p, choice.base_risk ?? 50);
+    const sv = p?.sk?.[encSkillSlot(choice.skill ?? 0)] ?? 0;
+    return { pct: encPct2d6(dn - sv), dn };
+  }
+
+  function oddsClass(pct) {
+    if (pct >= 70) return 'odds-hi';
+    if (pct >= 45) return 'odds-mid';
+    return 'odds-lo';
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // ── Render: haul tray + leave button ───────────────────────────
+  function renderHaul() {
+    haulItems.innerHTML = '';
+    let any = false;
+    pendingLoot.forEach((v, i) => {
+      if (v <= 0) return;
+      any = true;
+      const chip = el('span', 'enc-haul-chip');
+      chip.appendChild(el('span', `res-dot ${RES_DOT_CLASS[i]}`));
+      chip.appendChild(el('span', 'enc-haul-qty', `${v}`));
+      chip.appendChild(el('span', 'enc-haul-name', RES_NAMES_ENC[i]));
+      haulItems.appendChild(chip);
+    });
+    pendingItems.forEach(it => {
+      any = true;
+      const def  = typeof getItemById === 'function' ? getItemById(it.id) : null;
+      const chip = el('span', 'enc-haul-chip enc-haul-item');
+      if (def?.icon) {
+        const img = document.createElement('img');
+        img.src = def.icon; img.alt = ''; img.width = 14; img.height = 14;
+        chip.appendChild(img);
+      }
+      chip.appendChild(el('span', 'enc-haul-qty', it.qty > 1 ? `${it.qty}×` : ''));
+      chip.appendChild(el('span', 'enc-haul-name', def?.name ?? `Item ${it.id}`));
+      haulItems.appendChild(chip);
+    });
+    haulEmpty.hidden = any;
+  }
+
+  function renderLeave() {
+    disarmLeave();
+    leaveBtn.disabled = (phase === 'rolling');
+    leaveBtn.classList.remove('primary', 'danger');
+    const n = haulCount();
+
+    if (phase === 'ejected') {
+      leaveBtn.textContent = 'LEAVE';
+      leaveBtn.classList.add('primary');
+      leaveHint.textContent = 'The encounter is over.';
+      return;
+    }
+    if (terminal) {
+      leaveBtn.textContent = n ? 'TAKE HAUL & LEAVE' : 'FINISH & LEAVE';
+      leaveBtn.classList.add('primary');
+      leaveHint.textContent = 'Nothing more here. Leaving now scores a full-clear bonus.';
+      return;
+    }
+    if (n && canBankHere()) {
+      leaveBtn.textContent = 'TAKE HAUL & LEAVE';
+      leaveBtn.classList.add('primary');
+      leaveHint.textContent = 'Pocket what you have, or push on for more.';
+      return;
+    }
+    if (n) {
+      leaveBtn.textContent = 'LEAVE · DROPS HAUL';
+      leaveBtn.classList.add('danger');
+      leaveHint.textContent = 'You can’t carry loot out from here. Push on to secure it.';
+      return;
+    }
+    leaveBtn.textContent = 'WALK AWAY';
+    leaveHint.textContent = 'Leave empty-handed. The place stays closed to you.';
+  }
+
+  function disarmLeave() {
+    leaveArmed = false;
+    clearTimeout(confirmTimer);
+    leaveBtn.classList.remove('armed');
+  }
+
+  // ── Render: result strip ───────────────────────────────────────
+  function hideResult() {
+    resultEl.hidden = true;
+    resultEl.className = '';
+    resVerd.textContent = ''; resRoll.textContent = '';
+    resText.textContent = ''; resDelta.innerHTML = '';
+  }
+
+  function showResult({ ok, verdict, roll, text, deltas, note }) {
+    resultEl.hidden = false;
+    resultEl.className = ok ? 'ok' : 'bad';
+    resVerd.textContent = verdict;
+    resRoll.textContent = roll ?? '';
+    resText.textContent = text ?? '';
+    resText.hidden = !text;
+    resDelta.innerHTML = '';
+    (deltas ?? []).forEach(d => resDelta.appendChild(el('span', `enc-delta ${d.pos ? 'pos' : 'neg'}`, d.txt)));
+    if (note) resDelta.appendChild(el('span', 'enc-delta-note', note));
+    scrollEl.scrollTop = 0;
+  }
+
+  // ── Render: story + choices ────────────────────────────────────
+  function renderNode(key) {
+    const n = enc?.nodes?.[key];
+    if (!n) { console.error('[ENC] missing node', key); return; }
+    node = n; nodeKey = key;
+    terminal = !(Array.isArray(n.choices) && n.choices.length);
+    phase = 'reading';
+
+    nodeText.textContent = resolveText(n.text, picked);
+    renderChoices();
+    renderHaul();
+    renderLeave();
+  }
+
+  function renderChoices() {
+    choiceEl.innerHTML = '';
+    if (terminal) {
+      choiceEl.appendChild(el('div', 'enc-terminal', 'You’ve seen all there is to see here.'));
+      return;
+    }
+    node.choices.forEach((ch, idx) => {
+      const btn = el('button', 'enc-choice');
+      btn.type = 'button';
+      const affordable = canAfford(ch.cost);
+      const { pct } = oddsFor(ch);
+
+      const num = el('span', 'enc-choice-num', `${idx + 1}`);
+      const body = el('span', 'enc-choice-body');
+      body.appendChild(el('span', 'enc-choice-label', resolveText(ch.label, picked)));
+
+      const meta = el('span', 'enc-choice-meta');
+      const odds = el('span', `enc-odds ${oddsClass(pct)}`);
+      odds.appendChild(el('b', '', `${pct}%`));
+      odds.appendChild(el('span', '', ` ${encSkillLabel(ch.skill ?? 0)}`));
+      meta.appendChild(odds);
+      costChips(ch.cost).forEach(c => meta.appendChild(el('span', `enc-cost ${c.bad ? 'bad' : 'good'}`, c.txt)));
+      if (!affordable) meta.appendChild(el('span', 'enc-cost cant', 'CAN’T AFFORD'));
+      body.appendChild(meta);
+
+      btn.appendChild(num);
+      btn.appendChild(body);
+      btn.disabled = !affordable || phase === 'rolling';
+      btn.addEventListener('click', () => sendChoice(ch, btn));
+      choiceEl.appendChild(btn);
+    });
+  }
+
+  function setChoicesEnabled(on) {
+    choiceEl.querySelectorAll('.enc-choice').forEach(b => {
+      b.classList.remove('rolling');
+      b.disabled = !on || b.dataset.cant === '1';
+    });
+  }
+
+  // ── Send a choice ──────────────────────────────────────────────
+  function sendChoice(ch, btn) {
+    if (phase !== 'reading') return;
+    phase = 'rolling';
+    disarmLeave();
+    hideResult();
+
+    const haz    = (ch.hazard_id && enc.hazards) ? (enc.hazards[ch.hazard_id] ?? {}) : {};
+    const hazPen = haz.penalty ?? {};
+    const cost   = ch.cost ?? {};
+    const nextKey  = ch.success_node ?? '';
+
+    // Authoring aid only: flag keys the server will ignore.
+    warnUnknownKeys(cost,   COST_KEYS, `choice "${ch.label}" cost`);
+    warnUnknownKeys(hazPen, PEN_KEYS,  `hazard "${ch.hazard_id}" penalty`);
+    warnUnknownKeys(haz,    HAZ_KEYS,  `hazard "${ch.hazard_id}"`);
+
+    pendingNext = nextKey;
+    pendingHaz  = haz.text ? resolveText(haz.text, picked) : '';
+
+    // The server resolves everything from its own copy of this file.
+    const ci = Array.isArray(node?.choices) ? node.choices.indexOf(ch) : -1;
+    send({ t: 'enc_choice', ci });
+
+    // Lock the cards; mark the one we picked.
+    choiceEl.querySelectorAll('.enc-choice').forEach(b => { b.dataset.cant = b.disabled ? '1' : '0'; b.disabled = true; });
+    btn.classList.add('rolling');
+    leaveBtn.disabled = true;
+
+    clearTimeout(rollTimer);
+    rollTimer = setTimeout(() => {
+      if (phase !== 'rolling') return;
+      phase = 'reading';
+      setChoicesEnabled(true);
+      renderLeave();
+      showResult({ ok: false, verdict: 'NO ANSWER', text: 'The server didn’t respond. Try again.' });
+    }, ROLL_TIMEOUT_MS);
+  }
+
+  // ── Server callbacks ───────────────────────────────────────────
+  globalThis._onEncResult = function(ev) {
+    if (!enc || phase !== 'rolling') return;
+    clearTimeout(rollTimer);
+
+    const rollTxt = (ev.tot !== undefined && ev.dn !== undefined)
+      ? `Rolled ${ev.tot} vs ${ev.dn}` : '';
+
+    if (ev.out) {
+      const deltas = [];
+      if (Array.isArray(ev.loot)) {
+        ev.loot.forEach((v, i) => {
+          if (v > 0) { pendingLoot[i] += v; deltas.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true }); }
+        });
+      }
+      // Typed items the server granted: an explicit node "item" entry and/or a
+      // loot-table roll (two at most per scene).
+      [[ev.it, ev.iq], [ev.it2, ev.iq2]].forEach(([id, qty]) => {
+        if (!id || !qty) return;
+        pendingItems.push({ id, qty });
+        const def = typeof getItemById === 'function' ? getItemById(id) : null;
+        deltas.push({ txt: `+${qty > 1 ? qty + '× ' : ''}${def?.name ?? 'Item'}`, pos: true });
+      });
+      const next = pendingNext;
+      pendingNext = ''; pendingHaz = '';
+      if (next && enc.nodes?.[next]) renderNode(next);
+      else { terminal = true; phase = 'reading'; renderChoices(); renderHaul(); renderLeave(); }
+      showResult({
+        ok: true,
+        verdict: 'YOU GET THROUGH',
+        roll: rollTxt,
+        deltas,
+        note: deltas.length ? 'Added to your haul.' : '',
+      });
+      return;
+    }
+
+    // Setback
+    const deltas = [];
+    if (ev.penLL  < 0) deltas.push({ txt: `${ev.penLL} Life`,     pos: false });
+    if (ev.penRad > 0) deltas.push({ txt: `+${ev.penRad} Rad`,    pos: false });
+    (ev.penRes ?? []).forEach((v, i) => {
+      if (v > 0) deltas.push({ txt: `-${v} ${RES_NAMES_ENC[i]}`, pos: false });
+    });
+    const hazText = pendingHaz || 'The wasteland takes its toll.';
+    pendingNext = ''; pendingHaz = '';
+
+    if (ev.ends) {
+      phase = 'ejected';
+      choiceEl.innerHTML = '';
+      choiceEl.appendChild(el('div', 'enc-terminal bad', 'You’re driven out. Whatever you hadn’t pocketed is lost.'));
+      pendingLoot = [0, 0, 0, 0, 0]; pendingItems = [];
+      renderHaul(); haulEmpty.textContent = 'lost'; renderLeave();
+      showResult({ ok: false, verdict: 'DRIVEN OUT', roll: rollTxt, text: hazText, deltas });
+      return;
+    }
+
+    phase = 'reading';
+    renderChoices();  // rebuild: odds may have shifted with LL / rad
+    renderLeave();
+    showResult({
+      ok: false, verdict: 'SETBACK', roll: rollTxt, text: hazText, deltas,
+      note: 'The way is still open. Choose again, or leave.',
+    });
+  };
+
+  globalThis._onEncError = function(msg) {
+    if (!enc || phase !== 'rolling') return;
+    clearTimeout(rollTimer);
+    phase = 'reading';
+    renderChoices();
+    renderLeave();
+    showResult({ ok: false, verdict: 'NOT POSSIBLE', text: msg || 'The server refused that choice.' });
+  };
+
+  globalThis._onEncBank = function() { closeEncounter(); };
+
+  globalThis._onEncEnd = function(ev) {
+    // A hazard that ends the encounter already rendered its own "DRIVEN OUT"
+    // screen — leave it up so the player can read what happened.
+    if (ev?.reason === 'hazard' && phase === 'ejected') return;
+    closeEncounter();
+  };
+
+  // ── Open / close ───────────────────────────────────────────────
+  function openEncounter(json) {
+    enc          = json;
+    picked       = pickPlaceholders(json.placeholders);
+    pendingLoot  = [0, 0, 0, 0, 0];
+    pendingItems = [];
+    terminal     = false;
+    pendingNext  = ''; pendingHaz = '';
+    haulEmpty.textContent = 'nothing yet';
+    hideResult();
+
+    titleEl.textContent = resolveText(json.title || 'Encounter', picked);
+    const p = me();
+    const cell = p ? gameMap[p.r]?.[p.q] : null;
+    const tname = cell ? (TERRAIN[cell.terrain]?.name ?? '') : '';
+    kickerEl.textContent = tname ? `ENCOUNTER · ${tname.toUpperCase()}` : 'ENCOUNTER';
+
     overlay.classList.add('open');
     overlay.style.display = '';
-    const startNode = enc.nodes?.[enc.start_node] ?? Object.values(enc.nodes ?? {})[0];
-    if (startNode) renderNode(startNode);
-    else console.error('[ENC] No start node found — encounter dialog will be empty', enc);
+    const startKey = json.nodes?.[json.start_node] ? json.start_node : Object.keys(json.nodes ?? {})[0];
+    if (startKey) renderNode(startKey);
+    else { console.error('[ENC] encounter has no nodes', json); send({ t: 'enc_abort' }); closeEncounter(); }
+    scrollEl.scrollTop = 0;
+    leaveBtn.blur();
   }
 
   function closeEncounter() {
-    console.log('%c[ENC] closeEncounter', 'color:#c0f', `id=${currentEnc?.id ?? 'none'} pendingLoot=${JSON.stringify(pendingLoot)}`);
+    clearTimeout(rollTimer);
+    disarmLeave();
     overlay.classList.remove('open');
     overlay.style.display = 'none';
-    currentEnc     = null;
-    currentNode    = null;
-    pendingLoot    = [0,0,0,0,0];
-    pendingNextKey = '';
-    pendingHazText = '';
-    canBank        = false;
-    lootDisp.textContent  = '';
-    outcomeDiv.classList.remove('visible');
-    outcomeDiv.innerHTML  = '';
-    bankRow.style.display = 'none';
-    choiceList.innerHTML  = '';
+    enc = null; node = null; nodeKey = '';
+    phase = 'idle';
+    pendingLoot = [0, 0, 0, 0, 0]; pendingItems = [];
+    terminal = false; pendingNext = ''; pendingHaz = '';
+    hideResult();
+    choiceEl.innerHTML = ''; haulItems.innerHTML = '';
   }
 
   // Called from network.js enc_path handler
   globalThis._startEncounterFetch = function(biome, id) {
     const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
-    const t0  = Date.now();
-    console.log('%c[ENC] fetch start', 'color:#c0f', `GET ${url}`);
     fetch(url)
-      .then(r => {
-        console.log('[ENC] fetch response', `HTTP ${r.status} t+${Date.now()-t0}ms`);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then(txt => {
-        console.log('[ENC] fetch body', `${txt.length} bytes t+${Date.now()-t0}ms`);
-        let enc;
-        try { enc = JSON.parse(txt); }
-        catch(error_) {
-          console.error('[ENC] JSON parse error:', error_, 'body=', txt.slice(0, 200));
-          throw new Error(`JSON parse: ${error_.message}`);
-        }
-        console.log('[ENC] parsed ok', `nodes=${Object.keys(enc.nodes ?? {}).length} start_node=${enc.start_node} t+${Date.now()-t0}ms`);
-        openEncounter(enc);
-      })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(openEncounter)
       .catch(e => {
-        console.error('[ENC] Fetch failed — sending enc_abort:', e.message, `t+${Date.now()-t0}ms`);
+        console.error('[ENC] fetch failed, aborting:', e.message);
+        showToast?.('⊙ The way in is blocked. (encounter failed to load)');
         send({ t: 'enc_abort' });
       });
   };
 
-  const SUCCESS_PHRASES = [
-    'You push through.', 'Barely.', 'Fortune holds.', 'Against the odds.',
-    'Clean exit.', 'You manage.', 'Just in time.', 'Through.'
-  ];
+  // ── Leave button ───────────────────────────────────────────────
+  leaveBtn.addEventListener('click', () => {
+    if (phase === 'rolling' || !enc) return;
+    if (phase === 'ejected') { closeEncounter(); return; }
 
-  // Called from engine.js enc_res handler — show outcome then advance or stay
-  globalThis._onEncResult = function(ev) {
-    console.log('%c[ENC] _onEncResult', 'color:#c0f', `out=${ev.out} ends=${ev.ends} penLL=${ev.penLL ?? 0} penRad=${ev.penRad ?? 0} loot=${JSON.stringify(ev.loot)}`);
-    if (ev.ends) { closeEncounter(); return; }
+    const n = haulCount();
+    if (terminal || (n && canBankHere())) { send({ t: 'enc_bank' }); closeEncounter(); return; }
 
-    const nextKey = pendingNextKey;
-    pendingNextKey = '';
-
-    // Build delta line
-    const deltaItems = [];
-    if (ev.out && Array.isArray(ev.loot)) {
-      ev.loot.forEach((v, i) => { if (v > 0) deltaItems.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true }); });
-    } else {
-      if (ev.penLL  < 0) deltaItems.push({ txt: `${ev.penLL} Life`,         pos: false });
-      if (ev.penRad > 0) deltaItems.push({ txt: `+${ev.penRad} Radiation`,  pos: false });
+    if (n && !leaveArmed) {
+      // Two-tap confirm: leaving here forfeits the haul.
+      leaveArmed = true;
+      leaveBtn.classList.add('armed');
+      leaveBtn.textContent = 'DROP HAUL? TAP AGAIN';
+      confirmTimer = setTimeout(() => renderLeave(), 3000);
+      return;
     }
-    const deltaHtml = deltaItems.map(d =>
-      `<span class="${d.pos ? 'enc-out-pos' : 'enc-out-neg'}">${escHtml(d.txt)}</span>`
-    ).join('  ');
-
-    // Flavor text: use authored hazard narration on failure, generic phrase on success
-    const flavor = ev.out
-      ? SUCCESS_PHRASES[Math.floor(Math.random() * SUCCESS_PHRASES.length)]
-      : (pendingHazText || 'The wasteland takes its toll.');
-    pendingHazText = '';
-
-    outcomeDiv.innerHTML =
-      `<span class="enc-out-flavor">${escHtml(flavor)}</span>` +
-      (deltaHtml ? `<span class="enc-out-delta">${deltaHtml}</span>` : '');
-    outcomeDiv.classList.add('visible');
-
-    setTimeout(() => {
-      outcomeDiv.classList.remove('visible');
-      outcomeDiv.innerHTML = '';
-      if (ev.out) {
-        if (Array.isArray(ev.loot))
-          ev.loot.forEach((v, i) => { pendingLoot[i] = (pendingLoot[i] ?? 0) + v; });
-        if (nextKey && currentEnc?.nodes?.[nextKey]) {
-          const contBtn = document.createElement('button');
-          contBtn.className = 'chk-action-btn';
-          contBtn.textContent = 'Continue \u2192';
-          contBtn.addEventListener('click', () => {
-            contBtn.remove();
-            // Guard: encounter may have been closed (abort/bank/ev.ends) while button was visible
-            if (currentEnc?.nodes?.[nextKey]) renderNode(currentEnc.nodes[nextKey]);
-          }, { once: true });
-          choiceList.appendChild(contBtn);
-        } else {
-          renderLoot();
-          choiceList.innerHTML = '';
-          canBank = true;
-          bankRow.style.display = '';
-        }
-      // Guard: closeEncounter() may have fired during the 2200ms outcome window
-      } else if (currentNode) {
-        renderNode(currentNode);
-      }
-    }, 4000);
-  };
-
-  globalThis._onEncBank = function() { closeEncounter(); };
-  globalThis._onEncEnd  = function() { closeEncounter(); };
-
-  bankBtn.addEventListener('click', () => {
-    send({ t: 'enc_bank' });
-    closeEncounter();
-  });
-
-  abortBtn.addEventListener('click', () => {
     send({ t: 'enc_abort' });
     closeEncounter();
   });
 
+  // Number keys pick choices; nothing on Escape (no accidental exits).
+  document.addEventListener('keydown', e => {
+    if (!enc || phase !== 'reading' || terminal) return;
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    const k = Number.parseInt(e.key, 10);
+    if (k >= 1 && k <= 9) {
+      const btn = choiceEl.querySelectorAll('.enc-choice')[k - 1];
+      if (btn && !btn.disabled) btn.click();
+    }
+  });
 }
 
 // ── VanJS entry point ─────────────────────────────────────────────

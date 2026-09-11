@@ -1,0 +1,144 @@
+{
+  "id": "urban_dentist_01",
+  "title": "{{practice}} Dental",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The practice is on the ground floor and the lights are on and the door chimes when you push it. Reception is spotless. The magazines are fanned. Through the frosted glass, a chair reclines with a soft hydraulic sigh, and the articulated arm above it rotates to face the door, and a recorded voice that has been recorded over many times says, in several overlapping accents: \"Take a seat. We can fit you in.\" On the counter is a bowl of sterilisation packs, a cash tin, and a display case of before-and-after photographs. The afters are genuinely spectacular.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Clear reception and don't go past the frosted glass",
+          "cost": {},
+          "base_risk": 21,
+          "skill": 3,
+          "success_node": "the_back_room",
+          "hazard_id": "the_chime"
+        },
+        {
+          "label": "Sit in the chair. Your teeth are, frankly, a problem.",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 0,
+          "success_node": "the_back_room",
+          "hazard_id": "the_scale_and_polish"
+        }
+      ]
+    },
+    "the_back_room": {
+      "text": "The back room is a working surgery with sixty years of supplies still in date because nobody ever opened them: sterile kits, sealed analgesics, distilled water by the litre, and a run of silver and stainless that trades for whatever you want. The arm follows you around the room, patiently, holding a mirror on a stick. It is not hostile. It is waiting for you to open. In the corner is a steel drawer marked EXTRACTIONS, and it is very full, and it is very well organised.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Open the extractions drawer",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_afters",
+          "hazard_id": "the_drawer"
+        },
+        {
+          "label": "Let it work. Keep your eyes shut.",
+          "cost": {},
+          "base_risk": 46,
+          "skill": 3,
+          "success_node": "the_afters",
+          "hazard_id": "no_anaesthetic"
+        }
+      ]
+    },
+    "the_afters": {
+      "text": "It is, and there is no way around this, an outstanding dentist. Eleven minutes, no pain worth mentioning, and you come out of that chair with a complete, flawless, immaculately seated set of teeth. They are not yours. The arm has been maintaining a bank since the war, and it sources locally, and it has never once let a patient leave with a bad smile. It buffs the mirror, shows you, and is visibly delighted. Then it opens the payment drawer — sixty years of fees from people who had no cash and paid in salvage — and settles up, because the practice does not take charity work, and you are not a charity case, you are a *success story*. Your new teeth feel wonderful. Something in the drawer had been someone's.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_chime": {
+      "text": "The door chimes again on your way past and the arm interprets it as a new arrival. It comes through the frosted glass rather than around it and greets you at head height with a probe already extended.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_scale_and_polish": {
+      "text": "It scales. It polishes. Somewhere in the third minute it decides a molar is beyond saving, and it is correct, and it does not ask, and the sound conducts up through your skull in a way that will visit you for years.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_drawer": {
+      "text": "The drawer is full and the drawer is spring-loaded and sixty years of extractions go into the air at once. Most of them land. Several of them land in you, which is the kind of injury you have to explain twice.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "no_anaesthetic": {
+      "text": "The analgesic reservoir ran dry in the first decade and the arm has been compensating with speed ever since. It is very fast. It is not fast enough, and you learn precisely how much of your face is jaw, and you leave with excellent teeth in a head that no longer wants them.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "practice": [
+      "Bright Mile",
+      "Kendrick",
+      "Pearl Row",
+      "Ashgrove",
+      "Milton Street",
+      "Fairview",
+      "Crown & Bridge",
+      "Whitaker"
+    ]
+  }
+}

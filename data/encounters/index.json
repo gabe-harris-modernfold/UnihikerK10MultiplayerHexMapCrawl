@@ -4,7 +4,7 @@
     "path": "scrub"
   },
   "1": {
-    "count": 2,
+    "count": 7,
     "path": "dunes"
   },
   "2": {
@@ -12,11 +12,11 @@
     "path": "forest"
   },
   "3": {
-    "count": 3,
+    "count": 13,
     "path": "marsh"
   },
   "4": {
-    "count": 19,
+    "count": 24,
     "path": "urban"
   },
   "5": {
@@ -32,11 +32,11 @@
     "path": "ridge"
   },
   "8": {
-    "count": 2,
+    "count": 12,
     "path": "mountain"
   },
   "9": {
-    "count": 4,
+    "count": 14,
     "path": "settlement"
   }
 }

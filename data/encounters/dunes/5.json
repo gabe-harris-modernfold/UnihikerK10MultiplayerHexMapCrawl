@@ -1,0 +1,137 @@
+{
+  "id": "dunes_request_line_01",
+  "title": "{{station}} — The Request Line",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A radio mast sticks out of the dune at a drunk angle, and at its base, mostly buried, is the studio — a squat concrete block with one door still clear of the sand. It is broadcasting. You can hear it through the wall: a warm late-night voice doing the links between records, taking requests, reading out dedications. \"That one goes out to Marie on Hollis Street, from her brother, who says he's sorry about the car.\" The door is unlocked. The tower has power. Nobody has lived on Hollis Street since the bombs.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Go in and strip the studio",
+          "cost": {},
+          "base_risk": 21,
+          "skill": 2,
+          "success_node": "the_booth",
+          "hazard_id": "sand_fall"
+        },
+        {
+          "label": "Climb the mast and take the hardware up top",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 4,
+          "success_node": "the_booth",
+          "hazard_id": "guy_wire"
+        }
+      ]
+    },
+    "the_booth": {
+      "text": "A sealed civil-defence locker, a working generator with fuel beside it, a staff fridge of tinned rations, and more copper and silver in the racks than you can carry. The DJ is in his chair with the headphones still on, cured dry by sixty years of desert, and he has not touched the desk in all that time. The automation is doing the music. The automation is not doing the voice. The voice is coming from the phone bank, where eleven lines are lit, and has been reading out the requests as they come in.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Pick up line one",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "line_one",
+          "hazard_id": "the_hold_music"
+        },
+        {
+          "label": "Pull the plug and take the transmitter",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "line_one",
+          "hazard_id": "dead_air"
+        }
+      ]
+    },
+    "line_one": {
+      "text": "It is a man called Aldo, forty kilometres east, in a bunker, alone, who has been calling this station every night for sixty years because it is the only voice he has ever got back. He does not know the DJ is dead. He has requested nine thousand songs. He has never once asked for anything else. The other ten lines are the same call, looping, at different points in the last six decades — the station has been holding all of them, because the DJ's last act was to set the queue to never drop a caller. When you talk to Aldo he goes quiet for a very long time, and then he tells you exactly where the station's emergency cache is buried, and where his own is, and he asks you to play him out. You do. He says thank you. He hangs up for the first time in sixty years.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "sand_fall": {
+      "text": "Opening the door releases four tonnes of dune that had been leaning on it. You end up on your back inside the studio under most of a sand bank, breathing grit, while the voice above you cheerfully takes the next request.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "guy_wire": {
+      "text": "A guy wire parts under your weight at nine metres and whips back across the mast. It opens your thigh on the way past and the fall takes care of everything the wire missed.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_hold_music": {
+      "text": "You pick up line one and get the hold music — sixty years of it, compressed, all at once, straight into your ear at broadcast level. Something in your head rings for three days and you will never again be entirely calm about a saxophone.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "dead_air": {
+      "text": "You pull the plug. The voice stops mid-dedication. Every one of the eleven lit lines goes to a flat tone at the same instant, and the DJ in the chair — who has not moved since the war and does not move now — turns his head far enough to look at what you have just done, and the sound his neck makes is the last thing you hear before you are outside and running.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "station": [
+      "KDUN 91.3",
+      "WVLT Nightside",
+      "The Long Wave",
+      "KRST 88.1",
+      "Sandline Radio",
+      "WOLD After Dark",
+      "The Late Hour",
+      "KHRM 104.9"
+    ]
+  }
+}

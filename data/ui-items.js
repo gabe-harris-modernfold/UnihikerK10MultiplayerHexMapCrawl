@@ -11,13 +11,23 @@ function _itemIcon(id) {
   return item?.icon || ITEM_ICON_PLACEHOLDER;
 }
 
+// Inline onerror for item <img>s: swap to the category fallback icon once.
+// `this.onerror=null` stops a loop if the fallback itself is missing.
+function _iconOnError(id) {
+  const fb = getItemIconFallback?.(id) ?? ITEM_ICON_PLACEHOLDER;
+  return `this.onerror=null;this.src='${fb}'`;
+}
+
 // Render typed inventory slots into #cs-item-grid
 function renderInventory() {
   const grid = document.getElementById('cs-item-grid');
   if (!grid || myId < 0) return;
   const me = players[myId];
-  const arch = me.arch ?? 0;
-  const slots = ARCHETYPES[arch]?.invSlots ?? 8;
+  // Pack size = archetype base (server `is`) + equipment slot bonuses, capped at
+  // the 12-slot grid — mirrors effectiveInvSlots() in inventory_items.hpp.
+  const base  = me.is ?? ARCHETYPES[me.arch ?? 0]?.invSlots ?? 8;
+  const bonus = computeEquipBonuses(me).tot.slots || 0;
+  const slots = Math.max(1, Math.min(12, base + bonus));
   const occupied = (me.it ?? []).filter(id => id > 0).length;
   console.log('%c[INV] renderInventory', 'color:#fc0', `myId=${myId} slots=${slots} occupied=${occupied}`);
   grid.innerHTML = '';
@@ -31,7 +41,7 @@ function renderInventory() {
       const item = getItemById?.(typeId);
       const catClass = CAT_CLASSES[item?.category ?? 0] ?? 'cat-consumable';
       div.innerHTML =
-        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId))}" alt="" width="26" height="26" onerror="this.src='${ITEM_ICON_PLACEHOLDER}'">` +
+        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId))}" alt="" width="26" height="26" onerror="${_iconOnError(typeId)}">` +
         `<span class="item-slot-qty">${qty > 1 ? qty : ''}</span>` +
         `<span class="item-slot-name">${escHtml(item?.name ?? '?')}</span>` +
         `<span class="item-cat-badge ${catClass}">${CAT_NAMES[item?.category ?? 0]?.slice(0, 4) ?? '?'}</span>`;
@@ -104,7 +114,7 @@ function renderEquipment() {
       const noteLine = mods?.note ? escHtml(mods.note) : '';
       div.innerHTML =
         `<span class="equip-slot-name">${SLOT_LABELS[s]}</span>` +
-        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId))}" alt="" width="28" height="28" onerror="this.src='${ITEM_ICON_PLACEHOLDER}'">` +
+        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId))}" alt="" width="28" height="28" onerror="${_iconOnError(itemId)}">` +
         `<span class="equip-slot-label">${escHtml(item?.name ?? '?')}</span>` +
         (modsLine ? `<span class="equip-slot-bonus" style="display:block;font-size:10px;color:var(--gold,#ffd700);margin-top:2px;letter-spacing:0.5px">${escHtml(modsLine)}</span>` : '') +
         (noteLine ? `<span class="equip-slot-note" style="display:block;font-size:9px;color:var(--txt-dim,#888);font-style:italic;margin-top:1px">${noteLine}</span>` : '');
@@ -160,7 +170,9 @@ function openItemMenu(slotIdx, isEquipped) {
   const isEquip = !isEquipped && item?.category === 1; // ITEM_EQUIPMENT=1
   const isCons  = !isEquipped && item?.category === 0; // ITEM_CONSUMABLE=0
 
-  document.getElementById('item-menu-icon').src = _itemIcon(itemId);
+  const menuIcon = document.getElementById('item-menu-icon');
+  menuIcon.onerror = () => { menuIcon.onerror = null; menuIcon.src = getItemIconFallback?.(itemId) ?? ITEM_ICON_PLACEHOLDER; };
+  menuIcon.src = _itemIcon(itemId);
   document.getElementById('item-menu-name').textContent = name;
 
   const storyEl = document.getElementById('item-menu-story');
@@ -243,7 +255,7 @@ function renderHexGroundItems(q, r) {
     span.className = 'hi-ground-pickup';
     span.title = `Pick up ${name}`;
     span.innerHTML =
-      `<img class="item-icon-img" src="${escHtml(_itemIcon(gi.id))}" alt="" width="16" height="16" onerror="this.src='${ITEM_ICON_PLACEHOLDER}'">` +
+      `<img class="item-icon-img" src="${escHtml(_itemIcon(gi.id))}" alt="" width="16" height="16" onerror="${_iconOnError(gi.id)}">` +
       `${escHtml(name)}` +
       (gi.n > 1 ? ` \u00d7${gi.n}` : '') +
       ` <span class="gp-plus">+</span>`;

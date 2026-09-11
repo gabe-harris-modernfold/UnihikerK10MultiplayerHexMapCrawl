@@ -98,6 +98,39 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 resize();
 
+// ── Pixel glyphs ───────────────────────────────────────────────────
+// Tinted copies of one 16px cell from the glyph strip, keyed `${idx}|${color}`.
+const _glyphTints = new Map();
+function _glyphTile(idx, color) {
+  const key = idx + '|' + color;
+  let c = _glyphTints.get(key);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = GLYPH_CELL;
+  const g = c.getContext('2d');
+  g.drawImage(glyphImg, idx * GLYPH_CELL, 0, GLYPH_CELL, GLYPH_CELL, 0, 0, GLYPH_CELL, GLYPH_CELL);
+  g.globalCompositeOperation = 'source-in';   // recolour, keep alpha
+  g.fillStyle = color;
+  g.fillRect(0, 0, GLYPH_CELL, GLYPH_CELL);
+  _glyphTints.set(key, c);
+  return c;
+}
+
+/**
+ * Draw a glyph from the sprite strip with its top-left at (x, y).
+ * Nearest-neighbour when enlarging (keeps the pixel look); bilinear when
+ * shrinking below 16px so no rows drop out. No-op until the strip loads.
+ */
+function drawGlyph(ctx, idx, x, y, size, color = '#FFF', alpha = 1) {
+  if (idx == null || idx < 0 || !glyphImg.loaded) return;
+  const px = Math.max(1, Math.round(size));
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = px < GLYPH_CELL;
+  ctx.drawImage(_glyphTile(idx, color), Math.round(x), Math.round(y), px, px);
+  ctx.restore();
+}
+
 /**
  * Draw terrain icon centered in a hex cell.
  * @param {CanvasRenderingContext2D} ctx - Canvas context
@@ -112,15 +145,8 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
   if (!t) return;
   const sz   = Math.max(10, hexSz * ICON_SIZE_SCALE);
   const offY = hasResource ? -hexSz * 0.42 : 0;
-
-  ctx.save();
-  ctx.globalAlpha  = hasResource ? 0.45 : 0.7;
-  ctx.font         = `${sz}px serif`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle    = '#FFF';
-  ctx.fillText(t.icon, cx, cy + offY);
-  ctx.restore();
+  // Glyph strip index 0..11 == terrain index
+  drawGlyph(ctx, terrainIdx, cx - sz / 2, cy + offY - sz / 2, sz, '#FFF', hasResource ? 0.45 : 0.7);
 }
 
 /**
@@ -128,17 +154,10 @@ function drawTerrainIcon(ctx, cx, cy, hexSz, terrainIdx, hasResource) {
  * Used for Water, Fuel, Medicine, Scrap (Food uses forage-animal PNG instead).
  */
 function drawResourceIcon(ctx, cx, cy, hexSz, resourceType) {
-  const icon = RES_ICONS[resourceType];
-  if (!icon) return;
+  const idx = RES_GLYPH[resourceType] ?? -1;
+  if (idx < 0) return;
   const sz = Math.max(10, hexSz * ICON_SIZE_SCALE);
-  ctx.save();
-  ctx.globalAlpha  = 0.3;
-  ctx.font         = `${sz}px serif`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle    = '#FFF';
-  ctx.fillText(icon, cx, cy);
-  ctx.restore();
+  drawGlyph(ctx, idx, cx - sz / 2, cy - sz / 2, sz, '#FFF', 0.3);
 }
 
 /**
@@ -338,33 +357,26 @@ function drawFootprints(cx, cy, cell) {
     const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
     const fx = cx + Math.cos(angle) * radius;
     const fy = cy + Math.sin(angle) * radius;
-    ctx.save();
-    ctx.filter       = 'sepia(1) saturate(0.5) brightness(0.35)';
-    ctx.globalAlpha  = 0.75;
-    ctx.font         = `${footprintSize}px monospace`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('👣', fx, fy);
-    ctx.restore();
+    // Worn-in tracks: dim amber boot sole
+    drawGlyph(ctx, GLYPH.FOOTPRINT, fx - footprintSize / 2, fy - footprintSize / 2,
+              footprintSize, '#6B4010', 0.75);
     footprintIdx++;
   }
 }
 
 function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
-  const imgs = shelterImgs[0];
+  const imgs = shelterImgs[0] ?? [];   // mock server never sends shelter variants
   const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
   const sImg = v >= 0 ? imgs[v] : null;
   if (sImg?.loaded) {
     const sz = HEX_SZ * 0.9;
     ctx.drawImage(sImg, cx - sz / 2, cy - sz / 2, sz, sz);
   } else {
-    ctx.save();
-    ctx.fillStyle    = cell.shelter === 2 ? '#7EC8E3' : '#D4A574';
-    ctx.font         = `${Math.max(12, Math.round(HEX_SZ * 0.5))}px monospace`;
-    ctx.textAlign    = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillText(cell.shelter === 2 ? '🏠' : '⛺', cx + HEX_SZ * 0.35, cy - HEX_SZ * 0.35);
-    ctx.restore();
+    // Upper-right corner of the hex; improved shelter = hut in steel blue, basic = tan tent
+    const sz = Math.max(12, Math.round(HEX_SZ * 0.5));
+    drawGlyph(ctx, cell.shelter === 2 ? GLYPH.HUT : GLYPH.TENT,
+              cx + HEX_SZ * 0.35 - sz, cy - HEX_SZ * 0.35, sz,
+              cell.shelter === 2 ? '#7EC8E3' : '#D4A574');
   }
 }
 
@@ -386,15 +398,10 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
 
   if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
 
-  // Weather icon — small 🌧 in upper-left corner of each visible hex
+  // Weather glyph — small rain cloud in upper-left corner of each visible hex
   if (weatherPhase > 0) {
-    ctx.save();
-    ctx.font         = `${Math.max(8, Math.round(HEX_SZ * 0.28))}px serif`;
-    ctx.textAlign    = 'left';
-    ctx.textBaseline = 'top';
-    ctx.globalAlpha  = 0.75;
-    ctx.fillText('🌧', cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48);
-    ctx.restore();
+    drawGlyph(ctx, GLYPH.RAIN, cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48,
+              Math.max(8, Math.round(HEX_SZ * 0.28)), '#FFF', 0.75);
   }
 }
 

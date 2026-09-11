@@ -57,14 +57,8 @@ function handleNarrativeEffect(param) {
       invertedInputTurns = 5;
       showToast('◌ Your senses flip inside out. North is south, and south mocks you.');
       break;
-    case 27: // Jar of Sweats — vomit, lose turn
-      showToast('☠ Your gut heaves. You retch the next turn into the dirt.');
-      break;
-    case 29: // Uranium Hard Candy — warn about LL ceiling
-      showToast('☢ The rads settle into your marrow. You will never be whole again.');
-      break;
-    case 25: // Knife-Wrench — catastrophic failure, self-damage
-      showToast('✦ The Knife-Wrench turns on you. You take the damage yourself.');
+    case 29: // Uranium Hard Candy — the server has just lowered the LL ceiling by 1
+      showToast('☢ The rads settle into your marrow. Your life ceiling drops by one, for good.');
       break;
     default:
       break;

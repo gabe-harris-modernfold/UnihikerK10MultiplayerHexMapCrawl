@@ -1,0 +1,148 @@
+{
+  "id": "mountain_quarry_01",
+  "title": "The {{adjective}} Quarry",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The crusher is running. You hear it from the next valley — a deep irregular chewing that rises whenever it gets something interesting. The quarry is a terraced bite out of the mountainside, and at the top of it a conveyor is still feeding the jaw, and beside the conveyor stands a foreman in a hard hat with a clipboard, waving material up the belt with two fingers like a man directing traffic. Bolted to the gantry above him is a board: DAYS SINCE LAST ACCIDENT — 0.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Work the lower terraces and stay off the belt",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_yard",
+          "hazard_id": "the_spoil"
+        },
+        {
+          "label": "Report to the foreman like a new hire",
+          "cost": {},
+          "base_risk": 31,
+          "skill": 3,
+          "success_node": "the_yard",
+          "hazard_id": "the_induction"
+        }
+      ]
+    },
+    "the_yard": {
+      "text": "A working quarry's stores, sixty years untouched: drums of diesel for plant that still turns over, a tool store, blasting supplies in a magazine you leave firmly alone, a canteen of sealed rations, and a site office with a stocked first-aid room. The safety board is the thing you keep coming back to. It reads 0. It has a little slot for the number and a stack of spare cards in a box beneath it, and the box holds cards for 1, and 2, and 3, and every one of them is pristine and unused, and the 0 card is worn nearly through.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Follow the conveyor back to see what it is feeding on",
+          "cost": {},
+          "base_risk": 43,
+          "skill": 2,
+          "success_node": "the_board",
+          "hazard_id": "the_belt"
+        },
+        {
+          "label": "Change the board to 1",
+          "cost": {},
+          "base_risk": 37,
+          "skill": 3,
+          "success_node": "the_board",
+          "hazard_id": "the_correction"
+        }
+      ]
+    },
+    "the_board": {
+      "text": "The conveyor is fed from a hopper, and the hopper is fed by the foreman, and the foreman has been feeding it the same eleven men for sixty years — the shift that was on when it happened — because the crusher is the only thing on this site that still works and a foreman does not shut down a working plant. They go in at the top. What comes out at the bottom is graded, bagged, and stacked in the yard in immaculate pallets, sixty years of it, and every single morning he goes to the board and puts the 0 card back in the slot, because he is scrupulous, and because it would be a lie to put up anything else. He signs your docket. He gives you the pay tin, the keys to the good store, and a bag of aggregate for the road. He is very glad of the company. The board, behind him, reads 0.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_spoil": {
+      "text": "The lower terrace is spoil, not rock, and sixty years of it has been waiting for a load. You cross it and it goes, and you ride a hundred tonnes of gravel forty metres down the face with your arms over your head, and arrive at the bottom mostly buried and entirely reconsidering.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_induction": {
+      "text": "He is delighted to have a new hire and he does the induction properly, which means the demonstration, which means he shows you the emergency stop by pressing it, and then he shows you what the machine does when it restarts by restarting it while your hand is still resting on the guard.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_belt": {
+      "text": "You walk the belt back toward the hopper, which is uphill, against the direction of travel, and the rubber is slick with sixty years of what the belt carries. You go down. You go down and the belt does not, and you cover eleven metres toward the jaw before you get a hand on the frame and stop yourself with your boots already in the noise.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_correction": {
+      "text": "You take down the 0 and slot in the 1. It is the only thing in sixty years he has objected to. He does not shout. He simply explains, with the clipboard, and with numbers, and with a demonstration, why the correct figure on that board this morning is 0 — and the demonstration is thorough, and it involves you, and by the end of it he is entirely right.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Working",
+      "Zero-Day",
+      "Running",
+      "Graded",
+      "Terraced",
+      "Compliant",
+      "Well-Stacked",
+      "Chewing"
+    ]
+  }
+}

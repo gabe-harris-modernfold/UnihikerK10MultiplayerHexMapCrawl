@@ -20,6 +20,22 @@ static int hexDistWrap(int q1, int r1, int q2, int r2) {
   return best;
 }
 
+// Defined in inventory_items.hpp (needs the item registry, which is loaded
+// after this file).  Sums +1 per equipped item with EFX_REVEAL_FOG param 1.
+static int equipVisionBonus(int pid);
+
+// ── Wire encoding of one cell (shared by full map, vis disk, survey ring) ──
+// TT = terrain, with bit 6 set when the hex holds an improved (level 2)
+//      shelter.  Fog is 0xFF and is tested for equality before decoding.
+// DD = bits 0-5 footprints, bit 6 any shelter, bit 7 POI present.
+// VV = resource type << 4 | image variant (resource masked when maskRes).
+static inline void encodeCell(const HexCell& cell, bool maskRes,
+                              uint8_t* tt, uint8_t* dd, uint8_t* vv) {
+  *tt = cell.terrain | (cell.shelter >= 2 ? 0x40 : 0x00);
+  *dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6) | (cell.poi ? 0x80 : 0x00);
+  *vv = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
+}
+
 // ── Effective vision parameters for a player ──────────────────
 // Call while holding G.mutex (reads map terrain at player position).
 static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
@@ -33,11 +49,7 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   else if (vl ==  1) { *outVisR = VISION_R + 1; *outMaskRes = false; }
   else               { *outVisR = VISION_R + 2; *outMaskRes = false; }
   if (G.players[pid].archetype == 4) *outVisR += 2;  // Scout: +2 vision radius
-  // Equipment passive vision bonus (Dark Goggles id:14, Glow Dentures id:45)
-  for (int s = 0; s < EQUIP_SLOTS; s++) {
-    uint8_t eid = G.players[pid].equip[s];
-    if (eid == 14 || eid == 45) (*outVisR)++;
-  }
+  *outVisR += equipVisionBonus(pid);  // EFX_REVEAL_FOG param 1 on equipped items
   // ── Weather visibility penalty (applied after Scout and equipment bonuses) ──
   *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
 }
@@ -475,18 +487,6 @@ static void generateMap() {
     }
   }
 
-  // ── Post-generation map stats ────────────────────────────────
-  uint16_t tCount[NUM_TERRAIN] = {0};
-  uint16_t rCount[6]           = {0};
-  uint16_t totalRes            = 0;
-
-  for (int r = 0; r < MAP_ROWS; r++)
-    for (int c = 0; c < MAP_COLS; c++) {
-      HexCell& cell = G.map[r][c];
-      tCount[cell.terrain]++;
-      if (cell.resource > 0 && cell.resource < 6) { rCount[cell.resource]++; totalRes++; }
-    }
-
 }
 
 // ── Map encode: fog masked ─────────────────────────────────────
@@ -498,11 +498,7 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
     for (int c = 0; c < MAP_COLS; c++) {
       uint8_t tt, dd, vv;
       if (hexDistWrap(pq, pr, c, r) <= visR) {
-        HexCell& cell = G.map[r][c];
-        tt = cell.terrain;
-        dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
-        if (cell.poi) dd |= (1 << 7);
-        vv = (cell.resource << 4) | (cell.variant & 0x0F);
+        encodeCell(G.map[r][c], maskRes, &tt, &dd, &vv);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
       }
@@ -528,11 +524,8 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       if (abs(dq) + abs(dr) + abs(s) > 2 * visR) continue;
       int      cq   = wrapQ(pq + dq);
       int      cr   = wrapR(pr + dr);
-      HexCell& cell = G.map[cr][cq];
-      uint8_t  tt   = cell.terrain;
-      uint8_t  dd   = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
-      if (cell.poi) dd |= (1 << 7);
-      uint8_t  vv   = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
+      uint8_t tt, dd, vv;
+      encodeCell(G.map[cr][cq], maskRes, &tt, &dd, &vv);
       if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
@@ -559,13 +552,11 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       int cq = wrapQ(pq + dq);
       int cr = wrapR(pr + dr);
       if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
-        HexCell& cell = G.map[cr][cq];
-        uint8_t dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6);
-        if (cell.poi) dd |= (1 << 7);
-        uint8_t vv = (cell.resource << 4) | (cell.variant & 0x0F);
+        uint8_t tt, dd, vv;
+        encodeCell(G.map[cr][cq], false, &tt, &dd, &vv);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
-        buf[pos++] = HEX_CH[cell.terrain >> 4]; buf[pos++] = HEX_CH[cell.terrain & 0xF];
+        buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
         buf[pos++] = HEX_CH[dd >> 4]; buf[pos++] = HEX_CH[dd & 0xF];
         buf[pos++] = HEX_CH[vv >> 4]; buf[pos++] = HEX_CH[vv & 0xF];
       }

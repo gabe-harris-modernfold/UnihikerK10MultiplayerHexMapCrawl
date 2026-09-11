@@ -11,7 +11,7 @@
           "label": "Stomp them methodically — work from the outside in",
           "cost": {},
           "base_risk": 35,
-          "skill": 5,
+          "skill": 4,
           "success_node": "roombas_destroyed",
           "hazard_id": "ankle_sliced"
         },
@@ -83,9 +83,8 @@
     "ankle_sliced": {
       "text": "The first one gets under your guard and the taped knife opens a clean cut across your left ankle. You stomp it flat in retaliation. You stomp several more before the blood in your boot starts to feel concerning.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 4,
       "wound": [
         1,
         0
@@ -95,17 +94,15 @@
     "no_rock_nearby": {
       "text": "There is no rock. The scrub is flat for a hundred metres in every direction. The Roombas are patient. They will wait. You have to fight them anyway, and you fight them worse for having tried to avoid it.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 4,
       "ends_encounter": false
     },
     "battery_leak": {
       "text": "A cracked lithium cell in the third motor vents directly onto your hand. It burns before you can pull back. Minor, but memorable.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
-      "status": 1,
       "ends_encounter": false
     }
   },

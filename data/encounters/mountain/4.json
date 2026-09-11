@@ -1,0 +1,146 @@
+{
+  "id": "mountain_summit_register_01",
+  "title": "The {{adjective}} Register",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "There is a queue at the summit. Forty-odd people, in sixty years of accumulated frost, standing single file along the ridge in perfect order, shuffling forward about a step a decade toward a steel ammunition box bolted to the cairn. The box holds the summit register. Everyone is waiting to sign. Nobody is pushing. At the very front, one man has had his pen out and poised for six decades and cannot quite commit to the downstroke.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Join the back of the queue like a civilised person",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 3,
+          "success_node": "the_box",
+          "hazard_id": "the_wait"
+        },
+        {
+          "label": "Walk up the side and open the box yourself",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 2,
+          "success_node": "the_box",
+          "hazard_id": "the_tutting"
+        }
+      ]
+    },
+    "the_box": {
+      "text": "The box has the register and sixty years of summit offerings underneath it: sealed rations, a full fuel bottle, a bivvy kit, a first-aid pouch, and the small expensive things climbers leave at the top for luck. The register itself is full. Every entry is neat. Every entry is dated. And on page eleven, ringed in three colours of ink by about thirty different hands, is a single line reading DAVE W — GREAT VIEW — and beneath it, in forty separate scripts, sixty years of commentary about Dave.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Find out what Dave did",
+          "cost": {},
+          "base_risk": 33,
+          "skill": 3,
+          "success_node": "dave",
+          "hazard_id": "the_ridge_shuffle"
+        },
+        {
+          "label": "Sign the register yourself",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "dave",
+          "hazard_id": "signed_in"
+        }
+      ]
+    },
+    "dave": {
+      "text": "Dave jumped the queue. That is the entirety of it. Sixty years ago, on the last morning the world had, Dave W walked past thirty-one waiting climbers, signed the book, wrote GREAT VIEW with two exclamation marks, and went down. He is still down there — you can see him, alone, a hundred metres below the col, where the group put him — and every single person on this ridge has spent six decades not talking about it and thinking about nothing else. When you ask, the entire queue turns to look at you at once, and then, as one, points. Dave's pack is still with him. It is enormous. Nobody has touched it, on principle, for sixty years.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_wait": {
+      "text": "You join the back and you wait, and the ridge is at four thousand metres, and the queue moves at a step a decade. By the time you accept that this was a bad plan, two of your fingers have accepted it considerably earlier.",
+      "penalty": {
+        "ll": -3,
+        "food": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_tutting": {
+      "text": "You go up the side. Forty heads turn. Nobody touches you. Nobody says anything. The sound forty frozen people make when they are being pointedly polite about your behaviour is a low dry creak, all at once, and it goes through you in a way that a shout never could.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_ridge_shuffle": {
+      "text": "The queue shifts to let you past and the shift takes the cornice with it. You go through up to the chest on the north side, with four hundred metres under your boots and a stranger's frozen hand around your wrist as the only reason you come back up.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "signed_in": {
+      "text": "You sign. The pen is cold enough to take skin. And the moment the ink is down you understand that you have taken a place in the order — that the queue behind you has a new last member, that the man at the front has still not committed to his downstroke, and that the ridge is in no hurry whatsoever. Getting back off the mountain costs you a great deal more than a finger.",
+      "penalty": {
+        "ll": -5,
+        "water": -1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Summit",
+      "Orderly",
+      "Frozen",
+      "Signed",
+      "Patient",
+      "Four-Thousand-Metre",
+      "Queued",
+      "Annotated"
+    ]
+  }
+}

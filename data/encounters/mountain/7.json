@@ -1,0 +1,144 @@
+{
+  "id": "mountain_observatory_01",
+  "title": "The {{adjective}} Observatory",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The dome is open a hand's width and it is tracking. You can hear the drive motors under the floor taking up the slack every few seconds, holding the great tube on something as the sky turns. Inside, at the eyepiece, is the astronomer. He has been at the eyepiece for sixty years and the cold and the dry have taken him down to leather and wire, and his eye socket has grown around the rubber cup, and his hand is still on the fine adjustment. The logbook beside him is open. The last entry is dated this morning.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Strip the instrument room and leave him to it",
+          "cost": {},
+          "base_risk": 21,
+          "skill": 2,
+          "success_node": "the_log",
+          "hazard_id": "the_dome_slit"
+        },
+        {
+          "label": "Read the logbook",
+          "cost": {},
+          "base_risk": 19,
+          "skill": 3,
+          "success_node": "the_log",
+          "hazard_id": "the_last_page"
+        }
+      ]
+    },
+    "the_log": {
+      "text": "The station is a mountaintop posting stocked for a six-month winter: sealed rations, bottled water, kerosene, a full medical locker, and enough silvered optical scrap to trade for a season. The logbook is the strange part. Sixty years of entries in the same hand, one a night, never missed, each one a position and a distance. The distances get smaller. The first entry is in millions of kilometres. Last night's is in hundreds. Tonight's, written in a hand that is not the astronomer's, is in tens.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Look through the eyepiece",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_object",
+          "hazard_id": "the_eyepiece"
+        },
+        {
+          "label": "Work out where it is going to come down",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_object",
+          "hazard_id": "the_drive_motors"
+        }
+      ]
+    },
+    "the_object": {
+      "text": "It is a supply platform. Pre-war, unmanned, parked in a high orbit on the last day by somebody who assumed there would be a day after — and it has spent sixty years coming down by inches while a dead man wrote the numbers. It lands at dawn, four ridges north, in a valley you can walk to. The astronomer worked all of this out decades ago, which is why he never moved, and the last thing he did with a living hand was leave the landing solution on the desk in block capitals with the word SUPPLIES underlined twice. You take the solution, the optics, and the winter stores. You will be there when it comes down. He will not, but the handwriting in tonight's entry suggests he is going to keep logging regardless.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_dome_slit": {
+      "text": "The dome chooses that moment to track, and the slit closes four inches on your forearm with the unhurried force of a machine built to move sixty tonnes of steel accurately. It reopens. Your arm comes out a different shape than it went in.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_last_page": {
+      "text": "You turn to the last page and the astronomer's hand comes off the fine adjustment and lands on your wrist. It is not an attack. It is a correction — you have the book open at the wrong date — and the cold of it goes up your arm and sits in your chest for the rest of the night.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_eyepiece": {
+      "text": "You put your eye to the cup, which means putting your eye where his eye still is. What you see is in focus, and it is close, and it is not a platform yet because at this magnification it is only a shape, and shapes at this distance have no business being that detailed. Your eye waters for two days and you see the shape whenever you close it.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_drive_motors": {
+      "text": "You lean over the desk to reach the solution and put your weight on the drive housing, and sixty tonnes of instrument corrects for it. The tube swings. The counterweight — two and a half tonnes of cast iron on the far side of the pier — swings the other way, through the space you occupy, at the stately unstoppable pace of something that has an appointment with the sky.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Tracking",
+      "Open-Slit",
+      "Logged",
+      "Sixty-Year",
+      "Cold",
+      "Turning",
+      "Unmissed",
+      "Nightly"
+    ]
+  }
+}

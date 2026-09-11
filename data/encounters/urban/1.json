@@ -83,9 +83,8 @@
     "shelf_collapse": {
       "text": "A metal shelving unit groans and topples as you push past it. It catches you across the shoulders, driving you into the broken glass below.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -95,9 +94,8 @@
     "ambush_outside": {
       "text": "A feral dog pack was sheltering in the alley. You take a bad bite before you can drive them off with your pack.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 1,
       "wound": [
         0,
         1
@@ -112,9 +110,8 @@
     "glass_cut": {
       "text": "A carelessly stacked tray of ampoules tips and shatters. The shards open a deep gash across your forearm before you can pull back.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         0,
         1

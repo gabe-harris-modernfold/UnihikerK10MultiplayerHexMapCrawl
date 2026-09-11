@@ -1,0 +1,150 @@
+{
+  "id": "marsh_back_nine_01",
+  "title": "The {{adjective}} Back Nine",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The reeds break onto forty metres of short, immaculate, violently green grass. A flag stands in the middle of it — hole seven, par four — surrounded on all sides by black marsh that has eaten everything else for sixty years and stops dead at the edge of the fairway like it has been told. A figure in pressed coveralls is on its knees at the green's edge with a pair of nail scissors, and it is trimming. It has been trimming since the bombs. Beside it sits a groundskeeper's cart, and the cart is full.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk the fairway to the cart, staying on the path",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 3,
+          "success_node": "the_cart",
+          "hazard_id": "off_path"
+        },
+        {
+          "label": "Cut straight across the green to save time",
+          "cost": {},
+          "base_risk": 37,
+          "skill": 2,
+          "success_node": "the_cart",
+          "hazard_id": "divot"
+        }
+      ]
+    },
+    "the_cart": {
+      "text": "The cart is sixty years of confiscated property, because the groundskeeper takes things off people who breach the dress code and it has never once thrown anything away. Water bottles, ration packs, fuel for a mower that no longer exists, a med kit, forty-one wristwatches. It does not look up from the scissors. \"Soft spikes only,\" it says. \"You're fine. He wasn't.\" It nods, very slightly, at the water hazard.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Wade the water hazard for what's at the bottom",
+          "cost": {
+            "water": 1
+          },
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "the_clubhouse",
+          "hazard_id": "the_hazard"
+        },
+        {
+          "label": "Ask what happens if you play the hole",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 3,
+          "success_node": "the_clubhouse",
+          "hazard_id": "the_tee_shot"
+        }
+      ]
+    },
+    "the_clubhouse": {
+      "text": "The water hazard is eleven feet deep and it is packed, standing upright, shoulder to shoulder, with sixty years of golfers in full club colours, every one of them perfectly preserved and every one of them holding position on a putt. The groundskeeper rakes the bunkers around them weekly. Past the hazard, dug into the bank, is the clubhouse cellar — sealed, dry, and stocked for a members' weekend that never happened: crates of tinned goods, a locked medical cabinet, a barrel of spirits pure enough to run an engine on. The groundskeeper waves you toward it without looking up. Members only, it explains, and you are wearing the right shoes, and that is the whole of the law.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "off_path": {
+      "text": "One boot leaves the path. The groundskeeper is across forty metres of fairway before your heel lands, and the nail scissors come out of your calf faster than they went in, and it is back on its knees trimming before you have finished shouting.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "divot": {
+      "text": "Your heel takes a divot out of the seventh green. The grass screams. Not the groundskeeper — the grass — and sixty years of extremely well-fed root system comes up around your ankles to put the turf back where it belongs, with you as fill.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_hazard": {
+      "text": "Chest-deep among the golfers, something shifts, and two hundred preserved club members settle a half-step toward you all at once in the slow unanimous way of a crowd. You are held between a Mr. Pendrell and a Mrs. Voss for eleven seconds while the pressure decides about your ribs.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_tee_shot": {
+      "text": "It demonstrates. Sixty years of stored technique goes through a driver it has been oiling daily since the war, and the ball leaves the tee at a speed the human eye has no business trying to follow, and it takes you off your feet from the hip. It plays the next nine holes around you while you decide whether you can still walk. Beautiful swing. Terrible day.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Immaculate",
+      "Members-Only",
+      "Trimmed",
+      "Seventh",
+      "Groomed",
+      "Standing",
+      "Unplayed",
+      "Well-Kept"
+    ]
+  }
+}

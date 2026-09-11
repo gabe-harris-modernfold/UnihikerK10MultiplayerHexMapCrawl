@@ -11,7 +11,7 @@
           "label": "Take the stairwell up to mid-floor units",
           "cost": {},
           "base_risk": 20,
-          "skill": 4,
+          "skill": 3,
           "success_node": "midfloor",
           "hazard_id": "stair_collapse"
         },
@@ -49,7 +49,7 @@
           "label": "Climb to the upper floors before they return",
           "cost": {},
           "base_risk": 35,
-          "skill": 5,
+          "skill": 4,
           "success_node": "penthouse_cache",
           "hazard_id": "resident_confrontation"
         },
@@ -120,9 +120,8 @@
     "stair_collapse": {
       "text": "A landing gives way under your foot. You catch the railing but your leg punches through to the floor below, scraping muscle against broken concrete before you haul yourself back up.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         0,
         1
@@ -137,9 +136,8 @@
     "resident_confrontation": {
       "text": "They are already on their way down. You meet on the stairs — a wiry man with a length of rebar and nothing left to lose. The fight is ugly and brief. You come out worse.",
       "penalty": {
-        "ll": -12
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         1,
         1
@@ -156,7 +154,6 @@
       "penalty": {
         "radiation": 2
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

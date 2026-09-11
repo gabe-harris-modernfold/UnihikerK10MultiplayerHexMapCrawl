@@ -36,7 +36,7 @@
     "totally_lost_worse": {
       "text": "You come to your senses somewhere even less familiar than before, with a mild headache and the distinct sensation of having made a wrong turn at a conceptual level. The drifter's voice has faded entirely. Where are you? Excellent question.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "ends_encounter": true
     }

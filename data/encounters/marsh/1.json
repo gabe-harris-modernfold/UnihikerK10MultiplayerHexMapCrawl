@@ -21,7 +21,7 @@
           "label": "Probe the mud for a safe path with your staff",
           "cost": {},
           "base_risk": 15,
-          "skill": 4,
+          "skill": 3,
           "success_node": "rim",
           "hazard_id": "reed_tangle"
         }
@@ -59,7 +59,7 @@
           "label": "Back off with what you have",
           "cost": {},
           "base_risk": 30,
-          "skill": 5,
+          "skill": 4,
           "success_node": "deep_cache",
           "hazard_id": "mire_leg"
         }
@@ -92,7 +92,7 @@
     "sudden_sink": {
       "text": "The bank gives way without warning and you drop thigh-deep into clinging mud. Wrenching free tears something in your hip and costs you precious minutes.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
       "wound": [
         1,
@@ -103,15 +103,14 @@
     "reed_tangle": {
       "text": "Your staff snaps a submerged root cluster and the rebound rakes a jagged stump across your shin, opening a long shallow cut.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 4,
       "ends_encounter": false
     },
     "collapse": {
       "text": "The rim caves inward and you go under to the waist. You drag yourself out, soaked and exhausted, losing most of your haul to the mud.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
       "wound": [
         1,

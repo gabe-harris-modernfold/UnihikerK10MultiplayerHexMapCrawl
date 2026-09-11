@@ -13,7 +13,7 @@
             "water": -2
           },
           "base_risk": 60,
-          "skill": 5,
+          "skill": 4,
           "success_node": "survived_drink",
           "hazard_id": "internal_burns"
         },
@@ -52,17 +52,15 @@
     "internal_burns": {
       "text": "The syrup is, in fact, highly corrosive soft drink concentrate at approximately four hundred percent concentration. Your mouth, throat, and oesophagus lodge their complaints in sequence. You are not dead but you are made aware of every centimetre of your digestive system.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 8,
       "ends_encounter": true
     },
     "spill_burns": {
       "text": "A small amount of syrup splashes onto the back of your hand during bottling. The sensation is immediate, precise, and instructive. The skin there will look interesting for a while.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 1,
       "ends_encounter": false
     }
   },

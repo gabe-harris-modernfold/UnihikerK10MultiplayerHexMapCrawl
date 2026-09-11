@@ -20,8 +20,8 @@
  *            Phase 3 = resource placement (terrain-specific loot tables).
  *
  * Encoding : 3 bytes / cell (6 hex chars):
- *              TT = terrain (0x00-0x0B) or 0xFF (fog)
- *              DD = bits 0-5: footprint bitmask; bit 6: shelter level
+ *              TT = terrain (0x00-0x0B) or 0xFF (fog); bit 6 (0x40) set = improved shelter
+ *              DD = bits 0-5: footprint bitmask; bit 6: has shelter; bit 7: has POI
  *              VV = high nibble: resource type (0-5); low nibble: terrain variant (0-15)
  *
  * Vis-disk : {"t":"vis","vr":N,"q":QQ,"r":RR,"cells":"QQRRTTDDVV..."}
@@ -63,12 +63,13 @@
  *                           setup(), loop()
  *   hex-map.hpp           — hex math, slot mgmt, map gen, vision encoding
  *   ui-display.hpp        — K10 screens, LED, audio
- *   boot-assets.hpp       — splash, asset loading, item registry, printStatus
+ *   boot-assets.hpp       — splash, asset loading, item registry, loot tables
  *   game-server.hpp       — game loop task, WiFi/HTTP/WS setup helpers
  *   survival_skills.hpp   — skill checks, resource economy tracks
- *   inventory_items.hpp   — item effects, equipment, trade
+ *   inventory_items.hpp   — item effects, equipment, trade, survivor init
  *   survival_state.hpp    — day cycle, movement, resource collection
  *   actions_game_loop.hpp — action handlers (forage, scav, shelter, rest, …)
+ *   encounter_engine.hpp  — server-side encounter JSON resolution
  *   network-persistence.hpp — SD save/load
  *   network-sync.hpp      — state serialization and broadcast
  *   network-events.hpp    — event queue drain → JSON → clients
@@ -113,10 +114,7 @@ static bool rtcSynced = false;
 static bool checkRtcReady() {
   if (rtcSynced) return true;
   struct tm ti;
-  if (getLocalTime(&ti, 0) && ti.tm_year > 100) {
-    rtcSynced = true;
-    char ts[32]; strftime(ts, sizeof(ts), "%F %T", &ti);
-  }
+  if (getLocalTime(&ti, 0) && ti.tm_year > 100) rtcSynced = true;
   return rtcSynced;
 }
 
@@ -151,9 +149,22 @@ static constexpr int SK_SCAVENGE = 2;
 static constexpr int SK_SHELTER  = 3;
 static constexpr int SK_ENDURE   = 4;
 
+// ── Wound system ────────────────────────────────────────────────
+// Player.wounds[] is indexed by these; each tier caps at WOUND_MAX_EACH.
+// Minor wounds penalise Endure checks only; major wounds penalise every
+// skill check and also cost 1 MP each per day (see effectiveMP).
+static constexpr int     WOUND_MINOR    = 0;
+static constexpr int     WOUND_MAJOR    = 1;
+static constexpr int     NUM_WOUND_TIER = 2;
+static constexpr uint8_t WOUND_MAX_EACH = 3;
+// Medic treats a major wound in the field at this DN; anyone may treat while
+// standing in a Settlement.  Costs 2 MP + 1 Medicine.
+static constexpr uint8_t TREAT_DN       = 9;
+
 // ── Action system constants ─────────────────────────────────────
 static constexpr uint8_t ACT_FORAGE  = 0;
 static constexpr uint8_t ACT_WATER   = 1;
+static constexpr uint8_t ACT_TREAT   = 2;
 static constexpr uint8_t ACT_SCAV    = 3;
 static constexpr uint8_t ACT_SHELTER = 4;
 static constexpr uint8_t ACT_SURVEY  = 6;
@@ -164,11 +175,16 @@ static constexpr uint8_t AO_SUCCESS = 1;
 static constexpr uint8_t AO_PARTIAL = 2;
 static constexpr uint8_t AO_FAIL    = 3;
 
-static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 0 };
+// River Channel (11) is reachable with the right equipment, so it needs a
+// forage DN (this is what the Fishing Pole doubles) and drinkable water.
+static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 6 };
 static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,7,8,0,0,0,0, 0 };
-static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 0 };
+static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 1 };
+// "Ruins" here means Broken Urban (4) — dense standing structure that blocks
+// weather and draws scavengers.  Flooded District (5) is open water-logged
+// rubble and is deliberately NOT ruins: it carries the highest chem intensity.
 static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
-static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,0, 0 };
+static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,1, 0 };
 
 // ── Weather system constants ──────────────────────────────────────────────────
 static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1,
@@ -195,10 +211,23 @@ static const float WEATHER_INTENSITY[4][12] = {
 static constexpr uint8_t  MAX_ITEMS  = 128;
 static constexpr uint8_t  MAX_GROUND = 32;
 
-static constexpr uint8_t TERR_BIT_NUKECRATR = (1 << 4);
-static constexpr uint8_t TERR_BIT_RIVER     = (1 << 3);
-static constexpr uint8_t TERR_PASS_RIVER    = (1 << 0);
-static constexpr uint8_t TERR_PASS_NUKE     = (1 << 1);
+// ItemDef.passTerrainBits — what an equipped item lets the wearer do.
+// Mirrors the `terrain` key documentation in data/items.cfg.
+static constexpr uint8_t TERR_PASS_RIVER    = (1 << 0);  // may enter River Channel (11) at MC 2
+static constexpr uint8_t TERR_PASS_CLIFF    = (1 << 1);  // Mountain (8) costs CLIFF_MC instead of 4
+static constexpr uint8_t TERR_PASS_RAD      = (1 << 2);  // no Endure check on entering Rad terrain
+static constexpr uint8_t RIVER_MC           = 2;
+static constexpr uint8_t CLIFF_MC           = 2;
+
+// EFX_NARRATIVE params the server acts on.  Params not listed here are
+// client-side only (11 = UI scramble, 12 = reversed keys) — see items.cfg.
+static constexpr uint8_t NAR_TELEPORT       = 10;  // teleport to a random surveyed hex
+static constexpr uint8_t NAR_FIRE_STARTER   = 20;  // REST upgrades a basic shelter to improved
+static constexpr uint8_t NAR_COLD_IMMUNE    = 21;  // no exposure LL loss at dawn
+static constexpr uint8_t NAR_LL_CAP_DOWN    = 29;  // permanently lowers the LL ceiling by 1
+static constexpr uint8_t NAR_SCAV_DOUBLE    = 30;  // doubles scrap from SCAVENGE
+static constexpr uint8_t NAR_RIVER_FORAGE   = 31;  // doubles FORAGE yield on River Channel
+static constexpr uint8_t NAR_LAND_FORAGE    = 32;  // doubles FORAGE yield on land hexes
 
 enum StatIdx : uint8_t {
   STAT_LL      = 0,
@@ -229,11 +258,11 @@ static constexpr uint8_t EQUIP_SLOTS = 5;
 
 enum EffectId : uint8_t {
   EFX_NONE          = 0,
-  EFX_UNLOCK_ACTION = 1,
-  EFX_REVEAL_FOG    = 2,
-  EFX_NARRATIVE     = 3,
-  EFX_THREAT_MOD    = 4,
-  EFX_CURE_STATUS   = 5
+  EFX_REVEAL_FOG    = 1,   // param 1 = +1 passive vision while equipped; >=2 = one-shot reveal radius; 99 = whole map
+  EFX_NARRATIVE     = 2,   // param = NAR_* (server) or client-only id
+  EFX_THREAT_MOD    = 3,   // param = signed delta to the Threat Clock (per use, or per dawn while equipped)
+  EFX_CURE_STATUS   = 4,   // param = number of wounds healed (minor first, then major)
+  EFX_COUNT
 };
 
 struct ItemDef {
@@ -242,8 +271,6 @@ struct ItemDef {
   ItemCategory category;
   EquipSlot    equipSlot;
   uint8_t      maxStack;
-  bool         tradeable;
-  uint8_t      tradeValue;
   int8_t       statMods[STAT_COUNT];
   EffectId     effectId;
   uint8_t      effectParam;
@@ -270,7 +297,7 @@ static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 
   "Mountain ", "Settlment", "NukeCratr", "RiverChnl"
 };
 static const char* T_SHORT[NUM_TERRAIN] = {
-  "Scrub","Dunes","Forst","Marsh","Urban","Ruins","Glass","Hills","Mtn  ","Settl","Nukr ","River"
+  "Scrub","Dunes","Forst","Marsh","Urban","Flood","Glass","Hills","Mtn  ","Settl","Nukr ","River"
 };
 static const char* TERRAIN_IMG_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes", "RustForest", "Marsh",
@@ -348,10 +375,11 @@ struct Player {
   uint8_t  wThreshBelow;
   int8_t   movesLeft;
 
-  bool     actUsed;
-  bool     encPenApplied;
+  uint8_t  wounds[NUM_WOUND_TIER];  // [0]=minor, [1]=major
+
   bool     resting;
   bool     radClean;
+  uint8_t  llCapPenalty;  // permanent LL-ceiling reduction (Uranium Candy)
 
   uint8_t  surveyedMap[SURVEYED_BYTES];
 };
@@ -370,7 +398,6 @@ enum EvtType : uint8_t {
   EVT_MOVE         = 3,
   EVT_JOINED       = 4,
   EVT_LEFT         = 5,
-  EVT_NAME         = 6,
   EVT_DAWN         = 7,
   EVT_ACTION       = 8,
   EVT_DUSK         = 9,
@@ -396,6 +423,7 @@ struct GameEvent {
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;
   int8_t   dawnExpD;
+  uint8_t  dawnWndMin, dawnWndMaj;
   uint8_t  actType;
   uint8_t  actOut;
   uint8_t  actNewLL;
@@ -404,8 +432,10 @@ struct GameEvent {
   int8_t   actWatD;
   int8_t   actLLD;
   int8_t   actScrapD;
+  int8_t   actMedD;
   int16_t  actScoreD;
   uint8_t  actCnd;
+  uint8_t  actWndMin, actWndMaj;   // wound counts after a TREAT action
   uint32_t evWsId;
   uint8_t  actDn;
   int8_t   actTot;
@@ -424,38 +454,57 @@ struct GameEvent {
   int8_t   encTotal;
   uint8_t  encLoot[5];
   int8_t   encPenLL, encPenRad;
+  uint8_t  encPenRes[5];  // resources taken by a hazard (0=Wat 1=Fod 2=Ful 3=Med 4=Scr)
   uint8_t  encEnds;
-  uint8_t  encItemType;   // typed item dropped (loot table roll)
+  uint8_t  encPenWndMin, encPenWndMaj;  // wounds inflicted by a hazard
+  uint8_t  encItemType;   // typed item granted (node "item" loot entry or loot-table roll)
   uint8_t  encItemQty;
+  uint8_t  encItemType2;  // second typed item, when a node grants both
+  uint8_t  encItemQty2;
   uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
 
+// Trades move legacy resource tokens only; typed items are not tradeable.
 struct TradeOffer {
   bool     active;
   uint8_t  fromPid;
   uint8_t  toPid;
   uint8_t  give[5];
   uint8_t  want[5];
-  uint8_t  giveSlots[4];
-  uint8_t  wantItemType[4];
-  uint8_t  wantItemQty[4];
   uint32_t expiresMs;
 };
 
 // ── Encounter engine structs ───────────────────────────────────
-#define ENC_MAX_ITEMS 3
+#define ENC_MAX_ITEMS  3
+#define ENC_KEY_LEN    24
 struct ActiveEncounter {
   uint8_t  active;          // bit 0 = in encounter, bit 7 = reachedTerminal
   uint8_t  encIdx;          // encounter file index selected at enc_start
   uint8_t  hexQ, hexR;
+  uint8_t  terrain;         // pool the file was drawn from (index into encPools)
+  uint8_t  canBank;         // current node's can_bank flag (server-authoritative)
+  char     nodeKey[ENC_KEY_LEN];  // current node in the encounter JSON
   uint8_t  pendingLoot[5];  // unbanked resource loot [Water,Food,Fuel,Med,Scrap]
   uint8_t  pendingItemType[ENC_MAX_ITEMS];
   uint8_t  pendingItemQty[ENC_MAX_ITEMS];
   uint8_t  pendingItemCount;
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
+
+// EVT_ENC_END reason codes (carried in GameEvent.encOut; serialised as text
+// by drainEvents(), mirrored by ENC_REASON_LABELS in data/network.js).
+static constexpr uint8_t ENC_END_HAZARD     = 0;
+static constexpr uint8_t ENC_END_ABORT      = 1;
+static constexpr uint8_t ENC_END_DAWN       = 2;
+static constexpr uint8_t ENC_END_DOWNED     = 3;
+static constexpr uint8_t ENC_END_DISCONNECT = 4;
+static constexpr uint8_t ENC_END_REGEN      = 5;
+static constexpr uint8_t ENC_END_COUNT      = 6;
+// Defined in encounter_engine.hpp; called from the game tick, session, and
+// regen handlers which are included earlier/later in the chain.
+static void endEncounter(int pid, uint8_t reason, bool restorePoi);
 
 struct EncPoolInfo {
   uint8_t count;
@@ -483,14 +532,13 @@ struct GameState {
   SemaphoreHandle_t mutex;
 
   uint8_t  threatClock;
-  bool     crisisState;
 
   uint32_t dayTick;
   uint16_t dayCount;
 
   uint8_t  weatherPhase;    // 0=clear 1=rain 2=storm 3=chem
-  uint16_t weatherCounter;  // ticks remaining in current phase
-  uint16_t badWeatherTicks; // consecutive weather-ticks in non-CLEAR phases
+  uint16_t weatherCounter;  // game-days remaining in current phase (decremented at dawn)
+  uint16_t badWeatherTicks; // consecutive game-days in non-CLEAR phases
 };
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
@@ -499,7 +547,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 10;
+static constexpr uint8_t  SAVE_VERSION = 12;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -509,8 +557,10 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  version;
   uint16_t dayCount;
   uint8_t  threatClock;
-  uint8_t  weatherPhase;    // was: pad
-  uint16_t weatherCounter;  // new (+2 bytes); total header: 11 bytes
+  uint8_t  weatherPhase;
+  uint16_t weatherCounter;
+  uint32_t dayTick;          // v12: resume mid-day instead of restarting the day clock
+  uint16_t badWeatherTicks;  // v12: bad-weather streak survives a reboot
 };
 
 struct __attribute__((packed)) SavePlayer {
@@ -530,7 +580,10 @@ struct __attribute__((packed)) SavePlayer {
   int8_t   movesLeft;
   uint8_t  fThreshBelow;
   uint8_t  wThreshBelow;
+  uint8_t  wounds[NUM_WOUND_TIER];
   uint8_t  used;
+  uint8_t  radClean;      // v12
+  uint8_t  llCapPenalty;  // v12
   uint8_t  surveyedMap[SURVEYED_BYTES];
 };
 
@@ -612,10 +665,6 @@ static WebFile WEB_FILES[] = {
   { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0, {} },
   { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0, {} },
   { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0, {} },
-  { "/game-config.js",             "text/javascript", "game-config.js",            nullptr, 0, {} },
-  { "/state-manager.js",           "text/javascript", "state-manager.js",          nullptr, 0, {} },
-  { "/animation-manager.js",       "text/javascript", "animation-manager.js",      nullptr, 0, {} },
-  { "/event-handlers.js",          "text/javascript", "event-handlers.js",         nullptr, 0, {} },
   { "/ui-state.js",                "text/javascript", "ui-state.js",               nullptr, 0, {} },
   { "/network.js",                 "text/javascript", "network.js",                nullptr, 0, {} },
   { "/map-decoder.js",             "text/javascript", "map-decoder.js",            nullptr, 0, {} },
@@ -626,7 +675,6 @@ static WebFile WEB_FILES[] = {
   { "/ui-panels.js",               "text/javascript", "ui-panels.js",              nullptr, 0, {} },
   { "/ui-items.js",                "text/javascript", "ui-items.js",               nullptr, 0, {} },
   { "/ui-encounter.js",            "text/javascript", "ui-encounter.js",           nullptr, 0, {} },
-  { "/van-ui.js",                  "text/javascript", "van-ui.js",                 nullptr, 0, {} },
   { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0, {} },
   { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0, {} },
 };
@@ -642,7 +690,7 @@ static uint32_t  g_bootNonce   = 0;
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
-#include "boot-assets.hpp"   // asset loading, item registry, printStatus
+#include "boot-assets.hpp"   // asset loading, item registry, loot tables
 #include "ui-display.hpp"    // K10 screens, LED, audio, boot splash (needs getItemDef from boot-assets)
 #include "usb_drive.h"       // USB MSC mode (needs canvas + canvasXxx from ui-display)
 
@@ -651,6 +699,7 @@ static uint32_t  g_bootNonce   = 0;
 #include "inventory_items.hpp"     // depends on survival_skills
 #include "survival_state.hpp"      // depends on survival_skills + inventory_items
 #include "actions_game_loop.hpp"   // depends on all 3 above
+#include "encounter_engine.hpp"    // server-side encounter JSON resolution
 
 // Network layer
 #include "network-persistence.hpp"
@@ -730,69 +779,25 @@ void setup() {
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
 
-  // Print terrain reference table
-  for (int t = 0; t < NUM_TERRAIN; t++) {
-    [[maybe_unused]] const char* visTxt = (TERRAIN_VIS[t] >= 2)   ? "+2 VHIGH "
-                       : (TERRAIN_VIS[t] == 1)  ? "+1 HIGH  "
-                       : (TERRAIN_VIS[t] == 0)  ? "standard "
-                       : (TERRAIN_VIS[t] == -1) ? "LOW r2   "
-                       : (TERRAIN_VIS[t] == -2) ? "PENALTY  "
-                       :                          "BLIND    ";
-    char mcBuf[4] = {(char)('0'+TERRAIN_MC[t]), 0};
-    [[maybe_unused]] const char* mcStr = (TERRAIN_MC[t] == 255) ? "∞" : mcBuf;
-    switch (t) {
-      case 0:   break;
-      case 1:   break;
-      case 2:   break;
-      case 3:   break;
-      case 4:   break;
-      case 5:   break;
-      case 6:   break;
-      case 7:   break;
-      case 8:   break;
-      case 9:   break;
-      case 10:  break;
-    }
-  }
-
   // ── Mutex + game state init ───────────────────────────────────
   G.mutex = xSemaphoreCreateMutex();
   if (!G.mutex) { Log.fatal("Game mutex create FAILED — halting"); for (;;) delay(1000); }
   Log.notice("Game mutex created");
 
   G.tickId = 0; G.connectedCount = 0;
-  G.threatClock = 0; G.crisisState = false;
+  G.threatClock = 0;
   G.dayTick = 0; G.dayCount = 0;
-  G.weatherPhase = WEATHER_CLEAR; G.weatherCounter = 80; G.badWeatherTicks = 0;
+  resetWeather();
   memset(groundItems, 0, sizeof(groundItems));
+  memset(encounters, 0, sizeof(encounters));
+  memset(tradeOffers, 0, sizeof(tradeOffers));
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p = G.players[i];
     p.connected = false; p.wsClientId = 0;
-    p.q = p.r = 0; p.score = 0; p.lastMoveMs = 0; p.steps = 0;
-    p.connectMs = 0;
-    memset(p.inv, 0, sizeof(p.inv));
-    p.inv[0] = 2; p.inv[1] = 1;
-    if (i == 1) { p.inv[1] = 2; }
-    if (i == 2) { p.inv[3] = 2; }
-    if (i == 3) { p.inv[1] = 2; p.inv[3] = 1; p.inv[4] = 1; }
-    memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
-    p.archetype    = (uint8_t)i;
-    p.ll = 7; p.food = 6; p.water = 6;
-    p.radiation = 0;
-    p.invSlots = ARCHETYPE_INV_SLOTS[i];
-    memcpy(p.skills, ARCHETYPE_SKILLS[i], NUM_SKILLS);
-    memset(p.invType, 0, sizeof(p.invType));
-    memset(p.invQty,  0, sizeof(p.invQty));
-    memset(p.equip,   0, sizeof(p.equip));
-    p.fThreshBelow = 0; p.wThreshBelow = 0;
-    p.encPenApplied = false; p.radClean = true;
-    p.movesLeft = (int8_t)effectiveMP(i);
+    p.q = p.r = 0; p.connectMs = 0;
+    resetSurvivor(p, (uint8_t)i);
     snprintf(p.name, sizeof(p.name), "%s%d", ARCHETYPE_NAME[i], i);
-  }
-
-  for (int i = 0; i < NUM_ARCHETYPES; i++) {
-    [[maybe_unused]] const uint8_t* sk = ARCHETYPE_SKILLS[i];
   }
 
   // ── SD card mount ─────────────────────────────────────────────
@@ -949,7 +954,6 @@ void loop() {
     Log.verbose("status: connected=%d tick=%lu freeHeap=%uKB",
                 (int)G.connectedCount, (unsigned long)G.tickId,
                 (unsigned)(ESP.getFreeHeap() / 1024));
-    printStatus();
   }
   delay(100);
 }

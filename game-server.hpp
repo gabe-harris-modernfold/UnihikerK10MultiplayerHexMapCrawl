@@ -217,7 +217,7 @@ static void setupWiFiAndServer() {
       j += ",\"dayTick\":";     j += G.dayTick;
       j += ",\"tickId\":";      j += G.tickId;
       j += ",\"tc\":";          j += G.threatClock;
-      j += ",\"crisis\":";      j += G.crisisState  ? "true" : "false";
+      j += ",\"weather\":";     j += G.weatherPhase;
       j += ",\"connected\":";   j += G.connectedCount;
       j += ",\"evtQueue\":";    j += pendingCount;
       {
@@ -328,7 +328,8 @@ static void setupWiFiAndServer() {
         j += ",\"water\":";       j += p.water;
         j += ",\"rad\":";         j += p.radiation;
         j += ",\"mp\":";          j += p.movesLeft;
-        j += ",\"encPenApplied\":"; j += p.encPenApplied ? "true" : "false";
+        j += ",\"wounds\":[";     j += p.wounds[WOUND_MINOR]; j += ",";
+                                   j += p.wounds[WOUND_MAJOR]; j += "]";
         j += ",\"resting\":";     j += p.resting       ? "true" : "false";
         j += ",\"radClean\":";    j += p.radClean      ? "true" : "false";
         j += ",\"fThreshBelow\":"; j += p.fThreshBelow;
@@ -347,10 +348,13 @@ static void setupWiFiAndServer() {
         j += "]";
         j += ",\"score\":";       j += p.score;
         j += ",\"steps\":";       j += p.steps;
+        j += ",\"llCap\":";       j += effectiveMaxLL(i);
         j += ",\"encActive\":";   j += encounters[i].active ? "true" : "false";
         if (encounters[i].active) {
           j += ",\"encQ\":";      j += encounters[i].hexQ;
           j += ",\"encR\":";      j += encounters[i].hexR;
+          j += ",\"encNode\":\""; j += encounters[i].nodeKey; j += "\"";
+          j += ",\"encCanBank\":"; j += encounters[i].canBank ? "true" : "false";
           j += ",\"encLoot\":[";
           for (int s = 0; s < 5; s++) { if (s) j += ","; j += encounters[i].pendingLoot[s]; }
           j += "]";

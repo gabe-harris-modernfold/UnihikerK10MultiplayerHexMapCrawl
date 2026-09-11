@@ -1,0 +1,149 @@
+{
+  "id": "settlement_bread_lottery_01",
+  "title": "The {{adjective}} Lottery",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The bakery is the warmest building in the settlement and the queue outside it is the whole town. It is the first of the month, which means the lottery loaf — one in every batch, marked with a cross, and whoever cuts into the cross is the winner. Everyone is in a tremendous mood. Children have been given coins. A woman near the front is crying and the people around her are congratulating her, and it is genuinely unclear which of those two things is the appropriate response.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Buy a loaf like anybody else",
+          "cost": {
+            "scrap": 1
+          },
+          "base_risk": 18,
+          "skill": 3,
+          "success_node": "the_bakehouse",
+          "hazard_id": "the_crust"
+        },
+        {
+          "label": "Go round the back to the bakehouse door",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 2,
+          "success_node": "the_bakehouse",
+          "hazard_id": "the_peel"
+        }
+      ]
+    },
+    "the_bakehouse": {
+      "text": "The bakehouse runs on wood, flour, and a great deal of organisation. There are sacks and sacks of grain, a rack of cooling loaves, a shelf of preserves, jars of lamp oil, and a locked meal-chest that is the settlement's actual treasury. The baker is a young man with white knuckles and the manner of someone counting down. On the wall, a board lists every winner by month, going back sixty years, and every name has been struck through, and at the bottom of the list, in fresh chalk, is his own.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask what the winner actually wins",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 3,
+          "success_node": "the_starter",
+          "hazard_id": "he_tells_you"
+        },
+        {
+          "label": "Look in the covered crock on the warm shelf",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_starter",
+          "hazard_id": "the_crock"
+        }
+      ]
+    },
+    "the_starter": {
+      "text": "The winner wins the job. That is all. The winner becomes the baker, and the outgoing baker goes into the crock, because the starter has to be fed and it has been fed the same way since the first winter and it is, by common agreement, the finest starter in four hundred kilometres. Nobody is coerced. Every single winner in sixty years has gone willingly, because the bread is the only reason this settlement is not a field of bones, and because being the loaf everyone eats forever is, if you think about it in the particular way this town thinks about it, rather lovely. The outgoing baker shakes your hand, hands you the treasury key as a leaving gift, and asks you to tell him honestly whether the crust this month was any good.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_crust": {
+      "text": "You bite down on the cross. The cross is baked around the token, and the token is bone, and it is somebody's, and it splits a molar clean up the middle before you understand what you have won.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_peel": {
+      "text": "You come through the back door into the swing of a three-metre oven peel carrying nine loaves at four hundred degrees. The baker apologises. The loaves do not. Two of them stay on you long enough to leave a signature.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": false
+    },
+    "he_tells_you": {
+      "text": "He tells you. He tells you all of it, in order, in detail, in the flat calm voice of a man who has had a month to rehearse it, and somewhere around the part about his predecessor you have to sit down on a flour sack and put your head between your knees while a stranger keeps talking.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_crock": {
+      "text": "You lift the cloth. The starter is alive in the way all starter is alive and also in the other way, and it is a great deal more awake than a starter should be, and it recognises a new hand immediately and comes up the side of the crock to meet it. It is warm. It is delighted. It is very, very hungry, and it does not distinguish between a baker and a customer.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Monthly",
+      "First-of-the-Month",
+      "Warm",
+      "Sixty-Year",
+      "Marked",
+      "Popular",
+      "Well-Attended",
+      "Crossed"
+    ]
+  }
+}

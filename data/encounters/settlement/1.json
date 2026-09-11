@@ -21,7 +21,7 @@
             "water": 1
           },
           "base_risk": 10,
-          "skill": 4,
+          "skill": 3,
           "success_node": "browsing",
           "hazard_id": "bad_deal"
         }

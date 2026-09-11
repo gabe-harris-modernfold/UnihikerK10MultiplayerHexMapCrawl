@@ -1,0 +1,147 @@
+{
+  "id": "marsh_wedding_01",
+  "title": "The {{adjective}} Reception",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Forty people are standing in the shallows in their best clothes, waist-deep, facing an altar made of two oil drums and a plank. The marsh has kept them beautifully — silk still white, hair still set, everyone still smiling. In the middle of the aisle, on a floating pallet lashed to a post, sits a four-tier wedding cake under an intact glass dome. Sixty years of humidity and the cake looks like it was iced this morning. The gift table is behind it, and the gifts are still wrapped.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wade up the aisle to the gift table",
+          "cost": {
+            "water": 1
+          },
+          "base_risk": 24,
+          "skill": 0,
+          "success_node": "gifts",
+          "hazard_id": "guest_list"
+        },
+        {
+          "label": "Go around the back through the bridesmaids",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "gifts",
+          "hazard_id": "taffeta_snag"
+        }
+      ]
+    },
+    "gifts": {
+      "text": "The gifts are magnificent: a sealed set of surgical steel, a case of tinned goods with a bow on it, a hand-sewn blanket, two cans of fuel wrapped in newspaper from the last week anybody printed one. You work down the table, and the whole time the congregation smiles at you, because that is what their faces do now. Only the groom is turned away, facing the altar, shoulders up around his ears. Nobody has told him anything.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Lift the dome and take the cake",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 2,
+          "success_node": "the_groom",
+          "hazard_id": "dome_pressure"
+        },
+        {
+          "label": "Tap the groom on the shoulder",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 3,
+          "success_node": "the_groom",
+          "hazard_id": "he_turns"
+        }
+      ]
+    },
+    "the_groom": {
+      "text": "He has been waiting sixty years and he is not, it turns out, dead — just extremely committed. He is also, after sixty years of marsh gas fermenting inside a sealed formal waistcoat, approximately a bomb. He turns. He sees you, in your filthy salvage gear, holding his cake. He opens his mouth to object. The objection ignites on the buttonhole lantern he has been holding all this time, and the groom distributes himself evenly across the wedding party at roughly the speed of sound. When the ringing stops you are standing in a crater of drained marsh, and the crater is full of sixty years of wedding presents that the water was hiding.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "guest_list": {
+      "text": "Halfway up the aisle a great-aunt's arm comes up out of the water and links itself through yours with the terrible strength of the very old and the very polite. Getting free costs you a strip of forearm and both of her hands, which come away still attached to you.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "taffeta_snag": {
+      "text": "You step into the middle of the bridesmaids and sixty years of waterlogged taffeta closes around your legs like a net. You go under in formal wear, thrash, and come up wearing most of a hat.",
+      "penalty": {
+        "ll": -2,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "dome_pressure": {
+      "text": "The dome has been holding back sixty years of pressurised fermentation. It lets go like a shotgun. The cake — still, technically, delicious — hits you in the chest at the speed of a thrown brick and something in your sternum makes a noise you will remember.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "he_turns": {
+      "text": "He turns too fast and the lantern swings with him. You get the leading edge of the detonation rather than the middle of it, which is the difference between a bad day and no more days. You are thrown thirty metres into the reeds, deaf, smoking gently, and wearing a boutonniere that is not yours.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Patient",
+      "Interrupted",
+      "Silken",
+      "Submerged",
+      "Long-Engaged",
+      "Best-Dressed",
+      "Unspoken",
+      "Still-Smiling"
+    ]
+  }
+}

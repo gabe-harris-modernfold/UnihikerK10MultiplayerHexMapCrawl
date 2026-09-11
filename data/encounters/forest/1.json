@@ -70,13 +70,12 @@
       "penalty": {
         "ll": -1
       },
-      "status": 8,
       "ends_encounter": false
     },
     "root_collapse": {
       "text": "The root mass shifts. You scramble back just as the hollow collapses inward.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "wound": [
         0,

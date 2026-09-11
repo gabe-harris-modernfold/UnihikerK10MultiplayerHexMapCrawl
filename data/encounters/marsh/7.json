@@ -1,0 +1,146 @@
+{
+  "id": "marsh_toll_frog_01",
+  "title": "The {{adjective}} Toll",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The only firm crossing for two kilometres is a causeway of sunken tyres, and squatting on the far end of it is a bullfrog the size of a delivery van. It has a cash box wedged under one forelimb and a hand-lettered sign balanced on its back: TOLL — 1 SCRAP OR EQUIVALENT. NO EXCEPTIONS. THANK YOU FOR YOUR BUSINESS. When it opens its mouth, what comes out is a middle-aged man's voice, warm and a little tired: \"Afternoon. Long day. Toll's a scrap.\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Pay the toll and make conversation",
+          "cost": {
+            "scrap": 1
+          },
+          "base_risk": 18,
+          "skill": 3,
+          "success_node": "crossing",
+          "hazard_id": "tongue_reflex"
+        },
+        {
+          "label": "Sprint the causeway without paying",
+          "cost": {},
+          "base_risk": 42,
+          "skill": 4,
+          "success_node": "crossing",
+          "hazard_id": "no_exceptions"
+        }
+      ]
+    },
+    "crossing": {
+      "text": "It shuffles aside with enormous courtesy and you get across. On the far bank is the reason the toll exists: a trader's handcart, tipped but intact, still loaded. \"That's Ferris's,\" the frog says, sadly. \"I look after it. He'd want it used.\" The cart holds water bladders, a fuel can and a wrapped bundle of medical supplies. The frog watches you take them with an expression that is difficult to read on a frog and very easy to read in the voice.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Ask where Ferris went",
+          "cost": {},
+          "base_risk": 33,
+          "skill": 3,
+          "success_node": "ferris",
+          "hazard_id": "it_remembers"
+        },
+        {
+          "label": "Go for the cash box while it's sentimental",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "ferris",
+          "hazard_id": "swallowed"
+        }
+      ]
+    },
+    "ferris": {
+      "text": "\"Bad question,\" says the frog, in Ferris's voice, with Ferris's little cough at the end of it. \"Eight years ago. Wasn't personal — I was hungry and he was standing there.\" It looks genuinely wretched about it. \"Thing is, I got the voice. And the toll idea. And the handwriting, look at that sign, that's lovely handwriting. Best years of my life, honestly.\" It coughs up the cash box, then, and a second box under it — Ferris's actual strongbox, kept eight years, unopened, because the frog cannot work a latch. \"Take it. I only ever wanted the job.\"",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "tongue_reflex": {
+      "text": "You hand over the scrap and its tongue goes for the movement before the rest of it can stop the reflex. It apologises immediately and profusely. Your hand is inside a frog for about a second and a half and it will be sore for a week.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "no_exceptions": {
+      "text": "The sign said NO EXCEPTIONS. The tongue takes you off the causeway at chest height and slams you into the tyres. \"I did say,\" it points out, wounded, as you peel yourself off the rubber.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "it_remembers": {
+      "text": "It gets halfway through the story and stops being able to tell whether it is remembering as the frog or as Ferris. The voice slides into something that is neither and it panics, and a panicking animal that size in shallow water is simply weather. You come out of the churn with a cracked rib and a strong distaste for the sound of your own name.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "swallowed": {
+      "text": "You get one hand on the cash box. You get the rest of you, to the waist, somewhere considerably worse. It spits you out on the bank after four seconds of hot, close, appalling darkness — \"Sorry! Sorry! Reflex!\" — and you lie there, digested at the edges, while a frog the size of a van fusses over you in a dead trader's voice.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Honest",
+      "Reasonable",
+      "Amphibian",
+      "Causeway",
+      "Standing",
+      "Posted",
+      "Nominal",
+      "Well-Lettered"
+    ]
+  }
+}

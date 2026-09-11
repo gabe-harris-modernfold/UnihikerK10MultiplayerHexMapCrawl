@@ -11,14 +11,14 @@
           "label": "State your intentions calmly.",
           "cost": {},
           "base_risk": 20,
-          "skill": 4,
+          "skill": 3,
           "success_node": "waved_through",
           "hazard_id": "guard_suspicion"
         },
         {
           "label": "Offer scrap as a toll.",
           "cost": {
-            "res": 4
+            "scrap": 1
           },
           "base_risk": 10,
           "skill": 0,
@@ -52,7 +52,7 @@
           "label": "Volunteer for the night watch.",
           "cost": {},
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "watch_reward",
           "hazard_id": "raider_probe"
         }

@@ -147,14 +147,42 @@ npm run dev
 # open http://localhost:8765/
 ```
 
-The mock serves `data/` statically, fakes `/ws` (lobby + map + player movement),
-and accepts `POST /upload?dest=/data/...` writing to
-`mock-server/uploads/<dest>` (gitignored). Run the data sync against it to
-exercise the pipeline without a board:
+The mock serves `data/` statically (with `Cache-Control: no-store`, so a plain
+reload picks up edits), fakes `/ws` (lobby + map + player movement +
+encounters), serves `GET /enc?biome=X&id=Y` from `data/encounters/`, and
+accepts `POST /upload?dest=/data/...` writing to `mock-server/uploads/<dest>`
+(gitignored). Run the data sync against it to exercise the pipeline without a
+board:
 
 ```powershell
 .\scripts\sync_data.ps1 localhost:8765
 ```
+
+### Encounter dialog dev loop
+
+Stepping onto a POI hex (the eye icon) in the mock triggers the real
+`enc_start → enc_path → GET /enc → enc_choice → enc_res → enc_bank/enc_end`
+sequence; the roll mirrors `computeEncounterDN()` + 2d6. The server is
+authoritative: `enc_choice` carries only `{ci: <choice index>}` and both the
+firmware ([encounter_engine.hpp](../encounter_engine.hpp)) and the mock read
+costs, hazards, loot and `can_bank` from the encounter JSON themselves. The
+client's copy of the JSON is for display only. Two test-only
+WebSocket messages exist in the mock (the firmware ignores them) — send them
+from the browser console:
+
+```js
+send({ t: 'dbg_enc',   biome: 'urban', id: 3 });  // open a specific encounter JSON, ignoring position/POI
+send({ t: 'dbg_force', out: 0 });                 // force the NEXT roll to fail (out: 1 = succeed)
+```
+
+Encounter JSON `skill` ids use the firmware's 5-skill enum — 0 NAVIGATE,
+1 FORAGE, 2 SCAVENGE, 3 SHELTER, 4 ENDURE. (The files were originally
+authored against a 6-skill enum that included Treat; they were migrated in
+Sept 2026. Don't reintroduce id 5.)
+
+Client module: [data/ui-encounter.js](../data/ui-encounter.js). Markup lives in
+`index.html` under `#enc-overlay`; styles under "Encounter overlay" in
+`style.css`.
 
 ## Troubleshooting
 
@@ -183,3 +211,12 @@ exercise the pipeline without a board:
   Validate game logic against real hardware.
 - **Don't `git add mock-server/uploads/` or `node_modules/`.** Both are
   ignored at the repo root.
+- **Every file under `data/img/` (one subdir deep) is loaded into the PSRAM
+  image cache at boot, capped at `MAX_IMG_CACHE = 100` (currently 95 used).**
+  Anything past the cap is silently skipped and served as 204. Pixel glyphs
+  (item fallback icons, `img/ui_glyphs.png` sprite strip) are hand-drawn ASCII
+  in `scripts/gen_pixel_glyphs.py` — edit the grids there and re-run it rather
+  than adding one PNG per glyph.
+- **`sw.js` caches `/img/*` cache-first forever.** If you change an image
+  in place (same filename), bump the `CACHE` name in `data/sw.js` or clients
+  keep the old bytes.

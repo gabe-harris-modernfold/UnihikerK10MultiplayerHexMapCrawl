@@ -55,9 +55,8 @@
     "actual_trap": {
       "text": "There is, improbably, an actual trap. Spring-loaded, chest height, very bad. The old man was not lying, which is not the outcome you prepared for.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         1,
         0

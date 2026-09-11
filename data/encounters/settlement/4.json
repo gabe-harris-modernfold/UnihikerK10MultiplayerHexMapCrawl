@@ -11,14 +11,14 @@
           "label": "Ask about the sealed cache.",
           "cost": {},
           "base_risk": 15,
-          "skill": 4,
+          "skill": 3,
           "success_node": "inside_cache",
           "hazard_id": "refused_entry"
         },
         {
           "label": "Offer medicine in trade.",
           "cost": {
-            "res": 3
+            "med": 1
           },
           "base_risk": 20,
           "skill": 1,

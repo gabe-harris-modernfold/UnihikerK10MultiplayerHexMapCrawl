@@ -13,7 +13,7 @@
             "water": 1
           },
           "base_risk": 25,
-          "skill": 5,
+          "skill": 4,
           "success_node": "midwater",
           "hazard_id": "current_drag"
         },
@@ -21,7 +21,7 @@
           "label": "Lash scrap-wood into a raft",
           "cost": {},
           "base_risk": 18,
-          "skill": 4,
+          "skill": 3,
           "success_node": "midwater",
           "hazard_id": "raft_break"
         }
@@ -44,7 +44,7 @@
           "label": "Climb the relay tower for what's stashed above",
           "cost": {},
           "base_risk": 40,
-          "skill": 5,
+          "skill": 4,
           "success_node": "tower_top",
           "hazard_id": "tower_collapse"
         },
@@ -85,9 +85,8 @@
     "current_drag": {
       "text": "An invisible subsurface current catches your legs and pulls you sideways into deeper water. You fight back to the wading line but swallow a lungful of brackish marsh water.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 2,
       "ends_encounter": false
     },
     "raft_break": {
@@ -100,7 +99,7 @@
     "tower_collapse": {
       "text": "A corroded support brace snaps under your weight. The upper section swings free and you fall six feet into the shallows, hard.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
       "wound": [
         0,
@@ -111,9 +110,8 @@
     "nest_swarm": {
       "text": "Your hand breaks through the skin of a mud-wasp nest built into the tower base. The swarm is immediate and merciless.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
-      "status": 1,
       "ends_encounter": false
     }
   },

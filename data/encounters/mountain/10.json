@@ -1,0 +1,149 @@
+{
+  "id": "mountain_tunnel_train_01",
+  "title": "The {{adjective}} Gradient",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The rail tunnel goes into the mountain at a gradient that made somebody's career and then ended it. Two hundred metres in, a freight train is stopped on the incline — twelve wagons, still coupled, still loaded, brake shoes glowing a dull cherry red after sixty years of holding. It is not stopped, you realise. It is moving. About a metre an hour, uphill, and the sound coming up the tunnel from behind the last wagon is the sound of something very large being extremely helpful.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Get in the wagons and work forward",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "the_wagons",
+          "hazard_id": "the_coupling"
+        },
+        {
+          "label": "Go up the maintenance walkway alongside",
+          "cost": {},
+          "base_risk": 21,
+          "skill": 3,
+          "success_node": "the_wagons",
+          "hazard_id": "the_clearance"
+        }
+      ]
+    },
+    "the_wagons": {
+      "text": "A pre-war freight consist is the best shop in the wasteland: sealed pallets of tinned goods, drums of fuel oil, a wagon of mixed hardware, and a guard's van with a stove, a bunk, and a first-aid locker. You load up while the floor moves under you at a metre an hour. In the guard's van, a tally is scratched into the panelling in a shaky hand — one mark per day — and it stops after eleven marks, and under it is written: IT IS PUSHING. IT THINKS IT IS HELPING. DO NOT THANK IT.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Go back along the consist and look at it",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_pusher",
+          "hazard_id": "the_last_wagon"
+        },
+        {
+          "label": "Get to the locomotive and release the brakes",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 3,
+          "success_node": "the_pusher",
+          "hazard_id": "brakes_off"
+        }
+      ]
+    },
+    "the_pusher": {
+      "text": "It fills the tunnel. It has been in the dark long enough to have taken the tunnel's shape, and it has its shoulder — an approximation of a shoulder — against the buffer beam of the last wagon, and it has been pushing this train up a one-in-forty gradient for sixty years because on the first day it saw a stalled train and understood, in whatever way it understands anything, that a train is supposed to go. It has never asked for anything. It has never eaten a soul. It is four hundred metres from the summit portal and it has about nine hundred years to go at current pace and it is not remotely discouraged. When it sees you it stops, very carefully, so as not to jolt the load, and waits for you to finish taking whatever you need off its train. Then it leans back in.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_coupling": {
+      "text": "You cross between wagons at exactly the wrong metre of the hour. The slack runs in, the coupling closes, and your foot is in the gap when sixty tonnes of stock decides to be one tonne shorter.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_clearance": {
+      "text": "The walkway was built for men who had been told the trains would be stationary. There is a hand's width between the wagon side and the tunnel wall, and you are in it when the train shifts, and for four seconds you are a thing being measured.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_last_wagon": {
+      "text": "You come round the end of the last wagon with a lamp, and the lamp is a mistake, because the thing behind the buffer beam has not seen light in sixty years and it flinches — politely, apologetically, minutely — and a minute flinch from something that size puts the whole consist back four metres with you underneath the solebar.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "brakes_off": {
+      "text": "You get to the cab and you wind the brakes off, and for one glorious second the train runs free and the pushing becomes momentum. Then the gradient remembers itself. Twelve loaded wagons go backwards down a one-in-forty into the dark, over the thing that was helping, which does not move, which was never going to move, and the sound the consist makes arriving is a sound you take with you.",
+      "penalty": {
+        "ll": -5,
+        "food": -1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "One-in-Forty",
+      "Helped",
+      "Unfinished",
+      "Patient",
+      "Pushed",
+      "Slow",
+      "Loaded",
+      "Nine-Hundred-Year"
+    ]
+  }
+}

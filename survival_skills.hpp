@@ -13,18 +13,55 @@ void ledFlash(uint8_t r, uint8_t g, uint8_t b);
 static uint8_t effectiveMaxLL(int pid);
 
 // ── Skill check resolution ────────────────────────────────────────────────────
-// Call while holding G.mutex (reads player skills/status).
-static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, uint8_t bonus) {
+
+// Standing modifier applied to every skill check, from wounds and archetype.
+//   Major wounds  → −1 each on ALL skills.
+//   Minor wounds  → −1 each on Endure only.
+//   Endurer (5)   → +1 on Endure (archetype trait).
+// Call while holding G.mutex.
+static int checkSkillMod(const Player& p, uint8_t skill) {
+  int mod = -(int)p.wounds[WOUND_MAJOR];
+  if (skill == (uint8_t)SK_ENDURE) {
+    mod -= (int)p.wounds[WOUND_MINOR];
+    if (p.archetype == 5) mod++;
+  }
+  return mod;
+}
+
+// Call while holding G.mutex (reads player skills/wounds).
+// `bonus` is a situational modifier from the caller; wound and archetype
+// modifiers are folded in here so no call site can forget them.
+static CheckResult resolveCheck(int pid, uint8_t skill, uint8_t dn, int bonus) {
   uint32_t rnd  = esp_random();
+  uint8_t  sk   = (skill < NUM_SKILLS) ? skill : 0;
+  const Player& p = G.players[pid];
   CheckResult r;
   r.r1       = 1 + (int)(rnd         % 6);
   r.r2       = 1 + (int)((rnd >> 8)  % 6);
   r.dn       = (int)dn;
-  r.skillVal = (int)G.players[pid].skills[skill < NUM_SKILLS ? skill : 0];
-  r.mods   = (int)bonus;
-  r.total  = r.r1 + r.r2 + r.skillVal + r.mods;
-  r.success = (r.total >= r.dn);
+  r.skillVal = (int)p.skills[sk];
+  r.mods     = bonus + checkSkillMod(p, sk);
+  r.total    = r.r1 + r.r2 + r.skillVal + r.mods;
+  r.success  = (r.total >= r.dn);
   return r;
+}
+
+// ── Wound helpers ─────────────────────────────────────────────────────────────
+// Apply a wound of the given tier, capped at WOUND_MAX_EACH.  Returns the
+// number actually inflicted (0 if the tier was already full).
+static uint8_t addWound(Player& p, int tier, uint8_t count) {
+  if (tier < 0 || tier >= NUM_WOUND_TIER || count == 0) return 0;
+  uint8_t before = p.wounds[tier];
+  uint8_t after  = (uint8_t)min((int)before + (int)count, (int)WOUND_MAX_EACH);
+  p.wounds[tier] = after;
+  return (uint8_t)(after - before);
+}
+
+// Heal one wound of the given tier.  Returns true if one was cleared.
+static bool healWound(Player& p, int tier) {
+  if (tier < 0 || tier >= NUM_WOUND_TIER || p.wounds[tier] == 0) return false;
+  p.wounds[tier]--;
+  return true;
 }
 
 // ── §4 Resource economy helpers ───────────────────────────────────────────────

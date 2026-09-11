@@ -11,7 +11,7 @@
           "label": "Climb the rope ladder to the deck",
           "cost": {},
           "base_risk": 20,
-          "skill": 5,
+          "skill": 4,
           "success_node": "deck",
           "hazard_id": "ladder_snap"
         },
@@ -93,7 +93,7 @@
     "ladder_snap": {
       "text": "Two rungs from the top the ladder's top fitting tears free of the gunwale. You drop into the shallows and one leg hits the sunken hull hard.",
       "penalty": {
-        "ll": -7
+        "ll": -3
       },
       "wound": [
         1,
@@ -104,9 +104,8 @@
     "hull_slice": {
       "text": "A torn hull plate hidden beneath the waterline opens a deep gash across your calf. The sting is immediate and fierce.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -116,16 +115,15 @@
     "list_shift": {
       "text": "The barge settles another foot to port with a grinding shudder. You're thrown into the bulkhead and slide toward the open railing. You catch the crane arm and hang there until the movement stops.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
       "ends_encounter": false
     },
     "gas_pocket": {
       "text": "The hatch releases a pocket of trapped methane. Your eyes water and your lungs seize for a terrifying few seconds before you stagger back into open air.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

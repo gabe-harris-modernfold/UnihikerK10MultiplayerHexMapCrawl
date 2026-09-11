@@ -1,22 +1,6 @@
 #pragma once
 // ── Player message handlers: pick, move, name, wifi, check, regen, erase, act, settings ──
 
-// ── TEST: fill inventory with random items on spawn ──────────────────────────
-// To remove: delete this #define and the two #ifdef TEST_FILL_INV blocks below
-#define TEST_FILL_INV
-#ifdef TEST_FILL_INV
-static void debugFillInventory(Player& p) {
-  if (itemCount == 0) return;
-  for (int s = 0; s < p.invSlots; s++) {
-    uint8_t idx     = (uint8_t)(esp_random() % itemCount);
-    const ItemDef& it = itemRegistry[idx];
-    p.invType[s] = it.id;
-    p.invQty[s]  = (it.maxStack > 1) ? (uint8_t)((esp_random() % it.maxStack) + 1) : 1;
-  }
-}
-#endif
-// ─────────────────────────────────────────────────────────────────────────────
-
 static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* ap = strstr(data, "\"arch\""); if (!ap) return;
@@ -36,8 +20,6 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
   }
 
   bool assigned = false;
-  struct { int16_t q, r; uint8_t terrain; int8_t visLvl; int visR, attempts, connCount;
-           char name[12]; } snap = {};
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
     Player& p = G.players[arch];
@@ -46,91 +28,25 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
       p.wsClientId = client->id();
       p.connectMs  = millis();
 
+      // Three ways into a slot:
+      //   downed    — LL 0: a fresh survivor, but lifetime score/steps carry over
+      //   reconnect — a live survivor (moved or scored) picks up where they left off
+      //   new       — an untouched slot: full init, score reset
       bool isDowned    = (p.ll == 0);
       bool isReconnect = (p.score > 0 || p.steps > 0) && !isDowned;
-      int attempts = 0;
-      if (isDowned) {
-        // Respawn: player died — preserve lifetime score/steps, reset health+inventory, new spawn
-        int32_t  savedScore = p.score;
-        uint32_t savedSteps = p.steps;
-        do {
-          p.q = (int16_t)(esp_random() % MAP_COLS);
-          p.r = (int16_t)(esp_random() % MAP_ROWS);
-          attempts++;
-          uint8_t st = G.map[p.r][p.q].terrain;
-          if (TERRAIN_MC[st] != 255 && !TERRAIN_IS_RAD[st]) break;
-        } while (TERRAIN_MC[G.map[p.r][p.q].terrain] == 255 && attempts < 50);
-        p.lastMoveMs = 0;
-        memset(p.inv, 0, sizeof(p.inv));
-        p.inv[0] = 2; p.inv[1] = 1; p.inv[2] = 3; p.inv[3] = 3; p.inv[4] = 3;
-        if (arch == 1) { p.inv[1] = 2; }
-        if (arch == 2) { p.inv[3] = 5; }
-        if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }
+      if (!isReconnect) {
+        uint16_t savedScore = isDowned ? p.score : 0;
+        uint16_t savedSteps = isDowned ? p.steps : 0;
+        resetSurvivor(p, (uint8_t)arch);
+        pickSpawnHex(p);
         snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
-        p.archetype    = (uint8_t)arch;
-        p.ll           = 7;
-        p.food         = 6;
-        p.water        = 6;
-        p.radiation    = 0;
-        p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
-        memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-        memset(p.invType,     0, sizeof(p.invType));
-        memset(p.invQty,      0, sizeof(p.invQty));
-        memset(p.equip,       0, sizeof(p.equip));
-        memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
-        p.fThreshBelow = 0; p.wThreshBelow = 0;
-        p.movesLeft    = (int8_t)effectiveMP(arch);
-        p.actUsed      = false;
-        p.encPenApplied = false;
-        p.radClean     = true;
-        { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
-        #ifdef TEST_FILL_INV
-        debugFillInventory(p);
-        #endif
+        int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1;
+        for (int i = 0; i < n; i++) grantRandomStartItem(p);
         p.score = savedScore;
         p.steps = savedSteps;
-      } else if (!isReconnect) {
-        // New player: spawn on passable terrain and full init
-        do {
-          p.q = (int16_t)(esp_random() % MAP_COLS);
-          p.r = (int16_t)(esp_random() % MAP_ROWS);
-          attempts++;
-          uint8_t st = G.map[p.r][p.q].terrain;
-          if (TERRAIN_MC[st] != 255 && !TERRAIN_IS_RAD[st]) break;
-        } while (TERRAIN_MC[G.map[p.r][p.q].terrain] == 255 && attempts < 50);
-        p.lastMoveMs = 0;
-        p.score = 0; p.steps = 0;
-        memset(p.inv, 0, sizeof(p.inv));
-        p.inv[0] = 2; p.inv[1] = 1; p.inv[2] = 3; p.inv[3] = 3; p.inv[4] = 3;
-        if (arch == 1) { p.inv[1] = 2; }
-        if (arch == 2) { p.inv[3] = 5; }
-        if (arch == 3) { p.inv[1]=2; p.inv[3]=4; p.inv[4]=4; }
-        snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
-        p.archetype    = (uint8_t)arch;
-        p.ll           = 7;
-        p.food         = 6;
-        p.water        = 6;
-        p.radiation    = 0;
-        p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
-        memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-        memset(p.invType,     0, sizeof(p.invType));
-        memset(p.invQty,      0, sizeof(p.invQty));
-        memset(p.equip,       0, sizeof(p.equip));
-        memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
-        p.fThreshBelow = 0; p.wThreshBelow = 0;
-        p.movesLeft    = (int8_t)effectiveMP(arch);
-        p.actUsed      = false;
-        p.encPenApplied = false;
-        p.radClean     = true;
-        { int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1; for (int i=0;i<n;i++) grantRandomStartItem(p); }
-        #ifdef TEST_FILL_INV
-        debugFillInventory(p);
-        #endif
-      } else {
-        // Reconnecting player: preserve score, position, inventory — just clear transient state
-        p.actUsed      = false;
-        p.encPenApplied = false;
       }
+      // Reconnecting players keep score, position, inventory and wounds;
+      // only the resting flag is transient.
       p.resting = false;
 
       G.connectedCount++;
@@ -138,15 +54,10 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 
       { GameEvent ev = {}; ev.type = EVT_JOINED; ev.pid = (uint8_t)arch;
         ev.q = p.q; ev.r = p.r; enqEvt(ev); }
-
-      snap.q       = p.q; snap.r = p.r;
-      snap.terrain = G.map[p.r][p.q].terrain;
-      snap.visLvl  = TERRAIN_VIS[snap.terrain];
-      snap.visR    = (snap.visLvl <= -3) ? 0 : (snap.visLvl == -2) ? 1 : (snap.visLvl == -1) ? 2 :
-                     (snap.visLvl == 0) ? VISION_R : (snap.visLvl == 1) ? VISION_R+1 : VISION_R+2;
-      snap.attempts    = attempts;
-      snap.connCount   = G.connectedCount;
-      memcpy(snap.name, p.name, 12);
+      Log.notice("PICK arch=%d name=%s q=%d r=%d %s connected=%d",
+                 arch, p.name, (int)p.q, (int)p.r,
+                 isDowned ? "respawn" : (isReconnect ? "reconnect" : "new"),
+                 (int)G.connectedCount);
       assigned = true;
     }
     xSemaphoreGive(G.mutex);
@@ -303,20 +214,26 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     Log.notice("Regen: removing %s and %s", SAVE_MAP_F, SAVE_PLY_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
+    // A new world: nothing from the old one may leak through.
+    for (int i = 0; i < MAX_PLAYERS; i++)
+      if (encounters[i].active) endEncounter(i, ENC_END_REGEN, /*restorePoi=*/false);
+    memset(tradeOffers, 0, sizeof(tradeOffers));
+    memset(groundItems, 0, sizeof(groundItems));
     generateMap();
     G.dayCount = 1; G.dayTick = 0; G.threatClock = 0;
+    resetWeather();
     for (int i = 0; i < MAX_PLAYERS; i++) {
       Player& pl = G.players[i];
       if (!pl.connected) continue;
+      // Connected survivors start the new world fresh on Open Scrub, keeping
+      // only name, score, and steps.
+      resetSurvivor(pl, pl.archetype);
       for (int tries = 0; tries < 200; tries++) {
         int nq = esp_random() % MAP_COLS;
         int nr = esp_random() % MAP_ROWS;
         if (G.map[nr][nq].terrain == 0) { pl.q = (int16_t)nq; pl.r = (int16_t)nr; break; }
       }
-      pl.ll = 7; pl.food = 4; pl.water = 4;
-      pl.radiation = 0;
-      pl.actUsed = false; pl.resting = false;
-      pl.movesLeft = (int8_t)effectiveMP(i);
+      G.map[pl.r][pl.q].footprints |= (1 << i);
     }
     xSemaphoreGive(G.mutex);
   }
@@ -343,26 +260,15 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
       p.resting    = false;
       G.connectedCount--;
     }
-    // Wipe all persistent fields; setting name[0]='\0' makes saveGame() write sp.used=0
-    memset(p.name,        0, sizeof(p.name));
-    memset(p.inv,         0, sizeof(p.inv));
-    memset(p.invType,     0, sizeof(p.invType));
-    memset(p.invQty,      0, sizeof(p.invQty));
-    memset(p.equip,       0, sizeof(p.equip));
-    memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
-    memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
-    p.archetype    = (uint8_t)arch;
-    p.invSlots     = ARCHETYPE_INV_SLOTS[arch];
-    p.ll           = 0;
-    p.food         = 0; p.water     = 0;
-    p.radiation = 0;
-    p.score        = 0; p.steps     = 0;
-    p.movesLeft    = 0;
-    p.actUsed      = false;
-    p.encPenApplied = false;
-    p.radClean     = true;
-    p.fThreshBelow = 0; p.wThreshBelow = 0;
-    p.lastMoveMs   = 0;
+    if (encounters[arch].active) endEncounter(arch, ENC_END_DISCONNECT, /*restorePoi=*/true);
+    // Wipe all persistent fields; setting name[0]='\0' makes saveGame() write
+    // sp.used=0, and LL 0 makes the next pick take the fresh-survivor path.
+    resetSurvivor(p, (uint8_t)arch);
+    memset(p.name, 0, sizeof(p.name));
+    memset(p.inv,  0, sizeof(p.inv));
+    p.ll = 0; p.food = 0; p.water = 0;
+    p.score = 0; p.steps = 0; p.encCount = 0;
+    p.movesLeft = 0;
     xSemaphoreGive(G.mutex);
   }
 
@@ -391,7 +297,6 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
 
 static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  // Note: "cnd" field (condTgt) removed — Treat action no longer exists
   const char* ap = strstr(data, "\"a\""); if (!ap) return;
   const char* av = strchr(ap + 3, ':');   if (!av) return;
   int actType = atoi(av + 1);
@@ -413,7 +318,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
         return;
       }
-      handleAction(slot, (uint8_t)actType, mpParam, 0,
+      handleAction(slot, (uint8_t)actType, mpParam,
                    survBuf, sizeof(survBuf), &survLen);
     }
     xSemaphoreGive(G.mutex);

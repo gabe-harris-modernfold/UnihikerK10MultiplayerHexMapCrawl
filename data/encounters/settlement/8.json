@@ -1,0 +1,140 @@
+{
+  "id": "settlement_wall_01",
+  "title": "The {{adjective}} Wall",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The wall is four metres high and it goes all the way round, and it is not made of stone. It is made of people — set in courses, packed with clay, faced flush, each one with a name and two dates scratched into the render above them. It is beautiful work. It is also, you notice as you walk the length of it, making conversation: a low continuous mutter out of four thousand set mouths, mostly complaints about the weather and the pointing.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk the wall to the gate and talk to the gatekeeper",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 3,
+          "success_node": "the_gate",
+          "hazard_id": "the_muttering"
+        },
+        {
+          "label": "Look for a gap and come in over the top",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_gate",
+          "hazard_id": "the_coping"
+        }
+      ]
+    },
+    "the_gate": {
+      "text": "Inside is a settlement doing well for itself — granary full, cisterns full, a forge, a clinic, a market that trades honestly with anybody who comes through the gate. The gatekeeper is delighted to see a traveller and sells you supplies at a fair price. The wall, she explains, is the census. Everyone who has ever lived here is in it. When you die here, you go in the wall, and your name goes on the render, and you keep working — because a wall that talks is a wall that tells you what it hears coming across the flat at night, and nothing has taken this settlement in sixty years.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask the wall what it wants",
+          "cost": {},
+          "base_risk": 31,
+          "skill": 3,
+          "success_node": "the_north_face",
+          "hazard_id": "it_answers"
+        },
+        {
+          "label": "Look at the bare stretch on the north face",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_north_face",
+          "hazard_id": "the_bare_stretch"
+        }
+      ]
+    },
+    "the_north_face": {
+      "text": "The wall wants the pointing done. That is it. That is the entire grievance of four thousand dead: the north face was rendered in a hurry in a wet autumn eleven years ago and it has been drumming hollow ever since, and every single soul in that stretch has spent a decade listening to their own wall not sound right, and they cannot get anybody to take it seriously because the living have a granary to run. You spend an afternoon with a hawk and a trowel and four thousand voices offering advice, most of it contradictory, all of it heartfelt. When you finish, the wall goes quiet — properly quiet, the first time in eleven years — and then it tells you, all at once, in one enormous agreeable murmur, exactly where every cache, every buried tin and every hidden strongbox in a day's walk is, because four thousand dead people between them saw where everything went.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_muttering": {
+      "text": "You walk too close and the muttering resolves, briefly, into individual voices, and one of them is talking about you, and it is being extremely specific about the state of your boots, your posture, and something private you have never told anybody.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_coping": {
+      "text": "You go over the top. The coping course is the most recent course, and the most recent course is not fully set, and it gives under your hands in a way that fresh work does. You arrive inside the settlement wearing a considerable amount of last month's arrivals.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "it_answers": {
+      "text": "You ask. Four thousand people answer at once, at length, with feeling, and none of them have had a new listener in years. The volume is not the problem. The problem is that they are all answering a different question, and about six hundred of them are answering the one you did not ask out loud.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_bare_stretch": {
+      "text": "There is a gap in the courses on the north face, nine feet wide, rendered smooth and blank with no names on it. It is not unfinished. It is *reserved* — and the moment you are close enough to work that out, the mutter along the whole north face stops, and four thousand voices consider you at once, and the wall says your height out loud.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Talking",
+      "Four-Thousand",
+      "Named",
+      "Coursed",
+      "Muttering",
+      "Census",
+      "Well-Faced",
+      "Hollow-Sounding"
+    ]
+  }
+}

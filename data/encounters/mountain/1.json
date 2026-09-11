@@ -35,7 +35,7 @@
           "label": "Push deeper to the main work face.",
           "cost": {},
           "base_risk": 60,
-          "skill": 5,
+          "skill": 4,
           "success_node": "work_face",
           "hazard_id": "gas_pocket"
         }
@@ -68,7 +68,7 @@
     "partial_collapse": {
       "text": "A section of the roof gives way. You're buried to the knees before you claw free.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "wound": [
         0,
@@ -79,10 +79,9 @@
     "gas_pocket": {
       "text": "A gas pocket ruptures ahead. The air burns. You turn back, half-conscious, and collapse at the chamber entrance.",
       "penalty": {
-        "ll": -2,
+        "ll": -1,
         "radiation": 2
       },
-      "status": 2,
       "ends_encounter": true
     }
   },

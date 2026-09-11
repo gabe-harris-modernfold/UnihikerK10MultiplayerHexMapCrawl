@@ -11,7 +11,7 @@
           "label": "Dig out the driver's door with your hands",
           "cost": {},
           "base_risk": 18,
-          "skill": 5,
+          "skill": 4,
           "success_node": "cab",
           "hazard_id": "ash_cave"
         },
@@ -50,7 +50,7 @@
           "label": "Tunnel to the cargo bed through the rear seat",
           "cost": {},
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "cargo_bed",
           "hazard_id": "full_collapse"
         },
@@ -91,17 +91,15 @@
     "ash_cave": {
       "text": "The ash wall collapses inward as you clear the last foot of debris, burying your arms to the elbow. You wrench free but your lungs are full of fine particulate.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 2,
       "ends_encounter": false
     },
     "hatch_edge": {
       "text": "The hatch tears free suddenly and its ragged edge opens a sharp cut across your palm. Blood makes everything slippery for the next hour.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -116,9 +114,8 @@
     "fuel_ignite": {
       "text": "A spark from your prying tool catches residue vapour from the cracked tank. A small fireball singes your forearm and eyebrows. You roll back fast.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 1,
       "wound": [
         0,
         1

@@ -284,10 +284,11 @@ function _msgSync(msg) {
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
-  // Re-render char-sheet if open — ensures wounds/status reflect fresh server state (BUG-10)
+  // Re-render char-sheet if open — ensures wounds/inventory reflect fresh server state (BUG-10)
   if (document.getElementById('char-overlay')?.classList.contains('open')) {
     renderInventory?.();
     renderEquipment?.();
+    if (myId >= 0) renderWounds?.(players[myId]);
   }
 }
 
@@ -307,6 +308,7 @@ function _msgState(msg) {
     if (pd.mp  !== undefined) p.mp  = pd.mp;
     if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
     if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
+    if (pd.wnd)               p.wnd = pd.wnd;   // [minor, major] wound counts
     if (pd.vm  !== undefined) p.vm  = pd.vm;    // valid move bitmask
     if (pd.rt  !== undefined) {
       p.rest = !!pd.rt;
@@ -322,6 +324,7 @@ function _msgState(msg) {
   // the item icon requests on every cycle. Inventory is already up-to-date from item_result.
   if (document.getElementById('char-overlay')?.classList.contains('open')) {
     renderEquipment?.();
+    if (myId >= 0) renderWounds?.(players[myId]);
   }
   if (msg.gs) _applyGameState(msg.gs);
   updateSidebar();
@@ -334,8 +337,11 @@ function _handleSelfVis() {
   const _me = players[myId];
   const _cell = gameMap[_me.r]?.[_me.q];
   if (_cell) {
-    const _mc = TERRAIN[_cell.terrain]?.mc;
-    if (_mc && _mc !== 255) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * _mc;
+    // Mirrors movePlayer(): terrain MC plus the weather movement penalty.
+    // Equipment-unlocked terrain (river, cliffs) uses the server's MC 2.
+    let _mc = TERRAIN[_cell.terrain]?.mc;
+    if (_mc === 255) _mc = 2;
+    if (_mc) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * (_mc + (WEATHER_MOVE_PENALTY[weatherPhase] ?? 0));
   }
   // If the current hex still has a resource after the move, collection was
   // blocked. The only server-side reason is a full inventory — notify the player.
@@ -412,6 +418,7 @@ function handleMsg(msg) {
       break;
     case 'err':
       console.error('[ERR] Server error:', msg);
+      globalThis._onEncError?.(msg.msg);  // unlocks the encounter dialog if a choice was refused
       break;
   }
   buildAgentState();
@@ -544,7 +551,7 @@ function _applyDawnToPlayer(ev) {
   p.mp    = ev.mp;
   if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT; }
   p.rest = false;
-  p.au   = 0;
+  if (ev.wnd) p.wnd = ev.wnd;
   if (ev.pid === myId) {
     _tickNarrativeEffects();
     if (uiResting.val && ev.expd < 0) showShelterWarning();
@@ -624,16 +631,10 @@ function _handleShelterSuccess(ev) {
 }
 
 function _narrateActResult(ev, actNm) {
-  const actNames = ['Forage','Water','','Scavenge','Shelter','Treat','Survey','Rest'];
+  const actNames = ['Forage','Water','Treat','Scavenge','Shelter','','Survey','Rest'];
   const outNames = ['','Success','Partial','Failed'];
   const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
   narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
-}
-
-function _trackActSlot(ev) {
-  if (ev.out === AO_BLOCKED) return;
-  const meIsScout = (players[ev.pid]?.arch ?? -1) === 4;
-  if (!(ev.a === ACT_SURVEY && meIsScout)) players[ev.pid].au = 1;
 }
 
 function _evAct(ev) {
@@ -650,7 +651,9 @@ function _evAct(ev) {
   if (ev.sd !== undefined && ev.sd !== 0)
     players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
   if (ev.pid === myId) _narrateActResult(ev, actNm);
-  _trackActSlot(ev);
+  // TREAT reports the post-roll wound counts; keep the char sheet in step.
+  if (ev.wnd) players[ev.pid].wnd = ev.wnd;
+  if (ev.md) players[ev.pid].inv[3] = Math.max(0, (players[ev.pid].inv[3] ?? 0) + ev.md);
   if (ev.a === ACT_REST && ev.pid === myId) restSent = false;
   updateSidebar();
 }
@@ -748,6 +751,12 @@ function _evEncRes(ev) {
     if (p) {
       if (ev.penLL)  p.ll  = Math.max(0, (p.ll  ?? 0) + ev.penLL);
       if (ev.penRad) p.rad = Math.max(0, (p.rad ?? 0) + ev.penRad);
+      // Hazard resource losses — server sends what it actually took.
+      if (Array.isArray(ev.penRes)) {
+        ev.penRes.forEach((v, ri) => {
+          if (v > 0) p.inv[ri] = Math.max(0, (p.inv?.[ri] ?? 0) - v);
+        });
+      }
     }
     updateSidebar();
     globalThis._onEncResult?.(ev);
@@ -788,7 +797,7 @@ function _evEncBank(ev) {
 
 function _evEncEnd(ev) {
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
-  const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected' };
+  const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected', regen: 'world remade' };
   const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
   addLog(`<span class="log-check-fail">\u25a0 ${escHtml(who)} encounter ended (${reasonTxt})</span>`);
   if (ev.pid === myId) {
@@ -798,6 +807,7 @@ function _evEncEnd(ev) {
       dawn:       '☀ Dawn finds you still rummaging. The moment is gone.',
       downed:     '☠ You fall where you stand. The ruin keeps its secrets.',
       disconnect: '☠ The thread snaps. The scene dissolves around you.',
+      regen:      '☠ The ground shifts. The place you were exploring no longer exists.',
     };
     showToast(ENC_END_FLAVOR[ev.reason] ?? `☠ The scene closes: ${reasonTxt}.`);
     globalThis._onEncEnd?.(ev);

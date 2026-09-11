@@ -50,9 +50,8 @@
     "methane_blast": {
       "text": "The door opens and the methane plume meets the igniter and you exit this situation backward, on fire, briefly airborne. The Stink status is the least of your immediate concerns but it will be the most lasting.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 128,
       "ends_encounter": true
     }
   },

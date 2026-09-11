@@ -1,0 +1,139 @@
+{
+  "id": "dunes_lifeguard_01",
+  "title": "The {{adjective}} Watch",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A lifeguard tower stands on the crest of a dune, freshly painted, flag flying, facing a sea that stopped being a sea sixty years ago. The lifeguard is up there — sun-cured, whistle in what used to be a mouth, rescue can across the knees, scanning the sand with the slow professional sweep of someone on hour four of a shift. At the base of the tower: a cooler, a supply locker, and a chalked board reading CONDITIONS: CALM. NO SWIMMING AFTER DARK.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Raid the locker while it watches the water",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "the_locker",
+          "hazard_id": "the_whistle"
+        },
+        {
+          "label": "Wave to it. Ask about conditions.",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 3,
+          "success_node": "the_locker",
+          "hazard_id": "the_rescue"
+        }
+      ]
+    },
+    "the_locker": {
+      "text": "Sixty years of a beach patrol's consumables, kept in shade and sealed: water by the gallon, ration packs, burn cream, a fuel can for the quad bike rusting behind the tower. The cooler still has ice in it, which raises questions you decide not to pursue. Out on the flat, about eighty metres down the slope, something breaks the surface of the sand — an arm, waving, unmistakably in trouble — and goes under again.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Go and help",
+          "cost": {
+            "water": 1
+          },
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_save",
+          "hazard_id": "the_undertow"
+        },
+        {
+          "label": "Stay put and watch what the lifeguard does",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 3,
+          "success_node": "the_save",
+          "hazard_id": "the_second_swimmer"
+        }
+      ]
+    },
+    "the_save": {
+      "text": "It goes down the dune like it was fired, hits the flat in four strides, and brings him out — a thin man in swimming trunks, spluttering sand, alive. It puts him in the recovery position, checks him over, walks him back up to the tower, and gives him a blanket and a stern word about the flags. Then it puts him down at the top of the dune and goes back to the chair. In about forty minutes he will wander down onto the flat and go under again, because he has been doing that since the war, and it has been fishing him out every time, roughly nine thousand saves, and neither of them has ever once discussed it. He is extremely grateful each time. His towel is stuffed with everything he has ever had on him when he drowned, and he insists you take it.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_whistle": {
+      "text": "Your hand is in the locker when the whistle goes — one short blast at close range, at a volume the equipment was never rated for. Something in your inner ear gives up and the dune tips ninety degrees for a while.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_rescue": {
+      "text": "You wave. It reads the wave as a distress signal and performs a textbook rescue on a person who is standing up, on dry land, not drowning. The rescue can hits you across the sternum, the carry is not gentle, and the recovery position is applied with force.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_undertow": {
+      "text": "You get thirty metres onto the flat before you understand why nobody walks on it. The sand moves the way water moves when something under it is deciding. You go in to the chest, breathe some, and claw back to the slope with your throat full of grit and your ribs complaining.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "the_second_swimmer": {
+      "text": "You stay put, and that is when you notice the rest of them: eleven more arms, spread across the flat, all waving, all in trouble, all of them out there at once. The lifeguard sees them too. The lifeguard can only save one at a time. The lifeguard has known this for sixty years, and the sound it makes when it chooses is not a sound a person should stand near.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Long",
+      "Unbroken",
+      "Dry",
+      "Ninth-Thousand",
+      "Sunlit",
+      "Diligent",
+      "Fourth-Hour",
+      "Flagged"
+    ]
+  }
+}

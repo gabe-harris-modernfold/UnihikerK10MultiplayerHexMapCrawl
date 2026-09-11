@@ -1,6 +1,6 @@
 #pragma once
 // ── boot-assets.hpp ─────────────────────────────────────────────────────────
-// Boot splash, SD→PSRAM asset loading, item registry parser, periodic status.
+// Boot splash, SD→PSRAM asset loading, item registry parser, loot tables.
 // Included by Esp32HexMapCrawl.ino before gameplay .hpp files.
 
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
@@ -80,64 +80,6 @@ static void loadWebFilesToRAM() {
   dir.close();
 }
 
-// ── Periodic player status table ───────────────────────────────
-static void printStatus() {
-  struct Snap {
-    bool     on; int16_t q, r; uint16_t score, steps;
-    uint8_t  terrain;
-    char     name[12]; uint32_t connectMs;
-    uint8_t  ll, food, water, radiation;
-    uint8_t  archetype;
-    uint8_t  skills[NUM_SKILLS];
-  } snap[MAX_PLAYERS];
-  [[maybe_unused]] uint32_t tick = 0;
-  [[maybe_unused]] uint8_t  snapTC = 0;
-  [[maybe_unused]] uint16_t snapDay = 0;
-  uint32_t nowMs = millis();
-
-  uint16_t mapRes[6] = {0};
-
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
-  tick    = G.tickId;
-  snapTC  = G.threatClock;
-  snapDay = G.dayCount;
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    Player& p       = G.players[i];
-    snap[i].on      = p.connected;
-    snap[i].q       = p.q; snap[i].r = p.r;
-    snap[i].score   = p.score; snap[i].steps = p.steps;
-    snap[i].terrain = G.map[p.r][p.q].terrain;
-    snap[i].connectMs = p.connectMs;
-    memcpy(snap[i].name, p.name, 12);
-    snap[i].ll        = p.ll;
-    snap[i].food      = p.food;
-    snap[i].water     = p.water;
-    snap[i].radiation = p.radiation;
-    snap[i].archetype = p.archetype;
-    memcpy(snap[i].skills, p.skills, NUM_SKILLS);
-  }
-  for (int r = 0; r < MAP_ROWS; r++)
-    for (int c = 0; c < MAP_COLS; c++) {
-      uint8_t res = G.map[r][c].resource;
-      if (res > 0 && res < 6) mapRes[res]++;
-    }
-  xSemaphoreGive(G.mutex);
-
-  [[maybe_unused]] uint32_t upSec = nowMs / 1000;
-
-
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    if (!snap[i].on) continue;
-    uint8_t  t      = snap[i].terrain < NUM_TERRAIN ? snap[i].terrain : 0;
-    int8_t   vl     = TERRAIN_VIS[t];
-    [[maybe_unused]] int      effVR  = (vl <= -3) ? 0 : (vl == -2) ? 1 : (vl == -1) ? 2 : (vl == 0) ? VISION_R : (vl == 1) ? VISION_R + 1 : VISION_R + 2;
-    uint32_t sessMs = nowMs - snap[i].connectMs;
-    [[maybe_unused]] uint32_t sessSec = sessMs / 1000;
-    [[maybe_unused]] uint8_t  arch   = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
-
-  }
-}
-
 // ── Item registry parser ──────────────────────────────────────────────────────
 static void trimRight(char* s) {
   int n = (int)strlen(s);
@@ -158,8 +100,7 @@ static void stripComment(char* s) {
 }
 
 static EffectId parseEffectId(const char* v) {
-  if      (strncmp(v, "unlock_action", 13) == 0) return EFX_UNLOCK_ACTION;
-  else if (strncmp(v, "reveal_fog",    10) == 0) return EFX_REVEAL_FOG;
+  if      (strncmp(v, "reveal_fog",    10) == 0) return EFX_REVEAL_FOG;
   else if (strncmp(v, "narrative",      9) == 0) return EFX_NARRATIVE;
   else if (strncmp(v, "threat_mod",    10) == 0) return EFX_THREAT_MOD;
   else if (strncmp(v, "cure_status",   11) == 0) return EFX_CURE_STATUS;
@@ -207,7 +148,7 @@ static void loadItemRegistry() {
 
     if (strncmp(t, "[item]", 6) == 0 || strncmp(t, "[Item]", 6) == 0) {
       commitItem(cur, hasItem);
-      cur = ItemDef{}; cur.maxStack = 1; cur.tradeable = true;
+      cur = ItemDef{}; cur.maxStack = 1;
       hasItem = true;
       continue;
     }
@@ -242,8 +183,8 @@ static void loadItemRegistry() {
       else                                       cur.equipSlot = EQUIP_NONE;
     }
     else if (strcmp(key, "stack")    == 0) cur.maxStack     = (uint8_t)max(1, atoi(val));
-    else if (strcmp(key, "trade")    == 0) cur.tradeable    = (strncmp(val, "yes", 3) == 0 || val[0] == '1');
-    else if (strcmp(key, "value")    == 0) cur.tradeValue   = (uint8_t)atoi(val);
+    // "trade" / "value" are flavour keys for the item catalogue; trading moves
+    // resource tokens only, so the firmware has no use for them.
     else if (strcmp(key, "ll")       == 0) cur.statMods[STAT_LL]      = (int8_t)atoi(val);
     else if (strcmp(key, "food")     == 0) cur.statMods[STAT_FOOD]    = (int8_t)atoi(val);
     else if (strcmp(key, "water")    == 0) cur.statMods[STAT_WATER]   = (int8_t)atoi(val);

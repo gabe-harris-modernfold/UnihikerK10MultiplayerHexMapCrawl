@@ -43,7 +43,8 @@ static void drainEvents() {
 
   if (snapCount > 0) Log.verbose("drainEvents: %d pending", snapCount);
 
-  char buf[256];
+  // Longest payload is enc_res at ~207 chars worst case; 288 leaves headroom.
+  char buf[288];
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
@@ -122,12 +123,13 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
           "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
-          "\"rad\":%d,\"expd\":%d}",
+          "\"rad\":%d,\"expd\":%d,\"wnd\":[%d,%d]}",
           ev.pid, (int)ev.dawnDay,
           (int)ev.dawnF, (int)ev.dawnW, (int)ev.dawnLL,
           (int)ev.dawnMP, (int)ev.dawnLLDelta,
           (int)ev.dawnFth, (int)ev.dawnWth,
-          (int)ev.radR, (int)ev.dawnExpD);
+          (int)ev.radR, (int)ev.dawnExpD,
+          (int)ev.dawnWndMin, (int)ev.dawnWndMaj);
         ws.textAll(buf, len);
         // K10 event log — only once per day (pid==0 guards double-logging for 6-player dawn)
         if (ev.pid == 0) {
@@ -152,7 +154,7 @@ static void drainEvents() {
 
       case EVT_ACTION: {
         // K10 event log — brief action summary
-        static const char* ACT_SHORT[8] = {"FORAGE","WATER","?","SCAV","SHELTER","?","SURVEY","REST"};
+        static const char* ACT_SHORT[8] = {"FORAGE","WATER","TREAT","SCAV","SHELTER","?","SURVEY","REST"};
         const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
         Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d mp=%d fd=%d wd=%d scoreD=%d",
                    (int)ev.pid, aShort, (int)ev.actType, (int)ev.actOut,
@@ -165,13 +167,16 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
           "\"mp\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
-          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,\"scoreD\":%d}",
+          "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,"
+          "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
           (int)ev.actNewMP, (int)ev.actNewLL,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
           (int)ev.actDn, (int)ev.actTot,
           (int)ev.radD, (int)ev.radR,
-          (int)ev.actCnd, (int)ev.actScrapD, (int)ev.actScoreD);
+          (int)ev.actCnd, (int)ev.actScrapD,
+          (int)ev.actMedD, (int)ev.actWndMin, (int)ev.actWndMaj,
+          (int)ev.actScoreD);
         ws.textAll(buf, len);
         break;
 
@@ -269,10 +274,6 @@ static void drainEvents() {
         break;
       }
 
-      case EVT_NAME:
-        Log.verbose("EVT name pid=%d (piggybacks on state broadcast)", (int)ev.pid);
-        break; // name changes broadcast via broadcastState(); no dedicated event message needed
-
       case EVT_ENC_START:
         Log.notice("EVT enc_start pid=%d q=%d r=%d",
                    (int)ev.pid, (int)ev.q, (int)ev.r);
@@ -300,13 +301,17 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_res\",\"pid\":%d,\"out\":%d,\"skill\":%d,"
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
-          "\"it\":%d,\"iq\":%d,\"penLL\":%d,\"penRad\":%d,"
+          "\"it\":%d,\"iq\":%d,\"it2\":%d,\"iq2\":%d,\"penLL\":%d,\"penRad\":%d,"
+          "\"penRes\":[%d,%d,%d,%d,%d],\"penWnd\":[%d,%d],"
           "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.encItemType, (int)ev.encItemQty,
+          (int)ev.encItemType2, (int)ev.encItemQty2,
           (int)ev.encPenLL, (int)ev.encPenRad,
+          ev.encPenRes[0], ev.encPenRes[1], ev.encPenRes[2], ev.encPenRes[3], ev.encPenRes[4],
+          (int)ev.encPenWndMin, (int)ev.encPenWndMaj,
           (int)ev.encEnds,
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);
@@ -351,9 +356,9 @@ static void drainEvents() {
       }
 
       case EVT_ENC_END: {
-        static const char* REASON[] = {"hazard","abort","dawn","downed","disconnect"};
-        const char* reason = (ev.encOut < 5) ? REASON[ev.encOut] : "?";
-        if (ev.encOut == 3 || ev.encOut == 4)
+        static const char* REASON[ENC_END_COUNT] = {"hazard","abort","dawn","downed","disconnect","regen"};
+        const char* reason = (ev.encOut < ENC_END_COUNT) ? REASON[ev.encOut] : "?";
+        if (ev.encOut == ENC_END_DOWNED || ev.encOut == ENC_END_DISCONNECT)
           Log.warning("EVT enc_end pid=%d reason=%s", (int)ev.pid, reason);
         else
           Log.notice("EVT enc_end pid=%d reason=%s", (int)ev.pid, reason);
@@ -361,13 +366,13 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"enc_end\",\"pid\":%d,\"q\":%d,\"r\":%d,\"reason\":\"%s\"}",
           ev.pid, (int)ev.q, (int)ev.r, reason);
         ws.textAll(buf, len);
-        if (ev.encOut == 1) {
+        if (ev.encOut == ENC_END_ABORT) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d aborted encounter", (int)ev.pid);
           k10LogAdd(lb);
-        } else if (ev.encOut == 2) {
+        } else if (ev.encOut == ENC_END_DAWN) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d enc ended (dawn)", (int)ev.pid);
           k10LogAdd(lb);
-        } else if (ev.encOut == 3) {
+        } else if (ev.encOut == ENC_END_DOWNED) {
           char lb[34]; snprintf(lb, sizeof(lb), "P%d DOWNED in encounter", (int)ev.pid);
           k10LogAdd(lb);
         }

@@ -57,7 +57,7 @@
           "label": "Leave the van and take the ramp up",
           "cost": {},
           "base_risk": 30,
-          "skill": 5,
+          "skill": 4,
           "success_node": "roof_level",
           "hazard_id": "ambush_stairwell"
         }
@@ -97,9 +97,8 @@
     "fuel_ignition": {
       "text": "A spark from a corroded fitting catches fumes pooled under the vehicle. The flash is brief but brutal — your forearm takes the burn, and you spend the next ten minutes patting out your sleeve.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         0,
         1
@@ -109,9 +108,8 @@
     "ramp_collapse": {
       "text": "The ramp surface gives way under your boot — a metre-wide section of concrete drops to the level below. You grab a support pillar and hang for a sickening moment before hauling yourself back to solid ground.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -126,9 +124,8 @@
     "ambush_stairwell": {
       "text": "Two figures step out of the stairwell door the moment you reach for it. They are not looking to talk. You take a blow across the kidneys before you manage to fight clear and reach the roof ramp instead.",
       "penalty": {
-        "ll": -12
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         1,
         1

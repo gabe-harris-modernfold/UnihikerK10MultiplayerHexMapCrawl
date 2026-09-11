@@ -82,17 +82,15 @@
     "lock_shock": {
       "text": "The dangling wire is live — a capacitor discharge from a backup battery slams through you when your tool makes contact. Your teeth ring for ten minutes after.",
       "penalty": {
-        "ll": -7
+        "ll": -3
       },
-      "status": 8,
       "ends_encounter": false
     },
     "squatter_ambush": {
       "text": "Whoever nested in that bullpen comes back before you finish. A thrown chunk of concrete catches you across the temple before you can retreat to cover.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         0,
         1
@@ -102,9 +100,8 @@
     "resident_attack": {
       "text": "The nest's owner — gaunt, feverish, armed with a fire extinguisher — is already inside the armory and charges the moment you enter. You take a hard blow across the ribs before you can break away.",
       "penalty": {
-        "ll": -12
+        "ll": -5
       },
-      "status": 1,
       "wound": [
         1,
         1

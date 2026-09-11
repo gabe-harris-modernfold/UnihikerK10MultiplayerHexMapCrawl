@@ -19,7 +19,7 @@
           "label": "Wade through carefully on foot",
           "cost": {},
           "base_risk": 15,
-          "skill": 5,
+          "skill": 4,
           "success_node": "wade_through",
           "hazard_id": "submerged"
         }
@@ -42,17 +42,15 @@
     "surf_failure": {
       "text": "The car door catches a submerged obstacle and pitches you face-first into the current. You surface one block downstream, choking, covered in the full catalogue of what this water contains. The 'Filthy' condition is almost certainly the least of your current problems, but it is the one you can name.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 128,
       "ends_encounter": true
     },
     "submerged": {
       "text": "A submerged step drops you from hip-deep to chest-deep without warning. You go under briefly and inhale something you cannot uncatalogued. The bacterial content of your current situation is significant.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 128,
       "ends_encounter": false
     }
   },

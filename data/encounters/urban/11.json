@@ -11,7 +11,7 @@
           "label": "Use ammo to kill it from range",
           "cost": {},
           "base_risk": 40,
-          "skill": 5,
+          "skill": 4,
           "success_node": "centipede_dead",
           "hazard_id": "centipede_reaches_you"
         },
@@ -81,9 +81,8 @@
     "centipede_reaches_you": {
       "text": "A segment catches you before you can finish it — armoured mandibles closing on your pack and one shoulder simultaneously. You tear free and pump everything you have left into it at close range. The wound is significant and you're going to feel this for days.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -93,9 +92,8 @@
     "quicksand_caught": {
       "text": "The quicksand takes your boot and keeps it. You pull free with one sock, landing hard on the dry side. The centipede is already reorienting. You run. You are inside, technically. Also shoeless on one foot. You improvise.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

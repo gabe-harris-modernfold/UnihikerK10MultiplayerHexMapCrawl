@@ -1,0 +1,144 @@
+{
+  "id": "urban_ice_cream_van_01",
+  "title": "The {{brand}} Van",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "You hear it four streets away: eight bars of a children's jingle, slowed to about half speed, repeating. The van is parked across a junction with its serving hatch open and its compressor running — actually running, sixty years on, off a solar array somebody bolted to the roof with great care and no skill. The driver is still at the wheel, mummified into a shape that suggests he died mid-jingle and had no complaints about it. The freezer wells behind the counter are full and frosted over and you cannot see what is in them.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb through the hatch and raid the freezer",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_wells",
+          "hazard_id": "hatch_drop"
+        },
+        {
+          "label": "Cut the solar rig off the roof instead",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 3,
+          "success_node": "the_wells",
+          "hazard_id": "roof_gives"
+        }
+      ]
+    },
+    "the_wells": {
+      "text": "The first two wells are exactly what they should be: sealed tubs, syrup bottles, a case of wafers, and beneath them the driver's own stash — tinned food, a full water jug, a fuel can for the generator he never needed. The third well is deeper than the van is tall and the frost on its lid is thick and undisturbed and there is a padlock on it, from the inside. The jingle keeps going. Under the jingle, very faint, something in the third well is humming along.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Open the third well",
+          "cost": {},
+          "base_risk": 47,
+          "skill": 2,
+          "success_node": "the_third_well",
+          "hazard_id": "cold_burn"
+        },
+        {
+          "label": "Cut the compressor and take the whole cooling unit",
+          "cost": {},
+          "base_risk": 43,
+          "skill": 3,
+          "success_node": "the_third_well",
+          "hazard_id": "thaw"
+        }
+      ]
+    },
+    "the_third_well": {
+      "text": "Eleven children, stacked like cordwood, frosted white, in party clothes. The driver put them in there on the last day, and rigged the panels, and sat down at the wheel, and kept the jingle running so they wouldn't be frightened. They sit up. All at once. They are cheerful, they are delighted to see you, they are sixty years hungry and they have been hearing that jingle the entire time. They swarm past you — not at you, past you — into the street, laughing, in a pack, and whatever they find out there first is not going to enjoy the next few minutes. They leave you the van. In the driver's lockbox: sixty years of takings, a med kit, and a note that just says THANK YOU FOR YOUR CUSTOM.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "hatch_drop": {
+      "text": "The counter is sixty years of syrup and you go through the hatch faster than intended, forehead first into the soft-serve machine, which is still pressurised and which empties its entire reservoir into your open mouth at eleven bar.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "roof_gives": {
+      "text": "The solar rig is bolted through a roof panel that has been rusting since before your parents. Panel, rig and you arrive in the serving area together, and one of the bolts arrives through your shoulder.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "cold_burn": {
+      "text": "The lid is at minus forty and your palms decide to stay on it. Getting free costs you both hands' worth of skin and makes a sound you would rather not have heard from your own body.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "thaw": {
+      "text": "You cut the compressor. The jingle stops. In the silence, eleven small padlocked-from-inside things begin, unhurriedly, to thaw, and you get about ninety seconds of head start, and you spend eleven of them working out which way the door opens.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "brand": [
+      "Mister Frosty's",
+      "Sunny Cone",
+      "Happy Mile",
+      "Whippy Bill's",
+      "Two Scoop",
+      "Chill Bros",
+      "Nice Cream",
+      "Old Tubby's"
+    ]
+  }
+}

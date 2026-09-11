@@ -1,0 +1,141 @@
+{
+  "id": "marsh_bog_choir_01",
+  "title": "The {{adjective}} Choir",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Eleven bodies stand upright in the peat, sunk to the ribs, arranged in a neat half-circle facing east. The tannin has turned them to brown leather — lips pulled back, jaws hinged wide, teeth perfect. They are humming. It is a low four-part chord and it has been going on, by the look of the moss on their shoulders, for about sixty years. Each one wears a pack. The packs look dry.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Cut a pack free from the nearest tenor",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "packs",
+          "hazard_id": "jaw_snap"
+        },
+        {
+          "label": "Hum along and hope you count as a section",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 0,
+          "success_node": "packs",
+          "hazard_id": "wrong_key"
+        }
+      ]
+    },
+    "packs": {
+      "text": "The chord does not change. You work the straps loose and the leather crumbles into your hands like burnt paper. Inside: sealed ration tins, a bladder of filtered water, a bundle of trade scrap. The bodies keep humming through it all, patient as furniture. Then the fourth one from the left stops humming, swivels its head on a neck that makes a sound like wet rope, and says, clearly: \"Finally. Do you have any idea how long I've needed to sneeze?\"",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Ask the talking one what it wants",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 3,
+          "success_node": "the_sneeze",
+          "hazard_id": "the_sneeze_hits"
+        },
+        {
+          "label": "Loot the remaining ten very quickly",
+          "cost": {},
+          "base_risk": 48,
+          "skill": 2,
+          "success_node": "the_sneeze",
+          "hazard_id": "peat_grab"
+        }
+      ]
+    },
+    "the_sneeze": {
+      "text": "Its name was Delroy. It was a bass. It has been holding a sneeze since the bombs fell because the chord requires eleven voices and it did not want to let the others down. It asks you, politely, to step back. You step back. Delroy sneezes. The sneeze removes Delroy's head, the upper third of his ribcage, and a considerable amount of the marsh behind him, and reveals the strongbox the choir had been standing around this entire time. The remaining ten adjust seamlessly into a ten-part arrangement. They sound, if anything, better.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "jaw_snap": {
+      "text": "The tenor's jaw comes down on your forearm with sixty years of stored tension behind it. The teeth are still very good. You pry the head off at the neck and it keeps humming in your hand, muffled, through a mouthful of you.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "wrong_key": {
+      "text": "You come in a full tone flat. Every head in the half-circle turns to look at you at the same time, which is a physical sensation as much as a visual one, and something in your chest decides to stop working properly for a while.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_sneeze_hits": {
+      "text": "You do not step back far enough. Delroy is apologetic about it afterward — as apologetic as a voice coming from a torso can be — but the pressure wave puts you flat in the peat and something warm and sixty-years-old goes into your eyes.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "peat_grab": {
+      "text": "You get greedy and lean too far over the seventh body. Its arm comes up out of the peat — not to attack, you realise later, but to steady itself — and the weight of it drags you down chest-deep into cold black sludge that tastes like a penny.",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Humming",
+      "Preserved",
+      "Patient",
+      "Eleven-Part",
+      "Tannin",
+      "Unbroken",
+      "Leather",
+      "Sustained"
+    ]
+  }
+}

@@ -19,7 +19,7 @@
           "label": "Jump over it as it passes",
           "cost": {},
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "dodged_weave",
           "hazard_id": "tangled_and_stripped"
         }
@@ -36,9 +36,8 @@
     "tangled_and_stripped": {
       "text": "It takes you off your feet and rolls over you in a dense, matted embrace. The teeth catch on your pack straps. By the time you've wrenched yourself free and sat up gasping, it has carried something away with it — something from your pack, gone into the scrub with the Weave, unrecoverable. You check your inventory with the quiet dread of someone who already knows.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 4,
       "ends_encounter": true
     }
   },

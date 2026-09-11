@@ -36,17 +36,15 @@
     "spore_exposure": {
       "text": "You don't hold your breath long enough. The spores are already in the air at threshold concentrations when you push through the door and you breathe before you mean to. The fever starts within minutes — a specific, fungal fever, different from the usual kind. The Sour Cream Tub, if you have one, knows what to do about this.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 8,
       "ends_encounter": false
     },
     "prolonged_exposure": {
       "text": "The systematic search takes longer than the fast approach. More exposure time means more spore uptake. By the time you find the mask, you're already symptomatic. The fever is there. The Sour Cream Tub, if you have one, is what you want right now.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 8,
       "ends_encounter": false
     }
   },

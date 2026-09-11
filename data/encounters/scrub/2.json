@@ -96,7 +96,7 @@
     "ambush": {
       "text": "The owner is still here — gaunt, desperate, and armed with a length of rebar. You take a blow across the shoulder before managing to talk them down and agree to split the find.",
       "penalty": {
-        "ll": -7
+        "ll": -3
       },
       "wound": [
         1,
@@ -107,9 +107,8 @@
     "false_bottom": {
       "text": "The false bottom is rigged to a pressure plate that fires a spring-loaded spike into your forearm as you lift it. The spike is short but the puncture is deep.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -119,9 +118,8 @@
     "scorpion_nest": {
       "text": "You upend the marker stone onto a colony of pale scorpions. Two land on your wrist before you can shake them loose, and the stings are already swelling.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
-      "status": 1,
       "ends_encounter": false
     }
   },

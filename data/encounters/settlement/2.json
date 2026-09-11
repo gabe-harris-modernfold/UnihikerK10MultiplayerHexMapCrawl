@@ -11,7 +11,7 @@
           "label": "Wait your turn at the crank.",
           "cost": {},
           "base_risk": 10,
-          "skill": 5,
+          "skill": 4,
           "success_node": "water_drawn",
           "hazard_id": "rope_snap"
         },
@@ -19,7 +19,7 @@
           "label": "Offer labor for priority access.",
           "cost": {},
           "base_risk": 20,
-          "skill": 4,
+          "skill": 3,
           "success_node": "water_drawn",
           "hazard_id": "overexertion"
         }

@@ -21,7 +21,7 @@
             "food": 2
           },
           "base_risk": 20,
-          "skill": 5,
+          "skill": 4,
           "success_node": "sasquatch_pleased",
           "hazard_id": "food_rejected"
         }
@@ -44,9 +44,8 @@
     "crushed_by_skate": {
       "text": "The skate catches a downslope just as you turn to run and the Sasquatch achieves a brief, terrible speed. It clips you on the way past — not maliciously, just geometrically. The impact is total and immediate. You get up considerably worse than you went down.",
       "penalty": {
-        "ll": -7
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -56,9 +55,8 @@
     "food_rejected": {
       "text": "It sniffs the offering carefully, makes a sound you can only describe as 'critically unimpressed', and skates directly at you. The next few seconds are mainly about survival. It doesn't pursue far, but you lose significant ground and arrive at your next position via a direction you did not plan.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 1,
       "ends_encounter": true
     }
   },

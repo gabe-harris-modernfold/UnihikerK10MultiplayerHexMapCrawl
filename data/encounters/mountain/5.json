@@ -1,0 +1,147 @@
+{
+  "id": "mountain_cheese_cave_01",
+  "title": "The {{adjective}} Cellar",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Cold air and a smell like a punch in the sinuses lead you to a cave mouth shored up with old timber. Inside, on rack after rack running back into the dark, are wheels — hundreds of them, each the size of a cartwheel, each turned and brushed and rubbed with brine. A small round man in an apron is working his way along row eleven with a mallet and a listening expression, tapping each wheel and nodding. \"Sixty-one years,\" he says, without turning round. \"You cannot rush it. People tried to rush it. People were wrong.\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Compliment the operation and ask for a taste",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 3,
+          "success_node": "the_racks",
+          "hazard_id": "the_tasting"
+        },
+        {
+          "label": "Load a wheel onto your back and go",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "the_racks",
+          "hazard_id": "rack_eleven"
+        }
+      ]
+    },
+    "the_racks": {
+      "text": "The cellar is a working dairy and a working larder both: salt by the sack, a spring running clean through a stone trough, sealed crocks of preserved food, lamp oil, and a medicine chest an alpine cheesemaker would have been fined for not keeping. The wheels themselves are worth a fortune in trade. They are also, now that you are close, not quite round, and the rind on the nearest one has a pattern in it that your eye keeps trying to read as a face.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Cut one open",
+          "cost": {},
+          "base_risk": 43,
+          "skill": 2,
+          "success_node": "the_rind",
+          "hazard_id": "the_cut"
+        },
+        {
+          "label": "Ask what the milk comes from up here",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 3,
+          "success_node": "the_rind",
+          "hazard_id": "he_shows_you"
+        }
+      ]
+    },
+    "the_rind": {
+      "text": "It is people. It has always been people. The village came up the valley in the first winter, cold and starving and unanimous, and he did the only thing he knew how to do properly, which was to preserve them, and he has been turning and brushing and salting his neighbours for sixty-one years with a craftsman's total tenderness. He is not ashamed. He is, if anything, insulted by your expression. He cuts a sliver and offers it and it is — there is no honest way around this — the finest thing you have ever eaten. He wraps you a parcel of the 61-year, opens the good cellar, and gives you the run of it, because he has been waiting six decades for one single customer with a palate.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_tasting": {
+      "text": "He is delighted and he is generous and the sliver he cuts is from the 61-year, which is aggressive in ways dairy should not be. It goes down like a live thing. Your body spends the next hour holding a vote on whether to keep it.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "rack_eleven": {
+      "text": "A wheel of aged anything is forty kilos and rack eleven is stacked five high. You take one from the middle. The other four take you, and the rack takes all of it, and you end up under about two hundred kilos of cheese with your leg at a shape.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_cut": {
+      "text": "The knife goes in and stops on something that is not curd, and the resistance travels up the blade into your wrist and tells your arm exactly what it has found before your eyes get there. What comes out with the blade is worse. You are sick for a long time, in front of a man who is watching you be sick about his life's work.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "he_shows_you": {
+      "text": "\"Milk,\" he says, \"is not the hard part,\" and he takes you to the back of the cave to show you the hard part, and the hard part is a pen, and the pen is occupied, and what is in the pen has been kept alive and lactating and entirely aware for sixty-one years. It is very pleased to have a visitor. It reaches through the bars for you with something that used to be an arm.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Sixty-One-Year",
+      "Brined",
+      "Turned",
+      "Alpine",
+      "Salted",
+      "Patient",
+      "Well-Kept",
+      "Cold"
+    ]
+  }
+}

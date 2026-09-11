@@ -1,0 +1,136 @@
+{
+  "id": "settlement_surgery_01",
+  "title": "The {{adjective}} Surgery",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A hand-painted sign over a shipping container reads SURGERY — BEST OUTCOMES IN THE REGION — and underneath, in smaller letters, ASSISTANT WANTED. Through the doorway you can see an operation in progress: a patient on a table, a boy of about fourteen up to the wrists in him, and behind the boy, directing, a woman with no arms at all. \"Left. Your left. LEFT. Now go around it. No — around. Thank you. Well done.\" The patient is awake and following along with interest.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wait politely until they finish",
+          "cost": {},
+          "base_risk": 19,
+          "skill": 3,
+          "success_node": "the_dispensary",
+          "hazard_id": "the_spectator"
+        },
+        {
+          "label": "Help the boy. He is clearly drowning.",
+          "cost": {},
+          "base_risk": 33,
+          "skill": 2,
+          "success_node": "the_dispensary",
+          "hazard_id": "you_are_the_hands"
+        }
+      ]
+    },
+    "the_dispensary": {
+      "text": "The dispensary is the best-stocked room you have walked into in a year: distilled spirit, boiled instruments in sealed cloth, sutures, poultices, a whole shelf of pre-war ampoules kept cold in a buried crock, and clean water by the barrel. On the wall, a tally: eleven hundred procedures, forty-one deaths. In a wasteland that is not a good record, it is an impossible one. The boy scrubs down, shaking. He is the ninth assistant. The previous eight all left, and the surgeon has never once raised her voice, and the tally has never once gone up because of an assistant.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask how she lost the arms",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_record",
+          "hazard_id": "the_answer"
+        },
+        {
+          "label": "Ask about the forty-one",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "the_record",
+          "hazard_id": "the_forty_one"
+        }
+      ]
+    },
+    "the_record": {
+      "text": "She took them off herself. Eleven years ago, in this room, talking an assistant through it at the elbow and then the shoulder, because she had worked out that the single greatest cause of death in her surgery was her own hands — a tremor she could not stop and would not risk — and because the settlement had exactly one person who knew the anatomy and no spare. So she removed the problem and kept the knowledge. Eleven hundred procedures. Forty-one deaths. Every one of the forty-one is from before the elbows. She would like you to understand that this is not a tragedy, it is a *correction*, and she is deeply irritated that people keep going quiet when she explains it. She pays you in medicine to carry a supply list to the next settlement, and it is a generous rate, and she tells you to eat something.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_spectator": {
+      "text": "You watch the whole thing from the doorway. It goes well. It goes well in a way that involves a bone saw, a bucket, and a running commentary delivered in the tone of a woman helping a child with long division, and by the end of it you are sitting on the step outside with your head down and somebody's cheerful patient asking if you are all right.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "you_are_the_hands": {
+      "text": "You step in. She switches to directing you without missing a syllable, and you discover that being the hands is a great deal worse than being the surgeon, because the surgeon knows what is about to happen and you find out at the same time as your fingers do. Something inside the patient shifts and something inside you goes with it.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_answer": {
+      "text": "She tells you, and she demonstrates the tremor on the stump to show you what she was working with, and the stump moves the way a hand would have moved, and your own hands decide independently that they would like to be somewhere else. You put one through the instrument tray getting them there.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_forty_one": {
+      "text": "The forty-one are not buried. They are catalogued, in the back room, in the cold, in numbered order, because she is still studying them and will be until she is certain she has learned everything each one had to teach. She opens the door to show you. She is proud of the labelling. You are in that room for eleven seconds and you will be in it again every time you close your eyes for a month.",
+      "penalty": {
+        "ll": -5
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Armless",
+      "Best-Outcome",
+      "Eleven-Hundred",
+      "Steady",
+      "Corrected",
+      "Careful",
+      "Container",
+      "Well-Stocked"
+    ]
+  }
+}

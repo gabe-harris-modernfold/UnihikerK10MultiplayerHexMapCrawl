@@ -1,0 +1,144 @@
+{
+  "id": "marsh_mud_market_01",
+  "title": "The {{adjective}} Market",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "There is a market on the mudflat and every single thing in it is made of mud. Mud stalls under mud awnings. Mud crates of mud fruit. A mud butcher with a mud cleaver standing over a mud carcass, all of it the same wet grey, all of it very slightly melting and continuously being pushed back into shape from underneath. Nine mud traders turn to look at you at once, with the same face, because whatever is doing this has only ever seen one face and is doing its best. A mud voice says, from no mouth in particular: \"BUSINESS?\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Say yes and start haggling",
+          "cost": {},
+          "base_risk": 27,
+          "skill": 3,
+          "success_node": "the_stalls",
+          "hazard_id": "handshake"
+        },
+        {
+          "label": "Walk the row looking for anything that isn't mud",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_stalls",
+          "hazard_id": "wrong_stall"
+        }
+      ]
+    },
+    "the_stalls": {
+      "text": "Under the counters, where the sculpting gets lazy, the real things are: tinned food, a water bladder, a coil of cable, three fuel canisters. Trade goods from every caravan that ever stopped here and did not leave. It is the worst haggler you have ever met — it accepts your first offer, then improves the offer, then gives you the stall as well, because it does not understand money, it understands *trading*, and it has been desperate for someone to trade with for a very long time.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Ask to see the good stuff out the back",
+          "cost": {},
+          "base_risk": 39,
+          "skill": 3,
+          "success_node": "the_warehouse",
+          "hazard_id": "the_butcher"
+        },
+        {
+          "label": "Take everything and offer nothing in return",
+          "cost": {},
+          "base_risk": 51,
+          "skill": 2,
+          "success_node": "the_warehouse",
+          "hazard_id": "bad_faith"
+        }
+      ]
+    },
+    "the_warehouse": {
+      "text": "Out the back is a mud warehouse and inside the mud warehouse is the stock room and the stock room is the inside of the thing itself. Eleven caravans' worth of genuine goods, held in a gullet the size of a barn, sorted with obsessive care into rows it copied from a market it watched once, sixty years ago, from underneath. It is so pleased you asked. It presents each item personally. At the far end, arranged with real tenderness on a mud shelf, are nine human skulls — its models, its reference material, the faces it has been wearing badly since. It offers you those too. You decline. It is not offended; it is a professional.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "handshake": {
+      "text": "You shake on the deal. The hand does not let go so much as continue — up your wrist, up the forearm, cool and heavy and setting like clay — and you tear your arm out of a mud sleeve that keeps the shape of it, fingerprints and all, and stands there afterward shaking hands with nobody.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "wrong_stall": {
+      "text": "You reach under the fishmonger's counter. The ice is mud, the fish are mud, but the hooks are real, and there are a great many of them, and they are all pointed the wrong way for taking a hand back out.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_butcher": {
+      "text": "The butcher demonstrates. It has watched butchery and it has understood the rhythm of butchery without ever understanding the point of it, and it demonstrates on the nearest available carcass, and today the nearest available carcass is standing next to it holding a shopping list.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "bad_faith": {
+      "text": "It does not understand money. It understands trading, and it understands, immediately and completely, that you have taken without giving, and the entire market — nine traders, four awnings, the whole flat you are standing on — stops being a market and becomes what it always was, which is a floor with an opinion.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Mud",
+      "Grey",
+      "Melting",
+      "Nine-Faced",
+      "Copied",
+      "Sunday",
+      "Well-Stocked",
+      "Sculpted"
+    ]
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "id": "dunes_last_lap_01",
+  "title": "The {{adjective}} Lap",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "You feel it before you hear it: a vibration through the dune, coming round. Then eleven vehicles crest the ridge in formation — buggies, a stripped saloon, something that used to be a bread van — running flat out on a circuit that has no track, no markers, and no finish line, because the salt flat they were racing on is forty metres under the sand. The drivers are strapped in and cured dry. They hold their lines. They take a corner that is not there with absolute precision and go past you at ninety, and the wind of it knocks your hat off, and then they come round again four minutes later.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wait for the gap and loot the pit area on the ridge",
+          "cost": {},
+          "base_risk": 23,
+          "skill": 3,
+          "success_node": "the_pits",
+          "hazard_id": "the_backmarker"
+        },
+        {
+          "label": "Stand in the racing line and make them stop",
+          "cost": {},
+          "base_risk": 41,
+          "skill": 4,
+          "success_node": "the_pits",
+          "hazard_id": "no_brakes"
+        }
+      ]
+    },
+    "the_pits": {
+      "text": "The pit lane is still laid out on the ridge, sixty years of drums and toolboxes and jack stands half-buried, and it is the single best haul of fuel and hardware you have seen in a month: full cans, sealed oil, a tyre stack, a crate of rations somebody packed for a long day out. On the timing board, a mechanical lap counter is still turning over. It reads 8,411. It clacks up to 8,412 as the field goes past.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Wave the chequered flag from the timing stand",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 3,
+          "success_node": "the_podium",
+          "hazard_id": "the_restart"
+        },
+        {
+          "label": "Loot the leader's pit box while they're on the far side",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_podium",
+          "hazard_id": "pit_wall"
+        }
+      ]
+    },
+    "the_podium": {
+      "text": "The flag comes down and eleven cars stop dead in a line, in order, perfectly spaced, in absolute silence. Nobody gets out, because nobody can, but the whole field has been waiting eight thousand four hundred and twelve laps for somebody to end this and they are not going to be graceless about it. The winner's car flashes its lights twice. The rest do the same, one after another, down the order — and then the bread van, which has been dead last for sixty years and has never once complained, gives a short, cheerful blast of its horn. The prize money is in the timing stand safe, in scrap and medicine and a sealed crate marked TROPHY, and it is a great deal, because the entry fees were steep and nobody ever collected.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_backmarker": {
+      "text": "You time the gap off the leaders and forget the bread van, which is a full lap down and therefore arrives when nothing should be arriving. It clips you at hip height at sixty and you cartwheel down the back of the ridge into the toolboxes.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "no_brakes": {
+      "text": "You stand in the line with both arms up. They do not stop. They do not swerve either — they *part*, eleven vehicles splitting around you at ninety with about a hand's width to spare, and the pressure wave alone puts you flat and takes the breath out of you for a frightening length of time.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_restart": {
+      "text": "You grab the wrong flag. Green is the wrong flag. The field, which had begun to slow, understands that there has been a restart, and eleven engines that have not been asked for anything in sixty years give everything they have left at once, and two of them give it in your direction.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "pit_wall": {
+      "text": "You are head-down in the leader's pit box when the field comes round early, because you counted the lap wrong, because you are not a racing person. The leader comes in. The leader has been coming into this box every four minutes for sixty years and has never had to check whether anyone was standing in it.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Eight-Thousandth",
+      "Long",
+      "Unfinished",
+      "Salt-Flat",
+      "Final",
+      "Running",
+      "Buried",
+      "Four-Minute"
+    ]
+  }
+}

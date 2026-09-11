@@ -3,12 +3,31 @@
 // Included from Esp32HexMapCrawl.ino after inventory_items.hpp.
 // Has access to all globals, constants, structs, and functions defined above it.
 
+// ── Camp detection (Quartermaster trait) ─────────────────────────────────────
+// A Camp is 2+ connected survivors sharing a hex.  Returns true if `pid` is in
+// a Camp that includes a connected Quartermaster (archetype 1).
+// Call while holding G.mutex.
+static bool inQuartermasterCamp(int pid) {
+  const Player& me = G.players[pid];
+  if (!me.connected) return false;
+  bool hasQM = (me.archetype == 1);
+  int  count = 1;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (i == pid || !G.players[i].connected) continue;
+    if (G.players[i].q != me.q || G.players[i].r != me.r) continue;
+    count++;
+    if (G.players[i].archetype == 1) hasQM = true;
+  }
+  return hasQM && count >= 2;
+}
+
 // ── §6.2 Dusk radiation check (all players) ──────────────────────────────────
-// Called from tickGame() while holding G.mutex.
+// Called from tickGame() while holding G.mutex.  Survivors already at LL 0
+// are skipped: their EVT_DOWNED is queued and the slot is about to be reset.
 static void duskCheck() {
   for (int pid = 0; pid < MAX_PLAYERS; pid++) {
     Player& p = G.players[pid];
-    if (!p.connected || p.radiation < 7) continue;
+    if (!p.connected || p.ll == 0 || p.radiation < 7) continue;
 
     GameEvent ev = {};
     ev.type  = EVT_DUSK;
@@ -46,11 +65,13 @@ static void duskCheck() {
 }
 
 // ── Dawn upkeep for all connected players (§4.1, §4.2, §4.5) ────────────────
-// Called from tickGame() while holding G.mutex.
+// Called from tickGame() while holding G.mutex.  Downed survivors (LL 0) are
+// skipped — duskCheck() or an encounter already queued their EVT_DOWNED, and
+// running upkeep on them would either queue a second one or revive them.
 static void dawnUpkeep() {
   for (int pid = 0; pid < MAX_PLAYERS; pid++) {
     Player& p = G.players[pid];
-    if (!p.connected) continue;
+    if (!p.connected || p.ll == 0) continue;
 
     int llDelta = 0;
 
@@ -71,14 +92,19 @@ static void dawnUpkeep() {
 
     // ── Settlement rest: no food or water consumed (§settlement rule) ────────
     bool inSettlement = (G.map[p.r][p.q].terrain == 9);
-    if (inSettlement) {
-    }
+
+    // ── Quartermaster trait: in a Camp (2+ survivors sharing a hex, one of
+    //    them the Quartermaster) every 2 tokens consumed restores 1 extra
+    //    track step.  Water consumes 2/day → +1 every day.  Food consumes
+    //    1/day → +1 on alternate days, which is the same 2-for-1 rate.
+    bool qmCamp = !inSettlement && inQuartermasterCamp(pid);
 
     // ── Food (§4.1): consume 1 token; F track +1; else F track -1 ─────────
     if (!inSettlement) {
       if (p.inv[1] > 0) {
         p.inv[1]--;
         applyFStep(p, +1, llDelta);
+        if (qmCamp && (G.dayCount & 1)) applyFStep(p, +1, llDelta);
       } else {
         applyFStep(p, -1, llDelta);
       }
@@ -92,6 +118,7 @@ static void dawnUpkeep() {
       p.inv[0] -= (uint8_t)use;
       for (int i = 0; i < use;  i++) applyWStep(p, +1, llDelta);
       for (int i = 0; i < miss; i++) applyWStep(p, -1, llDelta);
+      if (qmCamp && use >= 2) applyWStep(p, +1, llDelta);
     }
 
     // ── Exposure (§7.3): no built shelter + terrain SV < 2 → LL−1 ──────────
@@ -100,7 +127,9 @@ static void dawnUpkeep() {
       uint8_t terr   = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
       uint8_t sv     = TERRAIN_SV[terr];
       uint8_t shelt  = G.map[p.r][p.q].shelter;
-      bool    covered = (shelt > 0) || (sv >= 2) || (p.archetype == 5);  // Endurer needs no shelter
+      bool    covered = (shelt > 0) || (sv >= 2)
+                     || (p.archetype == 5)                       // Endurer needs no shelter
+                     || hasNarrativeParam(pid, NAR_COLD_IMMUNE); // Bear Skin Cape
       if (!covered) {
         llDelta--;
         expDelta = -1;
@@ -113,9 +142,11 @@ static void dawnUpkeep() {
       expDelta = 0;
     }
 
-    // ── Rest recovery: resting with adequate supplies → +1 LL ───────────
-    if (p.resting && p.food >= 4 && p.water >= 1 && p.ll < (uint8_t)effectiveMaxLL(pid))
-      llDelta++;
+    // ── Rest recovery: resting with adequate supplies → +1 LL, and a minor
+    //    wound knits closed.  W floors at 1, so the water gate must be >1.
+    bool restedWell = p.resting && p.food >= 4 && p.water >= 3;
+    if (restedWell && p.ll < (uint8_t)effectiveMaxLL(pid)) llDelta++;
+    if (restedWell) healWound(p, WOUND_MINOR);
 
     // ── Apply LL delta (§4.5): losses first (F→W order), then gains ────────
     // Losses were accumulated first in llDelta (food, water, and exposure above).
@@ -123,9 +154,6 @@ static void dawnUpkeep() {
     uint8_t prevLL = p.ll;  // snapshot before changes to compute actual delta
     if (llDelta < 0) {
       for (int i = 0; i < -llDelta; i++) {
-        if (p.archetype == 5 && (esp_random() % 4 == 0)) {  // Endurer: 25% chance to resist
-          continue;
-        }
         if (p.ll > 0) p.ll--;
         if (p.ll == 0) {
           GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
@@ -141,8 +169,6 @@ static void dawnUpkeep() {
 
     // ── Reset daily move budget and action flags ────────────────────────────
     p.movesLeft    = (p.ll == 0) ? 0 : (int8_t)effectiveMP(pid);  // downed: no moves
-    p.actUsed      = false;
-    p.encPenApplied = false;
     p.resting      = false;
     // Apply equipped item operating costs (fuel-gated MP bonuses added here)
     applyDawnItemCosts(pid);
@@ -162,6 +188,8 @@ static void dawnUpkeep() {
     ev.dawnWth     = p.wThreshBelow;
     ev.radR        = p.radiation;
     ev.dawnExpD    = expDelta;
+    ev.dawnWndMin  = p.wounds[WOUND_MINOR];
+    ev.dawnWndMaj  = p.wounds[WOUND_MAJOR];
     enqEvt(ev);
   }
 }
@@ -182,19 +210,21 @@ static void collectResource(int pid, int q, int r) {
   uint8_t  idx  = cell.resource - 1;
   uint8_t  gain = cell.amount;
 
-  // Enforce total-carry cap (invSlots) — count all items across all types
+  // Enforce total-carry cap — count all tokens across all types against the
+  // pack size in effect (archetype base + equipment slot bonuses)
   int totalInv = 0;
   for (int k = 0; k < 5; k++) totalInv += (int)p.inv[k];
-  if (totalInv >= (int)p.invSlots) {
+  int cap = (int)effectiveInvSlots(p);
+  if (totalInv >= cap) {
     Log.notice("col SKIP inv-full pid=%d q=%d r=%d res=%d totalInv=%d/%d",
-               pid, q, r, (int)cell.resource, totalInv, (int)p.invSlots);
+               pid, q, r, (int)cell.resource, totalInv, cap);
     GameEvent ev = {}; ev.type = EVT_COLLECT_FAIL; ev.pid = (uint8_t)pid;
     ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = COL_FAIL_INV_FULL;
     enqEvt(ev);
     return;  // cell stays untouched — icon correctly remains visible
   }
   // Collect only as many as there is room for
-  int room = (int)p.invSlots - totalInv;
+  int room = cap - totalInv;
   gain = (uint8_t)min((int)gain, room);
   if (gain == 0) {
     Log.notice("col SKIP no-room pid=%d q=%d r=%d", pid, q, r);
@@ -223,16 +253,16 @@ static void collectResource(int pid, int q, int r) {
     // for partial pickups without a second event.
     ev.dawnLL = remaining;
     enqEvt(ev); }
-  // Note: §5 encumbrance penalty isn't applied here — gain is clamped to
-  // remaining inv room above, so totalInv can never exceed invSlots via
-  // collection. Encounter loot / trades are the only paths that can push
-  // inv over the cap; those apply encumbrance themselves.
+  // Note: gain is clamped to remaining pack room above, so collection can
+  // never push a survivor over the cap.  Actions, encounter loot, and trades
+  // can; effectiveMP() charges the encumbrance penalty at the next dawn.
 }
 
 // ── Valid move bitmask ────────────────────────────────────────────────────────
 // Returns a 6-bit mask (bit N = direction N is passable and player can move).
 // Used by broadcastState() to let the client gray out blocked direction buttons.
-// Fog (0xFF) is treated as impassable — movement into fog is denied until revealed.
+// Shares canEnterTerrain() with movePlayer() so equipment unlocks (river gear,
+// climbing gear) show up as enabled buttons.
 static uint8_t computeValidMoves(int pid) {
   Player& p = G.players[pid];
   if (!p.connected) return 0;
@@ -241,9 +271,7 @@ static uint8_t computeValidMoves(int pid) {
   for (int d = 0; d < 6; d++) {
     int nq = wrapQ(p.q + DQ[d]);
     int nr = wrapR(p.r + DR[d]);
-    uint8_t t = G.map[nr][nq].terrain;
-    // BUG-10 fix: removed `t == 0xFF ||` — fog is not passable
-    if (TERRAIN_MC[t] != 255) mask |= (1 << d);
+    if (canEnterTerrain(pid, G.map[nr][nq].terrain, nullptr)) mask |= (1 << d);
   }
   return mask;
 }
@@ -254,29 +282,30 @@ static void movePlayer(int pid, int dir) {
   Player& p  = G.players[pid];
   if (p.ll == 0) return;  // downed — waiting for slot reset
   if (encounters[pid].active)  return;  // locked during active encounter
-  if (p.resting) {
-    return;
-  }
+  if (p.resting) return;
   int     nq = wrapQ(p.q + DQ[dir]);
   int     nr = wrapR(p.r + DR[dir]);
 
   uint8_t destTerrain = G.map[nr][nq].terrain;
-  uint8_t mc          = TERRAIN_MC[destTerrain];
-  if (mc == 255) {
-    // Check if an equipped item unlocks this terrain type
-    // River Channel (terrain 11) → TERR_PASS_RIVER (bit 0)
-    uint8_t neededBit = 0;
-    if (destTerrain == 11) neededBit = TERR_PASS_RIVER;
-    // Add future terrain unlocks here (e.g. Nuke Crater → TERR_PASS_NUKE)
-    if (!neededBit || !hasPassTerrainBit(pid, neededBit)) {
-      return;
-    }
-    // Terrain unlocked by equipment — use a default MC of 2 for river traversal
-    mc = 2;
-  }
+  uint8_t mc          = 0;
+  if (!canEnterTerrain(pid, destTerrain, &mc)) return;
 
   // ── Weather movement penalty ─────────────────────────────────────────────
   mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase]);
+
+  // ── Guide trait (archetype 0): a companion moving into a hex the Guide is
+  //    standing on follows their line and pays MC−1 (min 1).
+  if (p.archetype != 0) {
+    for (int g = 0; g < MAX_PLAYERS; g++) {
+      if (g == pid || !G.players[g].connected) continue;
+      if (G.players[g].archetype != 0) continue;
+      if (G.players[g].ll == 0) continue;
+      if ((int)G.players[g].q == nq && (int)G.players[g].r == nr) {
+        mc = (uint8_t)max(1, (int)mc - 1);
+        break;
+      }
+    }
+  }
 
   // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
   if (p.movesLeft == 0) {
@@ -288,7 +317,6 @@ static void movePlayer(int pid, int dir) {
   if (now - p.lastMoveMs < cd) return;  // cooldown — silent, normal behaviour
   p.lastMoveMs = now;
 
-  [[maybe_unused]] int16_t oldQ = p.q, oldR = p.r;
   p.q = (int16_t)nq;
   p.r = (int16_t)nr;
   p.steps++;
@@ -303,16 +331,14 @@ static void movePlayer(int pid, int dir) {
   // Mark footprint at new hex (visible to all players)
   G.map[p.r][p.q].footprints |= (1 << pid);
 
-  // Compute vision params at new position for the debug line
-  int8_t  visLvl  = (destTerrain < NUM_TERRAIN) ? TERRAIN_VIS[destTerrain] : 0;
-  [[maybe_unused]] int     effVisR = (visLvl <= -3) ? 0 : (visLvl == -2) ? 1 : (visLvl == -1) ? 2 : (visLvl == 0) ? VISION_R : (visLvl == 1) ? VISION_R + 1 : VISION_R + 2;
   // Deduct movement cost from daily MP budget
   p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
 
-
   // ── Radiation entry check (§6.2): Rad-tagged terrain → Endure DN6 or +1 R ──
+  // Sealed gear (TERR_PASS_RAD: Glow Suit, Wheeze Filter) skips the check and
+  // keeps the day "clean" for the dawn R−1 recovery.
   int8_t radGain = 0;
-  if (destTerrain < NUM_TERRAIN && TERRAIN_IS_RAD[destTerrain]) {
+  if (TERRAIN_IS_RAD[destTerrain] && !hasPassTerrainBit(pid, TERR_PASS_RAD)) {
     p.radClean = false;   // day is no longer clean
     if (p.radiation < 10) {
       CheckResult cr = resolveCheck(pid, SK_ENDURE, 6, 0);
@@ -320,7 +346,6 @@ static void movePlayer(int pid, int dir) {
         p.radiation++;
         radGain = 1;
         ledFlash(0, 255, 0); k10Play(MOTIF_GEIGER);  // green + geiger ticks
-      } else {
       }
     }
   }

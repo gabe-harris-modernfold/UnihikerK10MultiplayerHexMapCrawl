@@ -1,0 +1,145 @@
+{
+  "id": "mountain_weather_station_01",
+  "title": "The {{adjective}} Forecast",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The weather station is a stilted hut on the col with an anemometer still spinning and a Stevenson screen still louvred shut against a sun that stopped mattering. Pinned to the door, weighted with a stone, is today's forecast, in fresh chalk: WIND LIGHT. VISIBILITY GOOD. PRESSURE FALLING SHARPLY. HERD DUE 11:40. TAKE COVER. It is currently twenty past eleven. Inside, through the window, an observer sits at the barograph with a pencil, not moving, entirely dry and entirely sixty years dead.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Get inside and get the door barred",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 4,
+          "success_node": "the_hut",
+          "hazard_id": "the_ladder"
+        },
+        {
+          "label": "Twenty minutes is plenty. Strip the instrument mast first.",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 2,
+          "success_node": "the_hut",
+          "hazard_id": "eleven_thirty_eight"
+        }
+      ]
+    },
+    "the_hut": {
+      "text": "A met station stocked for a lonely posting: a winter's rations, paraffin, a water butt fed off the roof, a medical box, and a workshop drawer of brass and platinum instrument parts that would buy a season. The barograph trace unrolls across the desk in a long paper ribbon, and it is beautiful work — sixty years of unbroken record — and every eleven days the pressure drops off a cliff and the observer's pencil has written the same word in the margin each time, four hundred and some times, in a hand that gets steadily worse: THEM.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Watch from the window at 11:40",
+          "cost": {},
+          "base_risk": 33,
+          "skill": 3,
+          "success_node": "the_herd",
+          "hazard_id": "the_window"
+        },
+        {
+          "label": "Take the trace and the brass and get out before they come",
+          "cost": {},
+          "base_risk": 42,
+          "skill": 3,
+          "success_node": "the_herd",
+          "hazard_id": "caught_on_the_col"
+        }
+      ]
+    },
+    "the_herd": {
+      "text": "They come over the north shoulder at 11:40 exactly, because they have been doing this every eleven days for sixty years, and they are the reason the pressure drops — not the cause of the weather, the weather itself, a herd of something enormous and woolly and utterly benign moving in a column so dense it displaces the atmosphere in front of it. It takes forty minutes to pass. The hut shakes. Nothing looks in. And when the last of them has gone over the far edge they leave behind what a herd that size always leaves behind on a col: forty minutes of shed cargo, the packs and panniers and strapped-on bundles of every unlucky traveller they have walked over since the war, shaken loose and scattered across the saddle, free for anyone who knew to be indoors at twenty to twelve.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_ladder": {
+      "text": "The access ladder is iced and the third rung has been waiting sixty years for weight. You come off at two metres onto the frozen scree with your pack on top of you and something in your back declaring itself immediately.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "eleven_thirty_eight": {
+      "text": "You are at the top of the mast at 11:38 when the pressure goes. Your ears pop hard enough to double you over, the mast starts to hum, and you come down it in about a second and a half using mostly friction. Your palms will remember the descent for weeks.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_window": {
+      "text": "You watch. That is the mistake the observer made, and his pencil is still in his hand, and his face is still pointed at this same pane. At that density, moving at that speed, close enough to touch — the eye cannot make a shape out of it and the part of you behind the eye tries anyway, for forty solid minutes, and comes out the far side of the herd worse than it went in.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "caught_on_the_col": {
+      "text": "You are eighty metres out on open ground with a pack full of brass when the north shoulder goes dark. There is nowhere on a col to be. You get into a boulder hollow, and get small, and the herd goes over the top of you for forty minutes, and not one of them touches you, and by the end of it you would honestly have preferred that they had.",
+      "penalty": {
+        "ll": -5,
+        "water": -1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Eleven-Day",
+      "Falling",
+      "Unbroken",
+      "Chalked",
+      "Sixty-Year",
+      "Recorded",
+      "Col",
+      "Twenty-To-Twelve"
+    ]
+  }
+}

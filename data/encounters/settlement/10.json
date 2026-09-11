@@ -1,0 +1,151 @@
+{
+  "id": "settlement_meat_ration_01",
+  "title": "The {{adjective}} Ration",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Meat day. The queue runs the length of the main street and the mood is that of a modest public holiday. At the head of it, the butcher works a long table under an awning, and behind the awning is the shed, and from inside the shed a warm, cheerful, slightly muffled voice is calling out greetings to people in the queue by name. \"Morning, Tam. How's the hip? — Morning, Ess, tell your mother — next, please.\" The butcher goes into the shed with a tray. There is a brief sound. The butcher comes out with the tray full.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Join the queue and take a ration like a guest",
+          "cost": {},
+          "base_risk": 19,
+          "skill": 3,
+          "success_node": "the_stores",
+          "hazard_id": "the_portion"
+        },
+        {
+          "label": "Go round the back and look in the shed",
+          "cost": {},
+          "base_risk": 33,
+          "skill": 2,
+          "success_node": "the_stores",
+          "hazard_id": "the_back_door"
+        }
+      ]
+    },
+    "the_stores": {
+      "text": "A settlement that has solved protein has solved everything else as a side effect. The stores behind the butcher's are stacked to the rafters: smoked and salted by the barrel, rendered fat in crocks, bone char, tallow for lamps, medicine bought with the surplus, and trade scrap from forty caravans a year. The wall by the door carries a painted board: DAY 22,411. WITH THANKS TO MAYOR HOLLOWAY. Beneath it, fresh flowers, changed daily, and a child's drawing of a smiling man with an enormous number of arms.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Go and meet Mayor Holloway",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "holloway",
+          "hazard_id": "the_introduction"
+        },
+        {
+          "label": "Ask the butcher how long this can possibly go on",
+          "cost": {},
+          "base_risk": 29,
+          "skill": 3,
+          "success_node": "holloway",
+          "hazard_id": "the_arithmetic"
+        }
+      ]
+    },
+    "holloway": {
+      "text": "He fills the shed. Sixty-one years ago Mayor Holloway caught whatever it was that came through with the first winter, and instead of dying of it he began — slowly, agreeably, unstoppably — to regrow, and he made a proposal to a starving town, and the town put it to a vote, and he abstained. He has been feeding four hundred people ever since. He does not suffer; the parts he loses stop being his about an hour before the knife. He is enormously interested in your journey. He asks after roads he has not seen since before the war. He wants to know if the coast is still there. When you go he presses a parcel on you — the good cut, wrapped, still warm — and the medicine chest key, and makes you promise to come back through and tell him what you saw, and the terrible thing is that you will, because he is the single kindest person you have met out here.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_portion": {
+      "text": "You take the ration and you eat it in the street like everyone else, and it is the best thing you have eaten in a year, and you are three mouthfuls in before you work out what you are eating and your body makes its own decision about the remaining portion, loudly, in front of the whole queue.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_back_door": {
+      "text": "You open the shed door unannounced. Something in there is startled, and something in there is four tonnes, and the shed wall comes out at you in one piece with you attached to the far side of it. A voice, from the dark, mortified: \"Oh — oh, I'm so sorry, I didn't hear you knock.\"",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_introduction": {
+      "text": "He wants to shake your hand. He has a great many, and none of them are quite the right size any more, and the one he chooses closes around your forearm with the careful, restrained, catastrophically misjudged gentleness of something enormous that remembers being a man.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_arithmetic": {
+      "text": "The butcher does the arithmetic out loud for you, because you asked, and it is the arithmetic of how much is taken each day against how much grows back, and the two numbers have not matched for eleven years. He has known for eleven years. The town has known for eleven years. Nobody has told the Mayor, because the Mayor would only insist, and the butcher's hands shake so badly telling you this that he puts the boning knife down through the back of your hand on the block.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Meat-Day",
+      "Twenty-Two-Thousandth",
+      "Mayor's",
+      "Generous",
+      "Weekly",
+      "Grateful",
+      "Fair",
+      "Warm"
+    ]
+  }
+}

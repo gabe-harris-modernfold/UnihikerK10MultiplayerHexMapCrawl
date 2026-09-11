@@ -202,15 +202,37 @@
 <!-- ──────────────── Encounter Overlay (active player) ──────────────── -->
 <dialog id="enc-overlay" aria-modal="true" aria-labelledby="enc-title">
   <div id="enc-box">
-    <div id="enc-title" class="check-lbl">&#x1F441; ENCOUNTER</div>
-    <div id="enc-node-text"></div>
-    <div id="enc-loot-display"></div>
-    <div id="enc-outcome"></div>
-    <div id="enc-choice-list"></div>
-    <div id="enc-bank-row" style="display:none">
-      <button id="enc-bank-btn" class="chk-action-btn">&#x25A0; BANK &amp; EXIT</button>
+    <header id="enc-head">
+      <div id="enc-kicker">ENCOUNTER</div>
+      <h2 id="enc-title"></h2>
+    </header>
+
+    <div id="enc-scroll">
+      <!-- Last roll: verdict + dice + hazard copy + gains/losses. Stays until the next action. -->
+      <section id="enc-result" role="status" aria-live="polite" hidden>
+        <div class="enc-res-head">
+          <span id="enc-res-verdict"></span>
+          <span id="enc-res-roll"></span>
+        </div>
+        <p id="enc-res-text"></p>
+        <div id="enc-res-delta"></div>
+      </section>
+
+      <p id="enc-node-text"></p>
+      <div id="enc-choices" aria-label="choices"></div>
     </div>
-    <button id="enc-abort-btn" class="chk-action-btn" style="margin-top:6px;border-color:#888;color:#888">&#x2715; ABORT</button>
+
+    <footer id="enc-foot">
+      <div id="enc-haul" aria-label="pending loot">
+        <span class="enc-haul-lbl">HAUL</span>
+        <div id="enc-haul-items"></div>
+        <span id="enc-haul-empty">nothing yet</span>
+      </div>
+      <div id="enc-leave-wrap">
+        <button id="enc-leave-btn" type="button">WALK AWAY</button>
+        <span id="enc-leave-hint"></span>
+      </div>
+    </footer>
   </div>
 </dialog>
 
@@ -249,6 +271,7 @@
       <div class="cs-section">
         <h3>Skills</h3>
         <div id="cs-skills-grid"><!-- populated by JS --></div>
+        <div id="cs-wounds" class="cs-wounds"><!-- populated by JS --></div>
         <div class="stat-grid" style="margin-top:10px">
           <div class="stat-box"><div class="stat-val" id="cs-steps">—</div><div class="stat-label">HEXES WALKED</div></div>
           <div class="stat-box"><div class="stat-val" id="cs-vision">1</div><div class="stat-label">VISION RANGE</div></div>

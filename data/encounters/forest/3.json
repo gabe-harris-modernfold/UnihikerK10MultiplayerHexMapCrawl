@@ -75,13 +75,12 @@
     "claw_trap": {
       "text": "A rusted snare set by the creature's previous occupant snaps shut on your wrist.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "wound": [
         1,
         1
       ],
-      "status": 4,
       "ends_encounter": true
     }
   },

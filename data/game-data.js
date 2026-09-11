@@ -9,27 +9,27 @@ const SQRT3       = Math.sqrt(3);
 // mc : movement cost (255 = impassable)
 // sv : shelter value
 const TERRAIN = [
-  { name:'Open Scrub',      mc:1,   sv:0, vis: 1, icon:'🌾',
+  { name:'Open Scrub',      mc:1,   sv:0, vis: 0, icon:'🌾',
     fill:'#2E2210', stroke:'#504030',   /* cracked-earth tan */
     tags:['Open Horizon','Forage','Hunting Ground'],
-    desc:'Wind-scoured flats of pale scrub and cracked earth. Small game — birds, feral rabbits, scavenger rodents — move through the open ground. A successful hunt yields 2 food. The open horizon grants long sight lines, but the animals can see you coming.' },
+    desc:'Wind-scoured flats of pale scrub and cracked earth. Small game — birds, feral rabbits, scavenger rodents — move through the open ground. A successful hunt yields 3 food (2 on a partial). The open horizon grants long sight lines, but the animals can see you coming.' },
   { name:'Ash Dunes',       mc:2,   sv:0, vis: 0, icon:'🏜',
     fill:'#201E16', stroke:'#3C3A2C',   /* desaturated ash grey */
     tags:['Radiation'],
     desc:'Rolling dunes of grey volcanic ash laced with fallout. Fuel caches and scrap lie buried beneath the drifts. Prolonged exposure without a mask is hazardous.' },
-  { name:'Rust Forest',     mc:2,   sv:1, vis:-1, icon:'🌲',
+  { name:'Rust Forest',     mc:2,   sv:1, vis:-3, icon:'🌲',
     fill:'#1A2808', stroke:'#344A18',   /* dark rust-tinged green */
     tags:['Forage','Wild Game','Blind Ground'],
-    desc:'Skeletal trees coated in rust-red fungus. The dense canopy blocks all sight lines. A full Forage success here yields 2 food — the root networks are rich with edible fungi. Partial success still yields 1. Visibility drops to near zero.' },
+    desc:'Skeletal trees coated in rust-red fungus. The dense canopy blocks all sight lines. A full Forage success here yields 3 food — the root networks are rich with edible fungi. Partial success still yields 2. Visibility drops to near zero.' },
   { name:'Marsh',           mc:3,   sv:0, vis: 0, icon:'🌿',
     fill:'#081A10', stroke:'#183428',   /* very dark brackish green */
     tags:['Water','Treacherous'],
     desc:'Brackish wetlands and salt flats. Water is abundant beneath the surface but undrinkable. Treacherous footing slows movement to a crawl. Avoid after dark.' },
-  { name:'Broken Urban',    mc:2,   sv:1, vis:-1, icon:'🏚',
+  { name:'Broken Urban',    mc:2,   sv:1, vis:-2, icon:'🏚',
     fill:'#1A1814', stroke:'#34302A',   /* cold concrete grey */
     tags:['Salvage','Blind Ground'],
     desc:'Collapsed hab-blocks and fractured infrastructure. Salvage and medicine lie in the rubble. Every crumbled wall cuts line-of-sight. Watch for floor voids and gas pockets.' },
-  { name:'Flooded District',mc:3,   sv:1, vis:-1, icon:'🌊',
+  { name:'Flooded District',mc:3,   sv:2, vis: 0, icon:'🌊',
     fill:'#08121E', stroke:'#142030',   /* cold steel blue-grey */
     tags:['Water','Treacherous','Blind Ground'],
     desc:'Former city streets drowned under murky floodwater. Water is plentiful here, but stay clear of craters and glass fields or it will be tainted. Visibility drops to zero beneath the surface. Every step is blind.' },
@@ -37,15 +37,15 @@ const TERRAIN = [
     fill:'#121A22', stroke:'#243444',   /* iridescent cold blue */
     tags:['Salvage','Open Horizon','Radiation'],
     desc:'Fused earth and melted debris from a detonation event. The flat reflective surface gives an unobstructed view for kilometres. Scrap can be carefully extracted from the glass.' },
-  { name:'Ridge',           mc:2,   sv:1, vis: 1, icon:'⛰',
+  { name:'Ridge',           mc:2,   sv:1, vis: 2, icon:'⛰',
     fill:'#1E1A12', stroke:'#3C3424',   /* warm slag-stone */
     tags:['Vantage','Open Horizon'],
     desc:'Elevated ridgelines of compressed slag-stone. A superior vantage point — the surrounding terrain is visible in detail. Exposed to wind, lightning, and distant sight lines.' },
-  { name:'Mountain',        mc:4,   sv:2, vis: 0, icon:'🗻',
+  { name:'Mountain',        mc:4,   sv:2, vis: 2, icon:'🗻',
     fill:'#14141C', stroke:'#28283A',   /* cold dark mineral */
     tags:['Vantage','Waypoint'],
     desc:'Towering slag-mountains and pre-war excavation sites. Heavy going, but caves and overhangs offer excellent shelter. Medicine and scrap can be found deep in the tunnels.' },
-  { name:'Settlement',      mc:1,   sv:3, vis: 0, icon:'🏕',
+  { name:'Settlement',      mc:1,   sv:3, vis:-1, icon:'🏕',
     fill:'#1A1206', stroke:'#382814',   /* warm amber glow */
     tags:['Haven','Barter'],
     desc:'A fortified survivor camp with trading posts and basic shelter. All resource types can be found or traded here. The only true safe zone on the wasteland.' },
@@ -81,8 +81,14 @@ const TAG_CLASS = {
 const RES_COLOR = ['','#2A5C8A','#4A7828','#8C4418','#7A1E1E','#5C5448'];
 const RES_LABEL = ['','≈','#','Ω','+','%'];
 const RES_NAMES = ['','Water','Food','Fuel','Medicine','Scrap'];
-// Canvas emoji icons per resource type (null = food uses forage-animal PNG instead)
-const RES_ICONS = ['', '〰', null, '🛢', '✚', '⚙'];
+// UI glyph sprite strip (img/ui_glyphs.png, built by scripts/gen_pixel_glyphs.py):
+// 16px white pixel glyphs, tinted at draw time by drawGlyph() in renderer.js.
+// Indices 0..11 match TERRAIN order; the rest are named here.
+const GLYPH_SHEET = 'img/ui_glyphs.png';
+const GLYPH_CELL  = 16;
+const GLYPH = { WATER:12, FUEL:13, MED:14, SCRAP:15, FOOTPRINT:16, TENT:17, HUT:18, RAIN:19 };
+// Canvas glyph per resource type (-1 = none; food uses the forage-animal PNG instead)
+const RES_GLYPH = [-1, GLYPH.WATER, -1, GLYPH.FUEL, GLYPH.MED, GLYPH.SCRAP];
 // Resource badge class names (matches .hi-badge.res-X in style.css)
 const RES_BADGE_CLASS = ['','hi-badge res-water','hi-badge res-food','hi-badge res-fuel','hi-badge res-med','hi-badge res-scrap'];
 
@@ -102,22 +108,24 @@ const ARCHETYPE_COLORS = [
 ];
 
 // ── Action system constants (mirrors server ACT_* / AO_*) ────────
-const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_SCAV = 3;
+const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_TREAT = 2, ACT_SCAV = 3;
 const ACT_SHELTER = 4, ACT_SURVEY = 6, ACT_REST = 7;
 const ACT_TRADE = 8;  // client-only sentinel — no server action type (above server's 0–7 range)
 const RES_SHORT = ['WAT', 'FOD', 'FUL', 'MED', 'SCP'];  // short labels for trade resource steppers
 const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
-const ACT_NAMES = ['FORAGE','COLLECT WATER','','SCAVENGE',
+const ACT_NAMES = ['FORAGE','COLLECT WATER','TREAT WOUND','SCAVENGE',
                    'BUILD SHELTER','','SURVEY','REST'];
-const ACT_MP    = [2, 1, 0, 2, 3, 0, 1, 0];  // default MP cost per action
+// MP costs live on the action cards in ui-panels.js (shelter and water are dynamic).
 // Which terrain indices allow each action (matches server terrain arrays)
-// Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8
-// Water:  Marsh(3), Flooded(5)
-// Scavenge: Broken Urban(4) DN6, Glass Fields(6) DN8
+// Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8, River(11) DN6
+// Water:  Marsh(3), Flooded(5), River(11)
+// Scavenge: Broken Urban(4) DN6, Flooded(5) DN7, Glass Fields(6) DN8
+// Treat:  anywhere for the Medic, Settlement(9) for everyone else
 // Others: any terrain
-const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 0];
+// River Channel (11) is reachable with the right equipment: it forages and waters.
+const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 6];
 const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0];
-const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 0];
+const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1];
 function actAvailable(actId, terrainIdx) {
   if (terrainIdx == null || terrainIdx > 11) return false;
   switch (actId) {
@@ -136,7 +144,7 @@ const ARCHETYPES = [
     name: 'GUIDE',
     icon: '\u29BF',   // ⦿ crosshair
     color: '#8B4513',
-    trait: 'Companions entering your hex via your movement pay MC\u22121 (min\u00a01).',
+    trait: 'Allies moving onto a hex you are standing on pay MC\u22121 (min\u00a01).',
     skills: [2, 1, 0, 1, 1],
     invSlots: 8,
     desc: 'Natural pathfinder. Leads allies through hostile terrain, reducing the movement cost for anyone following in their footsteps.',
@@ -146,7 +154,7 @@ const ARCHETYPES = [
     name: 'QUARTERMASTER',
     icon: '\u25A3',   // ▣ box
     color: '#C07818',
-    trait: 'In a Camp (2+ Survivors), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
+    trait: 'In a Camp (2+ survivors sharing your hex), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
     skills: [0, 2, 1, 1, 0],
     invSlots: 8,
     desc: 'Supply expert. Stretches the group\'s rations when camped with other survivors. Trait is inactive when travelling solo.',
@@ -156,10 +164,10 @@ const ARCHETYPES = [
     name: 'MEDIC',
     icon: '\u2764',   // ♥ heart
     color: '#6B5449',
-    trait: 'May treat Major Wounds in the field at DN\u00a09.',
+    trait: 'May TREAT a Major Wound anywhere at DN\u00a09. Others must stand in a Settlement.',
     skills: [0, 0, 1, 0, 2],
     invSlots: 8,
-    desc: 'Field surgeon. Can stabilise serious wounds without a settlement.',
+    desc: 'Field surgeon. Can stabilise Major Wounds anywhere, at 2\u00a0MP and 1\u00a0Medicine a time.',
     flavor: 'Patches survivors back together. What remains is... functional.'
   },
   {
@@ -176,17 +184,17 @@ const ARCHETYPES = [
     name: 'SCOUT',
     icon: '\u25CE',   // ◎ circle
     color: '#7A6055',
-    trait: 'Survey costs 0\u00a0MP. May Survey before moving on the same turn without consuming the action slot.',
+    trait: 'Survey costs 0\u00a0MP, and your vision radius is +2.',
     skills: [2, 1, 1, 0, 1],
     invSlots: 8,
-    desc: 'Recon specialist. Survey is free and combinable with movement, giving the group an early read on terrain ahead.',
+    desc: 'Recon specialist. Sees two rings further than anyone else and surveys for free, giving the group an early read on the terrain ahead.',
     flavor: 'Gets there first. Doesn\u2019t always come back.'
   },
   {
     name: 'ENDURER',
     icon: '\u25D9',   // ◙ inverse circle
     color: '#6A3008',
-    trait: 'Endure skill treated as\u00a01\u00a0higher for all checks (does not affect Collective Endure).',
+    trait: 'Endure counts as\u00a01\u00a0higher on every check, and exposure never costs you Life.',
     skills: [1, 0, 0, 2, 2],
     invSlots: 8,
     desc: 'Hardened survivor. Built to endure radiation, exhaustion and injury. The last one standing when conditions reach their worst.',
@@ -249,7 +257,7 @@ const ITEMS = [
   { id:9,  name:'Anti-Rot Kit',     category:0, slot:0,
     img:'img/items/item_9.png',  icon:'img/items/icon_9.png',
     preUse:  'Antibiotics, antiseptic, and a prayer.',
-    postUse: 'Wounds treated. Recovery begins.',
+    postUse: 'Wound cleaned and closed. Recovery begins.',
     story:   null },
   { id:10, name:'Bright Bad Idea',  category:0, slot:0,
     img:'img/items/item_10.png', icon:'img/items/icon_10.png',
@@ -263,11 +271,11 @@ const ITEMS = [
   { id:12, name:'Glow Suit',        category:1, slot:2,
     img:'img/items/item_12.png', icon:'img/items/icon_12.png',
     preUse:  null, postUse: null,
-    story:   'Thick, yellow, and suffocating. A full seal against chemical and radiation hazards. Reduces Rad each dawn.' },
+    story:   'Thick, yellow, and suffocating. A full seal against fallout: no radiation check when you walk into hot terrain, and Rad bleeds off each dawn.' },
   { id:13, name:'Wheeze Filter',    category:1, slot:1,
     img:'img/items/item_13.png', icon:'img/items/icon_13.png',
     preUse:  null, postUse: null,
-    story:   'Filters ash and particulates. Uncomfortable to sleep in. Unlocks traversal through toxic terrain.' },
+    story:   'Filters ash and particulates. Uncomfortable to sleep in. No radiation check when you walk into hot terrain.' },
   { id:14, name:'Dark Goggles',     category:1, slot:1,
     img:'img/items/item_14.png', icon:'img/items/icon_14.png',
     preUse:  null, postUse: null,
@@ -291,11 +299,11 @@ const ITEMS = [
   { id:19, name:'Vertical Regret',  category:1, slot:3,
     img:'img/items/item_19.png', icon:'img/items/icon_19.png',
     preUse:  null, postUse: null,
-    story:   'Forty metres of woven polyester. Rated to 500kg. You\'re betting your life on it. Unlocks cliff traversal.' },
+    story:   'Forty metres of woven polyester. Rated to 500kg. You\'re betting your life on it. Mountains cost 2 MP instead of 4.' },
   { id:20, name:'Doom Clicker',     category:1, slot:3,
     img:'img/items/item_20.png', icon:'img/items/icon_20.png',
     preUse:  null, postUse: null,
-    story:   'Vintage civil defence issue. Every click is a data point. Every data point is bad news. Reveals radiation on adjacent hexes.' },
+    story:   'Vintage civil defence issue. Every click is a data point. Every data point is bad news. You learn to hear what is out there: +1 vision.' },
   { id:21, name:'Useful Garbage',   category:2, slot:0,
     img:'img/items/item_21.png', icon:'img/items/icon_21.png',
     preUse: null, postUse: null, story: null },
@@ -311,7 +319,7 @@ const ITEMS = [
   { id:25, name:'Doomed Diary',     category:3, slot:0,
     img:'img/items/item_25.png', icon:'img/items/icon_25.png',
     preUse:  null, postUse: null,
-    story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too.' },
+    story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too. Reading it maps the three hexes around you.' },
   { id:26, name:'Motorbike',        category:1, slot:5,
     img:'img/items/item_26.png', icon:'img/items/icon_26.png',
     preUse: null, postUse: null,
@@ -363,22 +371,22 @@ const ITEMS = [
   { id:38, name:'Pre-War Net Map',  category:3, slot:0,
     img:'img/items/item_38.png', icon:'img/items/icon_38.png',
     preUse:  null, postUse: null,
-    story:   'A recovered network node uplink. Broadcasts your position and pulls every active signal on the grid. Reveals all encounters and players on the map.' },
+    story:   'A recovered network node uplink. Pulls every active signal on the grid. Reading it surveys the entire map; it can be read again any time.' },
   { id:39, name:'Irradiated Fur',   category:2, slot:0,
     img:'img/items/item_39.png', icon:'img/items/icon_39.png',
     preUse: null, postUse: null, story: null },
   { id:40, name:'Shock Knuckles',   category:1, slot:3,
     img:'img/items/item_40.png', icon:'img/items/icon_40.png',
     preUse: null, postUse: null,
-    story: 'Knuckle guards wrapped in strips of Irradiated Fur. Every punch builds charge. Every third hit discharges it through whatever you\'re hitting. +1 LL ceiling.' },
+    story: 'Knuckle guards wrapped in strips of Irradiated Fur. They hum faintly. Nobody has tested them on anything living, and nobody wants to. +1 LL ceiling.' },
   { id:41, name:'Squatch Sliprs',   category:1, slot:4,
     img:'img/items/item_41.png', icon:'img/items/icon_41.png',
     preUse: null, postUse: null,
-    story: 'Enormous felted slippers sewn from Sasquatch fur. Completely silent. Quicksand doesn\'t know what to do with them. Reduces ambush rates and grants slip immunity.' },
+    story: 'Enormous felted slippers sewn from Sasquatch fur. Completely silent. Whatever is out there stops noticing you: the Threat Clock winds down by 4 each dawn.' },
   { id:42, name:'Knife-Wrench',     category:1, slot:3,
     img:'img/items/item_42.png', icon:'img/items/icon_42.png',
     preUse: null, postUse: null,
-    story: 'Half knife, half wrench, all disappointment. Functions as a terrible version of both. 20% chance of failing catastrophically and taking the damage yourself.' },
+    story: 'Half knife, half wrench, all disappointment. Functions as a terrible version of both, but it does replace two tools with one: +1 pack slot.' },
   { id:43, name:'Valid License',    category:3, slot:0,
     img:'img/items/item_43.png', icon:'img/items/icon_43.png',
     preUse:  null, postUse: null,
@@ -386,7 +394,7 @@ const ITEMS = [
   { id:44, name:'Jar of Sweats',    category:0, slot:0,
     img:'img/items/item_44.png', icon:'img/items/icon_44.png',
     preUse:  'You open it. The smell is a physical force.',
-    postUse: 'You drink it. Your body accepts the hydration and immediately rejects the experience. +4 Water, lose next turn.',
+    postUse: 'You drink it. Your body accepts the hydration and immediately rejects the experience. +4 Water, −2 MP.',
     story:   null },
   { id:45, name:'Glow Dentures',    category:1, slot:1,
     img:'img/items/item_45.png', icon:'img/items/icon_45.png',
@@ -416,9 +424,22 @@ const ITEMS = [
     story:   'A faded yellow post-it note. In careful ballpoint: "admin / admin". The most powerful document in the wasteland.' },
 ];
 
-// Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist
-const ITEM_IMG_PLACEHOLDER  = 'img/items/item_placeholder.png';
-const ITEM_ICON_PLACEHOLDER = 'img/items/icon_placeholder.png';
+// Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist.
+// Monochrome amber pixel-art (16px grid @2x) so missing art still matches the UI.
+const ITEM_IMG_PLACEHOLDER  = 'img/items/item_placeholder.png';   // skull, 128px
+const ITEM_ICON_PLACEHOLDER = 'img/items/icon_placeholder.png';   // skull, 32px
+// Per-category badge fallback (indexed by item.category): flask / wrench / gear / key
+const ITEM_ICON_FALLBACK = [
+  'img/items/icon_gulpable.png',  // 0 Gulpable  (consumable)
+  'img/items/icon_bolton.png',    // 1 Bolt-On   (equipment)
+  'img/items/icon_salvage.png',   // 2 Salvage   (material)
+  'img/items/icon_relic.png',     // 3 Relic     (key item)
+];
+// Fallback badge for an item id — category icon, else the generic skull.
+function getItemIconFallback(id) {
+  const item = getItemById(id);
+  return (item && ITEM_ICON_FALLBACK[item.category]) || ITEM_ICON_PLACEHOLDER;
+}
 
 // ── Equipment stat modifiers ────────────────────────────────────────────────
 // Mirrors stat fields in /data/items.cfg (mp, ll, slots, rad, vision, *_cost).
@@ -429,25 +450,25 @@ const ITEM_ICON_PLACEHOLDER = 'img/items/icon_placeholder.png';
 //   note                   : qualitative effect (terrain unlock, special)
 const ITEM_MODS = {
   11: { ll: +2 },                                                  // Dent Absorber
-  12: { rad: -1, note: 'Unlocks toxic terrain traversal' },        // Glow Suit
-  13: { note: 'Unlocks toxic terrain traversal' },                 // Wheeze Filter
+  12: { rad: -1, note: 'Sealed: no rad check entering hot terrain' }, // Glow Suit
+  13: { note: 'Sealed: no rad check entering hot terrain' },       // Wheeze Filter
   14: { vision: +1 },                                              // Dark Goggles
   15: { mp: +1 },                                                  // Trudge Stompers
   16: { slots: +4 },                                               // Hoarder's Rig
   17: { mp: +4, fuelCost: 1 },                                     // Rust Rocket
-  18: { note: 'Unlocks River Channel traversal' },                 // Floaty Disaster
-  19: { note: 'Unlocks cliff traversal' },                         // Vertical Regret
-  20: { note: 'Reveals rad levels on adjacent hexes' },            // Doom Clicker
-  26: { mp: +5, fuelCost: 2 },                                     // Motorbike
+  18: { note: 'Cross River Channel (MC 2)' },                      // Floaty Disaster
+  19: { note: 'Climbing gear: Mountain costs MC 2' },              // Vertical Regret
+  20: { vision: +1 },                                              // Doom Clicker
+  26: { mp: +5, fuelCost: 1 },                                     // Motorbike
   27: { note: 'Doubles scrap from SCAVENGE' },                     // Portable Forge
-  28: { note: 'Doubles river forage yield' },                      // Fishing Pole
+  28: { note: 'Cross River Channel; doubles river forage' },       // Fishing Pole
   29: { note: 'Doubles land food forage yield' },                  // Compound Bow
-  32: { note: 'Auto-upgrades camp shelter on REST' },              // Fire Starter
-  33: { note: 'Reduces ambush threat' },                           // Intimidate Mask
-  34: { ll: +2, note: 'Cold weather immunity' },                   // Bear Skin Cape
-  40: { ll: +1, note: 'Shock charge bonus on hit' },               // Shock Knuckles
-  41: { note: 'Reduces ambush threat, slip immunity' },            // Squatch Sliprs
-  42: { note: '20% chance of self-damage on use' },                // Knife-Wrench
+  32: { note: 'REST upgrades a basic shelter to improved' },       // Fire Starter
+  33: { note: 'Threat Clock −3 each dawn' },                       // Intimidate Mask
+  34: { ll: +2, note: 'No exposure loss at dawn' },                // Bear Skin Cape
+  40: { ll: +1 },                                                  // Shock Knuckles
+  41: { note: 'Threat Clock −4 each dawn' },                       // Squatch Sliprs
+  42: { slots: +1 },                                               // Knife-Wrench
   45: { vision: +1 },                                              // Glow Dentures
   47: { mp: -1, rad: -5 },                                         // Lead Snuggie
 };
@@ -468,7 +489,13 @@ function getItemIcon(id) {
 }
 
 // Short skill labels for display
-const SK_SHORT = ['Nav', 'For', 'Scav', 'Trt', 'Shel', 'End'];
+const SK_SHORT = ['Nav', 'For', 'Scav', 'Shel', 'End'];
+
+// ── Wounds (mirrors server WOUND_* / Player.wounds[]) ────────────
+// wd[0] = minor (−1 Endure each), wd[1] = major (−1 all skills and −1 MP each)
+const WOUND_MINOR = 0, WOUND_MAJOR = 1, WOUND_MAX_EACH = 3;
+const WOUND_NAMES = ['MINOR', 'MAJOR'];
+const TREAT_DN    = 9;
 
 // ── Skill check constants (mirrors server SK_* / SKILL_NAME) ─────
 const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
@@ -477,7 +504,9 @@ const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
 // Phase IDs: 0=Clear 1=Rain 2=Storm 3=Chem-Storm
 const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM'];
 // Visibility subtracted from server visR per phase (floored at 0)
-const WEATHER_VIS_PENALTY = [0, 1, 4, 6];
+const WEATHER_VIS_PENALTY = [0, 1, 3, 5];
+// Extra movement cost per hex in each phase — added to terrain MC by movePlayer()
+const WEATHER_MOVE_PENALTY = [0, 1, 2, 3];
 // Terrain intensity [phase][terrain idx 0-11] — matches C++ WEATHER_INTENSITY exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain

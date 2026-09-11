@@ -11,7 +11,7 @@
           "label": "Haul the door open.",
           "cost": {},
           "base_risk": 15,
-          "skill": 5,
+          "skill": 4,
           "success_node": "equipment_room",
           "hazard_id": "door_drop"
         }
@@ -82,9 +82,8 @@
     "electrical_arc": {
       "text": "A residual charge in the equipment bank arcs through the locker and into your hands. Your vision whites out.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
-      "status": 1,
       "ends_encounter": false
     }
   },

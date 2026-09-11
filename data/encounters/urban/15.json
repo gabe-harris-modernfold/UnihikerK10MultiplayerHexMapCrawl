@@ -49,7 +49,7 @@
           "label": "Fight The Router — this ends here",
           "cost": {},
           "base_risk": 60,
-          "skill": 5,
+          "skill": 4,
           "success_node": "router_defeated",
           "hazard_id": "dial_up_blast"
         }
@@ -76,9 +76,8 @@
     "dial_up_blast": {
       "text": "The Router's primary attack is a focused beam of amplified 56k modem noise played at structural volumes. The sound enters through your ears and exits through your resolve. It does not do clean damage — it does loud, disorienting, deeply unpleasant damage.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

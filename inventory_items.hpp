@@ -12,26 +12,85 @@
   "None","Head","Body","Hand","Feet","Vehicle"
 };
 
+// ── Equipment queries ─────────────────────────────────────────────────────
+// All take the pid and read G.players[pid].equip[]; call while holding G.mutex.
+
+// True if any equipped item carries EFX_NARRATIVE with the given NAR_* param.
+static bool hasNarrativeParam(int pid, uint8_t param) {
+  const Player& p = G.players[pid];
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    if (!p.equip[s]) continue;
+    const ItemDef* def = getItemDef(p.equip[s]);
+    if (!def) continue;
+    if (def->effectId  == EFX_NARRATIVE && def->effectParam  == param) return true;
+    if (def->effectId2 == EFX_NARRATIVE && def->effectParam2 == param) return true;
+  }
+  return false;
+}
+
+// +1 vision per equipped item with EFX_REVEAL_FOG param 1 (Dark Goggles, Glow Dentures, …).
+static int equipVisionBonus(int pid) {
+  const Player& p = G.players[pid];
+  int bonus = 0;
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    if (!p.equip[s]) continue;
+    const ItemDef* def = getItemDef(p.equip[s]);
+    if (!def) continue;
+    if (def->effectId  == EFX_REVEAL_FOG && def->effectParam  == 1) bonus++;
+    if (def->effectId2 == EFX_REVEAL_FOG && def->effectParam2 == 1) bonus++;
+  }
+  return bonus;
+}
+
+// Typed-inventory slot count in effect right now: archetype base plus STAT_SLOTS
+// from equipment (Hoarder's Rig), capped at the array size.  This is the ONE
+// number every slot loop and carry-cap check must use.
+static uint8_t effectiveInvSlots(const Player& p) {
+  int slots = (int)p.invSlots;
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    if (!p.equip[s]) continue;
+    const ItemDef* def = getItemDef(p.equip[s]);
+    if (def) slots += (int)def->statMods[STAT_SLOTS];
+  }
+  return (uint8_t)constrain(slots, 1, (int)INV_SLOTS_MAX);
+}
+
 // ── Effect dispatch table ─────────────────────────────────────────────────
 // Function signature: (pid, itemId, param)
 typedef void (*EffectFn)(int pid, uint8_t itemId, uint8_t param);
-static EffectFn effectTable[16] = {};  // indexed by EffectId enum
+static EffectFn effectTable[EFX_COUNT] = {};  // indexed by EffectId enum
 
 static void efxThreatMod(int pid, uint8_t itemId, uint8_t param) {
   // param is treated as signed int8_t: positive raises TC, negative lowers it.
   int delta = (int)(int8_t)param;
   G.threatClock = (uint8_t)constrain((int)G.threatClock + delta, 0, 20);
 }
+
+// EFX_CURE_STATUS — the status-condition system was removed; "curing" now
+// means closing wounds.  param = number of wounds healed, minor tier first.
 static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
-  (void)pid; (void)itemId; (void)param; // conditions removed
+  (void)itemId;
+  Player& p = G.players[pid];
+  for (int n = 0; n < (int)param; n++) {
+    if (!healWound(p, WOUND_MINOR) && !healWound(p, WOUND_MAJOR)) break;
+  }
 }
 
-// EFX_NARRATIVE — server-side handler for params requiring server action.
-// param==10: teleport_random (Rambling Drifter, Slippery Cave)
-// All other params (11=UI scramble, 12=reverse keys, 20-32=misc) are client-side;
-// the server just broadcasts the item-use event with the param for the client to handle.
+// EFX_NARRATIVE — server-side handler.  Only the NAR_* params listed in the
+// .ino are acted on here; passive equipment params (NAR_FIRE_STARTER,
+// NAR_COLD_IMMUNE, NAR_*_FORAGE, NAR_SCAV_DOUBLE) are queried where they apply
+// via hasNarrativeParam().  Params 11/12 are client-side and are echoed back
+// in the item_result "efxp" field.
 static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
-  if (param == 10) {
+  (void)itemId;
+  if (param == NAR_LL_CAP_DOWN) {
+    Player& p = G.players[pid];
+    if (effectiveMaxLL(pid) > 1) p.llCapPenalty++;
+    uint8_t cap = effectiveMaxLL(pid);
+    if (p.ll > cap) p.ll = cap;
+    return;
+  }
+  if (param == NAR_TELEPORT) {
     // teleport_random — move player to a random surveyed hex
     // surveyedMap bitmask: bit (r*MAP_COLS+q) => q = idx%MAP_COLS, r = idx/MAP_COLS
     static constexpr int totalCells = MAP_ROWS * MAP_COLS;
@@ -84,9 +143,9 @@ static void initEffectTable() {
 }
 
 static void dispatchEffect(int pid, const ItemDef& item) {
-  if (item.effectId  && item.effectId  < 16 && effectTable[item.effectId])
+  if (item.effectId  && item.effectId  < EFX_COUNT && effectTable[item.effectId])
     effectTable[item.effectId](pid, item.id, item.effectParam);
-  if (item.effectId2 && item.effectId2 < 16 && effectTable[item.effectId2])
+  if (item.effectId2 && item.effectId2 < EFX_COUNT && effectTable[item.effectId2])
     effectTable[item.effectId2](pid, item.id, item.effectParam2);
 }
 
@@ -136,9 +195,10 @@ static void applyDawnItemCosts(int pid) {
 }
 
 // ── useItem ───────────────────────────────────────────────────────────────
-// Use a consumable in inventory slot slotIdx. Applies statMods and dispatches
-// effect. Returns true on success, false if slot empty / wrong category.
-// Must hold G.mutex.
+// Use the item in inventory slot slotIdx.  Consumables apply their statMods
+// and effects and lose one charge.  Key items with an effect (Pre-War Net
+// Map, Cursed Device) may be "read" any number of times and are never
+// consumed.  Equipment and materials cannot be used.  Must hold G.mutex.
 static bool useItem(int pid, uint8_t slotIdx) {
   if (slotIdx >= INV_SLOTS_MAX) return false;
   Player& p = G.players[pid];
@@ -146,8 +206,8 @@ static bool useItem(int pid, uint8_t slotIdx) {
   if (!itemId) return false;
   const ItemDef* def = getItemDef(itemId);
   if (!def) return false;
-  // Equipment must be equipped, not used directly (use equipItem instead)
-  if (def->category == ITEM_EQUIPMENT) return false;
+  bool isKeyWithEffect = (def->category == ITEM_KEY) && (def->effectId != EFX_NONE);
+  if (def->category != ITEM_CONSUMABLE && !isKeyWithEffect) return false;
 
 
   // Apply stat modifiers — food/water via threshold-aware steps to propagate LL events
@@ -167,6 +227,8 @@ static bool useItem(int pid, uint8_t slotIdx) {
 
   // Dispatch effects
   dispatchEffect(pid, *def);
+
+  if (isKeyWithEffect) return true;  // key items are not spent
 
   // Decrement quantity; clear slot if exhausted
   if (p.invQty[slotIdx] > 1) {
@@ -199,7 +261,8 @@ static bool equipItem(int pid, uint8_t slotIdx) {
   if (prev) {
     // Find a free inv slot
     bool placed = false;
-    for (int i = 0; i < p.invSlots && !placed; i++) {
+    uint8_t slots = effectiveInvSlots(p);
+    for (int i = 0; i < slots && !placed; i++) {
       if (!p.invType[i]) {
         p.invType[i] = prev; p.invQty[i] = 1;
         placed = true;
@@ -221,14 +284,23 @@ static bool equipItem(int pid, uint8_t slotIdx) {
 // ── unequipItem ───────────────────────────────────────────────────────────
 // Remove item from equipment slot (0-indexed eslot, 0=HEAD..4=VEHICLE).
 // Moves it to the first free inventory slot. Returns true on success.
+// Refused if the item grants pack slots that are currently occupied — the
+// pack would shrink around items the player could no longer reach.
 // Must hold G.mutex.
 static bool unequipItem(int pid, uint8_t eslot) {
   if (eslot >= EQUIP_SLOTS) return false;
   Player& p = G.players[pid];
   uint8_t itemId = p.equip[eslot];
   if (!itemId) return false;
-  // Find free inv slot
-  for (int i = 0; i < p.invSlots; i++) {
+  // Slot count once this item is gone
+  p.equip[eslot] = 0;
+  uint8_t newSlots = effectiveInvSlots(p);
+  p.equip[eslot] = itemId;
+  for (int i = newSlots; i < INV_SLOTS_MAX; i++) {
+    if (p.invType[i]) return false;  // would orphan an item beyond the new cap
+  }
+  // Find free inv slot within the new cap
+  for (int i = 0; i < newSlots; i++) {
     if (!p.invType[i]) {
       p.invType[i] = itemId; p.invQty[i] = 1;
       p.equip[eslot] = 0;
@@ -298,7 +370,8 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
 
   // Find existing stack or free slot in inventory
   int freeSlot = -1, stackSlot = -1;
-  for (int i = 0; i < p.invSlots; i++) {
+  uint8_t slots = effectiveInvSlots(p);
+  for (int i = 0; i < slots; i++) {
     if (p.invType[i] == itemId && stackSlot < 0) stackSlot = i;
     if (!p.invType[i] && freeSlot < 0) freeSlot = i;
   }
@@ -340,26 +413,38 @@ static bool hasPassTerrainBit(int pid, uint8_t terrainBit) {
   return false;
 }
 
+// ── canEnterTerrain ───────────────────────────────────────────────────────
+// Single source of truth for "may pid step onto terrain t, and at what base
+// MC".  Used by movePlayer() and computeValidMoves() so the direction mask the
+// client receives always agrees with what the server will accept.
+// Must hold G.mutex.
+static bool canEnterTerrain(int pid, uint8_t t, uint8_t* mcOut) {
+  if (t >= NUM_TERRAIN) return false;
+  uint8_t mc = TERRAIN_MC[t];
+  if (mc == 255) {
+    if (t == 11 && hasPassTerrainBit(pid, TERR_PASS_RIVER)) mc = RIVER_MC;
+    else return false;
+  }
+  if (t == 8 && hasPassTerrainBit(pid, TERR_PASS_CLIFF)) mc = CLIFF_MC;  // climbing gear
+  if (mcOut) *mcOut = mc;
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Effective Movement Points = LL − encumbrance penalty
+// Effective Movement Points = LL + 3 − major wounds − encumbrance penalty
 //   + STAT_MP from equipment (items with no opCost always active;
 //     fuel-gated items like motorbike have STAT_MP applied in applyDawnItemCosts).
+// Floored at 2.  Keep data/ui-panels.js's MP help text in sync with this.
 // Called while holding G.mutex.
 static int effectiveMP(int pid) {
   Player& p  = G.players[pid];
   int     mp = (int)p.ll + 3;
-  // Encumbrance: count legacy inv slots used
+  mp -= (int)p.wounds[WOUND_MAJOR];        // each major wound costs 1 MP/day
+  // Encumbrance: resource tokens carried above the pack size cost 1 MP
   int used = 0;
   for (int k = 0; k < 5; k++) used += (int)p.inv[k];
-  // Effective slot cap includes STAT_SLOTS equipment bonus
-  int effSlots = (int)p.invSlots;
-  for (int s = 0; s < EQUIP_SLOTS; s++) {
-    if (!p.equip[s]) continue;
-    const ItemDef* def = getItemDef(p.equip[s]);
-    if (def) effSlots += (int)def->statMods[STAT_SLOTS];
-  }
-  if (used > effSlots) mp--;               // encumbrance
+  if (used > (int)effectiveInvSlots(p)) mp--;
   // Add free (no opCost) STAT_MP bonuses from equipped items
   for (int s = 0; s < EQUIP_SLOTS; s++) {
     if (!p.equip[s]) continue;
@@ -374,11 +459,11 @@ static int effectiveMP(int pid) {
 }
 
 // ── effectiveMaxLL ────────────────────────────────────────────────────────────
-// Returns the player's current LL ceiling, including STAT_LL bonuses from all
-// equipped items (e.g. Body Armor +2 → ceiling 9 instead of 7).
-// Must hold G.mutex.
+// Returns the player's current LL ceiling: 7, plus STAT_LL bonuses from all
+// equipped items (e.g. Body Armor +2 → 9), minus any permanent penalty
+// (Uranium Candy).  Never below 1.  Must hold G.mutex.
 static uint8_t effectiveMaxLL(int pid) {
-  int cap = 7;
+  int cap = 7 - (int)G.players[pid].llCapPenalty;
   for (int s = 0; s < EQUIP_SLOTS; s++) {
     if (!G.players[pid].equip[s]) continue;
     const ItemDef* def = getItemDef(G.players[pid].equip[s]);
@@ -430,7 +515,73 @@ static void grantRandomStartItem(Player& p) {
   }
   if (poolSize == 0) return;
   uint8_t itemId = pool[esp_random() % poolSize];
-  for (int s = 0; s < p.invSlots; s++) {
+  uint8_t slots = effectiveInvSlots(p);
+  for (int s = 0; s < slots; s++) {
     if (p.invType[s] == 0) { p.invType[s] = itemId; p.invQty[s] = 1; return; }
   }
+}
+
+// ── Survivor (re)initialisation ───────────────────────────────────────────────
+// Resets every gameplay field of a Player for archetype `arch`: vitals, skills,
+// pack, equipment, wounds, MP, and the starting resource kit.  Position, name,
+// score, steps, and connection fields are left to the caller.
+//
+// The starting kit must fit under the archetype's pack size, otherwise the
+// survivor spawns encumbered and collectResource() refuses every pickup.
+//   standard  : 2 water, 1 food, 1 fuel, 1 med, 1 scrap  = 6 of 8
+//   Quarterm. : +1 food                                 = 7 of 8
+//   Medic     : +1 med                                  = 7 of 8
+//   Mule      : +1 food, +1 med, +1 scrap                = 9 of 12
+static void resetSurvivor(Player& p, uint8_t arch) {
+  if (arch >= NUM_ARCHETYPES) arch = 0;
+  p.archetype = arch;
+  p.invSlots  = ARCHETYPE_INV_SLOTS[arch];
+  memcpy(p.skills, ARCHETYPE_SKILLS[arch], NUM_SKILLS);
+
+  memset(p.inv, 0, sizeof(p.inv));
+  p.inv[0] = 2; p.inv[1] = 1; p.inv[2] = 1; p.inv[3] = 1; p.inv[4] = 1;
+  if (arch == 1) { p.inv[1]++; }
+  if (arch == 2) { p.inv[3]++; }
+  if (arch == 3) { p.inv[1]++; p.inv[3]++; p.inv[4]++; }
+
+  memset(p.invType,     0, sizeof(p.invType));
+  memset(p.invQty,      0, sizeof(p.invQty));
+  memset(p.equip,       0, sizeof(p.equip));
+  memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
+  memset(p.wounds,      0, sizeof(p.wounds));
+
+  p.ll = 7; p.food = 6; p.water = 6; p.radiation = 0;
+  p.llCapPenalty = 0;
+  p.fThreshBelow = 0; p.wThreshBelow = 0;
+  p.radClean  = true;
+  p.resting   = false;
+  p.lastMoveMs = 0;
+  p.movesLeft = (int8_t)(p.ll + 3);  // == effectiveMP() for a fresh, unencumbered survivor
+}
+
+// Random passable spawn hex.  Prefers non-radioactive terrain; after 50 tries
+// settles for merely passable.  Caller holds G.mutex.
+static void pickSpawnHex(Player& p) {
+  int attempts = 0;
+  while (attempts < 50) {
+    p.q = (int16_t)(esp_random() % MAP_COLS);
+    p.r = (int16_t)(esp_random() % MAP_ROWS);
+    attempts++;
+    uint8_t st = G.map[p.r][p.q].terrain;
+    if (TERRAIN_MC[st] != 255 && !TERRAIN_IS_RAD[st]) return;
+  }
+  while (TERRAIN_MC[G.map[p.r][p.q].terrain] == 255 && attempts < 200) {
+    p.q = (int16_t)(esp_random() % MAP_COLS);
+    p.r = (int16_t)(esp_random() % MAP_ROWS);
+    attempts++;
+  }
+}
+
+// Fresh weather for a new world: CLEAR for a random spell in the CLEAR duration
+// range (game-days), no bad-weather streak.
+static void resetWeather() {
+  G.weatherPhase   = WEATHER_CLEAR;
+  G.weatherCounter = WEATHER_DUR_MIN[WEATHER_CLEAR] +
+    (uint16_t)(esp_random() % (WEATHER_DUR_MAX[WEATHER_CLEAR] - WEATHER_DUR_MIN[WEATHER_CLEAR] + 1));
+  G.badWeatherTicks = 0;
 }

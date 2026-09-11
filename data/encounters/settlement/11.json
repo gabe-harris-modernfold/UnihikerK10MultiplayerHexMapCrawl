@@ -1,0 +1,136 @@
+{
+  "id": "settlement_headcount_01",
+  "title": "The {{adjective}} Headcount",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Dusk, and the settlement is doing its curfew count. Everyone stands at their own door — every household, the whole length of the street — while the warden walks the line with a lamp and a board, touching each head and saying a number out loud. It is done in complete silence. It takes eleven minutes. At the end the warden says a number, and there is a pause that goes on slightly too long, and then everyone goes inside very quickly and bars the door.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Stand in the line and be counted",
+          "cost": {},
+          "base_risk": 21,
+          "skill": 3,
+          "success_node": "the_warden",
+          "hazard_id": "counted_twice"
+        },
+        {
+          "label": "Stay out of it and work the empty market instead",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_warden",
+          "hazard_id": "after_curfew"
+        }
+      ]
+    },
+    "the_warden": {
+      "text": "The warden's post is the old grain office and it is where the settlement keeps everything it cannot afford to lose: seed, medicine, oil, the water tally, and a strongbox of trade scrap. She is happy to trade with a stranger and happier still to have someone to talk to after dark. On her wall, sixty years of count boards. The settlement has four hundred and eleven residents. Every board, every night, for sixty years, reads four hundred and twelve.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask about the extra one",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 3,
+          "success_node": "the_extra",
+          "hazard_id": "she_explains"
+        },
+        {
+          "label": "Walk the line yourself and find them",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "the_extra",
+          "hazard_id": "the_thirteenth_door"
+        }
+      ]
+    },
+    "the_extra": {
+      "text": "There has been one extra at the count since the first night, and in sixty years nobody has ever managed to be looking at it. It stands in the line. It stands at a door. It is counted, and the count is always one over, and the following morning there is always one more portion gone from the stores than the ledger allows — and that is the whole arrangement, because on the two occasions in sixty years that the settlement tried to short it, the warden's predecessors did not survive the night and neither did the two households on either side. So they set out an extra portion. They count four hundred and twelve. They do not look for it. And in exchange, whatever it is has stood in that line every single night for six decades, between the settlement and the dark, and nothing has ever come in off the flat. The warden gives you a full pack and one instruction: when the count is called, be indoors or be in the line, and do not, under any circumstances, be the one who turns round.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "counted_twice": {
+      "text": "You shuffle in the line and the warden's hand comes down on your head twice. The count runs one higher than usual. Four hundred and thirteen. Every single door on the street turns to look at you, and the warden's voice when she starts the count again is not steady, and the eleven minutes it takes to redo it are the longest of your life.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "after_curfew": {
+      "text": "The count finishes while you are two streets away with your arms full of market stock. You hear every door bar at once. Then you hear, from the direction of the line you are no longer standing in, something take a single step toward you on a street where there is now nobody at all.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": false
+    },
+    "she_explains": {
+      "text": "She explains, quietly, with the lamp between you, and halfway through the explanation the lamp gutters the way lamps do when a door opens, and neither of you moves to check the door, and she finishes the sentence anyway because she has been finishing that sentence for eleven years.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_thirteenth_door": {
+      "text": "You take the lamp and you walk the line yourself and you count, and at the thirteenth door there is a household of four standing out with three of them alive. You get one clear look at the arrangement before the lamp goes out, and what you learn in that look is that it is not standing *at* the doors. It is standing in place of somebody, and it has been doing that for sixty years, and the family has never mentioned it.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Nightly",
+      "Four-Hundred-and-Twelfth",
+      "Curfew",
+      "Unbroken",
+      "Silent",
+      "Eleven-Minute",
+      "Counted",
+      "Dusk"
+    ]
+  }
+}

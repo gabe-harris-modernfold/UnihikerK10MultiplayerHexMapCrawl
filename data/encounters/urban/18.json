@@ -58,9 +58,8 @@
     "walker_thrown": {
       "text": "The walker travels farther and faster than walkers are supposed to travel. It connects with your upper arm and the impact is genuine — she's been loading those wheels with something. 'Next time,' she calls, pleasantly, 'buy a muffin.'",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         1,
         0

@@ -1,0 +1,145 @@
+{
+  "id": "marsh_punt_01",
+  "title": "The {{adjective}} Punt",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A long flat punt comes up the channel at a steady walking pace, and the man poling it is screaming. Not in panic — he has clearly been doing this for years and has paced himself. Pole down, push, recover, scream, repeat. The punt is loaded to the gunwales with salvage: drums, crates, a cargo net of scrap, all of it lashed down and sorted by weight. \"DON'T GET ON,\" he calls, cheerfully, over the screaming. \"BUT PLEASE COME CLOSER.\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk the bank alongside and hear him out",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_cargo",
+          "hazard_id": "bank_gives"
+        },
+        {
+          "label": "Hook the cargo net with a pole as it passes",
+          "cost": {},
+          "base_risk": 31,
+          "skill": 4,
+          "success_node": "the_cargo",
+          "hazard_id": "net_drag"
+        }
+      ]
+    },
+    "the_cargo": {
+      "text": "He throws you things as he passes and he throws generously — a fuel can, ration tins, a bundle of copper, a sealed med kit — because he cannot stop and he cannot spend any of it and the punt has been slowly filling for eleven years. His hands are on the pole. His hands are *part of* the pole; the grain runs up into the wrists and the fingers have gone to knot and bark. Everything below the elbow is willow now, and it is still growing, and it is very slowly growing downward into the boat.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Offer to cut his hands off",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_last_run",
+          "hazard_id": "bad_cut"
+        },
+        {
+          "label": "Board anyway and strip the hold while he can't stop you",
+          "cost": {},
+          "base_risk": 52,
+          "skill": 2,
+          "success_node": "the_last_run",
+          "hazard_id": "the_boat_objects"
+        }
+      ]
+    },
+    "the_last_run": {
+      "text": "He is enormously grateful and completely wrong about what's happening. You take the hands off at the elbow — two clean strokes, a great deal of sap, surprisingly little blood — and the screaming stops, and he stands upright for the first time in eleven years, and beams at you, and steps off the punt onto the bank. The punt stops. The channel stops. Two hundred metres of marsh that had been politely flowing because the pole told it to remembers that it is a swamp, and drops half a metre in four seconds, and beaches eleven years of accumulated cargo across the mud in front of you. \"Ah,\" he says. \"That was load-bearing.\" He does not seem to mind. He is already walking east, waving stumps, apologising to nobody in particular.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "bank_gives": {
+      "text": "You pace him for forty metres and the bank you are pacing him on turns out to be reeds over nothing. You go in, the punt goes past, and he screams an apology at the same pitch and volume as everything else he screams.",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "net_drag": {
+      "text": "The hook holds. The punt does not stop. You are towed thirty metres through a reed bed at walking pace, which is a humiliating speed to be injured at, and a submerged fence post finds your ribs on the way through.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "bad_cut": {
+      "text": "You go in above the wood and hit living arm. He does not stop screaming — he has been screaming the whole time, which makes it impossible to tell how badly you are doing — and by the time you find the seam you are wearing a great deal of him and the pole has kicked back into your mouth.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_boat_objects": {
+      "text": "He said don't get on. The deck takes your weight for one second and then the whole punt is willow — roots up through the planking, through your boots, through the meat of both feet in about the time it takes to say so — and you tear free leaving a great deal behind. He is terribly sorry. He warned you. He warned you first thing.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Screaming",
+      "Unstopping",
+      "Loaded",
+      "Willow",
+      "Eleven-Year",
+      "Load-Bearing",
+      "Passing",
+      "Well-Sorted"
+    ]
+  }
+}

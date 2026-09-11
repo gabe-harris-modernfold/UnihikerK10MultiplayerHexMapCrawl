@@ -53,15 +53,13 @@
       "penalty": {
         "ll": -1
       },
-      "status": 2,
       "ends_encounter": true
     },
     "performance_incident": {
       "text": "One of the performers sheds a limb mid-spin. It lands on you. The screaming is mutual. You run. You don't stop running for a while.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 1,
       "ends_encounter": true
     }
   },

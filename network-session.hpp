@@ -108,14 +108,12 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       p.wsClientId = 0;
       p.resting    = false;
       G.connectedCount--;
-      // Clear active encounter on disconnect (POI already consumed at enc_start)
+      // Clear active encounter on disconnect.  Involuntary, so the POI goes
+      // back on the hex; unbanked loot is forfeit.
       if (encounters[slot].active) {
-        uint8_t hq = encounters[slot].hexQ, hr = encounters[slot].hexR;
-        Log.warning("Encounter ended by disconnect slot=%d q=%u r=%u", slot, hq, hr);
-        encounters[slot] = {};
-        GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)slot;
-        eev.q = (int16_t)hq; eev.r = (int16_t)hr; eev.encOut = 4;  // reason: disconnect
-        enqEvt(eev);
+        Log.warning("Encounter ended by disconnect slot=%d q=%u r=%u",
+                    slot, encounters[slot].hexQ, encounters[slot].hexR);
+        endEncounter(slot, ENC_END_DISCONNECT, /*restorePoi=*/true);
       }
       { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev);
         Log.verbose("Enq EVT_LEFT pid=%d", slot); }

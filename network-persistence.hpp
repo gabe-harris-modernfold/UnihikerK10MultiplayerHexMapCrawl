@@ -22,14 +22,27 @@ void saveGame() {
       Log.notice("SD mkdir: %s", SAVE_DIR);
       SD.mkdir(SAVE_DIR);
     }
-    // Map file
+    // Map file.  Active encounters are not persisted, so their POIs are put
+    // back on the map for the duration of the write — after a reboot nobody is
+    // mid-encounter and the hex is visitable again instead of being lost.
     size_t mapBytes = 0;
     File f = SD.open(SAVE_MAP_F, FILE_WRITE);
     if (f) {
       SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount, G.threatClock,
-                         G.weatherPhase, G.weatherCounter };
+                         G.weatherPhase, G.weatherCounter, G.dayTick, G.badWeatherTicks };
+      uint8_t savedPoi[MAX_PLAYERS] = {0};
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!encounters[i].active) continue;
+        HexCell& c = G.map[encounters[i].hexR][encounters[i].hexQ];
+        savedPoi[i] = c.poi;
+        c.poi = encounters[i].encIdx;
+      }
       mapBytes += f.write((uint8_t*)&hdr, sizeof(hdr));
       mapBytes += f.write((uint8_t*)G.map, sizeof(G.map));
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!encounters[i].active) continue;
+        G.map[encounters[i].hexR][encounters[i].hexQ].poi = savedPoi[i];
+      }
       f.close();
       Log.notice("SD WRITE: %s bytes=%u", SAVE_MAP_F, (unsigned)mapBytes);
     } else {
@@ -58,7 +71,10 @@ void saveGame() {
         sp.movesLeft    = pl.movesLeft;
         sp.fThreshBelow = pl.fThreshBelow;
         sp.wThreshBelow = pl.wThreshBelow;
+        memcpy(sp.wounds, pl.wounds, NUM_WOUND_TIER);
         memcpy(sp.surveyedMap, pl.surveyedMap, sizeof(sp.surveyedMap));
+        sp.radClean     = pl.radClean ? 1 : 0;
+        sp.llCapPenalty = pl.llCapPenalty;
         sp.used = (pl.name[0] != '\0') ? 1 : 0;
         plyBytes += p.write((uint8_t*)&sp, sizeof(sp));
       }
@@ -121,12 +137,15 @@ bool tryLoadSave() {
     if (sgi.itemType) giLoaded++;
   }
   f.close();
-  G.dayCount       = hdr.dayCount;
-  G.threatClock    = hdr.threatClock;
-  G.weatherPhase   = hdr.weatherPhase;
-  G.weatherCounter = hdr.weatherCounter;
-  Log.notice("Save map loaded day=%u tc=%u groundItems=%d",
-             (unsigned)G.dayCount, (unsigned)G.threatClock, giLoaded);
+  G.dayCount        = hdr.dayCount;
+  G.threatClock     = hdr.threatClock;
+  G.weatherPhase    = (hdr.weatherPhase < 4) ? hdr.weatherPhase : WEATHER_CLEAR;
+  G.weatherCounter  = hdr.weatherCounter;
+  G.dayTick         = (hdr.dayTick < DAY_TICKS) ? hdr.dayTick : 0;
+  G.badWeatherTicks = hdr.badWeatherTicks;
+  Log.notice("Save map loaded day=%u tick=%lu tc=%u weather=%u groundItems=%d",
+             (unsigned)G.dayCount, (unsigned long)G.dayTick, (unsigned)G.threatClock,
+             (unsigned)G.weatherPhase, giLoaded);
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());
@@ -152,7 +171,11 @@ bool tryLoadSave() {
       pl.movesLeft    = sp.movesLeft;
       pl.fThreshBelow = sp.fThreshBelow;
       pl.wThreshBelow = sp.wThreshBelow;
+      memcpy(pl.wounds, sp.wounds, NUM_WOUND_TIER);
       memcpy(pl.surveyedMap, sp.surveyedMap, sizeof(pl.surveyedMap));
+      pl.radClean     = sp.radClean != 0;
+      pl.llCapPenalty = sp.llCapPenalty;
+      pl.resting      = false;
       pl.connected = false; pl.wsClientId = 0;
       plyLoaded++;
     }

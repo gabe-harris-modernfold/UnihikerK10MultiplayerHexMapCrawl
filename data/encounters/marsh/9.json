@@ -1,0 +1,136 @@
+{
+  "id": "marsh_donor_drive_01",
+  "title": "The {{adjective}} Donor Drive",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A man in a clean coat stands at a folding table in the middle of the reeds, beside a banner that reads GIVE BLOOD — GIVE LIFE — REFRESHMENTS PROVIDED. The table has a cash box, a stack of forms, and a tray of biscuits under cling film. \"Only take a minute,\" he says, warmly, and his voice arrives a fraction early, and his outline shivers at the edges the way hot tar does. He is not a man. He is about nine thousand marsh mosquitoes agreeing on a shape, and they have been standing here in shifts since spring.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Fill in the form and roll up your sleeve",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 0,
+          "success_node": "the_table",
+          "hazard_id": "full_unit"
+        },
+        {
+          "label": "Grab the cash box and run for the treeline",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "the_table",
+          "hazard_id": "shape_breaks"
+        }
+      ]
+    },
+    "the_table": {
+      "text": "The cash box is not cash. It is the accumulated property of every donor since spring, neatly sorted: purification tabs, ration tins, a fuel bladder, four good knives. The forms, you notice, are real forms, filled in by real hands, and they go back weeks. All the signatures are enthusiastic. None of the donors are anywhere. The biscuits, weirdly, are excellent.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Ask where the donors went",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "the_freezer",
+          "hazard_id": "honest_answer"
+        },
+        {
+          "label": "Follow the tubing running out the back of the table",
+          "cost": {},
+          "base_risk": 47,
+          "skill": 2,
+          "success_node": "the_freezer",
+          "hazard_id": "the_reservoir"
+        }
+      ]
+    },
+    "the_freezer": {
+      "text": "The tubing runs forty metres to a buried pre-war chest freezer, still humming off a solar rig, and inside is the whole operation: two hundred labelled units of blood, catalogued, rotated, temperature-logged in careful handwriting. The swarm has been running a functioning blood bank. It has never drunk a drop. \"It's for the hospital,\" the man says, and gestures east at a hospital that stopped existing sixty years ago, and every mosquito in him is absolutely certain about this. Stacked beside the freezer is six decades of medical supply the swarm has scavenged and never had anyone to give to. It insists you take it. It thanks you for your time.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "full_unit": {
+      "text": "The needle is nine hundred needles and the minute is nine minutes. You come off the table grey, cotton-wool taped to eleven places, and the man tells you not to operate heavy machinery. You couldn't operate a door.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": false
+    },
+    "shape_breaks": {
+      "text": "The man comes apart before your hand reaches the box — no lunge, just a coat falling through a cloud — and you run twenty metres inside a solid column of insect. You breathe some. You swallow some. The ones you swallow are the ones you think about later.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "honest_answer": {
+      "text": "\"Home,\" he says, and points, and the finger disassembles as it extends because nine thousand things cannot agree on a knuckle. Watching it happen does something unpleasant to the part of you that decides what a hand is. You are unwell for a while afterward.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_reservoir": {
+      "text": "Forty metres of tubing and then a collection drum you put your hand into without looking. It is warm, and full, and it has a skin on it. The drum goes over. You are standing in the recovered work of an entire season, and it is standing in you, and the swarm descends in a panic to save what it can of the donation.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Annual",
+      "Voluntary",
+      "Well-Attended",
+      "Registered",
+      "Ongoing",
+      "Humming",
+      "Charitable",
+      "Nine-Thousand-Strong"
+    ]
+  }
+}

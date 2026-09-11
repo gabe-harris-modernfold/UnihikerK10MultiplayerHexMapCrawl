@@ -85,9 +85,8 @@
     "rotor_injury": {
       "text": "A blade section catches on the fuselage as you drag it free and swings back at low height. You get the forearm up in time to protect your face. The forearm suffers for its sacrifice.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         1,
         0

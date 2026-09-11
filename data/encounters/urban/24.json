@@ -1,0 +1,140 @@
+{
+  "id": "urban_spin_class_01",
+  "title": "The {{gym}} Spin Class",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The gym's front windows are boarded but the bass is coming through them anyway — a hard, unvarying four-on-the-floor that has not missed a beat in sixty years. Inside, in the dark, forty stationary bikes are turning. Forty riders are turning them. They are dry, and grey, and wearing through at the seat and the palms, and they have pedalled every one of the last twenty-two thousand days. At the front, on the instructor's podium, something with a headset mic is counting them in. \"AND UP. AND UP. LOOKING GREAT, ROW THREE.\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Skirt the back wall to the towel store and the office",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 3,
+          "success_node": "the_office",
+          "hazard_id": "row_five"
+        },
+        {
+          "label": "Take a free bike and blend in",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 0,
+          "success_node": "the_office",
+          "hazard_id": "the_sprint"
+        }
+      ]
+    },
+    "the_office": {
+      "text": "The office is untouched: a stocked first-aid cabinet, a fridge of sealed electrolyte, protein bricks by the case, and a back room of spare parts and heavy copper. The bikes are all wired — properly wired, in series, by someone who knew what they were doing — and the cable runs out under the fire door and down the street. You have been assuming this is a horror. The wiring is making you reconsider.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Follow the cable out the fire door",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_grid",
+          "hazard_id": "the_door"
+        },
+        {
+          "label": "Cut the cable and take four decades of copper",
+          "cost": {},
+          "base_risk": 49,
+          "skill": 2,
+          "success_node": "the_grid",
+          "hazard_id": "load_drop"
+        }
+      ]
+    },
+    "the_grid": {
+      "text": "Two streets down, the cable terminates in a clinic. Working lights, a working cold chain, a working theatre, forty beds, and a functioning community of about two hundred people who have never once questioned where the power comes from because the instructor asked them not to. It has been running this class since the war. It recruits, it maintains, it keeps forty riders in decent mechanical condition, and it counts them in for eight hours a day, and the reason it does this is written on a laminated card taped to the podium in a dead woman's handwriting: KEEP THE LIGHTS ON FOR THEM. The clinic's quartermaster hears where you came from, goes grey, and pays you in medicine and scrap on the condition that you never tell anyone downstairs.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "row_five": {
+      "text": "You clip a handlebar in the dark. Row five's rider comes off the bike and does not stop pedalling, and the legs keep going, and it takes your feet out from under you and then keeps going on top of you at a steady eighty revolutions a minute.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_sprint": {
+      "text": "You get on a bike. The instructor calls a sprint. The resistance on your machine is set for something that has been doing this for sixty years and your legs are not that, and by the time you stop you have torn something in both thighs and you are, embarrassingly, the worst in the room.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_door": {
+      "text": "The fire door has been welded and rewired as part of the circuit and nobody told you. Forty riders' worth of accumulated potential goes through the handle and through you and puts you on your back in the car park with your teeth buzzing.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": false
+    },
+    "load_drop": {
+      "text": "You cut the cable. Forty bikes lose their load at once and every one of them freewheels, and forty riders who have been pushing against resistance for twenty-two thousand days go over their handlebars in unison in the dark. Then they get up. The instructor's voice does not change tone, not once, not even slightly, as it explains to them what you have just done to the clinic.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "gym": [
+      "Iron Mile",
+      "Pulse",
+      "Anytime",
+      "Vertex",
+      "Grindhouse",
+      "Cadence",
+      "Fitwell",
+      "Red Line"
+    ]
+  }
+}

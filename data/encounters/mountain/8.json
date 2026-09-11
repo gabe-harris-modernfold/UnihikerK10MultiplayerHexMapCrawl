@@ -1,0 +1,140 @@
+{
+  "id": "mountain_bell_tower_01",
+  "title": "The {{adjective}} Bell",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The monastery is cut into the cliff and the bell has not stopped. One strike every eleven seconds, for sixty years, and you can feel each one come up through the rock and out through your teeth. Chiselled above the gate, in letters a hand deep: WE RING SO THAT IT SLEEPS. DO NOT STOP. Inside the gatehouse, eleven monks are asleep on the floor in a neat row, breathing, warm, and impossible to wake. In the tower, something is pulling the rope.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Loot the refectory and stay out of the tower",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "the_refectory",
+          "hazard_id": "the_eleventh_second"
+        },
+        {
+          "label": "Try to wake a monk",
+          "cost": {},
+          "base_risk": 29,
+          "skill": 3,
+          "success_node": "the_refectory",
+          "hazard_id": "he_half_wakes"
+        }
+      ]
+    },
+    "the_refectory": {
+      "text": "A monastery provisioned for a mountain winter and then abandoned by everyone with a reason to eat: sacks of grain, salt fish, a cellar of oil and spirit, a dispensary of dried medicine, and a workshop of good tools. Nobody has touched any of it in six decades — the monks do not eat, and the thing in the tower does not either. On the refectory wall, a chart tracks the ringing in a clean unbroken hand. It stops, mid-column, forty-one years ago. After that the tallies are in a different hand entirely, and that hand has never missed a strike.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Climb the tower and see who is ringing",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "the_ringer",
+          "hazard_id": "the_stair"
+        },
+        {
+          "label": "Cut the bell rope from below",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "the_ringer",
+          "hazard_id": "one_missed_strike"
+        }
+      ]
+    },
+    "the_ringer": {
+      "text": "It woke up forty-one years ago. It came down out of whatever the bell had been holding it in, and it found eleven exhausted men who had been ringing in shifts for two decades to keep it under, and it did not eat them, because it had been listening to that bell its whole long sleep and it had come to need the sound the way you need a heartbeat. So it put them to sleep. Gently. And it took the rope. And it has rung every eleven seconds since, for forty-one years, without one missed strike, because the eleven of them are under now and it will not be the one that wakes them. It looks at you with an expression you have no word for and puts a finger — an approximation of a finger — to the place a mouth would be. Then it nods at the treasury door, and goes back to the rope.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_eleventh_second": {
+      "text": "You are under the tower arch when the strike comes. A bell that size at that range is not a sound, it is weather, and it puts you on your knees with both hands over your ears and blood tracking out from under one of them.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "he_half_wakes": {
+      "text": "One eye opens. Only one. It finds you, and the monk says something in a voice that has not been used in forty-one years and does not want to be, and whatever he says it is a warning and you cannot understand a word of it, and the effort of it cracks his lips open from corner to corner.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_stair": {
+      "text": "The tower stair is stone, and every strike shakes a little more dust out of the mortar, and eleven seconds is not long enough to cross a landing carefully. You take the last flight at the wrong moment and the step takes it with you, and you go down two turns of the spiral with the bell going off above you the whole way.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "one_missed_strike": {
+      "text": "The rope parts. There is no strike. For the first time in sixty years there is no strike, and the silence is enormous, and in the silence eleven men on the gatehouse floor all take a breath at once — the first one in forty-one years — and begin, slowly, to sit up. Whatever they were, sleep has not improved them. You do not stay to see the second breath.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Unmissed",
+      "Eleven-Second",
+      "Sleepless",
+      "Forty-One-Year",
+      "Tolling",
+      "Kept",
+      "Patient",
+      "Cliffside"
+    ]
+  }
+}

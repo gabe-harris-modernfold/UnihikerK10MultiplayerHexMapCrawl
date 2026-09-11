@@ -1,0 +1,141 @@
+{
+  "id": "dunes_glass_picnic_01",
+  "title": "The {{adjective}} Picnic",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The sand gives way to a plate of green-black glass four hundred metres across, smooth as a pond, and there is a family having lunch in the middle of it. Four of them, on a checked blanket, fused into the glass at the exact instant the sky opened — mother reaching for the flask, father mid-sentence, a boy with a ball, a grandmother laid out flat with her hat over her eyes. They are perfect. They are the clearest thing you have ever seen. The hamper beside them is not fused. The hamper is sitting on the surface, closed, and the glass around it is unmarked, as if somebody set it down last week.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk out and take the hamper",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 3,
+          "success_node": "the_hamper",
+          "hazard_id": "the_crust"
+        },
+        {
+          "label": "Hook it from the edge with a pole and rope",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "the_hamper",
+          "hazard_id": "the_drag"
+        }
+      ]
+    },
+    "the_hamper": {
+      "text": "Sealed jars, wrapped sandwiches gone hard as tile, a full flask, a bottle of something strong, and underneath it all the practical layer — a tin of matches, a medical roll, the father's tools, sixty years dry and perfect. As you close the lid you hear it: a tap. Two taps. From the grandmother. Under the hat, inside the glass, one finger is moving, and it has been moving at that speed, in that rhythm, for six decades, and it is unmistakably knocking to be let in on the conversation.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Break the glass over her face",
+          "cost": {},
+          "base_risk": 46,
+          "skill": 2,
+          "success_node": "the_sandwich",
+          "hazard_id": "the_shatter"
+        },
+        {
+          "label": "Tap back and see what she says",
+          "cost": {},
+          "base_risk": 31,
+          "skill": 3,
+          "success_node": "the_sandwich",
+          "hazard_id": "the_others_wake"
+        }
+      ]
+    },
+    "the_sandwich": {
+      "text": "She has been awake since the first second and she has spent sixty years working out how she feels about that, and what she has arrived at is that she is starving and everyone else is being very rude. The glass comes off her face in a sheet. Underneath, she is intact and furious and eighty-one. She takes a sandwich, eats the whole thing, tells you it's gone off, eats another one, and then explains — with the patience of a woman addressing an idiot — that her husband kept the family's money in a buried tin because he did not trust banks, and that he was a fool, and that she is going to enjoy telling him so when the rest of him thaws out. She tells you where it is. She goes back under the hat. She says to wake her when there's tea.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_crust": {
+      "text": "The plate is glass on top and something still soft underneath, and forty metres out your foot goes through the crust into a pocket of it. It is hot. It has been hot for sixty years. You get the boot out. The boot is a different shape now, and so is the foot.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_drag": {
+      "text": "The hook catches the blanket instead of the handle and drags the boy's arm out of the glass with it — cleanly, the way a cork leaves a bottle — and the arm arrives at your feet still holding the ball. You are not proud of the noise you make.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_shatter": {
+      "text": "You swing. Four hundred metres of tensioned glass has been waiting sixty years for exactly that, and the whole plate crazes at once with a bang you feel in your teeth. You take a hundred small pieces across the chest and arms, and the family, all four of them, drop half an inch as the surface settles.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_others_wake": {
+      "text": "You tap. She taps. And then the father taps, and the mother, and the boy, and the rhythm spreads outward into the plate and does not stop at the family, because the family are not the only people out here, they are just the only ones near the surface. Four hundred metres of glass begins, politely, to knock.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Glass",
+      "Clear",
+      "Interrupted",
+      "Green-Black",
+      "Sunday",
+      "Perfect",
+      "Fused",
+      "Unfinished"
+    ]
+  }
+}

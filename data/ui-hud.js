@@ -226,11 +226,50 @@ function openCharSheet() {
     });
   }
 
+  renderWounds(me);
+
   uiCharOpen.val = true;
   // renderInventory and renderEquipment are defined in ui-items.js
   renderInventory?.();
   renderEquipment?.();
 }
+
+// — Wounds row on the char sheet ———
+// me.wnd is [minor, major] straight off the wire; absent on an old server.
+function renderWounds(me) {
+  const box = document.getElementById('cs-wounds');
+  if (!box) return;
+  box.innerHTML = '';
+  const wd    = me.wnd ?? [0, 0];
+  const minor = wd[WOUND_MINOR] | 0, major = wd[WOUND_MAJOR] | 0;
+  if (!minor && !major) {
+    const ok = document.createElement('div');
+    ok.className = 'cs-wound-row cs-wound-none';
+    ok.textContent = 'NO WOUNDS';
+    box.appendChild(ok);
+    return;
+  }
+  const rows = [
+    [minor, 'MINOR', MINOR_EFFECT],
+    [major, 'MAJOR', MAJOR_EFFECT],
+  ];
+  rows.forEach(([n, name, effect]) => {
+    if (!n) return;
+    const row = document.createElement('div');
+    row.className = 'cs-wound-row cs-wound-' + name.toLowerCase();
+    const lbl = document.createElement('span');
+    lbl.className = 'cs-wound-name';
+    lbl.textContent = n > 1 ? `${name} ×${n}` : name;
+    const eff = document.createElement('span');
+    eff.className = 'cs-wound-effect';
+    eff.textContent = effect(n);
+    row.appendChild(lbl);
+    row.appendChild(eff);
+    box.appendChild(row);
+  });
+}
+const MINOR_EFFECT = n => `−${n} Endure`;
+const MAJOR_EFFECT = n => `−${n} all skills, −${n} MP`;
 
 document.getElementById('menu-btn').addEventListener('click', () => openMenu('main'));
 document.getElementById('menu-overlay').addEventListener('click', e => {

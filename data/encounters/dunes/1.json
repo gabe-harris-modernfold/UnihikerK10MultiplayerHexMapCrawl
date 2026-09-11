@@ -11,7 +11,7 @@
           "label": "Dig out the drum and pry it open.",
           "cost": {},
           "base_risk": 20,
-          "skill": 5,
+          "skill": 4,
           "success_node": "drum_cache",
           "hazard_id": "sand_collapse"
         }

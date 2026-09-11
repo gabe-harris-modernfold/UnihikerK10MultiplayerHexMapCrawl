@@ -11,7 +11,7 @@
           "label": "Pry open the cargo hatch.",
           "cost": {},
           "base_risk": 20,
-          "skill": 4,
+          "skill": 3,
           "success_node": "cargo_bay",
           "hazard_id": "sharp_metal"
         }
@@ -37,7 +37,7 @@
             "ll": 1
           },
           "base_risk": 60,
-          "skill": 5,
+          "skill": 4,
           "success_node": "drivers_cab",
           "hazard_id": "submersion"
         }
@@ -72,13 +72,12 @@
       "penalty": {
         "ll": -1
       },
-      "status": 4,
       "ends_encounter": false
     },
     "submersion": {
       "text": "You misjudge the depth. Water floods your lungs before you surface, coughing hard.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "ends_encounter": true
     }

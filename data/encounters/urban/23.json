@@ -1,0 +1,152 @@
+{
+  "id": "urban_vending_stairwell_01",
+  "title": "The {{adjective}} Stairwell",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Somebody dragged every vending machine in the building into one stairwell and stacked them four flights high, and then the vending machines dragged in a few more themselves. They are all lit. They are all stocked. They hum in sequence, top to bottom and back, which is either a cooling cycle or a conversation. Taped to the bottom machine is a cardboard sign in machine-printed receipt paper: EXACT CHANGE. NO NOTES. WE HAVE BEEN VERY PATIENT.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Pay properly — scrap in the slot, one item at a time",
+          "cost": {
+            "scrap": 1
+          },
+          "base_risk": 19,
+          "skill": 3,
+          "success_node": "the_stock",
+          "hazard_id": "wrong_coin"
+        },
+        {
+          "label": "Tip the bottom machine and take what falls out",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 4,
+          "success_node": "the_stock",
+          "hazard_id": "tipped"
+        }
+      ]
+    },
+    "the_stock": {
+      "text": "They dispense generously once you have established yourself as a customer: sealed water, sixty-year snack bricks that are technically still food, a first-aid kit from the machine on flight three that has clearly been retrofitted for the purpose. They are restocked. Everything in them is fresh-rotated and dust-free, and there is no way a machine did that, and on the underside of the stairs someone has chalked a tally that runs into four figures.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Keep feeding the slot until something unusual comes out",
+          "cost": {
+            "scrap": 1
+          },
+          "base_risk": 33,
+          "skill": 2,
+          "success_node": "the_restocker",
+          "hazard_id": "stuck_spiral"
+        },
+        {
+          "label": "Follow the tally marks up to flight four",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "the_restocker",
+          "hazard_id": "the_top_machine"
+        }
+      ]
+    },
+    "the_restocker": {
+      "text": "On flight four, between two machines, in the gap where a third used to be, is the restocker. He has a uniform, a route sheet, a trolley, and no legs to speak of — the machines take care of that part now — and he has been servicing this account since the war because the account has been very clear that the alternative is not being serviced. He is thrilled to see a customer. Genuinely thrilled. He hands over his entire service kit, the float from six decades of takings, and the good stuff he keeps behind the coin mechs, and he asks — this is the only thing he asks — whether the route is still on the system. You say yes. He cries a little. The machines hum approvingly, top to bottom, all the way down.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "wrong_coin": {
+      "text": "The scrap you feed it is a fraction light. The machine rejects it, then rejects your hand, then rejects the concept of you, and the coin return fires the offending slug back through the meat of your palm at the speed of a nail gun.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "tipped": {
+      "text": "It goes over. So does the one above it, and the one above that, and four flights of stacked vending machines come down the stairwell with you somewhere in the middle of the sequence. You get out at the landing. You get out of most of it.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "stuck_spiral": {
+      "text": "The spiral turns and the item hangs. You do what everyone does — arm in up to the shoulder, through the flap — and the flap is not a flap, it is a jaw with a spring behind it, and it has been waiting four figures' worth of tally marks for exactly this.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_top_machine": {
+      "text": "The machine on flight four is not stocked with product. You get one clear look at what it is stocked with, sorted by size and neatly faced-up the way good merchandising demands, before it kills the stairwell lights and the whole stack stops humming at once. You take the stairs four at a time in the dark and something on every landing takes a swipe at the tally.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Well-Stocked",
+      "Humming",
+      "Exact-Change",
+      "Serviced",
+      "Four-Flight",
+      "Patient",
+      "Lit",
+      "Rotated"
+    ]
+  }
+}

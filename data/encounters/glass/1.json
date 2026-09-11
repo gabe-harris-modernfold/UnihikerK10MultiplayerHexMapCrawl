@@ -63,7 +63,6 @@
       "penalty": {
         "ll": -1
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -76,7 +75,6 @@
         "radiation": 2,
         "ll": -1
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

@@ -98,7 +98,9 @@
       "Bash(mv Panel_RGB.cpp Panel_RGB.cpp.disabled)",
       "PowerShell(& 'C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe' board list 2>&1; Write-Host '---all com ports---'; [System.IO.Ports.SerialPort]::GetPortNames\\(\\) | Sort-Object)",
       "Bash(powershell -ExecutionPolicy Bypass -File scripts\\\\build.ps1)",
-      "PowerShell(.\\\\scripts\\\\build.ps1)"
+      "PowerShell(.\\\\scripts\\\\build.ps1)",
+      "Bash(node --check server.js)",
+      "Read(//c/SourceCode/**)"
     ]
   }
 }

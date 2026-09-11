@@ -51,9 +51,8 @@
     "glass_shelf_collapse": {
       "text": "The shelf unit chose this moment to finish falling. The glass pane shatters and you pull back fast but catch a long shallow cut across your palm from the leading edge.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 4,
       "ends_encounter": false
     }
   },

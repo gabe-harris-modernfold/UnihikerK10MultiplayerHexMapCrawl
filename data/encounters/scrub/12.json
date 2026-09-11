@@ -11,7 +11,7 @@
           "label": "Stand very still and try to process what you're hearing",
           "cost": {},
           "base_risk": 20,
-          "skill": 5,
+          "skill": 4,
           "success_node": "cactus_harvest",
           "hazard_id": "confusion_spiral"
         },
@@ -45,15 +45,13 @@
     "confusion_spiral": {
       "text": "The harmony shifts into something that addresses your specific anxieties with precision you can't fully explain. You sit down in the dirt for what feels like a moment and stand back up having lost a substantial block of time. The cacti have not moved. The wind is still. One of them appears to have produced a small bow.",
       "penalty": {},
-      "status": 2,
       "ends_encounter": false
     },
     "spine_puncture": {
       "text": "A gust catches the largest cactus mid-harvest and it swings its arm segment directly into your forearm. The spines are long and deeply barbed. Removing them is a process.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 4,
       "wound": [
         1,
         0

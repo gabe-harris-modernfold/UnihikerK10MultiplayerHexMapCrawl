@@ -1,0 +1,140 @@
+{
+  "id": "settlement_council_vote_01",
+  "title": "The {{adjective}} Vote",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The town hall is full and the motion on the floor is whether to widen the east ditch. Eleven councillors sit at a long table. Ten of them are alive and evenly, furiously split. The eleventh is Founder Orrin Beck, who has been dead for fifty-eight years, and who is carried in for every session in his chair by two appointed bearers and set down at the head of the table, and whose vote is determined by which way he settles. They are all watching him settle. Nobody breathes. He is, very slowly, going left.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sit at the back and watch democracy happen",
+          "cost": {},
+          "base_risk": 17,
+          "skill": 3,
+          "success_node": "the_hall",
+          "hazard_id": "the_settling"
+        },
+        {
+          "label": "Offer to help carry the Founder",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_hall",
+          "hazard_id": "the_bearers"
+        }
+      ]
+    },
+    "the_hall": {
+      "text": "The hall is also the town's strongroom, because the council does not trust a building it is not sitting in: the common stores are stacked along the back wall under the flag, and the clerk's cupboard holds the settlement's medicine, its lamp oil, its seed corn and its scrap reserve. Fifty-eight years of minutes fill the shelves. Every session is recorded. Every vote is recorded. And Founder Beck has voted, according to the record, four hundred and nine times, and has never once abstained, and has been on the winning side of every single motion.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Read back far enough to find who decides the lean",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "the_bearers_room",
+          "hazard_id": "the_minutes"
+        },
+        {
+          "label": "Straighten him up. He is about to fall over.",
+          "cost": {},
+          "base_risk": 43,
+          "skill": 2,
+          "success_node": "the_bearers_room",
+          "hazard_id": "the_correction"
+        }
+      ]
+    },
+    "the_bearers_room": {
+      "text": "The bearers decide. Of course the bearers decide — two appointed men, chosen by the council, who carry the chair in and set it down, and a chair set down half an inch out of true will settle left, and half an inch the other way will settle right. They have known this for fifty-eight years. Every councillor has known it for fifty-eight years. The bearers are appointed by a vote that the Founder casts, which means the Founder appoints the men who decide how the Founder votes, and this arrangement has produced fifty-eight years of stable government, no famine, no civil war, and the widest ditches in the region. The bearers show you the ledger where they record which way they set him down and why. It is the most carefully reasoned document you have ever read. They pay you, in common stores, to take a copy to the next town over, in case anyone there is still doing it the hard way.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_settling": {
+      "text": "You lean forward to see better and the bench creaks, and eleven heads turn, and the Founder — who was two-thirds of the way to a decision — is jolted by the floorboard and goes the other way. The motion fails. The east ditch is not widened. Four councillors want your name and one of them is holding a hammer.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_bearers": {
+      "text": "You take a corner of the chair. You have not been trained, and nobody tells you about the half-inch, and you set your end down square, which means the Founder does not settle at all — he simply sits, upright, for eleven full minutes, while an entire town's government waits on a dead man, and then he comes forward instead of sideways and takes you to the floor with him.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_minutes": {
+      "text": "You go back far enough and you find the early sessions, and the early sessions are not about ditches. They are about what the settlement did in the first two winters to still be here for a third, and Founder Beck voted on all of it, and he was alive for the first four hundred pages and the handwriting does not change when he stops being.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_correction": {
+      "text": "You straighten him. The hall goes silent in a way rooms do not usually manage. And Founder Orrin Beck, perfectly upright and squared to the table for the first time in fifty-eight years, turns his head — unassisted, without a bearer within two metres of him — and looks at the man who has just cast his vote for him. Then he looks at you. The council does not adjourn so much as evacuate.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Founder's",
+      "Fifty-Eight-Year",
+      "Unanimous",
+      "Casting",
+      "Carried",
+      "Settled",
+      "Quorate",
+      "Well-Minuted"
+    ]
+  }
+}

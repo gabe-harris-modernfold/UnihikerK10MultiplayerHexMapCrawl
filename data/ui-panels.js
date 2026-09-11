@@ -1,29 +1,35 @@
 function getShelterDesc(shelterMaxed, shelterLevel, scrap, mp) {
   if (shelterMaxed) return 'Improved shelter already here — nothing to build';
-  if (shelterLevel === 1 && scrap === 0) return 'Shelter here — needs scrap to upgrade';
+  // Mirrors doShelter(): a basic shelter can only be upgraded (2 scrap, 2 MP);
+  // an improved one is finished.  Never downgrade, never pay out twice.
   if (shelterLevel === 1 && scrap >= 2 && mp >= 2) return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
-  if (shelterLevel === 1) return '1 scrap → upgrade to improved \u2302 (1 MP, +4 pts)';
+  if (shelterLevel === 1) return 'Basic shelter here — upgrading needs 2 scrap and 2 MP';
   if (scrap === 0) return 'Needs scrap — none in pack';
   if (scrap === 1) return '1 scrap → shelter \u2302 (1 MP, +4 pts)';
   if (mp < 2) return '1 scrap → shelter \u2302 (1 MP, +4 pts) — not enough MP for improved';
   return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
 }
 
-function getBlockReason(def, shelterLevel, available, hasMP, slotFree, mp, scrap) {
+// Scrap needed for the shelter action on this hex (2 to upgrade a basic one).
+function shelterScrapNeeded(shelterLevel) { return shelterLevel === 1 ? 2 : 1; }
+
+function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds) {
   const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
-  const hasScrap = def.id !== ACT_SHELTER || scrap > 0;
+  const hasScrap = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
   if (shelterMaxed) return 'Max shelter built here';
-  if (def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap) return 'Shelter here — need scrap to upgrade';
+  if (def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap) return 'Shelter here — upgrading needs 2 scrap';
+  if (def.id === ACT_TREAT && !majorWounds) return 'No Major Wound to treat';
   if (!available) {
-    if (def.id === ACT_FORAGE) return 'Needs Forage terrain (Rust Forest · Marsh · Open Scrub)';
-    if (def.id === ACT_WATER)  return 'Needs Water terrain (Marsh \u00b7 Flooded District)';
-    if (def.id === ACT_SCAV)   return 'Needs Salvage terrain (Broken Urban · Glass Fields)';
+    if (def.id === ACT_FORAGE) return 'Needs Forage terrain (Open Scrub · Rust Forest · Marsh · River Channel)';
+    if (def.id === ACT_WATER)  return 'Needs Water terrain (Marsh \u00b7 Flooded District \u00b7 River Channel)';
+    if (def.id === ACT_SCAV)   return 'Needs Salvage terrain (Broken Urban · Flooded District · Glass Fields)';
     if (def.id === ACT_TRADE)  return 'No survivors on this hex';
+    if (def.id === ACT_TREAT)  return 'Only the Medic can treat outside a Settlement';
     return 'Not available here';
   }
   if (!hasMP)    return `Needs ${def.mpCost} MP (have ${mp})`;
   if (!hasScrap) return `Needs scrap (have ${scrap})`;
-  if (!slotFree) return 'Action used this cycle \u2014 REST to reset';
+  if (def.id === ACT_TREAT && med < 1) return 'Needs 1 Medicine';
   return '';
 }
 
@@ -186,14 +192,17 @@ function initActionPanel() {
     const mp          = me.mp  ?? 0;
     const scrap       = me.inv?.[4] ?? 0;
     const shelterLevel = cell?.shelter ?? 0;
-    const isScout     = (me.arch ?? -1) === 4;  // Scout: Survey free + no action slot
-    const actUsed     = !!(me.au ?? 0);
+    const isScout     = (me.arch ?? -1) === 4;  // Scout: Survey is free
+    const isMedic     = (me.arch ?? -1) === 2;  // Medic: may TREAT anywhere
+    const med         = me.inv?.[3] ?? 0;
+    const majorWounds = me.wnd?.[WOUND_MAJOR] ?? 0;
 
     // Always update terrain header immediately so it never shows a stale hex name (BUG-04)
-    terrName = (terr != null && terr <= 10) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
     const _terrSub = document.getElementById('act-panel-terrain-sub');
     if (_terrSub) _terrSub.textContent = 'IN THE ' + terrName.toUpperCase();
 
+    // terr is read again below for the TREAT gate (Settlement = 9)
     // Fix: suppress action menu entirely at MP:0 — only REST makes sense
     // Exception: TRADE is free (0 MP) and must remain available if a co-located player exists
     if (mp === 0) {
@@ -218,8 +227,9 @@ function initActionPanel() {
 
     document.getElementById('action-water-ctrl').style.display = 'none';
 
-    // Fix: compute actual shelter MP cost dynamically — fall back to basic (1 MP) if not enough MP for improved
-    const shelterMpCost = (scrap >= 2 && mp >= 2) ? 2 : 1;
+    // Shelter cost mirrors doShelter(): improved when affordable, basic otherwise;
+    // an existing basic shelter can only be upgraded (2 scrap, 2 MP).
+    const shelterMpCost = (shelterLevel === 1 || (scrap >= 2 && mp >= 2)) ? 2 : 1;
     const shelterLabel  = shelterLevel >= 1 ? 'UPGRADE SHELTER' : 'BUILD SHELTER';
 
     actionBtnList.innerHTML = '';
@@ -230,6 +240,11 @@ function initActionPanel() {
       { id: ACT_SHELTER, icon: '\u2302', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
     ];
+    // TREAT is only offered when there is a Major Wound to treat.
+    if (majorWounds > 0) {
+      actionDefs.push({ id: ACT_TREAT, icon: '\u2695', label: 'TREAT WOUND', mpCost: 2,
+                        desc: `Close a Major Wound — Endure DN${TREAT_DN}, costs 1 Medicine` });
+    }
     // Scout-exclusive: SURVEY is hidden for non-Scouts
     if (isScout) {
       actionDefs.push({ id: ACT_SURVEY, icon: '\u25CE', label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
@@ -244,14 +259,16 @@ function initActionPanel() {
       // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
       // allow terrain-dependent actions optimistically; the server validates.
       const terrAvail  = terr === null || (!shelterMaxed && actAvailable(def.id, terr));
-      const available  = def.id === ACT_TRADE ? tradeAvail : terrAvail;
+      // TREAT: the Medic works anywhere; everyone else needs a Settlement (9).
+      const treatAvail = isMedic || terr === null || terr === 9;
+      const available  = def.id === ACT_TRADE ? tradeAvail
+                       : def.id === ACT_TREAT ? treatAvail
+                       :                        terrAvail;
       const hasMP      = mp >= def.mpCost;
-      const hasScrap   = def.id !== ACT_SHELTER || scrap > 0;
-      // Actions that bypass the action slot (deterministic — no skill roll):
-      const slotless   = def.id === ACT_SHELTER || def.id === ACT_WATER || def.id === ACT_TRADE
-                       || (def.id === ACT_SURVEY && isScout);
-      const slotFree   = slotless || !actUsed;
-      const canAct     = available && hasMP && hasScrap && slotFree;
+      const hasScrap   = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
+      const hasMed     = def.id !== ACT_TREAT || med >= 1;
+      const hasWound   = def.id !== ACT_TREAT || majorWounds > 0;
+      const canAct     = available && hasMP && hasScrap && hasMed && hasWound;
 
       // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
       let desc = def.desc;
@@ -260,7 +277,7 @@ function initActionPanel() {
       }
 
       // Compute the inline block reason shown under the button label
-      const blockReason = getBlockReason(def, shelterLevel, available, hasMP, slotFree, mp, scrap);
+      const blockReason = getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds);
 
       const btn = document.createElement('button');
       btn.id        = 'action-btn-' + def.id;   // stable ID for AI agents
@@ -466,7 +483,7 @@ function initMenuSystem() {
 
       sec('Movement',
         mp({ class: 'menu-text-body' },
-          'Your Move Points (MP) = max(2, Life Level − major wounds − encumbrance). ' +
+          'Your Move Points (MP) = max(2, Life Level + 3 − major wounds − encumbrance). ' +
           'Even at worst condition, you retain minimum 2 MP to stay mobile. ' +
           'Each hex costs MP equal to its terrain cost (1–2 MP). ' +
           'First visit to any hex grants +1 exploration point automatically.'
@@ -521,7 +538,7 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             ms({ class: 'ht-track-lbl' }, 'LIFE LEVEL'),
             ms({ class: 'ht-track-val' }, '1 – 6'),
-            ms({ class: 'ht-track-desc' }, 'Core health. Drops from starvation, thirst, wounds, radiation. Reaches 0 = downed. Restored by REST in good conditions or treating a Grievous Wound.')
+            ms({ class: 'ht-track-desc' }, 'Core health. Drops from starvation, thirst, hazards, radiation. Reaches 0 = downed. Restored by REST in good conditions.')
           ),
           md({ class: 'ht-track-row' },
             ms({ class: 'ht-track-lbl' }, 'FOOD'),
@@ -597,7 +614,7 @@ function initMenuSystem() {
 
       sec('Terrain',
         md({ class: 'terrain-grid' },
-          ...TERRAIN.map(t => {
+          ...TERRAIN.map((t, ti) => {
             let vis;
             if (t.vis > 0) {
               vis = ms({ class: 'tr-vis-hi'  }, '\u25B2 HIGH');
@@ -610,7 +627,7 @@ function initMenuSystem() {
                       :               ms({}, `MC:${t.mc}`);
             return md({ class: 'terrain-ref-card' },
               md({ class: 'tr-head' },
-                ms({ class: 'tr-icon' }, t.icon),
+                ms({ class: 'tr-icon ui-glyph', style: `background-position:-${ti * GLYPH_CELL}px 0` }),
                 ms({ class: 'tr-name' }, t.name)
               ),
               md({ class: 'tr-stats' }, mc, ms({}, ' \u00B7 '), vis)
@@ -621,8 +638,14 @@ function initMenuSystem() {
 
       sec('Wounds',
         mp({ class: 'menu-text-body' },
-          'Wounds reduce skill checks. Minor Wounds penalise Endure; Major Wounds penalise all skills. ' +
-          'Grievous Wounds require a Settlement and a successful Treat to remove — and restore 1 LL when cleared.'
+          'Encounter hazards leave wounds. Each Minor Wound is −1 on Endure checks; each Major Wound ' +
+          'is −1 on every skill check and −1 MP per day. Three of each tier is the cap.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'Resting with Food 4+ and Water 3+ knits one Minor Wound closed per night. Major Wounds need ' +
+          'the TREAT action: 2 MP, 1 Medicine, and an Endure check at DN 9. The Medic can do this ' +
+          'anywhere; everyone else must be standing in a Settlement. A near miss downgrades the Major ' +
+          'Wound to a Minor one instead of clearing it.'
         )
       ),
 
@@ -630,7 +653,10 @@ function initMenuSystem() {
         mp({ class: 'menu-text-body' },
           'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
           'Meeting or exceeding DN = success. ' +
-          'Five skills: NAVIGATE · FORAGE · SCAVENGE · SHELTER · ENDURE.'
+          'Five skills: NAVIGATE · FORAGE · SCAVENGE · SHELTER · ENDURE. ' +
+          'FORAGE and SCAVENGE roll on those actions; ENDURE rolls on radiation and TREAT; all five ' +
+          'are called for by encounter choices. Each is rated 0 (untrained), 1 (trained) or 2 (expert) ' +
+          'and is fixed by your archetype for the life of the character.'
         )
       ),
 
@@ -678,7 +704,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[3], skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/actUsed/resting/radClean), chkSk/chkDn/chkBonus, score/steps. conn:false = empty slot.')
+            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/resting/radClean), score/steps. conn:false = empty slot.')
           )
         ),
 

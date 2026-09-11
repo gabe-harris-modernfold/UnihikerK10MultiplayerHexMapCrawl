@@ -19,7 +19,7 @@
           "label": "Force the hatch and go in dark.",
           "cost": {},
           "base_risk": 25,
-          "skill": 5,
+          "skill": 4,
           "success_node": "pump_interior",
           "hazard_id": "hatch_gas"
         }

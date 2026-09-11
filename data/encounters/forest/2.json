@@ -11,7 +11,7 @@
           "label": "Force the door with your shoulder.",
           "cost": {},
           "base_risk": 15,
-          "skill": 5,
+          "skill": 4,
           "success_node": "main_room",
           "hazard_id": "door_splinter"
         }
@@ -70,7 +70,6 @@
       "penalty": {
         "ll": -1
       },
-      "status": 4,
       "ends_encounter": false
     },
     "bad_air": {

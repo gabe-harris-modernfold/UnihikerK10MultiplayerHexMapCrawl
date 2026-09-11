@@ -53,12 +53,10 @@ static void k10PlaySeq(const ToneStep* seq, const char* name = nullptr) {
 static void checkScoreAudio() {
   uint32_t teamScore = 0;
   uint8_t  snapTC    = 0;
-  bool     crisis    = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     for (int i = 0; i < MAX_PLAYERS; i++)
       if (G.players[i].connected) teamScore += G.players[i].score;
     snapTC  = G.threatClock;
-    crisis  = G.crisisState;
     xSemaphoreGive(G.mutex);
   }
 
@@ -80,7 +78,7 @@ static void checkScoreAudio() {
                   (snapTC >= TC_THRESHOLD_B) ? 2 :
                   (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
   if (tcLvl > k10PrevTCLevel) {
-    if (tcLvl == 4 || crisis) k10Play(MOTIF_BUNKER_ALARM); else k10Play(MOTIF_WARNING_GRUNT);
+    if (tcLvl == 4) k10Play(MOTIF_BUNKER_ALARM); else k10Play(MOTIF_WARNING_GRUNT);
   }
   k10PrevTCLevel = tcLvl;
 }

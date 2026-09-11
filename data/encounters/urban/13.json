@@ -19,7 +19,7 @@
           "label": "Walk straight to the front — cut the line",
           "cost": {},
           "base_risk": 70,
-          "skill": 5,
+          "skill": 4,
           "success_node": "license_obtained",
           "hazard_id": "ghoul_frenzy"
         }
@@ -69,9 +69,8 @@
     "ghoul_frenzy": {
       "text": "They come up from their seats with the momentum of something that has been wound up for forty-seven years and finally released. There are more of them than you counted. They are very upset about the queue. You survive but you do not get the license and you do not go back.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 4,
       "wound": [
         0,
         1

@@ -1,0 +1,145 @@
+{
+  "id": "mountain_chairlift_01",
+  "title": "The {{adjective}} Chairlift",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The lift is running. Cable taut, bull wheel turning, chairs swinging up out of the cloud and round the bend at the bottom station with a clank you can set a watch by. Most of them are occupied. The passengers are sixty years frozen into their seats, ski poles upright, lift bars down, and they go up into the cloud and come back down again empty-handed and empty-eyed, over and over. In the operator's hut, a man in a red jacket is watching the chairs go past and counting under his breath.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Raid the bottom station's stores while he counts",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_hut",
+          "hazard_id": "the_bull_wheel"
+        },
+        {
+          "label": "Ask him what the count is for",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_hut",
+          "hazard_id": "he_loses_count"
+        }
+      ]
+    },
+    "the_hut": {
+      "text": "Sixty years of a lift station that nobody stripped: a drum of diesel for the backup motor, a crate of hut rations, a stocked first-aid box on the wall, and a lost-property bin the size of a bathtub. The operator's tally is chalked on the wall in columns that go all the way round the room and out onto the ceiling. UP: 41,208. DOWN: 41,207. He has been one passenger short since the first day and he has checked the arithmetic every single time.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Ride up and find the missing passenger",
+          "cost": {},
+          "base_risk": 42,
+          "skill": 0,
+          "success_node": "the_top_station",
+          "hazard_id": "the_unload_ramp"
+        },
+        {
+          "label": "Tell him the count is fine and take the rest",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 3,
+          "success_node": "the_top_station",
+          "hazard_id": "the_recount"
+        }
+      ]
+    },
+    "the_top_station": {
+      "text": "The missing passenger is in the top station, and has been since the first morning, because she got off, walked four metres, sat down on a bench to fix a binding, and never stood up again — which means she never passed the down-counter, which means that for sixty years a man in a red jacket has been slowly losing his mind over a discrepancy that is a woman on a bench forty metres above him. You carry her down. He checks the tally. He writes the last number. He stands up, for the first time in six decades, and hands you the station keys, the safe, and everything in the lost-property bin, and walks off down the mountain whistling like a man who has finally clocked off.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_bull_wheel": {
+      "text": "You duck under the cable on the wrong side of the bull wheel. A grip housing the size of a fist catches your pack, lifts you off the deck, and carries you a quarter turn before something in your shoulder decides the ride is over.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "he_loses_count": {
+      "text": "You speak. He loses the count. Sixty years of arithmetic evaporates in a single syllable and the noise he makes brings the frost down off the roof beams and something wet off the inside of your ears.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_unload_ramp": {
+      "text": "You ride up with a frozen family of four for company and miss the unload ramp, and the chair takes you round the top bull wheel and starts back down with your legs on the wrong side of the bar. You get off. You get off at eleven metres.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_recount": {
+      "text": "He does not believe you, and to prove it he stops the lift and recounts from chair one, and forty-one thousand frozen passengers swing to a halt at once and then swing back, and the whole cable resonates, and three of them come off at the top and arrive at the bottom station at a hundred kilometres an hour. One of them arrives through you.",
+      "penalty": {
+        "ll": -5,
+        "food": -1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Running",
+      "Counted",
+      "Cloud-Fed",
+      "Unbroken",
+      "Clanking",
+      "Forty-Thousandth",
+      "Loaded",
+      "Patient"
+    ]
+  }
+}

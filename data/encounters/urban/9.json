@@ -19,7 +19,7 @@
           "label": "Use the wall to your advantage and fight",
           "cost": {},
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "attacker_down",
           "hazard_id": "bite_caught_bad"
         }
@@ -51,9 +51,8 @@
     "bite_caught": {
       "text": "The jaw unhinges faster than you saw it coming. You get your forearm up and the teeth close on that instead of somewhere worse. The grip is enormous and the bite goes deep before you can break free.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         0,
         1
@@ -63,9 +62,8 @@
     "bite_caught_bad": {
       "text": "She gets a bite in before you can close the distance. The teeth are real, the jaw strength is significant, and the wound is deep. You finish the fight but you finish it worse.",
       "penalty": {
-        "ll": -10
+        "ll": -5
       },
-      "status": 4,
       "wound": [
         0,
         1

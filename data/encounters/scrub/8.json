@@ -36,9 +36,8 @@
     "device_shock": {
       "text": "The moment you touch it, a brief pulse of energy fires up your arm. Not enough to do real damage — more like a warning. Your fingers tingle for the next hour. The device sits in your pack perfectly still.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

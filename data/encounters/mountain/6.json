@@ -1,0 +1,145 @@
+{
+  "id": "mountain_avalanche_dog_01",
+  "title": "The {{adjective}} Rescue",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Something is digging in the avalanche debris at the bottom of the bowl, and it is the size of a draught horse. Barrel-chested, matted, wearing the rotted remains of a rescue harness with a red cross still just legible on the flank. It digs with method — quarters the slope, alerts, digs, checks — and it has clearly been doing this without a break for a very long time. Scattered across the debris field, half-buried, is the gear from about nine separate expeditions.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Work the far end of the debris while it digs",
+          "cost": {},
+          "base_risk": 23,
+          "skill": 2,
+          "success_node": "the_debris",
+          "hazard_id": "slab_shift"
+        },
+        {
+          "label": "Whistle. Good dog. Very good dog.",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 3,
+          "success_node": "the_debris",
+          "hazard_id": "the_greeting"
+        }
+      ]
+    },
+    "the_debris": {
+      "text": "Nine expeditions' worth of packs, and every one of them opened, emptied of food, and then repacked and reburied with the straps done up neatly. The dog has been curating. You find rations it did not want, a stove, fuel bottles, a full medical kit, and rope by the coil. Twenty metres away it alerts, digs hard for four minutes, and pulls a man out of the snow by the collar — and lays him on the surface, and licks his face, and waits.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "mountain_common",
+      "choices": [
+        {
+          "label": "Go and look at the man it dug out",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 3,
+          "success_node": "the_find",
+          "hazard_id": "the_handover"
+        },
+        {
+          "label": "Take the gear and get off the slope",
+          "cost": {},
+          "base_risk": 41,
+          "skill": 4,
+          "success_node": "the_find",
+          "hazard_id": "the_second_alert"
+        }
+      ]
+    },
+    "the_find": {
+      "text": "It is the same man it dug out yesterday, and the day before, and roughly twenty-two thousand times before that. You can tell because of the wear. The dog has been finding him, laying him out, waiting for a handler who is not coming — and then, at dusk, when no one has come, carefully burying him again, because a dog that has finished its work has no work. He is not in good condition. The dog is enormously proud of him. When you finally take the body down the slope yourself the dog follows, and at the valley floor it stops, and sits, and gives you the one thing it has been carrying in the harness pocket for sixty years: its handler's kit, intact, sealed, and stuffed with everything a rescue team thought worth having.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "mountain_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "slab_shift": {
+      "text": "You cross the debris high and the whole slab settles a foot with a boom you feel in your sternum. You go down with it and come to rest with one leg wedged between two blocks of avalanche ice that have no intention of letting go politely.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_greeting": {
+      "text": "It is very pleased to see you. It is also a hundred and forty kilos and it has not been pleased to see anyone in sixty years. The greeting puts you flat on your back in the snow under a great deal of extremely affectionate animal, and something in your chest gives before you can explain that you are fine, you are fine, you are fine.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_handover": {
+      "text": "You reach for the body. The dog does not growl — it simply puts itself between you and him and leans, and leaning is what an animal that size does instead of an argument. You come away with your hand opened along the back by a harness buckle and a very clear understanding of whose casualty this is.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_second_alert": {
+      "text": "You are halfway off the slope with a full pack when it alerts again — hard, and close, and directly under your feet. It starts digging. You are standing on the dig. A hundred and forty kilos of working animal removes the snow beneath you at a speed that is genuinely impressive, and you go down with the hole, and the hole closes over you both.",
+      "penalty": {
+        "ll": -5,
+        "water": -1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Twenty-Two-Thousandth",
+      "Good",
+      "Unfinished",
+      "Patient",
+      "Harnessed",
+      "Daily",
+      "Diligent",
+      "Buried"
+    ]
+  }
+}

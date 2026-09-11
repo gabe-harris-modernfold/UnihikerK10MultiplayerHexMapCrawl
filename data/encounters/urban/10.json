@@ -19,7 +19,7 @@
           "label": "Commit to it — controlled slide, tuck and roll at the bottom",
           "cost": {},
           "base_risk": 35,
-          "skill": 5,
+          "skill": 4,
           "success_node": "fell_anyway",
           "hazard_id": "fell_anyway_hard"
         }
@@ -36,9 +36,8 @@
     "fell_anyway_hard": {
       "text": "The chute terminates more abruptly than expected. You arrive at the bottom in a way that prioritises momentum over dignity and exit the situation covered in guano and substantially bruised. Still lost. Still relocated. Just louder about it.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 2,
       "wound": [
         1,
         0

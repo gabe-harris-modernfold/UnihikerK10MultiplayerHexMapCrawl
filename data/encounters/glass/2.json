@@ -11,7 +11,7 @@
           "label": "Force the door open the rest of the way.",
           "cost": {},
           "base_risk": 20,
-          "skill": 4,
+          "skill": 3,
           "success_node": "instrument_room",
           "hazard_id": "door_shard"
         }

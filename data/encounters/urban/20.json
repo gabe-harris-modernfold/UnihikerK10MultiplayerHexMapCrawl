@@ -1,0 +1,144 @@
+{
+  "id": "urban_q3_review_01",
+  "title": "The {{floor}} Floor Review",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Eleven floors up, the lights are on. Not emergency lights — proper overheads, humming, running off something in the basement that has been loyal for sixty years. The open-plan floor is intact: desks, chairs, a wall of motivational posters gone amber. Every workstation is occupied. Nobody has stood up in six decades and the carpet has come up around their shoes to make sure of it. A whiteboard by the lifts reads Q3 GOALS in tidy marker, and under it, in the same hand, much fresher: WELCOME NEW STARTER. There is a chair out for you. There is a mug with your job title on it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sit down. Act like you work here.",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 3,
+          "success_node": "the_supply_cupboard",
+          "hazard_id": "onboarding"
+        },
+        {
+          "label": "Go straight for the supply cupboard and out",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 2,
+          "success_node": "the_supply_cupboard",
+          "hazard_id": "open_plan"
+        }
+      ]
+    },
+    "the_supply_cupboard": {
+      "text": "Sixty years of an office that never got dismantled: a first-aid station nobody raided, a fridge of vending stock still sealed, four jerry cans for a generator, a drawer of batteries, and eleven kilos of perfectly good copper in the cable runs. You work fast and quietly. Nobody looks up. Every screen on the floor is showing the same spreadsheet, and the cursor in cell H4 is blinking, and every so often the number in it goes up.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Follow the cables to the corner office",
+          "cost": {},
+          "base_risk": 41,
+          "skill": 2,
+          "success_node": "the_corner_office",
+          "hazard_id": "the_kitchen"
+        },
+        {
+          "label": "Unplug the whole floor and strip it properly",
+          "cost": {},
+          "base_risk": 48,
+          "skill": 2,
+          "success_node": "the_corner_office",
+          "hazard_id": "restructure"
+        }
+      ]
+    },
+    "the_corner_office": {
+      "text": "The cables all run to the boardroom, and the boardroom table is not a table. It is nine members of senior management, fused shoulder to shoulder in a long oval, faces up, polished to a shine by sixty years of somebody wiping them down. In the middle of them, still typing, is the one who has been doing it: a manager with no legs below the desk line and no intention of discussing that, who greets you by the name on the mug and hands you a sealed emergency kit, a fire safe, and the contents of petty cash. \"Excellent first day,\" it says. \"Genuinely. You'd be amazed how many don't finish the induction.\" It taps the spreadsheet. H4 goes up by one. You understand, with total clarity, what H4 counts, and you leave while you are still ahead of the number.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "onboarding": {
+      "text": "You sit. The chair's lumbar support closes around your spine with a click that is clearly original to the product, and the induction begins, and it is four hours long, and it is compulsory, and you get out of it by leaving a strip of back in the mesh.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "open_plan": {
+      "text": "You cut between two desks and the carpet, which is mostly hair now, takes your ankle. Every head on the floor turns on the same beat, like a meeting noticing a latecomer, and the sheer collective disappointment of it puts you on the floor for a while.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_kitchen": {
+      "text": "You take a shortcut through the break room. The microwave is still running its cycle — has been since the war, one minute twenty on the clock, counting down and never arriving — and when you open the door to check, sixty years of that minute comes out at once and takes the skin off your forearms.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "restructure": {
+      "text": "You pull the main run out of the wall and the floor goes dark, and then the floor stands up. All of it. Forty-one chairs go back at once, in perfect unison, which is the most frightening sound the building has made in sixty years. You are down the stairwell before the first one reaches the aisle, and you are bleeding from something you did not feel happen.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "floor": [
+      "Eleventh",
+      "Mezzanine",
+      "Sales",
+      "Compliance",
+      "Fourth",
+      "Executive",
+      "Open-Plan",
+      "Quarterly"
+    ]
+  }
+}

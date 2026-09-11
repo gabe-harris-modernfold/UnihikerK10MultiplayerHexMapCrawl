@@ -19,7 +19,7 @@
           "label": "Stomp a clear path and grab it quickly",
           "cost": {},
           "base_risk": 50,
-          "skill": 5,
+          "skill": 4,
           "success_node": "sour_cream_retrieved",
           "hazard_id": "bitten_up"
         }
@@ -36,9 +36,8 @@
     "rat_swarm_overwhelm": {
       "text": "The nest collapses around your arms and the rats interpret your presence as an attack. Hundreds of small, diseased mouths find purchase. You retreat covered in bites, trailing blood, without the tub.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 4,
       "wound": [
         1,
         0
@@ -48,9 +47,8 @@
     "bitten_up": {
       "text": "They don't scatter — they escalate. The swarm climbs your legs and you go down hard, arms shielding your face. By the time you're back on your feet the tub has been subsumed back into the nest and the swarm is dispersing like it never happened.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 4,
       "wound": [
         1,
         0

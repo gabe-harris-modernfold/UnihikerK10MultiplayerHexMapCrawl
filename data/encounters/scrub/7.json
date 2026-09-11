@@ -11,7 +11,7 @@
           "label": "Hold your ground and stare it down",
           "cost": {},
           "base_risk": 40,
-          "skill": 5,
+          "skill": 4,
           "success_node": "wraith_retreats",
           "hazard_id": "panic_sprint"
         },
@@ -51,9 +51,8 @@
     "panic_sprint": {
       "text": "Your body decides this is a running situation and executes before you can weigh in on the decision. You cover the next four hundred metres at a sprint you didn't know you had. You've put real distance between yourself and wherever you wanted to be.",
       "penalty": {
-        "ll": -3
+        "ll": -2
       },
-      "status": 2,
       "ends_encounter": true
     }
   },

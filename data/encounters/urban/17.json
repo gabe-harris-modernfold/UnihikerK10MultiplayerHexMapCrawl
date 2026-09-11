@@ -33,7 +33,7 @@
           "label": "Play for high score — aim for 10+",
           "cost": {},
           "base_risk": 40,
-          "skill": 5,
+          "skill": 4,
           "success_node": "high_score",
           "hazard_id": "low_score"
         }
@@ -70,17 +70,15 @@
     "low_score": {
       "text": "You reach 7. The cabinet makes a sound like a disappointed sigh — a specific, designed sound, deliberately engineered to make you feel that. Then it shocks you through the controls. Not severely. Just enough. The panel stays shut.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 2,
       "ends_encounter": true
     },
     "cabinet_defends_itself": {
       "text": "The cabinet detects the attempted disassembly and discharges its full power reserve through the chassis. You let go fast but not fast enough. The shock is significant and the components are now locked behind a magnetic shutter that was not there before.",
       "penalty": {
-        "ll": -5
+        "ll": -3
       },
-      "status": 2,
       "ends_encounter": false
     }
   },

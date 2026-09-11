@@ -1,0 +1,148 @@
+{
+  "id": "dunes_mirage_motel_01",
+  "title": "The {{motel}} Motel",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "It resolves out of the heat shimmer at four hundred metres: a single-storey motel, twelve rooms, ice machine, pool. The sign says VACANCY and under it, in smaller letters that were definitely added later, PLEASE DON'T. A man in a short-sleeved shirt is behind the desk in the open office, and as you come up the drive he puts both hands flat on the counter and says, with enormous weariness, \"Right. Before you say anything. This is not a motel. I'm the manager and I have to say the room rate, so — twenty scrap, continental breakfast — and now I've said it, so please, for the love of god, don't take a room.\"",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Loot the office and the ice machine, skip the rooms",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_office",
+          "hazard_id": "the_carpet"
+        },
+        {
+          "label": "Ask him what happens if you take a room",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 3,
+          "success_node": "the_office",
+          "hazard_id": "he_demonstrates"
+        }
+      ]
+    },
+    "the_office": {
+      "text": "The office is real and the office is a good haul: the ice machine still runs, there are cases of soft drinks, a stocked first-aid box, jerry cans behind the desk, and a lost-property cupboard that sixty years of guests have generously contributed to. The manager helps you carry things. He is friendly, he is relieved, and he never steps out from behind the counter, and the counter, you notice, is the only part of the floor in here that is a different colour.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_common",
+      "choices": [
+        {
+          "label": "Ask for the key to room twelve anyway",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 2,
+          "success_node": "room_twelve",
+          "hazard_id": "check_in"
+        },
+        {
+          "label": "Ask him what he gets out of warning people",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 3,
+          "success_node": "room_twelve",
+          "hazard_id": "the_pool"
+        }
+      ]
+    },
+    "room_twelve": {
+      "text": "\"Nothing,\" he says. \"That's the whole problem.\" He has been the front of house for sixty years for a thing that is twelve rooms wide and roughly stomach-shaped, and he gets no commission, no cut, no thanks, and it cannot make him lie — it can only make him say the rate. So he has spent six decades saying the rate and then talking every single guest back out of the drive, which has cost the motel approximately everything and has made him, by his own estimate, the worst employee in the history of hospitality. Room twelve is where it keeps the luggage it never got to digest. He hands you the key himself. \"Take the lot,\" he says. \"Tell it I tried.\"",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_carpet": {
+      "text": "You cross the office on the wrong side of the counter. The carpet closes around your boot to the ankle, tastes it, decides you are not a guest, and lets go — but not before taking the boot, the sock, and a disappointing amount of the foot inside them.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "he_demonstrates": {
+      "text": "He demonstrates with a chair. The chair goes through the doorway of room four and does not come out, and the sound it makes on the way is wet and unhurried and lasts about eleven seconds. He apologises for the noise. You spend the rest of the visit listening for it.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "check_in": {
+      "text": "You ask for the key. He has to give it to you — that one he cannot talk his way out of — and room twelve's door opens onto something that is not a room and is very glad to meet you. You get out. You get out considerably lighter than you went in, and a stripe of you stays behind on the threshold like a welcome mat.",
+      "penalty": {
+        "ll": -5,
+        "radiation": 1
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "the_pool": {
+      "text": "You lean on the pool rail while he talks. The pool is full — not of water — and the surface of it comes up the rail after your hand with real speed. The manager grabs your collar and hauls you back, which is the first time in sixty years he has stepped out from behind the counter, and neither of you enjoys watching what that costs him.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "motel": [
+      "Sandpiper",
+      "Blue Mesa",
+      "Restwell",
+      "Starlite",
+      "Dune View",
+      "Wayfarer",
+      "El Rancho",
+      "Cool Springs"
+    ]
+  }
+}

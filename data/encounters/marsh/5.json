@@ -1,0 +1,144 @@
+{
+  "id": "marsh_leech_spa_01",
+  "title": "The {{adjective}} Spa",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "Someone has dragged a cast-iron bathtub into the middle of the marsh and hung a hand-painted sign over it: WELLNESS. FIRST VISIT FREE. The tub is full to the brim with leeches — a slow black boil of them, thousands, sliding over each other. A man sits in it up to his neck, eyes closed, expression beatific. \"Detox,\" he says without opening his eyes. \"Been in eleven years. Never felt lighter.\" A crate of supplies sits beside the tub, neatly stacked, clearly payment from previous clients.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Rob the crate while he's relaxing",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "crate",
+          "hazard_id": "tub_lunge"
+        },
+        {
+          "label": "Accept the free first visit",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "crate",
+          "hazard_id": "free_visit"
+        }
+      ]
+    },
+    "crate": {
+      "text": "The crate is real and generously stocked — purification tabs, ration tins, a coil of copper, and three sealed vials of something medical. Eleven years of satisfied customers, apparently. The man still hasn't opened his eyes. You notice, now that you are closer, that his arms end at the elbow, and that the stumps are very clean, and very old.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Ask him how the business is doing",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "the_proprietor",
+          "hazard_id": "he_stands_up"
+        },
+        {
+          "label": "Reach into the tub for whatever the crate was paying for",
+          "cost": {},
+          "base_risk": 52,
+          "skill": 2,
+          "success_node": "the_proprietor",
+          "hazard_id": "under_the_boil"
+        }
+      ]
+    },
+    "the_proprietor": {
+      "text": "\"Business is excellent,\" he says, and his jaw moves a half-second after the words, like bad dubbing. \"We've expanded.\" The leeches near his throat part briefly and you see the arrangement: the man is a puppet, hollowed and held upright by a solid braid of them running up through his neck and into the back of his skull. They have been running a spa for eleven years. They are, by every measure, extremely good at it. They gesture — he gestures — at the crate, and at a second crate, sunk under the tub, which is better. \"Repeat customers,\" he explains, with enormous warmth. \"Take it. Tell a friend.\"",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            3
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "tub_lunge": {
+      "text": "The tub tips as you lean past it. A wave of leeches goes down your collar and by the time you have your shirt off you are wearing about forty of them and none of them are in a hurry.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "free_visit": {
+      "text": "The first ten seconds are, genuinely, wonderful. The eleventh second is when they find the soft parts. You come out of the tub faster than you went in, streaming, and spend a long time counting to make sure you got them all. You did not get them all.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "he_stands_up": {
+      "text": "He stands up to shake your hand, forgets about the elbows, and overbalances. Two hundred kilos of tub, man and leech comes down across your legs. The leeches are unharmed. The man apologises continuously throughout.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "under_the_boil": {
+      "text": "Your arm goes in to the shoulder and something at the bottom of the tub grips it and squeezes — not a leech, something braided out of a great many leeches, something with a grip like a fist. You pull free at the cost of most of the skin on that forearm and all of your remaining interest in wellness.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Wellness",
+      "Detox",
+      "Restorative",
+      "Free-Trial",
+      "Black-Water",
+      "Deep-Tissue",
+      "Subscription",
+      "Award-Winning"
+    ]
+  }
+}

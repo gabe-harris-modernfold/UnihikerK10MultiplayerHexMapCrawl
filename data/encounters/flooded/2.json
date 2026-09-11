@@ -11,7 +11,7 @@
           "label": "Climb the stairs to the upper floors.",
           "cost": {},
           "base_risk": 20,
-          "skill": 5,
+          "skill": 4,
           "success_node": "upper_hall",
           "hazard_id": "stair_collapse"
         },
@@ -52,7 +52,7 @@
           "label": "Check the roof access hatch.",
           "cost": {},
           "base_risk": 55,
-          "skill": 5,
+          "skill": 4,
           "success_node": "rooftop_cache",
           "hazard_id": "hatch_fall"
         }
@@ -110,7 +110,7 @@
     "hatch_fall": {
       "text": "The hatch springs open and the pull-down ladder telescopes violently, catching you across the jaw and knocking you back down the stairs. You land hard and stay down for a moment.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "ends_encounter": true
     }

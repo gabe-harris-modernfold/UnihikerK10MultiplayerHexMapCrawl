@@ -45,15 +45,13 @@
     "chair_collapses": {
       "text": "The ecosystem supporting the chair has more give than expected. Your weight on the desk-surface causes the entire arrangement to shift and partially collapse, and the figure tilts toward you at a speed that seems deliberate. You scramble back covered in decades of particulate and emerge with what you need but not what you wanted.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
-      "status": 2,
       "ends_encounter": false
     },
     "disturbed_badly": {
       "text": "Something falls from the pocket that doesn't bear examination. You have the note. You're moving on and not looking back.",
       "penalty": {},
-      "status": 2,
       "ends_encounter": false
     }
   },

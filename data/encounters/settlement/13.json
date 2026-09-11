@@ -1,0 +1,144 @@
+{
+  "id": "settlement_tannery_01",
+  "title": "The {{adjective}} Tannery",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "You smell the tannery from the ridge and you find it downwind of everything, as tanneries are: a yard of pits, a drying frame, and a man working a beam with a two-handled knife and the total absorption of a craftsman. On the frame is the piece he is working toward — a coat, or the beginnings of one, and it is the size of a barn door. Around the yard, hung on eleven separate frames, are eleven previous attempts, each one bigger than the last, each one beautifully finished, each one outgrown.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Trade with him. A good tanner is worth knowing.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_yard",
+          "hazard_id": "the_beam"
+        },
+        {
+          "label": "Help yourself to the finished leather on the frames",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 2,
+          "success_node": "the_yard",
+          "hazard_id": "the_pits"
+        }
+      ]
+    },
+    "the_yard": {
+      "text": "A working tannery is a chemist's shop with a smell: lime, tannin, oils, fat liquor, and a store of cured hide that trades anywhere. He has salt by the sack, lamp oil, a barrel of clean water kept well away from the pits, and a medicine box for the burns the trade guarantees. He works while he talks. The coat on the frame is for the town's protector, he says, and the town's protector needs a new one about every five years, and he has been making them since he was nineteen and he is sixty-eight now and his hands are going and this one, realistically, is the last.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask to meet the protector",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 3,
+          "success_node": "the_fitting",
+          "hazard_id": "the_introduction"
+        },
+        {
+          "label": "Ask where a coat that size gets its leather",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "the_fitting",
+          "hazard_id": "the_supply"
+        }
+      ]
+    },
+    "the_fitting": {
+      "text": "The protector is four metres of it and it is waiting behind the drying shed with its head down and its arms out, the way you stand for a fitting, and it has been standing like that since dawn because it does not want to rush him. It has kept the raiders off this settlement for forty-nine years. It cannot speak. It is cold — properly cold, all the time, in a way that hurts — and a coat is the only kindness anyone has ever been able to do it, and it has worn every single one of the eleven on those frames until it grew out of them and then brought each one back, folded, undamaged, out of politeness. The tanner gets it fitted. It stands very still. And when it is done it looks at the old man's hands for a long moment, and then it goes into the shed and comes out with forty-nine years of what it has taken off the people it stopped, and puts the lot down in the yard, and pushes it toward you, because it has worked out that the tanner is nearly finished and it will need somebody to find it a new one.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_beam": {
+      "text": "He hands you the fleshing knife to show you the stroke, and the stroke is a two-handed pull with a blade edged on both sides, and nobody who has done it for fifty years remembers to mention which side. You find out at the wrist.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_pits": {
+      "text": "You cut across the yard to the frames and the boards over pit four are not boards, they are a skin laid out to soak. You go in to the waist. Lime liquor is not water. Getting out takes eleven seconds and about that many years off your legs.",
+      "penalty": {
+        "ll": -4
+      },
+      "ends_encounter": false
+    },
+    "the_introduction": {
+      "text": "It comes round the shed to be introduced. It is trying very hard to be small. It cannot be small. It offers you a hand the size of a door and you take it because refusing seemed rude, and the grip is gentle by its standards, and by yours it is a wall closing.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_supply": {
+      "text": "\"Where do you think,\" he says, without looking up, and nods at the pits, and at the drying frames, and finally at the long low building at the back of the yard that you had taken for a barn — and the town keeps the supply in there, and the town has kept the supply in there for forty-nine years, and the supply is aware of you now and is making the sound that a barn full of supply makes when the door opens.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Downwind",
+      "Twelfth",
+      "Forty-Nine-Year",
+      "Working",
+      "Well-Cured",
+      "Last",
+      "Fitted",
+      "Patient"
+    ]
+  }
+}

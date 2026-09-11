@@ -11,7 +11,7 @@
           "label": "Climb the tower to the observation deck.",
           "cost": {},
           "base_risk": 25,
-          "skill": 5,
+          "skill": 4,
           "success_node": "observation_deck",
           "hazard_id": "rung_failure"
         }
@@ -75,7 +75,7 @@
     "rung_failure": {
       "text": "A rung snaps under your weight. You catch yourself but slam hard into the ladder. The bruises are deep.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
       "wound": [
         0,

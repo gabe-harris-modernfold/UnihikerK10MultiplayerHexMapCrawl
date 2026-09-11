@@ -19,7 +19,7 @@
           "label": "Charge through before they react",
           "cost": {},
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "dump_interior",
           "hazard_id": "full_chemical_bath"
         }
@@ -52,18 +52,16 @@
     "mudball_hit": {
       "text": "A mudball the size of a grapefruit catches you in the side of the neck from a range of approximately four metres. The chemical burn starts immediately. You don't know which one threw it. They're all smiling.",
       "penalty": {
-        "ll": -4
+        "ll": -2
       },
-      "status": 8,
       "ends_encounter": false
     },
     "full_chemical_bath": {
       "text": "They target you the moment you move. The barrage is sustained, accurate, and deeply unpleasant. You reach the other side looking like something that crawled out of the dump itself. The radiation reading in your immediate vicinity has gone up.",
       "penalty": {
-        "ll": -5
+        "ll": -3,
+        "radiation": 3
       },
-      "status": 8,
-      "rad": 3,
       "ends_encounter": false
     }
   },

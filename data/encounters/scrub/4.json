@@ -13,7 +13,7 @@
             "food": 1
           },
           "base_risk": 45,
-          "skill": 5,
+          "skill": 4,
           "success_node": "party_won",
           "hazard_id": "drinking_loss"
         },
@@ -54,17 +54,15 @@
     "drinking_loss": {
       "text": "The fermented rad-roach milk hits you like a structural collapse. The next thing you know, you're face-down in the scrub forty metres from the fire, missing a boot and two items from your pack that you can't quite account for.",
       "penalty": {
-        "ll": -6
+        "ll": -3
       },
-      "status": 2,
       "ends_encounter": true
     },
     "caught_stealing": {
       "text": "A mutant with the peripheral vision of something that evolved in a very dangerous environment grabs your wrist mid-reach. The beating is enthusiastic and thorough. You are ejected from the party grounds with emphasis.",
       "penalty": {
-        "ll": -8
+        "ll": -4
       },
-      "status": 4,
       "wound": [
         1,
         0

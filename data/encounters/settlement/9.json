@@ -1,0 +1,136 @@
+{
+  "id": "settlement_schoolhouse_01",
+  "title": "The {{adjective}} Schoolhouse",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A bell rings across the settlement at nine sharp and forty adults stop what they are doing and file into a long shed with a blackboard at one end. They sit on benches built for six-year-olds, knees up round their ears, and they take out slates, and they put their hands up. At the front, a very old woman in a cardigan writes the date on the board in a beautiful copperplate hand and says, \"Good morning, class,\" and forty people in their forties say good morning back in unison.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sit at the back. It would be rude not to.",
+          "cost": {},
+          "base_risk": 17,
+          "skill": 3,
+          "success_node": "the_stores",
+          "hazard_id": "called_on"
+        },
+        {
+          "label": "Use the hour to go through the settlement stores",
+          "cost": {},
+          "base_risk": 27,
+          "skill": 2,
+          "success_node": "the_stores",
+          "hazard_id": "the_monitor"
+        }
+      ]
+    },
+    "the_stores": {
+      "text": "The school is the best-provisioned building in the settlement, because a town that still holds lessons is a town that decided something, and everything goes through here: the seed store, the medicine chest, the winter rations, the tool library, all of it stacked in the back room under the coat pegs with each child's name still painted above their hook. The lesson today is long division. The lesson yesterday was long division. On the shelf behind the teacher's desk are sixty years of register books, and the same forty names are in every one, and not one of them has ever been marked absent.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Ask her why the class never moves on",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_register",
+          "hazard_id": "the_answer"
+        },
+        {
+          "label": "Read the register from the first year",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 2,
+          "success_node": "the_register",
+          "hazard_id": "the_first_year"
+        }
+      ]
+    },
+    "the_register": {
+      "text": "They never move on because she cannot bear to reach the end of the book. That is the whole of it. On the last day of the world she had forty-one children and a lesson plan that ran to the end of the summer term, and forty-one is now forty, and the one it is not is on page eleven of the first register with a line through the name — and the teacher has run the remaining forty round and round the same eleven weeks of curriculum for six decades because the week after the lesson plan ends is the week she has to be a person who has outlived a child, and she has simply declined to arrive at it. The forty know. Every one of them knows. Forty grown adults have sat on infant benches doing long division for sixty years to keep an old woman from a Tuesday, and when you understand that, the whole class turns round and looks at you with the flat unanimous expression of people who will not be discussing it further. They pay you in stores, generously, to move along.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "called_on": {
+      "text": "She calls on you. You do not know the answer, because you have not been listening, because you are a grown adult who wandered into a shed — and forty people turn round at once to watch you not know it, and the silence has sixty years of practice in it.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "the_monitor": {
+      "text": "The stores are supervised by the class monitor, a man of about fifty with a ruler and an unshakeable sense of his own authority, and he catches you at the seed bins and does what monitors do. The ruler is oak. He gets eleven good ones in before anybody intervenes and nobody is in a hurry to intervene.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_answer": {
+      "text": "She tells you, in the same clear teaching voice she uses for everything, and she does not cry, and the forty behind her do not move, and the chalk goes on squeaking through the whole explanation. You are the one who cries. In front of the class. At the back. Like an idiot.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "the_first_year": {
+      "text": "You get the first register down off the shelf, which means standing on the teacher's chair, which means the entire class stands up at once. They do not touch you. They simply stand — forty adults on infant benches, rising together without a word, the way a class does when the head walks in — and it is the most frightening thing that has happened to you this month, and you leave the book and leave the shed.",
+      "penalty": {
+        "ll": -5
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Nine-O'Clock",
+      "Unfinished",
+      "Sixty-Year",
+      "Registered",
+      "Patient",
+      "Long-Division",
+      "Well-Attended",
+      "Infant"
+    ]
+  }
+}

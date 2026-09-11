@@ -11,7 +11,7 @@
           "label": "Free-climb to the ledge.",
           "cost": {},
           "base_risk": 35,
-          "skill": 5,
+          "skill": 4,
           "success_node": "ledge",
           "hazard_id": "handhold_failure"
         }
@@ -75,9 +75,8 @@
     "crevice_creature": {
       "text": "Something strikes from inside the crevice. You yank your arm back — deep punctures on your forearm.",
       "penalty": {
-        "ll": -2
+        "ll": -1
       },
-      "status": 1,
       "wound": [
         1,
         1

@@ -14,7 +14,7 @@ static void updateWeatherPhase() {
   static constexpr uint16_t BAD_WEATHER_CAP = 6; // max 6 game-days of bad weather
   uint8_t next;
   if (G.badWeatherTicks >= BAD_WEATHER_CAP) {
-    next = WEATHER_CLEAR;  // force clear after 3-day bad-weather streak
+    next = WEATHER_CLEAR;  // force clear once the bad-weather streak hits the cap
   } else {
     uint32_t roll = esp_random() % 100;
     next = G.weatherPhase;
@@ -64,19 +64,17 @@ static void tickGame() {
     G.dayTick = 0;
     G.dayCount++;
     dawnOccurred = true;
-    // Force-abort any active encounters before dusk (no TC increment for dawn abort)
+    // Force-abort any active encounters at dawn.  Involuntary, so no TC
+    // increment and the POI goes back on the hex for another visit.
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (!encounters[i].active) continue;
-      uint8_t hq = encounters[i].hexQ;
-      uint8_t hr = encounters[i].hexR;
-      encounters[i] = {};
-      GameEvent eev = {}; eev.type = EVT_ENC_END; eev.pid = (uint8_t)i;
-      eev.q = (int16_t)hq; eev.r = (int16_t)hr;
-      eev.encOut = 2;  // reason: dawn
-      enqEvt(eev);
+      endEncounter(i, ENC_END_DAWN, /*restorePoi=*/true);
     }
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
     updateWeatherPhase();  // advance weather once per game-day
+    // Threat decays 1/day.  Without this the clock only ever climbs and every
+    // encounter is permanently pinned at the +20 risk ceiling.
+    if (G.threatClock > 0) G.threatClock--;
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
   }
@@ -101,17 +99,23 @@ static void tickGame() {
   }
 
   // ── Chem-storm per-tick hazard ────────────────────────────────────────────
+  // CHEM_TICK_RATE is tuned so a survivor standing in the open on the worst
+  // terrain (intensity 1.0) loses about 1 LL per real minute (600 ticks), i.e.
+  // roughly 5 LL over a full 300-second day — dangerous, but survivable long
+  // enough to reach cover.  Basic shelter halves the rate; improved shelter,
+  // Settlement, and Broken Urban are immune.
   if (G.weatherPhase == WEATHER_CHEM) {
+    static constexpr float CHEM_TICK_RATE = 1.0f / 600.0f;
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
       if (!p.connected || (p.ll == 0)) continue;
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
-      // Settlement (t==9) and Ruins terrain: fully immune to all weather hazards
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
-      // Improved shelter (level 2): immune to all weather; basic shelter (level 1): no immunity
-      if (G.map[p.r][p.q].shelter >= 2) continue;
-      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * 0.016f;
+      uint8_t shelter = G.map[p.r][p.q].shelter;
+      if (shelter >= 2) continue;
+      float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * CHEM_TICK_RATE;
+      if (shelter == 1) prob *= 0.5f;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP); }
         if (p.ll == 0) {
@@ -138,23 +142,21 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   CheckResult cr = resolveCheck(pid, SK_FORAGE, dn, 0);
   ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_FORAGE, cr);
-  if (cr.total >= (int)dn) {
-    uint8_t yield = (terr == 0 || terr == 2) ? 3 : 2;  // Open Scrub + Rust Forest → 3 food, others → 2
-    // Compound Bow (id:29) doubles food yield on land hexes
-    if (p.equip[EQUIP_HAND - 1] == 29) yield = (uint8_t)min((int)yield * 2, 99);
-    // Fishing Pole (id:28) doubles yield on River Channel (terr==11)
-    if (p.equip[EQUIP_HAND - 1] == 28 && terr == 11) yield = (uint8_t)min((int)yield * 2, 99);
+  if (cr.total >= (int)dn - 1) {
+    bool partial = (cr.total < (int)dn);
+    // Open Scrub + Rust Forest are the rich land hexes → 3 food, others → 2.
+    // Keep data/game-data.js TERRAIN desc text in step with these numbers.
+    uint8_t yield = (terr == 0 || terr == 2) ? 3 : 2;
+    // Compound Bow doubles food yield on land hexes (not the river).
+    if (terr != 11 && hasNarrativeParam(pid, NAR_LAND_FORAGE))  yield = (uint8_t)min((int)yield * 2, 99);
+    // Fishing Pole doubles yield on River Channel.
+    if (terr == 11 && hasNarrativeParam(pid, NAR_RIVER_FORAGE)) yield = (uint8_t)min((int)yield * 2, 99);
+    // A partial always comes in strictly under a clean success.
+    if (partial) yield = (uint8_t)max(1, (int)yield - 1);
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + yield, 99);
     ev.actFoodD = (int8_t)yield;
-    addScore(p, ev, 3);
-    ev.actOut   = AO_SUCCESS;
-  } else if (cr.total >= (int)dn - 1) {
-    uint8_t partYield = 2;
-    if (p.equip[EQUIP_HAND - 1] == 29) partYield = 4;
-    p.inv[1]    = (uint8_t)min((int)p.inv[1] + partYield, 99);
-    ev.actFoodD = (int8_t)partYield;
-    addScore(p, ev, 1);
-    ev.actOut   = AO_PARTIAL;
+    addScore(p, ev, partial ? 1 : 3);
+    ev.actOut   = partial ? AO_PARTIAL : AO_SUCCESS;
   } else {
     ev.actOut = AO_FAIL;
   }
@@ -182,35 +184,71 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   CheckResult cr = resolveCheck(pid, SK_SCAVENGE, dn, 0);
   ev.actDn = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_SCAVENGE, cr);
-  if (cr.total >= (int)dn) {
+  if (cr.total >= (int)dn - 1) {
+    bool    partial    = (cr.total < (int)dn);
     uint8_t scrapYield = 2;
-    // Portable Forge (id:27) doubles scrap yield on scavenge
-    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
+    // Portable Forge doubles scrap yield on scavenge
+    if (hasNarrativeParam(pid, NAR_SCAV_DOUBLE)) scrapYield = 4;
+    // A partial always comes in strictly under a clean success.
+    if (partial) scrapYield = (uint8_t)max(1, (int)scrapYield / 2);
     p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
     ev.actScrapD = scrapYield;
-    addScore(p, ev, 5);
-    ev.actOut    = AO_SUCCESS;
-  } else if (cr.total >= (int)dn - 1) {
-    // Partial: item + Encounter (Encounter not yet implemented)
-    uint8_t scrapYield = 2;
-    if (p.equip[EQUIP_HAND - 1] == 27) scrapYield = 4;
-    p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
-    ev.actScrapD = scrapYield;
-    addScore(p, ev, 2);
-    ev.actOut    = AO_PARTIAL;
+    addScore(p, ev, partial ? 2 : 5);
+    ev.actOut    = partial ? AO_PARTIAL : AO_SUCCESS;
   } else {
     ev.actOut = AO_FAIL;
   }
 }
 
-static void doShelter(int pid, GameEvent& ev) {
+// Treat a major wound.  The Medic (archetype 2) may do this anywhere — that is
+// the archetype's trait; everyone else must be standing in a Settlement.
+// Costs 2 MP + 1 Medicine, and rolls Endure vs TREAT_DN.  On a partial the
+// major wound is downgraded to a minor one rather than cleared outright.
+static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
   Player& p = G.players[pid];
-  if (p.inv[4] == 0) {
-    return;  // ev.actOut stays AO_BLOCKED — UI responds accordingly
+  bool isMedic      = (p.archetype == 2);
+  bool inSettlement = (terr == 9);
+  if (!isMedic && !inSettlement) return;   // AO_BLOCKED
+  if (p.wounds[WOUND_MAJOR] == 0)    return;
+  if (p.inv[3] == 0 || p.movesLeft < 2) return;
+  spendMP(p, 2);
+  p.inv[3]--;
+  ev.actMedD = -1;
+  CheckResult cr = resolveCheck(pid, SK_ENDURE, TREAT_DN, 0);
+  ev.actDn = TREAT_DN; ev.actTot = (int8_t)cr.total;
+  broadcastCheck(pid, SK_ENDURE, cr);
+  if (cr.success) {
+    healWound(p, WOUND_MAJOR);
+    addScore(p, ev, 6);
+    ev.actOut = AO_SUCCESS;
+  } else if (cr.total >= (int)TREAT_DN - 1) {
+    // Partial: the major wound becomes a minor one.
+    healWound(p, WOUND_MAJOR);
+    addWound(p, WOUND_MINOR, 1);
+    addScore(p, ev, 2);
+    ev.actOut = AO_PARTIAL;
+  } else {
+    ev.actOut = AO_FAIL;
   }
-  // Auto-select type: 2+ scrap + 2+ MP = improved shelter (2 MP), otherwise basic shelter (1 MP)
+  ev.actWndMin = p.wounds[WOUND_MINOR];
+  ev.actWndMaj = p.wounds[WOUND_MAJOR];
+}
+
+// Build or upgrade the shelter on the current hex.
+//   empty hex : 2+ scrap and 2+ MP → improved (2 scrap, 2 MP, +8);
+//               otherwise basic (1 scrap, 1 MP, +4)
+//   basic here: upgrade to improved only (2 scrap, 2 MP, +8)
+//   improved  : nothing to build — blocked
+// A hex is never downgraded and a finished shelter never pays out twice.
+// Keep data/ui-panels.js getShelterDesc() in step with these rules.
+static void doShelter(int pid, GameEvent& ev) {
+  Player&  p       = G.players[pid];
+  uint8_t  current = G.map[p.r][p.q].shelter;
+  if (current >= 2) return;                       // AO_BLOCKED: already improved
+  if (p.inv[4] == 0) return;                      // AO_BLOCKED: no scrap
   uint8_t shelterType = (p.inv[4] >= 2 && p.movesLeft >= 2) ? 2 : 1;
-  uint8_t mpCost      = shelterType;
+  if (current == 1 && shelterType < 2) return;    // AO_BLOCKED: can't afford the upgrade
+  uint8_t mpCost = shelterType;
   if (p.movesLeft < (int8_t)mpCost) return;
   spendMP(p, mpCost);
   p.inv[4]                 = (uint8_t)max(0, (int)p.inv[4] - shelterType);
@@ -246,28 +284,26 @@ static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* su
   }
 }
 
-static void doRest(int pid, uint8_t terr, GameEvent& ev) {
+// Settle in for the night.  With a Fire Starter equipped, a basic shelter on
+// this hex is banked up to an improved one for free (the actCnd field carries
+// the new level so the client can redraw the hex).
+static void doRest(int pid, GameEvent& ev) {
   Player& p = G.players[pid];
   if (p.resting) return;  // already resting; prevent duplicate REST commands
-  p.actUsed = true;
   p.resting = true;  // mark as resting; if all players rest, day ends early
-  [[maybe_unused]] uint8_t hexShelt = G.map[p.r][p.q].shelter;  // 0=none, 1=shelter, 2=improved shelter
-  ev.actOut = AO_SUCCESS;
-  [[maybe_unused]] uint32_t ticksLeft = (G.dayTick < DAY_TICKS) ? (DAY_TICKS - G.dayTick) : 0;
-  // Count how many connected players are now resting (including this one)
-  int restCount = 0, totalConn = 0;
-  for (int k = 0; k < MAX_PLAYERS; k++) {
-    if (G.players[k].connected) { totalConn++; if (G.players[k].resting) restCount++; }
+  HexCell& cell = G.map[p.r][p.q];
+  if (cell.shelter == 1 && hasNarrativeParam(pid, NAR_FIRE_STARTER)) {
+    cell.shelter = 2;
+    ev.actCnd    = 2;
   }
+  ev.actOut = AO_SUCCESS;
 }
 
 // ── §5 Action dispatcher ──────────────────────────────────────────────────────
 // Call while holding G.mutex.  Enqueues EVT_ACTION.
 // survBuf/survLen: optional out-param for SURVEY response (send to client directly).
-// condTgt: unused (retained for call-site compatibility; Treat action removed).
-static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
+static void handleAction(int pid, uint8_t actType, int mpParam,
                          char* survBuf, int survCap, int* survLen) {
-  (void)condTgt;
   Player& p    = G.players[pid];
   uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   if (terr >= NUM_TERRAIN) terr = 0;
@@ -284,10 +320,11 @@ static void handleAction(int pid, uint8_t actType, int mpParam, int condTgt,
   switch (actType) {
     case ACT_FORAGE:  doForage (pid, terr, ev);                      break;
     case ACT_WATER:   doWater  (pid, terr, mpParam, ev);             break;
+    case ACT_TREAT:   doTreat  (pid, terr, ev);                      break;
     case ACT_SCAV:    doScav   (pid, terr, ev);                      break;
     case ACT_SHELTER: doShelter(pid, ev);                            break;
     case ACT_SURVEY:  doSurvey (pid, ev, survBuf, survCap, survLen); break;
-    case ACT_REST:    doRest   (pid, terr, ev);                      break;
+    case ACT_REST:    doRest   (pid, ev);                            break;
     default: break;
   }
 

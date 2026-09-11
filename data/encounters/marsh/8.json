@@ -1,0 +1,144 @@
+{
+  "id": "marsh_bloat_01",
+  "title": "The {{adjective}} Hill",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "What you took for an island is a dead thing lying on its side. Something bovine once, before the marsh got into its lineage — six legs, all of them pointing the same unhelpful direction, and a torso swollen so tight the hide has gone translucent and pale as a held breath. It is four metres at the shoulder and the gases inside have lifted the whole carcass a hand's width clear of the mud. Lashed high on its flank, where the tide couldn't reach, is a scavenger's kit bag. Whoever climbed up to leave it there did not climb back down.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the hide carefully and cut the bag free",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 4,
+          "success_node": "the_bag",
+          "hazard_id": "hide_slip"
+        },
+        {
+          "label": "Knife a small vent first to take the pressure down",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 2,
+          "success_node": "the_bag",
+          "hazard_id": "vent_jet"
+        }
+      ]
+    },
+    "the_bag": {
+      "text": "The bag is good — a scavenger's working kit, dry, well packed. Ration tins, a fuel bladder, a roll of sterile wrap and a tool set wrapped in oilcloth. Underneath it, carved into the hide with a blade and gone leathery at the edges, is a message left by the last owner. It reads: DON'T. And then, lower, in a shakier hand: I MEAN IT. THE SECOND ONE IS INSIDE.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "marsh_common",
+      "choices": [
+        {
+          "label": "Open the belly — whatever's in there, it's cargo",
+          "cost": {},
+          "base_risk": 46,
+          "skill": 2,
+          "success_node": "the_second_one",
+          "hazard_id": "full_release"
+        },
+        {
+          "label": "Knock politely on the hide",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 3,
+          "success_node": "the_second_one",
+          "hazard_id": "it_knocks_back"
+        }
+      ]
+    },
+    "the_second_one": {
+      "text": "The belly gives, and the pressure behind it launches a second, smaller, entirely alive version of the animal about nine metres into the air in a spray of fluid and old grass. It lands on its six feet, shakes itself off, looks at you with an expression of total and uncomplicated betrayal, and walks away east without a word. It had been in there long enough to build a nest, a latrine, and a small organised stockpile of everything it had eaten out of the dead one's saddlebags: sealed medical kits, a clutch of scrap ingots, and four tins that the acid never got through. You take all of it. You will smell like this for six days.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            4
+          ]
+        }
+      ],
+      "loot_table": "marsh_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "hide_slip": {
+      "text": "Three metres up, the hide splits under your boot and your leg goes in to the thigh. What is in there is warm. You get out fast enough, but the edge of the split is sharper than skin has any right to be and it opens you from knee to ankle on the way.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "vent_jet": {
+      "text": "You misjudge the pressure. The vent becomes a jet and the jet becomes a fog, and the fog is old gut gas at body temperature, directly into your face, at range zero. Your eyes shut on their own and stay shut for a worrying length of time.",
+      "penalty": {
+        "ll": -3
+      },
+      "ends_encounter": false
+    },
+    "full_release": {
+      "text": "The belly does not open so much as resign. Several hundred litres of pressurised marsh-cow interior arrives everywhere at once, including on you, including inside your clothes, including — through the simple physics of a sudden large volume — in your mouth. Somewhere in the wave, a rib hits you edge-on.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "it_knocks_back": {
+      "text": "You knock twice. Something inside knocks back — three times, evenly spaced, unmistakably a reply — and then it comes out through the side of the carcass rather than the front, because it has had eight months to decide it doesn't like the front. The exit takes most of the hide and a good deal of you with it.",
+      "penalty": {
+        "ll": -5
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Tight",
+      "Swollen",
+      "Breathing",
+      "Occupied",
+      "Pale",
+      "Lifted",
+      "Patient",
+      "Overdue"
+    ]
+  }
+}

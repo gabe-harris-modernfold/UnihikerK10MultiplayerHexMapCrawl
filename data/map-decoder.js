@@ -1,14 +1,15 @@
 // ── Map decode ──────────────────────────────────────────────────
-// 3 bytes per cell (6 hex chars):
-//   TT = terrain byte (0x00-0x0B) or 0xFF (fog)
+// 3 bytes per cell (6 hex chars) — mirrors encodeCell() in hex-map.hpp:
+//   TT = terrain byte (0x00-0x0B) or 0xFF (fog); bit 6 (0x40) = improved shelter
 //   DD = bits 0-5: footprint bitmask, bit 6: has shelter (any), bit 7: has POI
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
+  const hasShelter = (dataByte >> 6) & 1;
   const cell = {
-    terrain:    terrainByte,
+    terrain:    terrainByte & 0x3F,
     footprints: dataByte & 0x3F,           // bits 0-5: which players visited (bitmask)
-    shelter:    (dataByte >> 6) & 1,       // bit 6: 0=none, 1=has shelter
+    shelter:    hasShelter ? ((terrainByte & 0x40) ? 2 : 1) : 0,  // 0 none, 1 basic, 2 improved
     poi:        (dataByte >> 7) & 1,       // bit 7: 0=none, 1=has POI encounter
     resource:   (variantByte >> 4) & 0xF, // high nibble: resource type (0=none, 1-5)
     variant:    variantByte & 0xF,        // low nibble: terrain image variant (0-15)

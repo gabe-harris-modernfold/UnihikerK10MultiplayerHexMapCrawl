@@ -4,18 +4,16 @@ let myVisionR = VISION_R;
 // ── Weather phase (0=Clear 1=Rain 2=Storm 3=Chem; updated from server gs.wp) ─
 let weatherPhase = 0;
 
-// Effective vision radius after weather penalty. Use this everywhere visibility
-// is calculated — never raw myVisionR — so weather shrinks the rendered view,
-// the char sheet display, and the AI-agent state object consistently.
-//   Clear : full myVisionR
-//   Rain  : myVisionR - 1  (one ring lost)
-//   Storm : capped at 1    (your hex + immediate ring only)
-//   Chem  : capped at 1    (same as storm)
+// Effective vision radius. Use this everywhere visibility is calculated so the
+// rendered view, the char sheet display and the AI-agent state object stay
+// consistent.
+//
+// The server already subtracts WEATHER_VIS_PENALTY in playerVisParams() before
+// it sends `vr`, and it only ships fog data for that radius — so this must NOT
+// subtract it a second time. Doing so double-penalised rain and drew fog over
+// hexes the client had been given.
 function getEffectiveVR() {
-  // Storm/Chem: always show own hex + 1 ring regardless of what server sends.
-  // Server may send vr=0 for these phases; we override client-side to vr=1.
-  if (weatherPhase === 2 || weatherPhase === 3) return 1;
-  return Math.max(0, myVisionR - (WEATHER_VIS_PENALTY[weatherPhase] ?? 0));
+  return Math.max(0, myVisionR);
 }
 
 // ── Magic number constants ────────────────────────────────────────
@@ -72,6 +70,9 @@ function createImageWithLoadTracking(src) {
   };
   return img;
 }
+
+// ── UI glyph sprite strip (terrain/resource/overlay pixel glyphs) ──
+const glyphImg = createImageWithLoadTracking('/' + GLYPH_SHEET);
 
 // ── Terrain hex images ────────────────────────────────────────────
 // Naming: /img/hex<Name><N>.png  (e.g. hexOpenScrub0.png, hexOpenScrub1.png)
@@ -135,24 +136,25 @@ let myId = -1;
 let gameMap = Array.from({ length: MAP_ROWS }, () => new Array(MAP_COLS).fill(null));
 let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   id: i, on: false, q: 0, r: 0, sc: 0, nm: `Survivor${i}`,
-  inv: [0,0,0,0,0], sp: 0, st: 0,
+  inv: [0,0,0,0,0], sp: 0,
   // Survivor fields
-  ll: 7, food: 6, water: 6, rad: 0, res: 3,
+  ll: 7, food: 6, water: 6, rad: 0,
   arch: 0, is: 8,
+  eq: [0,0,0,0,0],
   sk: [0,0,0,0,0],
-  wd: [0,0,0],
+  wnd: [0,0],           // wounds: [minor, major] — NB: act events use `wd` for water delta
   it: new Array(12).fill(0),
   iq: new Array(12).fill(0),
   // §4 Resource economy
   fth: 0, wth: 0, mp: 6,
   // §5 Action tracking
-  au: false, rest: false,
+  rest: false,
   // §6 Encounter
   enc: false,
 }));
 
-// Shared game state (Threat Clock, Day, shared stores)
-let gameState = { tc: 0, dc: 0, sf: 30, sw: 30 };
+// Shared game state (Threat Clock, Day, weather phase) — from gs on sync/state
+let gameState = { tc: 0, dc: 0, wp: 0 };
 // Ground items from latest sync/ground_update
 let groundItems = [];
 
