@@ -115,6 +115,11 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
                     slot, encounters[slot].hexQ, encounters[slot].hexR);
         endEncounter(slot, ENC_END_DISCONNECT, /*restorePoi=*/true);
       }
+      // Kill any outstanding offer this slot made. Slots are reused by
+      // archetype (see handleMsg_pick) — without this, a stale offer could
+      // still be armed once a new, unrelated player inherits the slot.
+      tradeOffers[slot].active = false;
+      lastCaravanHex[slot].q = -1; lastCaravanHex[slot].r = -1;  // same reuse hazard as tradeOffers above
       { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev);
         Log.verbose("Enq EVT_LEFT pid=%d", slot); }
     }

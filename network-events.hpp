@@ -256,18 +256,18 @@ static void drainEvents() {
       }
 
       case EVT_TRADE_RESULT: {
-        static const char* TRL[4] = {"?","DONE","DECLINED","EXPIRED"};
+        static const char* TRL[5] = {"?","DONE","DECLINED","EXPIRED","FAILED"};
         Log.notice("EVT trd_res from=%d to=%d result=%s",
                    (int)ev.pid, (int)ev.tradeTo,
-                   (ev.tradeResult < 4) ? TRL[ev.tradeResult] : "?");
+                   (ev.tradeResult < 5) ? TRL[ev.tradeResult] : "?");
         char tbuf[96]; int tlen;
         tlen = snprintf(tbuf, sizeof(tbuf),
           "{\"t\":\"ev\",\"k\":\"trd_res\","
           "\"from\":%d,\"to\":%d,\"res\":%d}",
           (int)ev.pid, (int)ev.tradeTo, (int)ev.tradeResult);
         ws.textAll(tbuf, tlen);
-        static const char* TR_LABEL[4] = {"?", "DONE", "DECLINED", "EXPIRED"};
-        const char* rl = (ev.tradeResult < 4) ? TR_LABEL[ev.tradeResult] : "?";
+        static const char* TR_LABEL[5] = {"?", "DONE", "DECLINED", "EXPIRED", "FAILED"};
+        const char* rl = (ev.tradeResult < 5) ? TR_LABEL[ev.tradeResult] : "?";
         { char lb[40]; snprintf(lb, sizeof(lb), "Trade P%d\xE2\x86\x94P%d %s",
             (int)ev.pid, (int)ev.tradeTo, rl);
           k10LogAdd(lb); }
@@ -392,6 +392,73 @@ static void drainEvents() {
         if (ev.q == WEATHER_STORM) k10Play(MOTIF_MUTANT_BREATH); else k10Play(MOTIF_DISTANT_THUD);
         break;
       }
+      case EVT_CARAVAN_TRADE: {
+        Log.notice("EVT car_avail pid=%d", (int)ev.pid);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"car_avail\",\"pid\":%d}", (int)ev.pid);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d meets caravan", (int)ev.pid);
+          k10LogAdd(lb); }
+        break;
+      }
+
+      case EVT_FIRE_DAMAGE: {
+        Log.notice("EVT fire_dmg pid=%d q=%d r=%d intensity=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"fire_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,\"intensity\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d burned (fire %d)", (int)ev.pid, (int)ev.amt);
+          k10LogAdd(lb); }
+        break;
+      }
+
+      case EVT_FIRE_SPREAD: {
+        // Vision-culled: a fire's location is map information, and revealing
+        // it to a player who hasn't explored that hex would leak outside
+        // their fog of war — unlike EVT_FIRE_DAMAGE above (about a specific
+        // player who is already there).
+        Log.verbose("EVT fire_spread q=%d r=%d intensity=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"fire_spread\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
+          (int)ev.q, (int)ev.r, (int)ev.amt);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+          if (!conn[i]) continue;
+          if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
+          AsyncWebSocketClient* cl = ws.client(wsId[i]);
+          if (cl) cl->text(buf, len);
+        }
+        break;
+      }
+
+      case EVT_DOOM_WARNING: {
+        // Broadcast to everyone regardless of position — Creeping Doom is a
+        // world-level threat, not a local one (per the spec). K10 LED/motif
+        // already fired inline in resolveDoomProximity() (world-system.hpp)
+        // at the moment of detection, so this is just the log + WS notice.
+        Log.notice("EVT doom_warn pid=%d", (int)ev.pid);
+        len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"doom_warn\",\"pid\":%d}", (int)ev.pid);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "Dread: P%d senses it", (int)ev.pid);
+          k10LogAdd(lb); }
+        break;
+      }
+
+      case EVT_DOOM_ACT: {
+        // amt = LL actually lost this act (0 or 1) — resource destruction
+        // always happens at this awareness tier, LL loss only at 100.
+        Log.notice("EVT doom_act pid=%d q=%d r=%d llLost=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"doom_act\",\"pid\":%d,\"q\":%d,\"r\":%d,\"llLost\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        ws.textAll(buf, len);
+        { char lb[34]; snprintf(lb, sizeof(lb), "P%d: the Doom acts", (int)ev.pid);
+          k10LogAdd(lb); }
+        break;
+      }
+
       default:
         Log.error("EVT UNKNOWN type=%d pid=%d", (int)ev.type, (int)ev.pid);
         break;

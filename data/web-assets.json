@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Source-of-truth list of client assets, in LOAD ORDER. Hand-maintained.",
+    "Adding a client file = add it here. No firmware change is needed: the K10",
+    "auto-discovers every file in the SD card's /data root at boot.",
+    "scripts/build_web.ps1 (or .sh) reads this, concatenates `scripts` into",
+    "app.bundle.js, gzips the bundle + styles + index.html, and writes",
+    "assets.json (the manifest the browser loader fetches first). If",
+    "assets.json is absent the loader falls back to this file and loads the",
+    "scripts one by one — that is also what the mock-server serves in dev."
+  ],
+  "styles": [
+    "style.css"
+  ],
+  "scripts": [
+    "van.js",
+    "game-data.js",
+    "ash-particle-system.js",
+    "weather-particle-system.js",
+    "storm-field.js",
+    "quake-field.js",
+    "fire-field.js",
+    "world-entities.js",
+    "engine.js",
+    "ui-state.js",
+    "network.js",
+    "map-decoder.js",
+    "renderer.js",
+    "ui-utils.js",
+    "ui-hud.js",
+    "ui-panels.js",
+    "ui-items.js",
+    "ui-encounter.js"
+  ]
+}

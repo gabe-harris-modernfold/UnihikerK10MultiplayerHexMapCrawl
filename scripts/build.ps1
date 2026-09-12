@@ -7,10 +7,17 @@
 [CmdletBinding()]
 param(
   [string]$Cli   = 'C:\Program Files\Arduino CLI\arduino-cli.exe',
-  [string]$Sketch = (Resolve-Path "$PSScriptRoot\..").Path
+  [string]$Sketch
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is empty inside param() defaults under `powershell -File`
+# (Windows PowerShell 5.1) -- resolve the sketch root in the body instead.
+if (-not $Sketch) {
+  $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+  $Sketch = (Resolve-Path (Join-Path $here '..')).Path
+}
 
 if (-not (Test-Path $Cli)) {
   Write-Error "arduino-cli not found at $Cli. Install Arduino CLI or pass -Cli <path>."

@@ -109,6 +109,7 @@ static void applyWStep(Player& p, int dir, int& llDelta) {
 // ── Action helpers ────────────────────────────────────────────────────────────
 static inline void spendMP(Player& p, int cost) {
   p.movesLeft = (int8_t)max(0, (int)p.movesLeft - cost);
+  wOnPlayerAction(p.q, p.r, (uint8_t)cost);  // lays a scent track (world-system-spec.md)
 }
 static inline void addScore(Player& p, GameEvent& ev, int pts) {
   ev.actScoreD = (int16_t)pts;

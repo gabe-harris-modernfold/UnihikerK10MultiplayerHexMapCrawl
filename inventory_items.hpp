@@ -94,7 +94,7 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
     // teleport_random — move player to a random surveyed hex
     // surveyedMap bitmask: bit (r*MAP_COLS+q) => q = idx%MAP_COLS, r = idx/MAP_COLS
     static constexpr int totalCells = MAP_ROWS * MAP_COLS;
-    static uint16_t surveyed[totalCells];
+    PSRAM_STATIC(uint16_t, surveyed, [totalCells]);
     int count = 0;
     const Player& pl = G.players[pid];
     for (int idx = 0; idx < totalCells; idx++) {
@@ -497,10 +497,12 @@ static bool hasResources(int pid, const uint8_t qty[5]) {
 static void executeTrade(int fromPid, int toPid, const TradeOffer& offer) {
   Player& fr = G.players[fromPid];
   Player& to = G.players[toPid];
-  // Legacy resource transfer
+  // Legacy resource transfer — clamp to 99 like collectResource() so a trade
+  // can't push a stack past the display/parsing convention used everywhere
+  // else (constrain(...,0,99) at offer time, min(...,99) on collection).
   for (int i = 0; i < 5; i++) {
-    fr.inv[i] = (uint8_t)(fr.inv[i] - offer.give[i] + offer.want[i]);
-    to.inv[i] = (uint8_t)(to.inv[i] - offer.want[i] + offer.give[i]);
+    fr.inv[i] = (uint8_t)min((int)fr.inv[i] - offer.give[i] + offer.want[i], 99);
+    to.inv[i] = (uint8_t)min((int)to.inv[i] - offer.want[i] + offer.give[i], 99);
   }
 }
 

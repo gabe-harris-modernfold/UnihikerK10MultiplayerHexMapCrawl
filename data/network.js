@@ -219,6 +219,14 @@ function _applyGameState(gs) {
   if (gs.wp !== undefined) { weatherPhase = gs.wp; updateWeatherHUD(); }
 }
 
+// Merges the "world" sync/state key into worldState. A partial payload (e.g.
+// Phase 1's `{caravan:{...}}` with no `doom`/`fire` keys yet) leaves the
+// other fields at their current value rather than clobbering them.
+function _applyWorldState(world) {
+  Object.assign(worldState, world);
+  if (world.fire) fireField?.setFromSync(world.fire);
+}
+
 function _msgAsgn(msg) {
   if (typeof msg.id !== 'number' || msg.id < 0 || msg.id >= MAX_PLAYERS) {
     console.warn('[ASGN] Invalid player ID:', msg.id);
@@ -274,6 +282,7 @@ function _msgSync(msg) {
   if (msg.sv) loadShelterVariants(msg.sv);
   if (msg.fa) loadForrageAnimalImgs(msg.fa);
   if (msg.gs) _applyGameState(msg.gs);
+  if (msg.world) _applyWorldState(msg.world);
   if (Array.isArray(msg.gi)) groundItems = msg.gi;
   hideConnectOverlay();
   if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
@@ -327,6 +336,7 @@ function _msgState(msg) {
     if (myId >= 0) renderWounds?.(players[myId]);
   }
   if (msg.gs) _applyGameState(msg.gs);
+  if (msg.world) _applyWorldState(msg.world);
   updateSidebar();
   updateTerrainCard();
   updateDirButtons();
@@ -402,6 +412,7 @@ function handleMsg(msg) {
     case 'vis':           _msgVis(msg);          break;
     case 'ev':            handleEvent(msg);      break;
     case 'ground_update': _msgGroundUpdate(msg); break;
+    case 'item_result':   _evItemResult(msg);    break;
     case 'full':
       console.warn('[RX] Server full — all slots taken');
       document.getElementById('connect-box').innerHTML =
@@ -418,7 +429,13 @@ function handleMsg(msg) {
       break;
     case 'err':
       console.error('[ERR] Server error:', msg);
-      globalThis._onEncError?.(msg.msg);  // unlocks the encounter dialog if a choice was refused
+      // _onEncError unlocks the encounter dialog if a choice was refused; for
+      // any other rejection (e.g. a blocked trade/move/act) it returns false
+      // so the player still sees *something* instead of the error vanishing.
+      if (!globalThis._onEncError?.(msg.msg)) showToast(msg.msg || 'Action failed.');
+      break;
+    case 'trade_fail':
+      showToast('⇄ Trade offer failed — check the target is still on your hex and you have the resources.');
       break;
   }
   buildAgentState();
@@ -707,10 +724,11 @@ function _evTrdOff(ev) {
 }
 
 function _evTrdRes(ev) {
-  // Trade result: 1=accepted 2=declined 3=expired
+  // Trade result: 1=accepted 2=declined 3=expired 4=failed (accepted but conditions no longer held)
   const fromName = (ev.from >= 0 && ev.from < MAX_PLAYERS && players[ev.from]?.nm) || 'P' + ev.from;
-  const toName   = (ev.to   >= 0 && ev.to   < MAX_PLAYERS && players[ev.to]?.nm)   || 'P' + ev.to;
-  const TRADE_LABELS = ['', 'ACCEPTED', 'DECLINED', 'EXPIRED'];
+  const toName   = ev.to === CARAVAN_PID ? 'Caravan'
+    : (ev.to >= 0 && ev.to < MAX_PLAYERS && players[ev.to]?.nm) || 'P' + ev.to;
+  const TRADE_LABELS = ['', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'FAILED'];
   const label = TRADE_LABELS[ev.res] ?? 'UNKNOWN';
   const cls   = ev.res === 1 ? 'log-col' : 'log-check-fail';
   addLog(`<span class="${cls}">\u21C4 Trade ${label}: ${escHtml(fromName)} \u2194 ${escHtml(toName)}</span>`);
@@ -718,6 +736,60 @@ function _evTrdRes(ev) {
     globalThis._closeTradeOverlay?.();
     updateSidebar();
   }
+}
+
+function _evFireSpread(ev) {
+  // amt=0 always means "just burned out" (see world-system.hpp's
+  // onFireExtinguished()) — the server already converted the hex to Ash
+  // Dunes(1), so mirror that locally the same way the quake event's
+  // `converted` list flips Settlement to Open Scrub.
+  if (ev.intensity === 0) {
+    if (gameMap[ev.r]?.[ev.q]) gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], terrain: 1 };
+    return;
+  }
+  // The fire overlay itself is driven by the next world/state sync's
+  // world.fire list (fireField.setFromSync) — this event is just the
+  // vision-culled "a hex caught fire nearby" notice.
+}
+
+function _evFireDamage(ev) {
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  const struck = ev.intensity === 10;  // sentinel: direct lightning strike, not standing-in-fire
+  addLog(`<span class="log-check-fail">🔥 ${escHtml(who)} ${struck ? 'struck by lightning' : `burned (fire ${ev.intensity})`}</span>`);
+  if (ev.pid === myId) {
+    showToast(struck ? '⚡ Lightning strikes home. Your ears ring.'
+              : ev.intensity >= 3 ? '🔥 The inferno sears you. Get clear.'
+              : '🔥 Flames lick at your skin.');
+    updateSidebar();
+  }
+}
+
+function _evDoomWarn(ev) {
+  // 51-75 awareness, adjacent — a world-level dread notice, sent to everyone
+  // regardless of position (see world-system-spec.md), not just the named pid.
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-check-fail">☠ ${escHtml(who)} senses something close</span>`);
+  if (ev.pid === myId) showToast('☠ A cold dread creeps in. Something is near.');
+}
+
+function _evDoomAct(ev) {
+  // 76-99: a resource node on pid's hex was destroyed. 100: that, plus llLost=1.
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-check-fail">☠ ${escHtml(who)}'s supplies rot away${ev.llLost ? ' — and worse' : ''}</span>`);
+  if (ev.pid === myId) {
+    showToast(ev.llLost ? '☠ It touches you. Something inside you dies a little.'
+                         : '☠ Your supplies crumble to dust before your eyes.');
+    updateSidebar();
+  }
+}
+
+function _evCarAvail(ev) {
+  // Edge-triggered nudge from the server (see world-system-spec.md's proximity
+  // debounce) — just a one-time prompt. The player can still open trade with
+  // the caravan any time they're co-located; see buildTradeTargetList().
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-col">⇄ ${escHtml(who)} met the caravan</span>`);
+  if (ev.pid === myId) showToast('⇄ A caravan rolls up. Trade available.');
 }
 
 function _evItemResult(ev) {
@@ -856,6 +928,11 @@ function handleEvent(ev) {
     case 'dusk':        _evDusk(ev);       break;
     case 'trd_off':     _evTrdOff(ev);     break;
     case 'trd_res':     _evTrdRes(ev);     break;
+    case 'car_avail':   _evCarAvail(ev);   break;
+    case 'doom_warn':   _evDoomWarn(ev);   break;
+    case 'doom_act':    _evDoomAct(ev);    break;
+    case 'fire_spread': _evFireSpread(ev); break;
+    case 'fire_dmg':    _evFireDamage(ev); break;
     case 'item_result': _evItemResult(ev); break;
     case 'enc_start': {
       // POI consumed — clear it from local map so eye disappears immediately
@@ -902,6 +979,20 @@ function handleEvent(ev) {
         addLog(`<span class="log-check-fail">▪ ${n} settlement${n > 1 ? 's' : ''} leveled to open scrub.</span>`);
         showToast('☠ The quake swallows a settlement whole. Nothing left but scrub.');
       }
+      break;
+    }
+    case 'settle': {
+      // Server founded a Settlement — either 3 survivors shared the hex an
+      // improved shelter just finished on, or that shelter completed a
+      // triangle of 3 mutually-adjacent improved shelters. `removed` lists
+      // every hex whose shelter was cleared (1 or 3); (ev.q, ev.r) is the
+      // one hex that becomes Settlement (terrain 9).
+      for (const c of ev.removed ?? []) {
+        if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], shelter: 0 };
+      }
+      if (gameMap[ev.r]?.[ev.q]) gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], terrain: 9 };
+      addLog(`<span class="log-check-ok">⌂ A settlement rises at (${ev.q},${ev.r})!</span>`);
+      showToast('⌂ Survivors raise a settlement from the wasteland.');
       break;
     }
   }

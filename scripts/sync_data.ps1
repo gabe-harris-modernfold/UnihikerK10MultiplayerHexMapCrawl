@@ -16,15 +16,30 @@
 param(
   [Parameter(Mandatory = $true, Position = 0)]
   [string]$Host_,
-  [string]$DataDir = (Resolve-Path "$PSScriptRoot\..\data").Path,
-  [string]$Manifest = (Join-Path (Resolve-Path "$PSScriptRoot\..\data").Path '.upload-manifest.json'),
+  [string]$DataDir,
+  [string]$Manifest,
   [switch]$DryRun,
   [switch]$Force,
-  [int]$DelayMs = 500
+  [switch]$NoBuild,
+  [int]$DelayMs = 500,
+  [int]$Attempts = 4
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'  # required when run from non-interactive PS
+
+# $PSScriptRoot is empty inside param() defaults under `powershell -File`
+# (Windows PowerShell 5.1) -- resolve paths in the body instead.
+$here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $DataDir)  { $DataDir  = (Resolve-Path (Join-Path $here '..\data')).Path }
+if (-not $Manifest) { $Manifest = Join-Path $DataDir '.upload-manifest.json' }
+
+# Regenerate app.bundle.js(.gz) / *.gz / assets.json first so the board never
+# gets sources newer than its manifest. -NoBuild skips (e.g. pushing only
+# encounter JSON or images).
+if (-not $NoBuild) {
+  & (Join-Path $here 'build_web.ps1') -DataDir $DataDir
+}
 
 $base = "http://$Host_"
 Write-Host "[sync] target : $base"
@@ -76,15 +91,37 @@ foreach ($f in $files) {
   Write-Host ("  {0,7} bytes  {1}" -f $sz, $rel)
 
   if (-not $DryRun) {
-    try {
-      Invoke-WebRequest -Uri $url -Method Post -InFile $f.FullName `
-                        -ContentType 'application/octet-stream' `
-                        -UseBasicParsing -TimeoutSec 30 | Out-Null
+    # The firmware answers 500 when the SD write failed or came up short
+    # (intermittent — SD/SPI contention with the LCD task). A retry rewrites
+    # the whole file, so a truncated first attempt is harmless.
+    $ok = $false
+    for ($attempt = 1; $attempt -le $Attempts -and -not $ok; $attempt++) {
+      try {
+        $resp = Invoke-WebRequest -Uri $url -Method Post -InFile $f.FullName `
+                                  -ContentType 'application/octet-stream' `
+                                  -UseBasicParsing -TimeoutSec 30
+        # Firmware replies "OK <bytes written>"; the mock replies "OK". Treat a
+        # count that disagrees with the local size as a failed upload.
+        $m = [regex]::Match([string]$resp.Content, '^OK(?:\s+(\d+))?')
+        if (-not $m.Success) { throw "unexpected reply: $($resp.Content)" }
+        if ($m.Groups[1].Success -and [int64]$m.Groups[1].Value -ne $sz) {
+          throw "board wrote $($m.Groups[1].Value) of $sz bytes"
+        }
+        $ok = $true
+      } catch {
+        if ($attempt -lt $Attempts) {
+          Write-Host ("          retry {0}/{1} {2} : {3}" -f $attempt, ($Attempts - 1), $rel, $_.Exception.Message)
+          Start-Sleep -Milliseconds ($DelayMs * 2 * $attempt)
+        } else {
+          Write-Warning "FAIL $rel : $($_.Exception.Message)"
+        }
+      }
+    }
+    if ($ok) {
       $state[$Host_][$rel] = $hash
       $pushed++
       Start-Sleep -Milliseconds $DelayMs
-    } catch {
-      Write-Warning "FAIL $rel : $($_.Exception.Message)"
+    } else {
       $failed++
     }
   } else {

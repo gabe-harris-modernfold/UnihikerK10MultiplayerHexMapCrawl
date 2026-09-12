@@ -203,9 +203,9 @@ deploy reference (toolchain, library pinning, gotchas). Quick start on
 Windows + PowerShell with `arduino-cli`:
 
 ```powershell
-pwsh .\scripts\build.ps1              # compile
-pwsh .\scripts\flash.ps1              # auto-detect COM port and upload
-pwsh .\scripts\sync_data.ps1 <board-ip>   # push data/ over HTTP without reflashing
+.\scripts\build.ps1              # compile
+.\scripts\flash.ps1              # auto-detect COM port and upload
+.\scripts\sync_data.ps1 <board-ip>   # push data/ over HTTP without reflashing
 ```
 
 `sync_data.ps1` (and its bash mirror `sync_data.sh`) pushes changed files in

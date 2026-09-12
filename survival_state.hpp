@@ -320,6 +320,7 @@ static void movePlayer(int pid, int dir) {
   p.q = (int16_t)nq;
   p.r = (int16_t)nr;
   p.steps++;
+  lastCaravanHex[pid].q = -1; lastCaravanHex[pid].r = -1;  // moved — re-arm the caravan trade prompt
 
   // Exploration bonus: +1 score first time this player visits this hex
   bool firstVisit = !(G.map[p.r][p.q].footprints & (1 << pid));

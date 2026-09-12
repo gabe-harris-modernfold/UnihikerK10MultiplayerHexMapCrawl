@@ -70,6 +70,22 @@ class WeatherParticleSystem {
     this.particles.push(this._spawnDust(anchor));
   }
 
+  // Flame licks + embers off every currently-burning hex — anchors here are
+  // {x, y, spread, intensity} from fire-field.js via renderer.js's terrain
+  // pass, one per burning hex (not a single random pick like the weather
+  // emitters above): a fire needs to visibly keep burning on every hex it
+  // occupies, not just flicker on one at a time. Rolled per-hex per-frame
+  // rather than a fixed count so a hotter hex reads busier without a
+  // separate frame counter.
+  emitFire(anchors) {
+    if (!anchors?.length) return;
+    for (const anchor of anchors) {
+      if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) break;
+      if (Math.random() < 0.35 + anchor.intensity * 0.15) this.particles.push(this._spawnFlame(anchor));
+      if (anchor.intensity >= 2 && Math.random() < 0.12 * anchor.intensity) this.particles.push(this._spawnEmber(anchor));
+    }
+  }
+
   // Advance all particles one frame and cull dead ones.
   update() {
     for (const p of this.particles) {
@@ -127,6 +143,20 @@ class WeatherParticleSystem {
           ctx.lineTo(p.x + Math.cos(a) * p.size, p.y + Math.sin(a) * p.size);
           ctx.stroke();
         }
+      } else if (p.shape === 'flame') {
+        // Elongated, upward-stretched blob — a hot core fading to
+        // transparent, taller than wide so it reads as a rising flame lick
+        // rather than a round puff like 'dust'/'fog'.
+        ctx.translate(p.x, p.y);
+        ctx.scale(1, 1.6);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size);
+        g.addColorStop(0,   `rgba(${p.color},0.95)`);
+        g.addColorStop(0.5, `rgba(${p.color},0.5)`);
+        g.addColorStop(1,   `rgba(${p.color},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.size, 0, Math.PI * 2);
+        ctx.fill();
       } else if (p.shape === 'dust') {
         // Soft puff, not a hard-edged dot — a dense-ish core fading smoothly
         // to nothing, like a real cloud of kicked-up dirt.
@@ -290,6 +320,45 @@ class WeatherParticleSystem {
       opacity: 0, age: 0, dead: false,
       maxY: null,
       ttl: 90 + Math.random() * 70, fade: 30,
+    };
+  }
+
+  // A single rising, flickering flame lick — short-lived and reborn
+  // constantly by emitFire() so a burning hex always has a few licks
+  // active, not one that flares and vanishes. Color and speed scale with
+  // intensity: dim orange smolder (1) through white-hot roar (3).
+  _spawnFlame(anchor) {
+    const hue = anchor.intensity >= 3 ? '255,225,130' : anchor.intensity === 2 ? '255,130,30' : '255,85,20';
+    return {
+      id: this._nextId++, shape: 'flame',
+      x: anchor.x + (Math.random() - 0.5) * anchor.spread * 0.7,
+      y: anchor.y + anchor.spread * 0.3,
+      dx: (Math.random() - 0.5) * 0.4,
+      dy: -(0.6 + Math.random() * 0.6 + anchor.intensity * 0.15),
+      color: hue,
+      size: anchor.spread * (0.16 + Math.random() * 0.12) * (0.8 + anchor.intensity * 0.15),
+      maxOpacity: 0.55 + Math.random() * 0.25,
+      opacity: 0, age: 0, dead: false,
+      maxY: null,
+      ttl: 14 + Math.random() * 10, fade: 6,
+    };
+  }
+
+  // A bright ember breaking free of the flame — rises higher/faster and
+  // outlasts the flame licks themselves, like real sparks lofting off a fire.
+  _spawnEmber(anchor) {
+    return {
+      id: this._nextId++, shape: 'circle',
+      x: anchor.x + (Math.random() - 0.5) * anchor.spread * 0.5,
+      y: anchor.y,
+      dx: (Math.random() - 0.5) * 0.3,
+      dy: -1 - Math.random() * 1.2,
+      color: 'rgba(255,200,90,0.9)',
+      size: 1 + Math.random() * 1.2,
+      maxOpacity: 0.7 + Math.random() * 0.3,
+      opacity: 0, age: 0, dead: false,
+      maxY: null,
+      ttl: 25 + Math.random() * 20, fade: 8,
     };
   }
 }

@@ -169,6 +169,10 @@ function openItemMenu(slotIdx, isEquipped) {
   const story  = item?.story ?? null;
   const isEquip = !isEquipped && item?.category === 1; // ITEM_EQUIPMENT=1
   const isCons  = !isEquipped && item?.category === 0; // ITEM_CONSUMABLE=0
+  // ITEM_KEY=3 with a real server effect (Doomed Diary, Cursed Device, Pre-War
+  // Net Map) — mirrors isKeyWithEffect in useItem() (inventory_items.hpp).
+  // Never consumed: useItem() returns before decrementing qty for these.
+  const isReadable = !isEquipped && item?.category === 3 && item?.usable;
 
   const menuIcon = document.getElementById('item-menu-icon');
   menuIcon.onerror = () => { menuIcon.onerror = null; menuIcon.src = getItemIconFallback?.(itemId) ?? ITEM_ICON_PLACEHOLDER; };
@@ -196,6 +200,15 @@ function openItemMenu(slotIdx, isEquipped) {
       closeItemMenu();
       if (item?.postUse) showBanner(item.postUse, null);
       console.log('%c[INV] use_item', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${name}"`);
+      send({ t: 'use_item', slot: slotIdx });
+    });
+  }
+  if (isReadable) {
+    const preUse = item?.preUse ?? null;
+    addBtn('\u25A4 Read' + (preUse ? ' \u2014 ' + preUse : ''), '', () => {
+      closeItemMenu();
+      if (item?.postUse) showBanner(item.postUse, null);
+      console.log('%c[INV] use_item', 'color:#fc0;font-weight:bold', `slot=${slotIdx} itemId=${itemId} name="${name}" (key/read)`);
       send({ t: 'use_item', slot: slotIdx });
     });
   }

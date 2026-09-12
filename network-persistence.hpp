@@ -28,8 +28,17 @@ void saveGame() {
     size_t mapBytes = 0;
     File f = SD.open(SAVE_MAP_F, FILE_WRITE);
     if (f) {
-      SaveHeader hdr = { SAVE_MAGIC, SAVE_VERSION, G.dayCount, G.threatClock,
-                         G.weatherPhase, G.weatherCounter, G.dayTick, G.badWeatherTicks };
+      SaveHeader hdr = {};
+      hdr.magic = SAVE_MAGIC; hdr.version = SAVE_VERSION;
+      hdr.dayCount = G.dayCount; hdr.threatClock = G.threatClock;
+      hdr.weatherPhase = G.weatherPhase; hdr.weatherCounter = G.weatherCounter;
+      hdr.dayTick = G.dayTick; hdr.badWeatherTicks = G.badWeatherTicks;
+      hdr.caravanQ = W.caravan.q; hdr.caravanR = W.caravan.r;
+      hdr.caravanRestockTimer = W.caravan.restockTimer;
+      memcpy(hdr.caravanInv, W.caravan.inv, 5);
+      hdr.caravanActive = W.caravan.active ? 1 : 0;
+      hdr.doomQ = W.creepingDoom.q; hdr.doomR = W.creepingDoom.r;
+      hdr.doomAwareness = W.creepingDoom.awareness;
       uint8_t savedPoi[MAX_PLAYERS] = {0};
       for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!encounters[i].active) continue;
@@ -38,7 +47,7 @@ void saveGame() {
         c.poi = encounters[i].encIdx;
       }
       mapBytes += f.write((uint8_t*)&hdr, sizeof(hdr));
-      mapBytes += f.write((uint8_t*)G.map, sizeof(G.map));
+      mapBytes += f.write((uint8_t*)G.map, MAP_BYTES);
       for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!encounters[i].active) continue;
         G.map[encounters[i].hexR][encounters[i].hexQ].poi = savedPoi[i];
@@ -123,7 +132,7 @@ bool tryLoadSave() {
     f.close();
     return false;
   }
-  if (f.read((uint8_t*)G.map, sizeof(G.map)) != sizeof(G.map)) {
+  if (f.read((uint8_t*)G.map, MAP_BYTES) != MAP_BYTES) {
     Log.warning("Save map read short: %s", SAVE_MAP_F);
     f.close(); return false;
   }
@@ -143,6 +152,17 @@ bool tryLoadSave() {
   G.weatherCounter  = hdr.weatherCounter;
   G.dayTick         = (hdr.dayTick < DAY_TICKS) ? hdr.dayTick : 0;
   G.badWeatherTicks = hdr.badWeatherTicks;
+  // World-system entities (v13+ only — the version check above already
+  // rejects anything older). wInit() first for its side effects (zero-clear
+  // W_hex/fireCount/debounce — tracks/fire are deliberately not persisted),
+  // then overwrite the persisted fields it randomized.
+  wInit();
+  W.caravan.q = hdr.caravanQ; W.caravan.r = hdr.caravanR;
+  W.caravan.restockTimer = hdr.caravanRestockTimer;
+  memcpy(W.caravan.inv, hdr.caravanInv, 5);
+  W.caravan.active = hdr.caravanActive != 0;
+  W.creepingDoom.q = hdr.doomQ; W.creepingDoom.r = hdr.doomR;
+  W.creepingDoom.awareness = hdr.doomAwareness;
   Log.notice("Save map loaded day=%u tick=%lu tc=%u weather=%u groundItems=%d",
              (unsigned)G.dayCount, (unsigned long)G.dayTick, (unsigned)G.threatClock,
              (unsigned)G.weatherPhase, giLoaded);

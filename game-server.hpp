@@ -1,4 +1,5 @@
 #pragma once
+#include <errno.h>
 // ── game-server.hpp ─────────────────────────────────────────────────────────
 // Game loop task (Core 1) and server setup helpers extracted from setup().
 // Included LAST, after all gameplay and network .hpp files.
@@ -121,10 +122,146 @@ static void setupVariantCounts() {
 }
 
 // ── Cache-Control policy per asset ──────────────────────────────
+// Entry points that must always revalidate: the page itself, the service
+// worker, and the asset manifests the loader reads first. Everything else is
+// requested by the client as "<url>?v=<manifest version>", so it can be
+// immutable — a new build changes the query string, not the cache policy.
 static const char* cacheControlFor(const char* url, const char* mime) {
-  if (strcmp(mime, "text/html") == 0)  return "no-cache";
-  if (strstr(url, "sw.js") != nullptr) return "no-cache";
+  if (strcmp(mime, "text/html") == 0)               return "no-cache";
+  if (strcmp(url, "/sw.js") == 0)                    return "no-cache";
+  if (strcmp(url, "/assets.json") == 0)              return "no-cache";
+  if (strcmp(url, "/web-assets.json") == 0)          return "no-cache";
   return "public, max-age=31536000, immutable";
+}
+
+// Serve webFiles[i] (PSRAM) for one request: 304 on ETag match, else 200 with
+// the cached bytes. Runs on the async_tcp task — keep it allocation-light.
+static void sendWebFile(AsyncWebServerRequest* req, int i) {
+  const WebFile& wf = webFiles[i];
+  const char* cc = cacheControlFor(wf.url, wf.mime);
+  if (req->hasHeader("If-None-Match") &&
+      req->getHeader("If-None-Match")->value() == wf.etag) {
+    Log.verbose("HTTP 304 %s", wf.url);
+    AsyncWebServerResponse* r = req->beginResponse(304);
+    r->addHeader("ETag", wf.etag);
+    r->addHeader("Cache-Control", cc);
+    req->send(r);
+    return;
+  }
+  Log.verbose("HTTP GET %s -> %s %u B%s heap=%uKB",
+              wf.url, wf.mime, (unsigned)wf.len, wf.gzip ? " gz" : "",
+              (unsigned)(ESP.getFreeHeap() / 1024));
+  AsyncWebServerResponse* resp = req->beginResponse(200, wf.mime, wf.buf, wf.len);
+  resp->addHeader("ETag", wf.etag);
+  resp->addHeader("Cache-Control", cc);
+  if (wf.gzip) {
+    resp->addHeader("Content-Encoding", "gzip");
+    resp->addHeader("Vary", "Accept-Encoding");
+  }
+  req->send(resp);
+}
+
+// ── /upload body writer (shared by the multipart and raw-body callbacks) ───
+// Runs on the async_tcp task. One upload at a time (sync scripts are
+// sequential); state is reset on index == 0. The request handler reads
+// g_uploadOk / g_uploadTotal to answer 200 or 500 — before this, a failed
+// SD open still returned "OK".
+static File     g_uploadFile;
+static size_t   g_uploadTotal = 0;
+static bool     g_uploadOk    = false;
+static String   g_uploadDest;
+static char     g_uploadLastErr[120] = {0};   // surfaced in /state mem.lastUploadErr
+static uint32_t g_uploadResumes = 0;          // successful mid-file recoveries (telemetry)
+
+// Write one body chunk, recovering from short writes. Observed on the K10:
+// f_write fails at offsets 16 KB apart (12288, 28672, 45056, ...) — the card
+// goes busy at a physical block boundary and the SPI transaction times out.
+// FatFs then latches the error on the handle, so every later write fails and
+// the file is left truncated at a cluster boundary. Recovery: close, let the
+// card settle, reopen for append, confirm the on-disk size is exactly what we
+// have accounted for, then continue with the unwritten remainder.
+//
+// Every chunk is flushed and its on-disk size confirmed before we account for
+// it (g_uploadTotal only ever holds *verified* bytes). fwrite() is buffered,
+// so without the flush the error surfaces a few KB late and the bytes that
+// were still in the stdio buffer are gone — the first version of this resume
+// saw disk=12288 vs accounted=15796 and had nothing to rewrite them from. With
+// per-chunk verification the only bytes at risk are the current chunk's, and
+// we still hold those.
+static bool uploadWriteChunk(uint8_t* data, size_t len) {
+  const size_t chunkStart = g_uploadTotal;            // verified bytes before this chunk
+  for (int attempt = 0; attempt < 5; attempt++) {
+    size_t done = g_uploadTotal - chunkStart;         // bytes of this chunk already on disk
+    size_t w = 0;
+    if (g_uploadFile) {
+      w = g_uploadFile.write(data + done, len - done);
+      g_uploadFile.flush();
+    }
+    size_t onDisk = g_uploadFile ? g_uploadFile.size() : 0;
+    if (onDisk >= chunkStart + len) {
+      g_uploadTotal = chunkStart + len;
+      if (attempt) g_uploadResumes++;
+      return true;
+    }
+    int e = errno;
+    snprintf(g_uploadLastErr, sizeof(g_uploadLastErr),
+             "%s: short write %u/%u at %u (disk=%u) errno=%d try=%d heap=%uKB",
+             g_uploadDest.c_str(), (unsigned)w, (unsigned)(len - done), (unsigned)g_uploadTotal,
+             (unsigned)onDisk, e, attempt + 1, (unsigned)(ESP.getFreeHeap() / 1024));
+    Log.warning("UPLOAD %s", g_uploadLastErr);
+    g_uploadFile.close();
+    delay(25 * (attempt + 1));                        // let the card finish its busy cycle
+    g_uploadFile = SD.open(g_uploadDest.c_str(), FILE_APPEND);
+    if (!g_uploadFile) { Log.error("UPLOAD reopen FAIL %s", g_uploadDest.c_str()); return false; }
+    onDisk = g_uploadFile.size();
+    if (onDisk < chunkStart || onDisk > chunkStart + len) {   // verified bytes vanished / FS confused
+      Log.error("UPLOAD resume mismatch %s disk=%u chunk=%u..%u", g_uploadDest.c_str(),
+                (unsigned)onDisk, (unsigned)chunkStart, (unsigned)(chunkStart + len));
+      return false;
+    }
+    g_uploadTotal = onDisk;                           // continue from what actually landed
+  }
+  return false;
+}
+
+static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
+                        size_t index, uint8_t* data, size_t len, bool final) {
+  if (index == 0) {
+    String dest = request->hasParam("dest")
+                  ? request->getParam("dest")->value()
+                  : "/data/" + (filename.length() ? filename : String("upload.bin"));
+    if (!dest.startsWith("/")) dest = "/" + dest;
+    if (dest.indexOf("..") >= 0) {                       // keep writes under the SD root
+      Log.error("UPLOAD rejected dest=%s", dest.c_str());
+      g_uploadOk = false; return;
+    }
+    g_uploadDest  = dest;
+    g_uploadTotal = 0;
+    if (g_uploadFile) g_uploadFile.close();
+    g_uploadFile = SD.open(dest.c_str(), FILE_WRITE);
+    g_uploadOk   = (bool)g_uploadFile;
+    if (g_uploadOk) Log.notice("UPLOAD start dest=%s", dest.c_str());
+    else            Log.error("SD WRITE FAIL: %s", dest.c_str());
+    UploadUI::begin(dest.c_str());
+  }
+  if (g_uploadOk && len) {
+    if (!uploadWriteChunk(data, len)) {
+      g_uploadOk = false;
+      Log.error("SD WRITE FAIL: %s after %u bytes — %s",
+                g_uploadDest.c_str(), (unsigned)g_uploadTotal, g_uploadLastErr);
+    }
+    UploadUI::chunk(g_uploadTotal);
+    yield();
+  }
+  if (final) {
+    if (g_uploadFile) {
+      g_uploadFile.flush();
+      g_uploadFile.close();
+      Log.notice("UPLOAD complete dest=%s total=%u ok=%d",
+                 g_uploadDest.c_str(), (unsigned)g_uploadTotal, (int)g_uploadOk);
+    }
+    UploadUI::end(g_uploadOk);
+  }
 }
 
 // ── WiFi, HTTP routes, and WebSocket setup ──────────────────────
@@ -156,33 +293,23 @@ static void setupWiFiAndServer() {
   ws.onEvent(onWsEvent); ws.enable(true); server.addHandler(&ws);
   Log.notice("WS handler registered path=/ws");
 
-  // Static web assets served from PSRAM
-  for (int i = 0; i < WEB_FILE_COUNT; i++) {
-    server.on(WEB_FILES[i].url, HTTP_GET, [i](AsyncWebServerRequest* req) {
-      if (!WEB_FILES[i].buf) {
-        Log.error("HTTP 503: web file not cached %s", WEB_FILES[i].url);
-        req->send(503, "text/plain", "Web file not cached - check SD & reboot");
-        return;
-      }
-      const char* cc = cacheControlFor(WEB_FILES[i].url, WEB_FILES[i].mime);
-      if (req->hasHeader("If-None-Match") &&
-          req->getHeader("If-None-Match")->value() == WEB_FILES[i].etag) {
-        Log.verbose("HTTP 304 %s etag match", WEB_FILES[i].url);
-        AsyncWebServerResponse* r = req->beginResponse(304);
-        r->addHeader("ETag", WEB_FILES[i].etag);
-        r->addHeader("Cache-Control", cc);
-        req->send(r);
-        return;
-      }
-      Log.verbose("HTTP GET %s -> %s (%u B)",
-                  WEB_FILES[i].url, WEB_FILES[i].mime, (unsigned)WEB_FILES[i].len);
-      AsyncWebServerResponse* resp = req->beginResponse_P(
-          200, WEB_FILES[i].mime, WEB_FILES[i].buf, WEB_FILES[i].len);
-      resp->addHeader("ETag", WEB_FILES[i].etag);
-      resp->addHeader("Cache-Control", cc);
-      req->send(resp);
-    });
+  // Static web assets served from PSRAM — one route per discovered file.
+  // Query strings (the loader's "?v=<version>") are ignored by path matching.
+  for (int i = 0; i < webFileCount; i++) {
+    server.on(webFiles[i].url, HTTP_GET, [i](AsyncWebServerRequest* req) { sendWebFile(req, i); });
   }
+  {
+    int idx = findWebFile("/index.html");
+    if (idx >= 0) {
+      server.on("/", HTTP_GET, [idx](AsyncWebServerRequest* req) { sendWebFile(req, idx); });
+    } else {
+      Log.error("HTTP: no /index.html cached — '/' will 503 until SD has data/index.html");
+      server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(503, "text/plain", "index.html not cached - check SD & reboot");
+      });
+    }
+  }
+  Log.notice("HTTP static routes: %d files", webFileCount);
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) {
     Log.verbose("HTTP 204 /favicon.ico");
     req->send(204);
@@ -220,6 +347,22 @@ static void setupWiFiAndServer() {
       j += ",\"weather\":";     j += G.weatherPhase;
       j += ",\"connected\":";   j += G.connectedCount;
       j += ",\"evtQueue\":";    j += pendingCount;
+      // Memory telemetry — lets a browser poll heap trend without a serial
+      // monitor (see docs/dev-loop.md "Diagnosing HTTP stalls").
+      j += ",\"mem\":{\"heap\":";    j += (uint32_t)ESP.getFreeHeap();
+      j += ",\"minHeap\":";          j += (uint32_t)ESP.getMinFreeHeap();
+      j += ",\"maxBlock\":";         j += (uint32_t)ESP.getMaxAllocHeap();
+      j += ",\"psram\":";            j += (uint32_t)ESP.getFreePsram();
+      j += ",\"uptimeMs\":";         j += (uint32_t)millis();
+      j += ",\"uploadResumes\":";    j += g_uploadResumes;
+      j += ",\"lastUploadErr\":\"";  j += g_uploadLastErr; j += "\"";
+      if (req->hasParam("sd")) {     // opt-in: f_getfree can take a while on big cards
+        uint64_t tot = SD.totalBytes(), used = SD.usedBytes();
+        j += ",\"sdTotal\":";        j += (uint32_t)(tot / 1024);
+        j += ",\"sdUsedKB\":";       j += (uint32_t)(used / 1024);
+        j += ",\"sdFreeKB\":";       j += (uint32_t)((tot - used) / 1024);
+      }
+      j += "}";
       {
         struct tm ti;
         bool ok = (getLocalTime(&ti, 0) && ti.tm_year > 100);
@@ -457,8 +600,9 @@ static void setupWiFiAndServer() {
             req->send(r);
             return;
           }
-          Log.verbose("HTTP /img/ hit %s (%u B)", filename.c_str(), (unsigned)imgCache[i].len);
-          AsyncWebServerResponse* resp = req->beginResponse_P(
+          Log.verbose("HTTP /img/ hit %s (%u B) heap=%uKB", filename.c_str(),
+                      (unsigned)imgCache[i].len, (unsigned)(ESP.getFreeHeap() / 1024));
+          AsyncWebServerResponse* resp = req->beginResponse(
               200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("ETag", imgCache[i].etag);
           resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -473,48 +617,34 @@ static void setupWiFiAndServer() {
     req->send(404, "text/plain", "Not found: " + url);
   });
 
+  // POST /upload?dest=/data/<path>
+  // Two body shapes reach us and ESPAsyncWebServer dispatches them to
+  // DIFFERENT callbacks:
+  //   * raw body (sync_data.ps1 / .sh: Content-Type application/octet-stream,
+  //     curl --data-binary)            -> onBody   (arg 5 below)
+  //   * multipart/form-data file part   -> onUpload (arg 4 below)
+  // Until 2026-09-12 only onUpload was registered, so every sync_data run got
+  // "OK" while nothing was written to the SD card. Both now feed one writer.
   server.on("/upload", HTTP_POST,
     [](AsyncWebServerRequest* request) {
-      Log.notice("UPLOAD request filename=%s",
-                 request->hasParam("filename", true)
-                   ? request->getParam("filename", true)->value().c_str()
-                   : "-");
-      request->send(200, "text/plain", "OK");
+      bool ok = g_uploadOk;
+      Log.notice("UPLOAD request dest=%s ok=%d bytes=%u",
+                 request->hasParam("dest") ? request->getParam("dest")->value().c_str() : "-",
+                 (int)ok, (unsigned)g_uploadTotal);
+      // Body is "OK <bytes written>" so sync_data.ps1 can verify the count
+      // against the local file size — a short write is never silently "OK".
+      char body[48];
+      if (ok) snprintf(body, sizeof(body), "OK %u", (unsigned)g_uploadTotal);
+      else    snprintf(body, sizeof(body), "SD write failed after %u", (unsigned)g_uploadTotal);
+      request->send(ok ? 200 : 500, "text/plain", body);
     },
     [](AsyncWebServerRequest* request, const String& filename,
        size_t index, uint8_t* data, size_t len, bool final) {
-      static File uploadFile;
-      static size_t totalLen = 0;
-      static String destPath;
-      if (index == 0) {
-        String dest = request->hasParam("dest")
-                      ? request->getParam("dest")->value()
-                      : "/data/" + filename;
-        if (!dest.startsWith("/")) dest = "/" + dest;
-        destPath = dest;
-        totalLen = 0;
-        Log.notice("UPLOAD start dest=%s", dest.c_str());
-        uploadFile = SD.open(dest.c_str(), FILE_WRITE);
-        if (uploadFile) Log.notice("SD WRITE OPEN: %s", dest.c_str());
-        else            Log.error("SD WRITE FAIL: %s", dest.c_str());
-        UploadUI::begin(dest.c_str());
-      }
-      if (uploadFile) {
-        uploadFile.write(data, len); uploadFile.flush(); yield();
-        totalLen += len;
-        UploadUI::chunk(totalLen);
-        Log.verbose("UPLOAD chunk idx=%u len=%u final=%d",
-                    (unsigned)index, (unsigned)len, (int)final);
-      }
-      if (final) {
-        bool ok = (bool)uploadFile;
-        if (uploadFile) {
-          uploadFile.close();
-          Log.notice("UPLOAD complete dest=%s total=%u",
-                     destPath.c_str(), (unsigned)totalLen);
-        }
-        UploadUI::end(ok);
-      }
+      uploadChunk(request, filename, index, data, len, final);
+    },
+    [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
+       size_t index, size_t total) {
+      uploadChunk(request, String(), index, data, len, index + len >= total);
     }
   );
 

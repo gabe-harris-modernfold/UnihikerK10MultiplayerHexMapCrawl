@@ -220,6 +220,7 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     memset(tradeOffers, 0, sizeof(tradeOffers));
     memset(groundItems, 0, sizeof(groundItems));
     generateMap();
+    wInit();  // re-place world entities — stale coords may now be impassable (e.g. a new Nuke Crater)
     G.dayCount = 1; G.dayTick = 0; G.threatClock = 0;
     resetWeather();
     for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -309,6 +310,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   static char survBuf[1100];
   int  survLen = 0;
   int  slot    = -1;
+  SettleResult settleResult = {};
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -319,12 +321,14 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         return;
       }
       handleAction(slot, (uint8_t)actType, mpParam,
-                   survBuf, sizeof(survBuf), &survLen);
+                   survBuf, sizeof(survBuf), &survLen, settleResult);
     }
     xSemaphoreGive(G.mutex);
   }
   if (survLen > 0)
     client->text(survBuf, (size_t)survLen);
+  if (settleResult.fired)
+    broadcastSettle(settleResult);
 }
 
 static void handleMsg_settings(AsyncWebSocketClient* client, char* data, size_t len) {

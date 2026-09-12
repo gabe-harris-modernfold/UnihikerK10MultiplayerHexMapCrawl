@@ -24,6 +24,11 @@ static int hexDistWrap(int q1, int r1, int q2, int r2) {
 // after this file).  Sums +1 per equipped item with EFX_REVEAL_FOG param 1.
 static int equipVisionBonus(int pid);
 
+// Defined in world-system.hpp (needs W_hex, which is declared after this
+// file). Smoke from a burning hex the player is standing on cuts vision
+// independently of the weather phase — see docs/world-system-spec.md.
+static int fireVisionPenalty(int q, int r);
+
 // ── Group vision bonus ──────────────────────────────────────────
 // Survivors watching the same hex together see farther: +1 vision radius per
 // other connected player stacked on pid's hex, capped so a full party stack
@@ -67,6 +72,8 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   *outVisR += groupVisionBonus(pid);  // allies stacked on the same hex
   // ── Weather visibility penalty (applied after Scout and equipment bonuses) ──
   *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
+  // ── Fire smoke (independent of weather) ─────────────────────────────────
+  *outVisR = max(0, *outVisR - fireVisionPenalty(G.players[pid].q, G.players[pid].r));
 }
 
 // ── Slot management ────────────────────────────────────────────
@@ -121,8 +128,15 @@ static uint8_t pickVariant(uint8_t n, uint32_t rnd) {
 static const uint8_t T_BASE[NUM_TERRAIN]  = { 66,  8, 12,  3,  2,  0,  0,  3,  2,  1,  3,  0 };
 
 // Clump % per terrain
+// NOTE: Open Scrub's base rate (66%) already lets it win most contested
+// smoothing cells on frequency alone — it doesn't need a high clump value
+// to survive the way a rare terrain like Rust Forest (12%, clump 75) does.
+// This value mainly controls Scrub's own internal texture: too low and its
+// interior looks noisy/speckled, too high and it starts steamrolling minor
+// terrains at their boundaries too. 30 was picked to firm up grassland into
+// broad fields while staying well under Marsh/Hills/Dunes (40-45).
 static const uint8_t TERRAIN_CLUMP[NUM_TERRAIN] = {
-  15,  // 0 Open Scrub
+  30,  // 0 Open Scrub
   40,  // 1 Ash Dunes
   75,  // 2 Rust Forest
   45,  // 3 Marsh
@@ -186,7 +200,7 @@ static void generateMap() {
   }
 
   // ── Phase 2: clump smoothing passes ──────────────────────────
-  static uint8_t scratch[MAP_ROWS][MAP_COLS];
+  PSRAM_STATIC(uint8_t, scratch, [MAP_ROWS][MAP_COLS]);
 
   for (int pass = 0; pass < SMOOTH_PASSES; pass++) {
     for (int r = 0; r < MAP_ROWS; r++) {
@@ -319,6 +333,11 @@ static void generateMap() {
   }
 
   // ── Phase 2.8: Riverine Forest Fringe ───────────────────────────
+  // Only organic ground grows a forest fringe: Open Scrub, Marsh, Rolling
+  // Hills. Ash Dunes/Glass Fields are excluded — arid or glassed ground
+  // doesn't green up just because water is nearby. Broken Urban is also
+  // excluded so it stays fully governed by the dedicated flooded-ruins
+  // transition below (Phase 2.82) instead of partially pre-empted here.
   {
     for (int r = 0; r < MAP_ROWS; r++)
       for (int c = 0; c < MAP_COLS; c++)
@@ -331,7 +350,7 @@ static void generateMap() {
           int nr = wrapR(r + DR[d]);
           int nc = wrapQ(c + DQ[d]);
           uint8_t t = G.map[nr][nc].terrain;
-          if (t == 8 || t == 9 || t == 10 || t == 11) continue;
+          if (t != 0 && t != 3 && t != 7) continue;
           if ((esp_random() % 100) < 50) scratch[nr][nc] = 2;
         }
       }
@@ -382,6 +401,34 @@ static void generateMap() {
           if (nCount[t] > bestN) { bestN = nCount[t]; best = (uint8_t)t; }
         }
         scratch[r][c] = best;
+      }
+    }
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        G.map[r][c].terrain = scratch[r][c];
+  }
+
+  // ── Phase 2.86: Grassland consolidation ─────────────────────────
+  // A lone Ash Dunes/Marsh/Rolling Hills hex with no same-terrain neighbor,
+  // sitting almost entirely inside Open Scrub, reads as single-hex noise
+  // rather than a feature. Fold it back into Scrub so grassland reads as
+  // broad fields. Terrain with its own identity (forest — already
+  // de-speckled above, urban, mountain, river, etc.) is untouched.
+  {
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int c = 0; c < MAP_COLS; c++)
+        scratch[r][c] = G.map[r][c].terrain;
+
+    for (int r = 0; r < MAP_ROWS; r++) {
+      for (int c = 0; c < MAP_COLS; c++) {
+        uint8_t t = G.map[r][c].terrain;
+        if (t != 1 && t != 3 && t != 7) continue;
+        uint8_t nCount[NUM_TERRAIN] = {0};
+        for (int d = 0; d < 6; d++)
+          nCount[G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain]++;
+        if (nCount[t] > 0) continue;   // has company of its own kind, leave it
+        if (nCount[0] < 5) continue;   // not surrounded by scrub
+        scratch[r][c] = 0;
       }
     }
     for (int r = 0; r < MAP_ROWS; r++)
@@ -476,7 +523,7 @@ static void generateMap() {
       G.map[r2][c2].poi = 0;
 
   {
-    static uint16_t hexBuf[MAP_ROWS * MAP_COLS];  // scratch, static to save stack
+    PSRAM_STATIC(uint16_t, hexBuf, [MAP_ROWS * MAP_COLS]);  // scratch; PSRAM, off both stack and internal .bss
     for (int t = 0; t <= 9; t++) {
       if (encPools[t].count == 0) continue;
       uint8_t n = encPools[t].count;
@@ -501,6 +548,18 @@ static void generateMap() {
       }
     }
   }
+
+  // ── Phase 5.5: Landmark art pin ──────────────────────────────
+  // Jack's Chopper (scrub/19.json) is a named landmark, not empty scrub —
+  // force its hex's variant to 10, a sentinel reserved for point-of-interest
+  // art rather than a real scrub variant (Open Scrub's counted variants are
+  // 0-9). The client maps terrain 0 + variant 10 to a dedicated named image
+  // (poi_jacks_chopper.png) instead of a random hexOpenScrub<N>.png — see
+  // POI_ART in engine.js. Overrides whatever random variant Phase 4 picked.
+  for (int r2 = 0; r2 < MAP_ROWS; r2++)
+    for (int c2 = 0; c2 < MAP_COLS; c2++)
+      if (G.map[r2][c2].terrain == 0 && G.map[r2][c2].poi == 19)
+        G.map[r2][c2].variant = 10;
 
 }
 

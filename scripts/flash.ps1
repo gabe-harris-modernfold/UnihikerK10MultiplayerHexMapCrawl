@@ -8,12 +8,18 @@
 [CmdletBinding()]
 param(
   [string]$Cli   = 'C:\Program Files\Arduino CLI\arduino-cli.exe',
-  [string]$Sketch = (Resolve-Path "$PSScriptRoot\..").Path,
+  [string]$Sketch,
   [string]$Port,
   [switch]$Build
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is empty inside param() defaults when run as
+# `powershell -File ...` (Windows PowerShell 5.1), which made -Sketch resolve
+# to C:\ -- so derive the repo root here instead.
+$here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $Sketch) { $Sketch = (Resolve-Path (Join-Path $here '..')).Path }
 
 if (-not (Test-Path $Cli)) {
   Write-Error "arduino-cli not found at $Cli. Install Arduino CLI or pass -Cli <path>."
@@ -48,7 +54,7 @@ if (-not $Port) {
 }
 
 if ($Build) {
-  & "$PSScriptRoot\build.ps1" -Cli $Cli -Sketch $Sketch
+  & (Join-Path $here 'build.ps1') -Cli $Cli -Sketch $Sketch
 }
 
 Write-Host "[flash] uploading to $Port ..."

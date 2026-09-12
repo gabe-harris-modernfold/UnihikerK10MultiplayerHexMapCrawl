@@ -94,7 +94,11 @@ function initActionPanel() {
     tradeGive.fill(0);
     tradeWant.fill(0);
     buildStepperRow('trade-give-row', tradeGive, i => (myId >= 0 ? (players[myId]?.inv?.[i] ?? 0) : 0));
-    buildStepperRow('trade-want-row', tradeWant, () => 30);
+    // Cap at what the target actually holds — their inv is already visible
+    // client-side via the state broadcast, so there's no reason to let the
+    // player build an offer that's guaranteed to fail on accept.
+    const wantSource = tradeTargetPid === CARAVAN_PID ? worldState.caravan?.inv : players[tradeTargetPid]?.inv;
+    buildStepperRow('trade-want-row', tradeWant, i => wantSource?.[i] ?? 0);
     document.getElementById('action-trade-offer-form').style.display = '';
   }
 
@@ -106,7 +110,8 @@ function initActionPanel() {
     if (myId < 0) return;
     const me = players[myId];
     const colocated = players.filter(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
-    if (colocated.length === 0) {
+    const caravanHere = worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r;
+    if (colocated.length === 0 && !caravanHere) {
       el.innerHTML = '<div class="action-no-cond">No survivors on this hex</div>';
       return;
     }
@@ -121,14 +126,30 @@ function initActionPanel() {
       });
       el.appendChild(btn);
     });
+    if (caravanHere) {
+      const btn = document.createElement('button');
+      btn.className   = 'chk-action-btn';
+      btn.textContent = '⇄ Trade with Caravan';
+      btn.addEventListener('click', () => {
+        tradeTargetPid = CARAVAN_PID;
+        el.style.display = 'none';
+        buildTradeOfferForm();
+      });
+      el.appendChild(btn);
+    }
   }
 
   document.getElementById('action-trade-send').addEventListener('click', () => {
     if (myId < 0 || tradeTargetPid < 0) return;
     const allZero = tradeGive.every(v => v === 0) && tradeWant.every(v => v === 0);
     if (allZero) return;
-    console.log('%c[TRADE] Sending trade_offer', 'color:#fc0;font-weight:bold', `to=${tradeTargetPid} give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
-    send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
+    if (tradeTargetPid === CARAVAN_PID) {
+      console.log('%c[TRADE] Sending car_trade', 'color:#fc0;font-weight:bold', `give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
+      send({ t: 'car_trade', give: [...tradeGive], want: [...tradeWant] });
+    } else {
+      console.log('%c[TRADE] Sending trade_offer', 'color:#fc0;font-weight:bold', `to=${tradeTargetPid} give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
+      send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
+    }
     closeActionPanel();
   });
 
@@ -250,8 +271,9 @@ function initActionPanel() {
       actionDefs.push({ id: ACT_SURVEY, icon: '\u25CE', label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
     }
 
-    // TRADE availability: requires another connected player on the same hex
-    const tradeAvail  = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
+    // TRADE availability: requires another connected player, or the caravan, on the same hex
+    const tradeAvail  = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r) ||
+      !!(worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r);
 
     actionDefs.forEach(def => {
       // Fix: shelter unavailable if improved shelter already built here
@@ -995,7 +1017,7 @@ function initMenuSystem() {
         // Terrain variants (populated after server sync)
         for (const variants of terrainImgVariants) {
           for (const img of variants) {
-            const p = new URL(img.src, window.location.href).pathname;
+            const p = new URL(img.dataset?.src || img.src, window.location.href).pathname;
             entries.push({ group: 'Terrain', label: p.split('/').pop(), path: p });
           }
         }
@@ -1009,7 +1031,7 @@ function initMenuSystem() {
         // Shelter variants
         for (const variants of shelterImgs) {
           for (const img of (variants || [])) {
-            const p = new URL(img.src, window.location.href).pathname;
+            const p = new URL(img.dataset?.src || img.src, window.location.href).pathname;
             entries.push({ group: 'Shelter', label: p.split('/').pop(), path: p });
           }
         }
@@ -1023,11 +1045,16 @@ function initMenuSystem() {
         assetProgress.val = { done: 0, total: entries.length };
         let completedCount = 0;
 
+        // Through the AssetLoader queue (bounded concurrency) — a bare
+        // Promise.all(fetch) here opened ~100 sockets against the K10 at once.
+        const get = window.AssetLoader
+          ? (p) => AssetLoader.fetch(p, { cache: 'no-store', attempts: 2 })
+          : (p) => fetch(p, { cache: 'no-store' });
         Promise.all(entries.map(async entry => {
           const t0 = performance.now();
           let ok = false, size = 0;
           try {
-            const resp = await fetch(entry.path, { cache: 'no-store' });
+            const resp = await get(entry.path);
             if (resp.ok) { const blob = await resp.blob(); ok = true; size = blob.size; }
           } catch (_) {}
           const elapsed = Math.round(performance.now() - t0);

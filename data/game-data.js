@@ -2,6 +2,7 @@
 const MAP_COLS    = 75;
 const MAP_ROWS    = 57;
 const MAX_PLAYERS = 6;
+const CARAVAN_PID = 254;  // sentinel trade partner id — matches world-system.hpp
 const VISION_R    = 1;   // base vision radius (server may send higher/lower via vr field)
 const SQRT3       = Math.sqrt(3);
 // ── 11 Terrain types ─────────────────────────────────────────────
@@ -212,6 +213,9 @@ const ITEM_CATEGORY_NAMES = ['Gulpable','Bolt-On','Salvage','Relic'];
 // Item catalog — mirrors /data/items.cfg on SD card.
 // Image paths: img/items/item_<id>.png (illustration) and img/items/icon_<id>.png (badge)
 // Narrative: preUse (shown before use prompt), postUse (after effect), story (key item lore)
+// usable: key items (category 3) only — true when items.cfg gives this item a
+// real effect (effectId != EFX_NONE), meaning useItem() in inventory_items.hpp
+// will actually dispatch something and the item can be "read" repeatedly.
 // Missing image files fall back to placeholder via getItemImg() / getItemIcon()
 const ITEMS = [
   { id:1,  name:'Trauma Patch',     category:0, slot:0,
@@ -316,7 +320,7 @@ const ITEMS = [
   { id:24, name:'Expired Meds',     category:2, slot:0,
     img:'img/items/item_24.png', icon:'img/items/icon_24.png',
     preUse: null, postUse: null, story: null },
-  { id:25, name:'Doomed Diary',     category:3, slot:0,
+  { id:25, name:'Doomed Diary',     category:3, slot:0, usable:true,
     img:'img/items/item_25.png', icon:'img/items/icon_25.png',
     preUse:  null, postUse: null,
     story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too. Reading it maps the three hexes around you.' },
@@ -364,11 +368,11 @@ const ITEMS = [
   { id:36, name:'Clean Underwear',  category:2, slot:0,
     img:'img/items/item_36.png', icon:'img/items/icon_36.png',
     preUse: null, postUse: null, story: null },
-  { id:37, name:'Cursed Device',    category:3, slot:0,
+  { id:37, name:'Cursed Device',    category:3, slot:0, usable:true,
     img:'img/items/item_37.png', icon:'img/items/icon_37.png',
     preUse:  null, postUse: null,
     story:   'A humming, slightly warm black box covered in symbols that shouldn\'t exist yet. It fell from the sky. Nothing about it is okay.' },
-  { id:38, name:'Pre-War Net Map',  category:3, slot:0,
+  { id:38, name:'Pre-War Net Map',  category:3, slot:0, usable:true,
     img:'img/items/item_38.png', icon:'img/items/icon_38.png',
     preUse:  null, postUse: null,
     story:   'A recovered network node uplink. Pulls every active signal on the grid. Reading it surveys the entire map; it can be read again any time.' },

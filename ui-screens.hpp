@@ -310,7 +310,7 @@ static void drawMapScreen() {
     0x080402,  // 10 Nuke Crater
   };
 
-  static uint8_t terr[MAP_ROWS][MAP_COLS];
+  PSRAM_STATIC(uint8_t, terr, [MAP_ROWS][MAP_COLS]);
   struct { int16_t q, r; bool on; } ps[MAX_PLAYERS];
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;

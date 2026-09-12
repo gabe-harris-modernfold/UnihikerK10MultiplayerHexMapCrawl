@@ -61,9 +61,15 @@ let displayMP = 6;  // smoothly lerped toward uiMP.val each frame
 
 // ── Image Loading Utility ─────────────────────────────────────────
 function createImageWithLoadTracking(src) {
-  const img = new Image();
+  // Route through index.html's AssetLoader queue when present: bounded
+  // concurrency + retries against the K10 (a bare `new Image()` per hex
+  // variant fired ~110 requests at once after the first sync and wedged the
+  // board). img.dataset.src keeps the original path; img.src becomes a blob:
+  // URL once fetched. Falls back to a plain Image outside the game page.
+  const img = window.AssetLoader ? AssetLoader.image(src) : new Image();
   img.loaded = false;
-  img.src = src;
+  if (!img.dataset.src) img.dataset.src = src;
+  if (!window.AssetLoader) img.src = src;
   img.onload = () => { img.loaded = true; };
   img.onerror = () => {
     img.loaded = false;
@@ -94,6 +100,19 @@ function loadTerrainVariants(vc) {
       (_, v) => createImageWithLoadTracking(`/img/hex${name}${v}.png`)
     );
   }
+}
+
+// ── Point-of-interest landmark art ─────────────────────────────────
+// Named art for a specific guaranteed-encounter hex, keyed by the
+// "terrain_variant" the firmware pins on that hex (see hex-map.hpp Phase
+// 5.5). Loaded directly by filename, independent of the per-terrain
+// variant pool above — each entry is one fixed image for one fixed
+// landmark, not a randomly-chosen variant.
+const POI_ART = {
+  '0_10': createImageWithLoadTracking('/img/poi_jacks_chopper.png'),  // Jack's Chopper — scrub/19.json
+};
+function poiArtFor(terrain, variant) {
+  return POI_ART[`${terrain}_${variant}`];
 }
 
 // ── Survivor pawn portrait images ────────────────────────────────
@@ -155,6 +174,11 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
 
 // Shared game state (Threat Clock, Day, weather phase) — from gs on sync/state
 let gameState = { tc: 0, dc: 0, wp: 0 };
+// World system entities (Caravan/Fire/Doom) — from world on sync/state.
+// Plain global like gameState, not VanJS-reactive. Partial payloads are
+// normal: Phase 1 only ever sends `caravan`, so `doom`/`fire` stay at these
+// defaults until later phases add those keys server-side.
+let worldState = { caravan: null, doom: null, fire: [] };
 // Ground items from latest sync/ground_update
 let groundItems = [];
 

@@ -13,6 +13,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
   static char ack[320];
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int capturedSlot = -1;
   uint8_t revealParam = 0;
@@ -75,6 +76,7 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
   static char ack[256];
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
@@ -110,6 +112,7 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
   int eslot = atoi(ev + 1);
   if (eslot < 0 || eslot >= EQUIP_SLOTS) return;
   static char ack[256];
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
@@ -149,6 +152,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   static char ack[256];
   static char upd[1280];
   bool ok = false;
+  ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
@@ -206,6 +210,7 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
   static char ack[256];
   static char upd[1280];
   bool ok = false;
+  ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());

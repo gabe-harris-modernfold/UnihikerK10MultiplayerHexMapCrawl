@@ -75,10 +75,31 @@ static void broadcastLobbyUpdate() {
   Log.verbose("Lobby broadcast to %d clients", recipients);
 }
 
+// Sparse burning-hex list shared by broadcastState()/sendSync() below: writes
+// "[q,r,intensity],[q,r,intensity],..." (no brackets/key — caller wraps it in
+// "fire":[ ... ]). Returns bytes written, same convention as snprintf. At the
+// FIRE_CAP of 20 this is at most ~220 bytes. Must precede both callers below —
+// C++ needs the declaration before first use, unlike the forward-declare
+// trick hex-map.hpp uses for fireVisionPenalty() (this file has no reverse
+// dependency forcing that).
+static int appendFireArray(char* buf, size_t cap) {
+  int  pos = 0;
+  bool first = true;
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int q = 0; q < MAP_COLS; q++) {
+      if (W_hex[r][q].fire == 0) continue;
+      if (!first) buf[pos++] = ',';
+      pos += snprintf(buf + pos, cap - pos, "[%d,%d,%d]", q, r, (int)W_hex[r][q].fire);
+      first = false;
+    }
+  }
+  return pos;
+}
+
 // ── Sync message (unicast to one client on connect) ──────────────────────────
 // Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin
 static void sendSync(AsyncWebSocketClient* client, int pid) {
-  static char buf[40000];  // sized for 75×57 map fog encoding (encodeMapFog: 6 chars/cell)
+  PSRAM_STATIC(char, buf, [40000]);  // 75×57 map fog encoding (6 chars/cell); PSRAM — was 40 KB of internal .bss
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
     Log.warning("sendSync pid=%d: G.mutex timeout - skipped", pid);
     return;
@@ -147,10 +168,18 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
+    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d]},"
+    "\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    G.threatClock, G.dayCount, (int)G.weatherPhase,
+    (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
+    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
+    (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
+  pos += appendFireArray(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "]},"
     "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
     "\"sv\":[%d,%d],"
     "\"fa\":%d}",
-    G.threatClock, G.dayCount, (int)G.weatherPhase,
     terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
     terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
     terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
@@ -167,10 +196,12 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
 }
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
-// Buffer: 6 players × ~315 chars + header/footer ~80 = ~1970; sized at 2500
-// to safely accommodate it[12]+iq[12]+eq[5] per player (~125 chars × 6 = 750).
+// Buffer: 6 players × ~315 chars + header/footer ~80 = ~1970; sized at 3072
+// to safely accommodate it[12]+iq[12]+eq[5] per player (~125 chars × 6 = 750)
+// plus the "world" block (caravan + doom + sparse fire list, ~200 bytes at
+// the FIRE_CAP of 20 — sized up front when caravan alone landed).
 static void broadcastState() {
-  static char buf[2500];
+  PSRAM_STATIC(char, buf, [3072]);
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) {
     static uint32_t lastBusyLogMs = 0;
     uint32_t nowMs = millis();
@@ -209,8 +240,15 @@ static void broadcastState() {
       encounters[i].active ? 1 : 0);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d}}",
-    G.threatClock, G.dayCount, (int)G.weatherPhase);
+    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
+    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d]},"
+    "\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    G.threatClock, G.dayCount, (int)G.weatherPhase,
+    (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
+    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
+    (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
+  pos += appendFireArray(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}}");
   xSemaphoreGive(G.mutex);
   ws.textAll(buf, (size_t)pos);
 }

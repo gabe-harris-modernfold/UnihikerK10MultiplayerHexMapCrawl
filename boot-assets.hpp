@@ -3,7 +3,84 @@
 // Boot splash, SD→PSRAM asset loading, item registry parser, loot tables.
 // Included by Esp32HexMapCrawl.ino before gameplay .hpp files.
 
+// ── Web-file discovery helpers ────────────────────────────────
+// MIME by extension. Anything not listed is NOT served (items.cfg, dotfiles,
+// the sync manifest, ...). Extend here if a new asset type appears.
+static const char* webMimeFor(const String& lowerName) {
+  if (lowerName.endsWith(".html")) return "text/html";
+  if (lowerName.endsWith(".js"))   return "text/javascript";
+  if (lowerName.endsWith(".css"))  return "text/css";
+  if (lowerName.endsWith(".json")) return "application/json";
+  if (lowerName.endsWith(".svg"))  return "image/svg+xml";
+  if (lowerName.endsWith(".ico"))  return "image/x-icon";
+  if (lowerName.endsWith(".png"))  return "image/png";
+  if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) return "image/jpeg";
+  if (lowerName.endsWith(".txt") || lowerName.endsWith(".map")) return "text/plain";
+  if (lowerName.endsWith(".webmanifest")) return "application/manifest+json";
+  return nullptr;
+}
+
+static int findWebFile(const char* url) {
+  for (int i = 0; i < webFileCount; i++)
+    if (strcmp(webFiles[i].url, url) == 0) return i;
+  return -1;
+}
+
+// Read one /data root file into PSRAM and register it under "/<name>".
+// "<name>.gz" registers as "/<name>" with gzip=true; if both exist the gz
+// copy replaces the plain one (smaller PSRAM, ~4x fewer bytes on the wire).
+static void cacheWebFile(File& f, const String& fname) {
+  if (fname.length() == 0 || fname[0] == '.') return;          // dotfiles, .upload-manifest.json
+  String lower = fname; lower.toLowerCase();
+  bool gz = lower.endsWith(".gz");
+  String plainLower = gz ? lower.substring(0, lower.length() - 3) : lower;
+  const char* mime = webMimeFor(plainLower);
+  if (!mime) { Log.verbose("WEB skip (not a web asset): %s", fname.c_str()); return; }
+
+  char url[48];
+  String plainName = gz ? fname.substring(0, fname.length() - 3) : fname;
+  if (plainName.length() + 1 >= sizeof(url)) {
+    Log.error("WEB skip (name too long): %s", fname.c_str()); return;
+  }
+  snprintf(url, sizeof(url), "/%s", plainName.c_str());
+
+  int existing = findWebFile(url);
+  if (existing >= 0) {
+    if (webFiles[existing].gzip) {                              // gz already cached — plain loses
+      Log.verbose("WEB skip (gz sibling cached): %s", fname.c_str()); return;
+    }
+    if (!gz) return;                                            // duplicate plain (case-diff) — ignore
+  }
+
+  size_t sz = f.size();
+  uint8_t* buf = (uint8_t*)ps_malloc(sz ? sz : 1);
+  if (!buf) { Log.error("WEB cache ps_malloc FAIL size=%u name=%s", (unsigned)sz, fname.c_str()); return; }
+  size_t got = f.read(buf, sz);
+
+  int slot = existing;
+  if (slot < 0) {
+    if (webFileCount >= MAX_WEB_FILES) {
+      Log.error("WEB cache FULL (MAX_WEB_FILES=%d) — not serving %s", MAX_WEB_FILES, fname.c_str());
+      free(buf); return;
+    }
+    slot = webFileCount++;
+  } else {
+    Log.notice("WEB cache: %s replaces plain copy (gzip preferred)", fname.c_str());
+    free(webFiles[slot].buf);
+  }
+  strlcpy(webFiles[slot].url, url, sizeof(webFiles[slot].url));
+  webFiles[slot].mime = mime;
+  webFiles[slot].gzip = gz;
+  webFiles[slot].buf  = buf;
+  webFiles[slot].len  = got;
+  Log.notice("WEB cache: %s -> %s (%u B%s)", fname.c_str(), url, (unsigned)got, gz ? ", gzip" : "");
+}
+
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
+// Images: every file under /data/img (one subdir deep) → imgCache.
+// Web files: every web-typed file in the /data ROOT → webFiles (see the
+// WebFile comment in Esp32HexMapCrawl.ino). Order of discovery doesn't
+// matter; gz-vs-plain preference is resolved in cacheWebFile().
 static void loadWebFilesToRAM() {
   File dir = SD.open("/data");
   if (!dir) { Log.error("SD OPEN FAIL: /data"); return; }
@@ -57,22 +134,7 @@ static void loadWebFilesToRAM() {
         imgFile = f.openNextFile();
       }
     } else if (!f.isDirectory()) {
-      for (int i = 0; i < WEB_FILE_COUNT; i++) {
-        if (fname.equalsIgnoreCase(WEB_FILES[i].sdName)) {
-          size_t sz = f.size();
-          uint8_t* buf = (uint8_t*)ps_malloc(sz);
-          if (buf) {
-            size_t got = f.read(buf, sz);
-            WEB_FILES[i].buf = buf;
-            WEB_FILES[i].len = got;
-            Log.notice("WEB cache: %s (%u B)", WEB_FILES[i].sdName, (unsigned)got);
-          } else {
-            Log.error("WEB cache ps_malloc FAIL size=%u name=%s",
-                      (unsigned)sz, WEB_FILES[i].sdName);
-          }
-          break;
-        }
-      }
+      cacheWebFile(f, fname);
     }
     f.close();
     f = dir.openNextFile();
@@ -121,7 +183,7 @@ static void commitItem(ItemDef& cur, bool& hasItem) {
 
 static void loadItemRegistry() {
   itemCount = 0;
-  memset(itemRegistry, 0, sizeof(itemRegistry));
+  memset(itemRegistry, 0, MAX_ITEMS * sizeof(ItemDef));   // itemRegistry lives in PSRAM (pointer)
 
   File f = SD.open("/data/items.cfg");
   if (!f) {
@@ -265,7 +327,7 @@ static void loadEncounterIndex() {
   free(buf);
 }
 
-// Load /encounters/loot_tables.json → lootTables[0..19]
+// Load /encounters/loot_tables.json → lootTables[0..MAX_LOOT_TABLES-1]
 static void loadLootTables() {
   File f = SD.open("/data/encounters/loot_tables.json");
   if (!f) { Log.warning("SD MISSING: /data/encounters/loot_tables.json"); return; }
@@ -279,7 +341,7 @@ static void loadLootTables() {
   f.close();
   lootTableCount = 0;
   const char* p = buf;
-  while (lootTableCount < 20 && *p) {
+  while (lootTableCount < MAX_LOOT_TABLES && *p) {
     // Find next quoted key
     const char* nameStart = strchr(p, '"');
     if (!nameStart) break;
@@ -327,6 +389,9 @@ static void loadLootTables() {
     }
     lootTableCount++;
     p = arr;
+  }
+  if (lootTableCount >= MAX_LOOT_TABLES && strchr(p, '"')) {
+    Log.warning("loot_tables.json has more than %d tables — some were not loaded", MAX_LOOT_TABLES);
   }
   free(buf);
 }

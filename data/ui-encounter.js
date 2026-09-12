@@ -424,12 +424,13 @@ function initEncounterOverlay() {
   };
 
   globalThis._onEncError = function(msg) {
-    if (!enc || phase !== 'rolling') return;
+    if (!enc || phase !== 'rolling') return false;  // not ours — let the caller fall back to a toast
     clearTimeout(rollTimer);
     phase = 'reading';
     renderChoices();
     renderLeave();
     showResult({ ok: false, verdict: 'NOT POSSIBLE', text: msg || 'The server refused that choice.' });
+    return true;
   };
 
   globalThis._onEncBank = function() { closeEncounter(); };

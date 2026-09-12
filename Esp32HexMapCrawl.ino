@@ -88,6 +88,27 @@
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
 #include "logging.hpp"
+
+// ── PSRAM placement helpers ─────────────────────────────────────────────────
+// Internal DRAM is the scarce resource on this board. ~210 KB of static .bss
+// left only ~45 KB of heap for the Wi-Fi driver + LWIP, and under a burst of
+// HTTP traffic their buffer allocations failed and the whole network stack
+// wedged until power-cycle (2026-09-12, see docs/dev-loop.md "Diagnosing HTTP
+// stalls"). Anything large therefore lives in the 8 MB PSRAM:
+//   PSRAM_STATIC(T, name, [dims...])  function-local static array in PSRAM
+//       that keeps full array semantics — sizeof(name), name[i][j], decay.
+//   allocPsramGlobals()               the big globals (G.map, W_hex, caches,
+//       event queue, item registry); called first thing in setup().
+static void* psramStaticAlloc(size_t bytes) {
+  void* p = ps_calloc(1, bytes);
+  if (!p) {
+    p = calloc(1, bytes);
+    Log.error("PSRAM alloc %u B FAILED — fell back to internal heap", (unsigned)bytes);
+  }
+  return p;
+}
+#define PSRAM_STATIC(T, name, dims) \
+  static T (&name)dims = *(T(*)dims)psramStaticAlloc(sizeof(T dims))
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include "unihiker_k10.h"
@@ -426,7 +447,12 @@ enum EvtType : uint8_t {
   EVT_ENC_BANK     = 16,
   EVT_ENC_END      = 17,
   EVT_COLLECT_FAIL = 18,
-  EVT_WEATHER      = 19
+  EVT_WEATHER      = 19,
+  EVT_FIRE_DAMAGE  = 20,   // player took fire damage: pid, q, r, amt (intensity) — Phase 2
+  EVT_FIRE_SPREAD  = 21,   // hex caught fire: q, r, intensity (vision-culled) — Phase 2
+  EVT_CARAVAN_TRADE = 22,  // caravan trade available: pid (co-located player)
+  EVT_DOOM_WARNING = 23,   // creeping doom adjacent, low threshold: pid — Phase 3
+  EVT_DOOM_ACT     = 24    // creeping doom destroyed resource / drained LL: pid, q, r — Phase 3
 };
 
 struct GameEvent {
@@ -533,15 +559,19 @@ static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
 // See hex-map.hpp Phase 5.
 
 // ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
+// MAX_LOOT_TABLES must be >= the number of top-level tables in loot_tables.json
+// (currently 34) — loadLootTables() in boot-assets.hpp silently stops parsing
+// once it's full, so a table added past this cap just never loads.
+static constexpr int MAX_LOOT_TABLES = 34;
 struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
 struct LootTable  { char name[20]; LootEntry entries[8]; uint8_t count; };
-static LootTable  lootTables[20];
+static LootTable  lootTables[MAX_LOOT_TABLES];
 static uint8_t    lootTableCount = 0;
 
 struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 
 struct GameState {
-  HexCell  map[MAP_ROWS][MAP_COLS];
+  HexCell  (*map)[MAP_COLS];   // PSRAM: MAP_ROWS rows, allocated by allocPsramGlobals(); G.map[r][q] unchanged
   Player   players[MAX_PLAYERS];
   uint32_t tickId;
   int      connectedCount;
@@ -558,12 +588,14 @@ struct GameState {
 };
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
+// Whole-map byte count — use instead of sizeof(G.map) (which is now a pointer).
+static constexpr size_t MAP_BYTES = sizeof(HexCell) * MAP_ROWS * MAP_COLS;
 
 static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 12;
+static constexpr uint8_t  SAVE_VERSION = 13;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -577,6 +609,15 @@ struct __attribute__((packed)) SaveHeader {
   uint16_t weatherCounter;
   uint32_t dayTick;          // v12: resume mid-day instead of restarting the day clock
   uint16_t badWeatherTicks;  // v12: bad-weather streak survives a reboot
+  // v13: world-system entities (docs/world-system-spec.md). W_hex (fire+track)
+  // is deliberately NOT persisted — tracks decay in seconds anyway and fires
+  // extinguish on power cycle, same as the spec specifies.
+  int16_t  caravanQ, caravanR;
+  uint8_t  caravanRestockTimer;
+  uint8_t  caravanInv[5];
+  uint8_t  caravanActive;
+  int16_t  doomQ, doomR;
+  uint8_t  doomAwareness;
 };
 
 struct __attribute__((packed)) SavePlayer {
@@ -609,13 +650,13 @@ struct __attribute__((packed)) SaveGroundItem {
   uint8_t qty;
 };
 
-static GameEvent      pendingEvents[EVT_QUEUE_SIZE];
+static GameEvent*     pendingEvents = nullptr;   // [EVT_QUEUE_SIZE], PSRAM (allocPsramGlobals)
 static int            pendingCount  = 0;
 static portMUX_TYPE   evtMux        = portMUX_INITIALIZER_UNLOCKED;
 static TradeOffer     tradeOffers[MAX_PLAYERS];
 
 // ── Item registry ─────────────────────────────────────────────
-static ItemDef  itemRegistry[MAX_ITEMS];
+static ItemDef* itemRegistry = nullptr;          // [MAX_ITEMS], PSRAM (allocPsramGlobals)
 static uint8_t  itemCount = 0;
 
 // ── Ground items ──────────────────────────────────────────────
@@ -673,35 +714,36 @@ AsyncWebServer server(80);
 AsyncWebSocket  ws("/ws");
 
 // ── PSRAM web-file cache ────────────────────────────────────────────────────
-struct WebFile { const char* url; const char* mime; const char* sdName;
+// Populated at boot by loadWebFilesToRAM() (boot-assets.hpp), which scans the
+// SD card's /data ROOT: every regular file with a known web extension gets an
+// HTTP route at "/<name>" (index.html also answers "/"). A "<name>.gz" sibling
+// wins over the plain file and is served with Content-Encoding: gzip.
+//
+// Adding a new client file therefore needs NO firmware change: drop it in
+// data/, list it in data/web-assets.json, run scripts/build_web.ps1 and sync.
+// (The old hardcoded WEB_FILES[] table silently 404'd anything it didn't
+// know about — that's how world-entities.js / *-field.js went missing.)
+struct WebFile { char url[48]; const char* mime; bool gzip;
                  uint8_t* buf; size_t len; char etag[26]; };
-static WebFile WEB_FILES[] = {
-  { "/",                           "text/html",       "index.html",                nullptr, 0, {} },
-  { "/engine.js",                  "text/javascript", "engine.js",                 nullptr, 0, {} },
-  { "/ash-particle-system.js",     "text/javascript", "ash-particle-system.js",    nullptr, 0, {} },
-  { "/weather-particle-system.js", "text/javascript", "weather-particle-system.js",nullptr, 0, {} },
-  { "/game-data.js",               "text/javascript", "game-data.js",              nullptr, 0, {} },
-  { "/ui-state.js",                "text/javascript", "ui-state.js",               nullptr, 0, {} },
-  { "/network.js",                 "text/javascript", "network.js",                nullptr, 0, {} },
-  { "/map-decoder.js",             "text/javascript", "map-decoder.js",            nullptr, 0, {} },
-  { "/renderer.js",                "text/javascript", "renderer.js",               nullptr, 0, {} },
-  { "/style.css",                  "text/css",        "style.css",                 nullptr, 0, {} },
-  { "/ui-utils.js",                "text/javascript", "ui-utils.js",               nullptr, 0, {} },
-  { "/ui-hud.js",                  "text/javascript", "ui-hud.js",                 nullptr, 0, {} },
-  { "/ui-panels.js",               "text/javascript", "ui-panels.js",              nullptr, 0, {} },
-  { "/ui-items.js",                "text/javascript", "ui-items.js",               nullptr, 0, {} },
-  { "/ui-encounter.js",            "text/javascript", "ui-encounter.js",           nullptr, 0, {} },
-  { "/van.js",                     "text/javascript", "van.js",                    nullptr, 0, {} },
-  { "/sw.js",                      "text/javascript", "sw.js",                     nullptr, 0, {} },
-};
-static const int WEB_FILE_COUNT = (int)(sizeof(WEB_FILES)/sizeof(WEB_FILES[0]));
+static const int MAX_WEB_FILES = 48;
+static WebFile*  webFiles = nullptr;             // [MAX_WEB_FILES], PSRAM (allocPsramGlobals)
+static int       webFileCount = 0;
 
 // ── PSRAM image cache ──────────────────────────────────────────────────────
 struct ImgFile { char name[40]; uint8_t* buf; size_t len; char etag[26]; };
 static const int MAX_IMG_CACHE = 100;
-static ImgFile   imgCache[MAX_IMG_CACHE];
+static ImgFile*  imgCache = nullptr;             // [MAX_IMG_CACHE], PSRAM (allocPsramGlobals)
 static int       imgCacheCount = 0;
-static uint32_t  g_bootNonce   = 0;
+
+// Content-derived ETag (FNV-1a 32 over the bytes + length). Stable across
+// reboots so browsers revalidating a cached asset get a cheap 304 instead of
+// the whole file — the previous per-boot nonce invalidated every client cache
+// on every power cycle.
+static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < len; i++) { h ^= buf[i]; h *= 16777619u; }
+  snprintf(out, outLen, "\"%08lx-%zx\"", (unsigned long)h, len);
+}
 
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
@@ -709,6 +751,10 @@ static uint32_t  g_bootNonce   = 0;
 #include "boot-assets.hpp"   // asset loading, item registry, loot tables
 #include "ui-display.hpp"    // K10 screens, LED, audio, boot splash (needs getItemDef from boot-assets)
 #include "usb_drive.h"       // USB MSC mode (needs canvas + canvasXxx from ui-display)
+
+// World system: Caravan/Fire/Creeping Doom (see docs/world-system-spec.md).
+// Depends only on hex-map.hpp; ticked from tickGame() in actions_game_loop.hpp.
+#include "world-system.hpp"
 
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
@@ -731,6 +777,26 @@ static uint32_t  g_bootNonce   = 0;
 // Server orchestration — last: calls drainEvents(), broadcastState()
 #include "game-server.hpp"
 
+// ── PSRAM-resident globals ─────────────────────────────────────
+// Must run before anything touches G.map / W_hex / the caches / the event
+// queue / the item registry — i.e. first thing in setup(). Everything here
+// used to be internal .bss (≈100 KB); see the PSRAM helpers near the top.
+static void allocPsramGlobals() {
+  uint32_t heapBefore = ESP.getFreeHeap();
+  G.map         = (HexCell(*)[MAP_COLS])    psramStaticAlloc(MAP_BYTES);
+  W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
+  pendingEvents = (GameEvent*)              psramStaticAlloc(sizeof(GameEvent) * EVT_QUEUE_SIZE);
+  itemRegistry  = (ItemDef*)                psramStaticAlloc(sizeof(ItemDef)   * MAX_ITEMS);
+  imgCache      = (ImgFile*)                psramStaticAlloc(sizeof(ImgFile)   * MAX_IMG_CACHE);
+  webFiles      = (WebFile*)                psramStaticAlloc(sizeof(WebFile)   * MAX_WEB_FILES);
+  Log.notice("PSRAM globals: map=%u whex=%u evq=%u items=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
+             (unsigned)MAP_BYTES, (unsigned)W_HEX_BYTES,
+             (unsigned)(sizeof(GameEvent) * EVT_QUEUE_SIZE), (unsigned)(sizeof(ItemDef) * MAX_ITEMS),
+             (unsigned)(sizeof(ImgFile) * MAX_IMG_CACHE), (unsigned)(sizeof(WebFile) * MAX_WEB_FILES),
+             (unsigned)(heapBefore / 1024), (unsigned)(ESP.getFreeHeap() / 1024),
+             (unsigned)(ESP.getFreePsram() / 1024));
+}
+
 // ── Setup ──────────────────────────────────────────────────────
 void setup() {
   uint32_t _bootT0 = millis();
@@ -742,6 +808,7 @@ void setup() {
              (unsigned)(ESP.getSketchSize() / 1024),
              (unsigned)(ESP.getFreeHeap() / 1024),
              (unsigned)(ESP.getFreePsram() / 1024));
+  allocPsramGlobals();
 
   // ── Reset reason ─────────────────────────────────────────────
   { esp_reset_reason_t rr = esp_reset_reason();
@@ -841,15 +908,14 @@ void setup() {
 
   Log.notice("Web cache start");
   loadWebFilesToRAM();
-  g_bootNonce = esp_random();
-  Log.verbose("Boot nonce=%08lx", (unsigned long)g_bootNonce);
-  for (int i = 0; i < WEB_FILE_COUNT; i++)
-    snprintf(WEB_FILES[i].etag, sizeof(WEB_FILES[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, WEB_FILES[i].len);
+  for (int i = 0; i < webFileCount; i++)
+    makeEtag(webFiles[i].etag, sizeof(webFiles[i].etag), webFiles[i].buf, webFiles[i].len);
   for (int i = 0; i < imgCacheCount; i++)
-    snprintf(imgCache[i].etag, sizeof(imgCache[i].etag), "\"%08lx-%zx\"", (unsigned long)g_bootNonce, imgCache[i].len);
-  Log.notice("Web cache complete: %d web files, %d images, freeHeap=%uKB",
-             (int)WEB_FILE_COUNT, (int)imgCacheCount,
-             (unsigned)(ESP.getFreeHeap() / 1024));
+    makeEtag(imgCache[i].etag, sizeof(imgCache[i].etag), imgCache[i].buf, imgCache[i].len);
+  Log.notice("Web cache complete: %d web files, %d images, freeHeap=%uKB freePSRAM=%uKB",
+             (int)webFileCount, (int)imgCacheCount,
+             (unsigned)(ESP.getFreeHeap() / 1024),
+             (unsigned)(ESP.getFreePsram() / 1024));
   { char hb[36]; snprintf(hb, 36, "Web: %ukB in PSRAM", (unsigned)(ESP.getFreeHeap()/1024));
     splashAdd(hb, 0x406030); }
 
@@ -888,12 +954,16 @@ void setup() {
   if (!tryLoadSave()) {
     Log.notice("No save found, generating map");
     generateMap();
+    wInit();  // fresh world — tryLoadSave() already called wInit() on its own success path
   } else {
-    Log.notice("Save loaded: map+players");
+    Log.notice("Save loaded: map+players+world");
   }
   Log.notice("Map ready %dx%d", (int)MAP_COLS, (int)MAP_ROWS);
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
+
+  Log.notice("World system ready: caravan at (%d,%d) doom at (%d,%d)",
+             (int)W.caravan.q, (int)W.caravan.r, (int)W.creepingDoom.q, (int)W.creepingDoom.r);
 
   setupWiFiAndServer();
 

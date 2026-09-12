@@ -60,6 +60,23 @@ function populateHexInfo(q, r, cell) {
     resList.innerHTML = '<span class="res-none-label">None visible</span>';
   }
 
+  // Survivors on this hex — informational; mirrors the colocated check the
+  // TRADE action list uses in ui-panels.js, but for whichever hex is shown
+  // here (always the player's own current hex — see uiCurrentCell).
+  const playersRow  = document.getElementById('hi-players-row');
+  const playersList = document.getElementById('hi-players-list');
+  if (playersRow && playersList) {
+    const here = players.filter(p => p.on && p.q === q && p.r === r);
+    playersList.innerHTML = '';
+    playersRow.style.display = here.length ? '' : 'none';
+    here.forEach(p => {
+      const span = document.createElement('span');
+      span.className = 'hi-badge';
+      span.textContent = (p.nm || 'P' + p.id) + (p.id === myId ? ' (You)' : '');
+      playersList.appendChild(span);
+    });
+  }
+
   // Ground items at this hex (renderHexGroundItems defined in ui-items.js)
   renderHexGroundItems?.(q, r);
 }

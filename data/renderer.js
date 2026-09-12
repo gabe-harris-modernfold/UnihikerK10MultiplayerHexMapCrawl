@@ -5,6 +5,8 @@ const lightningSystem = (typeof LightningSystem === 'undefined')
   ? null : new LightningSystem();
 const quakeField = (typeof QuakeField === 'undefined')
   ? null : new QuakeField();
+const fireField = (typeof FireField === 'undefined')
+  ? null : new FireField();
 
 // Storm hexes ({x, y, spread, intensity} in screen space) collected during
 // this frame's terrain pass — consumed by renderWeatherOverlay() afterward
@@ -15,6 +17,10 @@ let stormyHexesThisFrame = [];
 // of {x, y} indexed by the cell's order along the line (gaps where a cell
 // isn't currently on screen), consumed by renderQuakeOverlay() afterward.
 let quakePixelsThisFrame = new Map();
+// Burning-hex pixel anchors ({x, y, spread, intensity}) collected during
+// this frame's terrain pass — consumed by emitFire() afterward, same
+// handoff pattern as stormyHexesThisFrame.
+let fireHexesThisFrame = [];
 // Pixel positions of hexes the quake leveled from Settlement to Open Scrub —
 // these get an extra, heavier burst of dust on top of the regular fault-line
 // dust to sell "a settlement just got flattened" rather than an ordinary shake.
@@ -492,6 +498,27 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
       stormyHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity });
     }
   }
+
+  // Fire — layered on top of weather darkening so it stays visible even
+  // during a storm. This is just a low base glow so the hex reads warm
+  // between flame licks; the actual "on fire" look comes from the flame/
+  // ember particles emitFire() spawns over the anchor collected below (see
+  // weather-particle-system.js) — a flat tinted hex alone read too static.
+  if (fireField) {
+    const fireIntensity = fireField.intensityAt(mapQ, mapR);
+    if (fireIntensity > 0) {
+      const FIRE_FILL  = ['', '#FF6A1A', '#FF3A0A', '#FFD866'];
+      const FIRE_ALPHA = [0, 0.18, 0.28, 0.38];
+      ctx.save();
+      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      ctx.clip();
+      ctx.globalAlpha = FIRE_ALPHA[fireIntensity] ?? 0.2;
+      ctx.fillStyle   = FIRE_FILL[fireIntensity] ?? '#FF6A1A';
+      ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
+      ctx.restore();
+      fireHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity: fireIntensity });
+    }
+  }
 }
 
 function applyHexFill(cell, dist, visible, surveyed, vr) {
@@ -513,7 +540,8 @@ function applyHexFill(cell, dist, visible, surveyed, vr) {
 function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
   ctx.globalAlpha = surveyed ? 0.7 : 1;
   const _tv  = terrainImgVariants[cell.terrain];
-  const tImg = _tv?.length > 0 ? (_tv[cell.variant % _tv.length] || _tv[0]) : null;
+  const tImg = poiArtFor(cell.terrain, cell.variant) ||
+               (_tv?.length > 0 ? (_tv[cell.variant % _tv.length] || _tv[0]) : null);
   if (tImg?.loaded) {
     const imgSz = HEX_SZ * 2;
     ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
@@ -829,11 +857,15 @@ const LAYERS = [
   { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
   { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
+  { name: 'caravan',      draw: (cam) => renderCaravan(cam) },
+  { name: 'doom',         draw: (cam) => renderDoom(cam) },
   { name: 'weather',      draw: (_)   => renderWeatherOverlay() },
   { name: 'quake',        draw: (_)   => renderQuakeOverlay() },
   // Ticks unconditionally — shared by weather (gated above) and quake dust
   // (not weather-gated), so it must run regardless of weatherPhase.
-  { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.update(); weatherParticles.render(ctx); } } },
+  // Fire particles emit here too (not weather-gated — a fire burns
+  // regardless of weatherPhase) so they share one update/render pass.
+  { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.emitFire(fireHexesThisFrame); weatherParticles.update(); weatherParticles.render(ctx); } } },
   { name: 'ash',          draw: (cam) => { if (ashParticles) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },
@@ -849,6 +881,7 @@ function render() {
   stormyHexesThisFrame = [];
   quakePixelsThisFrame = new Map();
   quakeConvertedPixelsThisFrame = [];
+  fireHexesThisFrame = [];
   if (quakeField) quakeField.update(weatherNow);
 
   lerpPlayerPositions();
