@@ -47,7 +47,7 @@ const nameWidthCache = new Array(MAX_PLAYERS).fill(null);
 // Rendered at reduced opacity as scouted-but-not-directly-visible.
 // Cleared whenever the local player moves.
 const surveyedCells = new Set(); // 'q_r' keys — populated from network.js (cross-file; ignore S4158)
-/* global displayMP, nightFade */
+/* global displayMP, nightFade, fireHexPhase */
 
 // Stable 1..N permutation keyed by (q,r) — non-positional reference number.
 const hexLabel = (() => {
@@ -500,23 +500,45 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
   }
 
   // Fire — layered on top of weather darkening so it stays visible even
-  // during a storm. This is just a low base glow so the hex reads warm
-  // between flame licks; the actual "on fire" look comes from the flame/
-  // ember particles emitFire() spawns over the anchor collected below (see
-  // weather-particle-system.js) — a flat tinted hex alone read too static.
+  // during a storm. Two passes, in this order for a reason:
+  //   1. CHAR: burning ground is *dark*. This used to be a flat orange wash,
+  //      which brightened the whole hex uniformly and flattened it; darkening
+  //      first is what gives the additive firelight above something to read
+  //      against, and it also pre-stains the hex toward the Ash Dunes it
+  //      becomes when the fire burns out (see world-system.hpp).
+  //   2. EMBER BED: additive and flickering, so the hex breathes instead of
+  //      sitting at one fixed alpha. Phase is per-hex (fireHexPhase, shared
+  //      with the particle system) so a fire spreading across several hexes
+  //      doesn't pulse in lockstep — that synchrony reads as one animated
+  //      overlay rather than as several separate fires.
+  // The fire itself is the flame/ember/smoke particles emitFire() spawns over
+  // the anchor collected below — several separate seats scattered across the
+  // hex, not one plume at its centre, since this is a top-down view of an area
+  // alight (see fireSeats in weather-particle-system.js).
   if (fireField) {
     const fireIntensity = fireField.intensityAt(mapQ, mapR);
     if (fireIntensity > 0) {
-      const FIRE_FILL  = ['', '#FF6A1A', '#FF3A0A', '#FFD866'];
-      const FIRE_ALPHA = [0, 0.18, 0.28, 0.38];
+      const BED_FILL = ['', '#C8400E', '#FF7A1E', '#FFC864'];
+      const ph = fireHexPhase(mapQ, mapR);
+      const ft = weatherNow * 0.001;
+      // Three incommensurate rates (~0.8 / 2 / 4.7 Hz) — a real fire's light
+      // is not periodic, and a single sine is immediately readable as fake.
+      const flick = 0.70
+        + 0.18 * Math.sin(ft * 5.1  + ph)
+        + 0.09 * Math.sin(ft * 12.8 + ph * 1.7)
+        + 0.05 * Math.sin(ft * 29.5 + ph * 2.9);
       ctx.save();
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
       ctx.clip();
-      ctx.globalAlpha = FIRE_ALPHA[fireIntensity] ?? 0.2;
-      ctx.fillStyle   = FIRE_FILL[fireIntensity] ?? '#FF6A1A';
+      ctx.globalAlpha = 0.26 + fireIntensity * 0.07;
+      ctx.fillStyle   = '#140A04';
+      ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.max(0, (0.13 + fireIntensity * 0.07) * flick);
+      ctx.fillStyle   = BED_FILL[fireIntensity] ?? '#FF7A1E';
       ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
       ctx.restore();
-      fireHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity: fireIntensity });
+      fireHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity: fireIntensity, q: mapQ, r: mapR });
     }
   }
 }
@@ -865,7 +887,10 @@ const LAYERS = [
   // (not weather-gated), so it must run regardless of weatherPhase.
   // Fire particles emit here too (not weather-gated — a fire burns
   // regardless of weatherPhase) so they share one update/render pass.
-  { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.emitFire(fireHexesThisFrame); weatherParticles.update(); weatherParticles.render(ctx); } } },
+  // renderFireGlow() runs first so the firelight pool lands *under* the licks;
+  // it deliberately spills over characters standing on the hex, which lights
+  // them by the fire rather than leaving them flatly lit inside it.
+  { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.renderFireGlow(ctx, fireHexesThisFrame); weatherParticles.emitFire(fireHexesThisFrame); weatherParticles.update(); weatherParticles.render(ctx); } } },
   { name: 'ash',          draw: (cam) => { if (ashParticles) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },

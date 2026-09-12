@@ -204,6 +204,26 @@
   <button class="item-menu-btn" id="item-menu-close">&#x2715; Cancel</button>
 </dialog>
 
+<!-- Resource drop sheet (z-index 52, sits above the item menu and char sheet).
+     Opened by clicking an .inv-box[data-res] on the character sheet. -->
+<div id="res-drop-backdrop"></div>
+<dialog id="res-drop-menu" aria-modal="true" aria-labelledby="res-drop-name">
+  <div id="res-drop-title">
+    <span class="dot" id="res-drop-dot"></span>
+    <span id="res-drop-name">&mdash;</span>
+  </div>
+  <div id="res-drop-sub">Abandon how many? Carrying <span id="res-drop-have">0</span>.</div>
+  <div id="res-drop-stepper">
+    <button type="button" class="res-step-btn" id="res-drop-minus" aria-label="One fewer">&minus;</button>
+    <input id="res-drop-qty" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="How many to abandon">
+    <button type="button" class="res-step-btn" id="res-drop-plus" aria-label="One more">+</button>
+    <button type="button" class="res-step-btn wide" id="res-drop-all">ALL</button>
+  </div>
+  <div id="res-drop-note"></div>
+  <button class="item-menu-btn danger" id="res-drop-confirm">&#x25BC; Abandon <span id="res-drop-confirm-qty">1</span></button>
+  <button class="item-menu-btn" id="res-drop-close">&#x2715; Cancel</button>
+</dialog>
+
 <!-- Incoming trade offer overlay (z-index 19, above action panel) -->
 <dialog id="trade-overlay" aria-modal="true" aria-labelledby="trade-overlay-title">
   <div id="trade-box">
@@ -316,12 +336,14 @@
       <!-- Inventory -->
       <div class="cs-section">
         <h3>Carried Misery</h3>
+        <!-- data-res (1-5) makes a box a drop target: openResDropMenu() in
+             ui-items.js opens the quantity sheet and sends `drop_res`. -->
         <div class="inv-grid">
-          <div class="inv-box"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
-          <div class="inv-box"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
-          <div class="inv-box"><div class="dot dot-fuel"></div><div class="qty" id="cs-inv2">0</div><div class="lbl">Fuel</div></div>
-          <div class="inv-box"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
-          <div class="inv-box"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
+          <div class="inv-box" data-res="1" role="button" tabindex="0" title="Abandon Water"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div><div class="lbl">Water</div></div>
+          <div class="inv-box" data-res="2" role="button" tabindex="0" title="Abandon Food"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div><div class="lbl">Food</div></div>
+          <div class="inv-box" data-res="3" role="button" tabindex="0" title="Abandon Fuel"><div class="dot dot-fuel"></div><div class="qty" id="cs-inv2">0</div><div class="lbl">Fuel</div></div>
+          <div class="inv-box" data-res="4" role="button" tabindex="0" title="Abandon Medicine"><div class="dot dot-med"></div><div class="qty" id="cs-inv3">0</div><div class="lbl">Med</div></div>
+          <div class="inv-box" data-res="5" role="button" tabindex="0" title="Abandon Scrap"><div class="dot dot-scrap"></div><div class="qty" id="cs-inv4">0</div><div class="lbl">Scrap</div></div>
         </div>
         <div id="cs-item-grid" style="margin-top:10px"><!-- populated by renderInventory() --></div>
       </div>

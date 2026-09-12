@@ -3,11 +3,180 @@
 // Plain global class — no ES module syntax.
 
 const WEATHER_PARTICLE_HARD_CAP = 300;
+// Fire gets its own budget rather than sharing the weather cap: a fire has to
+// keep burning through a storm, and a storm has to keep raining over a fire.
+// Sharing one pool meant whichever emitted first that frame starved the other.
+const FIRE_PARTICLE_CAP = 360;
+
+// ── Fire sprite bank ─────────────────────────────────────────────────────────
+// Flames are drawn as pre-baked sprites, not per-particle canvas gradients:
+// createRadialGradient() per particle per frame was the expensive part of the
+// old renderer and it only ever bought a round blob. Baking instead lets each
+// lick be a real tapered tongue and reduces drawing to a bare drawImage().
+//
+// FIRE_RAMP is a temperature ramp, hottest first. A lick walks *down* it as it
+// ages — the thing an actual flame does, and the main reason the old
+// one-colour-for-life licks read as orange confetti.
+const FIRE_RAMP = [
+  [255, 253, 240],  // 0 white-hot
+  [255, 240, 180],
+  [255, 212,  96],
+  [255, 168,  44],
+  [250, 116,  22],
+  [224,  70,  14],
+  [166,  34,   8],
+  [ 88,  16,   6],  // 7 last dull-red gasp before it's gone
+];
+
+const FireSprites = (() => {
+  let bank = null;
+
+  const canvas = (size) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    return c;
+  };
+
+  // A flame tongue: round at the base, drawn out to a point at the top, fill
+  // hottest at the base. Blurred so the edge reads as gas, not as a decal.
+  const flameSprite = ([r, g, b]) => {
+    const S = 64, cx = S / 2, bulbY = 44, bulbR = 17, tipY = 3;
+    const c = canvas(S), x = c.getContext('2d');
+    // Core tops out well under 1: these stack additively, and a fully opaque
+    // core meant a dozen overlapping licks clipped to a flat white disc
+    // instead of grading white → yellow → orange out from the middle.
+    const grad = x.createRadialGradient(cx, bulbY - 6, 0, cx, bulbY - 6, 30);
+    grad.addColorStop(0,    `rgba(${r},${g},${b},0.82)`);
+    grad.addColorStop(0.35, `rgba(${r},${g},${b},0.62)`);
+    grad.addColorStop(0.75, `rgba(${r},${g},${b},0.26)`);
+    grad.addColorStop(1,    `rgba(${r},${g},${b},0)`);
+    x.filter    = 'blur(3px)'; // no-op where unsupported — sprite just reads crisper
+    x.fillStyle = grad;
+    x.beginPath();
+    x.moveTo(cx - bulbR, bulbY);
+    x.bezierCurveTo(cx - bulbR, bulbY - 26, cx - 6, tipY + 11, cx, tipY);
+    x.bezierCurveTo(cx + 6, tipY + 11, cx + bulbR, bulbY - 26, cx + bulbR, bulbY);
+    x.arc(cx, bulbY, bulbR, 0, Math.PI);
+    x.closePath();
+    x.fill();
+    return c;
+  };
+
+  // An airborne spark: white pinpoint core so it stays legible at 2 px, with
+  // the band colour bleeding out around it.
+  const emberSprite = ([r, g, b]) => {
+    const S = 24, cx = S / 2;
+    const c = canvas(S), x = c.getContext('2d');
+    const grad = x.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    grad.addColorStop(0,    'rgba(255,255,255,1)');
+    grad.addColorStop(0.22, `rgba(${r},${g},${b},0.95)`);
+    grad.addColorStop(0.55, `rgba(${r},${g},${b},0.32)`);
+    grad.addColorStop(1,    `rgba(${r},${g},${b},0)`);
+    x.fillStyle = grad;
+    x.fillRect(0, 0, S, S);
+    return c;
+  };
+
+  const smokeSprite = () => {
+    const S = 64, cx = S / 2;
+    const c = canvas(S), x = c.getContext('2d');
+    const grad = x.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    grad.addColorStop(0,   'rgba(34,30,28,0.95)');
+    grad.addColorStop(0.5, 'rgba(28,25,24,0.45)');
+    grad.addColorStop(1,   'rgba(24,22,21,0)');
+    x.filter    = 'blur(4px)';
+    x.fillStyle = grad;
+    x.beginPath();
+    x.arc(cx, cx, cx * 0.88, 0, Math.PI * 2);
+    x.fill();
+    return c;
+  };
+
+  // The pool of firelight on the ground under the licks. Drawn once per
+  // burning hex per frame, additively, with a flicker — this is what actually
+  // says "this hex is on fire" at a glance; the licks are detail on top of it.
+  const glowSprite = () => {
+    const S = 128, cx = S / 2;
+    const c = canvas(S), x = c.getContext('2d');
+    const grad = x.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    grad.addColorStop(0,    'rgba(255,180,80,0.85)');
+    grad.addColorStop(0.28, 'rgba(255,124,36,0.42)');
+    grad.addColorStop(0.62, 'rgba(196,58,14,0.15)');
+    grad.addColorStop(1,    'rgba(150,30,8,0)');
+    x.fillStyle = grad;
+    x.fillRect(0, 0, S, S);
+    return c;
+  };
+
+  // Built on first use rather than at load, so the file stays importable
+  // before there is a document to make canvases from.
+  return () => bank ?? (bank = {
+    flame: FIRE_RAMP.map(flameSprite),
+    ember: FIRE_RAMP.map(emberSprite),
+    smoke: smokeSprite(),
+    glow:  glowSprite(),
+  });
+})();
+
+// Stable per-hex phase so neighbouring fires never flicker in lockstep — that
+// synchrony is the giveaway that it's one global sine and not many fires.
+// Shared with renderer.js's ember-bed fill so the hex and its licks pulse
+// together (cross-file global; ignore S3800).
+function fireHexPhase(q, r) {
+  const h = (Math.imul(q | 0, 73856093) ^ Math.imul(r | 0, 19349663)) >>> 0;
+  return (h % 6283) / 1000;
+}
+
+// ── Fire seats ───────────────────────────────────────────────────────────────
+// A burning hex gets several separate seats of fire, not one plume in the
+// middle. The map is a top-down view: a hex on fire is an *area* alight, and
+// from above that's a scatter of burning spots across the ground — one central
+// campfire per tile is the wrong read entirely.
+const FIRE_SEAT_COUNT = [0, 2, 3, 5];  // by intensity: smoulder → burning → inferno
+const _seatCache = new Map();
+
+function fireSeats(q, r, intensity) {
+  const key = `${q}_${r}_${intensity}`;
+  const hit = _seatCache.get(key);
+  if (hit) return hit;
+  // Deterministic per hex, so the spots stay put frame to frame and the glow
+  // pass lands on exactly the same spots as the particle pass. Anything
+  // random-per-frame here makes the fire crawl around its own tile.
+  let s = (Math.imul(q | 0, 73856093) ^ Math.imul(r | 0, 19349663) ^ Math.imul(intensity, 83492791)) >>> 0;
+  const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const n = FIRE_SEAT_COUNT[intensity] ?? 3;
+  const seats = [];
+  for (let k = 0; k < n; k++) {
+    // Golden-angle spiral plus jitter: spots land spread over the hex rather
+    // than clumping, without a rejection loop. Offsets are in units of the
+    // hex's spread, so they hold up at any zoom.
+    const ang = k * 2.399963 + rnd() * 0.9;
+    const rad = 0.13 + 0.42 * Math.sqrt((k + rnd()) / n);
+    seats.push({
+      dx: Math.cos(ang) * rad,
+      dy: Math.sin(ang) * rad * 0.62,   // squashed: a flat-top hex is wider than tall
+      scale: 0.62 + rnd() * 0.55,       // spots differ in size...
+      phase: rnd() * Math.PI * 2,       // ...and never flicker in step
+    });
+  }
+  // Bounded: keys are (hex, intensity) and a fire both spreads and changes
+  // intensity, so without this the map grows all session for no benefit.
+  if (_seatCache.size > 2048) _seatCache.clear();
+  _seatCache.set(key, seats);
+  return seats;
+}
 
 class WeatherParticleSystem {
   constructor() {
     this.particles = [];
     this._nextId = 0;
+    this._fireCount = 0;
+    this._t = 0; // frame counter; drives all fire flicker/wander
+  }
+
+  // Weather's share of the pool, excluding fire (see FIRE_PARTICLE_CAP).
+  get _weatherFull() {
+    return this.particles.length - this._fireCount >= WEATHER_PARTICLE_HARD_CAP;
   }
 
   // Emit count new particles for the given weather phase.
@@ -20,7 +189,7 @@ class WeatherParticleSystem {
     const confined = phase === 1 || phase === 2 || phase === 3;
     if (confined && !anchors?.length) return;
     for (let i = 0; i < count; i++) {
-      if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) break;
+      if (this._weatherFull) break;
       const anchor = confined ? anchors[(Math.random() * anchors.length) | 0] : null;
       this.particles.push(this._spawn(phase, w, h, anchor));
     }
@@ -32,7 +201,7 @@ class WeatherParticleSystem {
   // pile up fast; a low chance keeps the effect "a little fog", not a haze.
   emitFog(chance, anchors) {
     if (!anchors?.length) return;
-    if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) return;
+    if (this._weatherFull) return;
     if (Math.random() > chance) return;
     const anchor = anchors[(Math.random() * anchors.length) | 0];
     this.particles.push(this._spawnFog(anchor));
@@ -44,7 +213,7 @@ class WeatherParticleSystem {
   // than a faint accent.
   emitCreepingFog(chance, anchors) {
     if (!anchors?.length) return;
-    if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) return;
+    if (this._weatherFull) return;
     if (Math.random() > chance) return;
     const anchor = anchors[(Math.random() * anchors.length) | 0];
     this.particles.push(this._spawnCreepingFog(anchor));
@@ -55,7 +224,7 @@ class WeatherParticleSystem {
   // radioactive pulses or the big hex-to-hex lightning arc.
   emitStatic(chance, anchors) {
     if (!anchors?.length) return;
-    if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) return;
+    if (this._weatherFull) return;
     if (Math.random() > chance) return;
     const anchor = anchors[(Math.random() * anchors.length) | 0];
     this.particles.push(this._spawnStatic(anchor));
@@ -64,31 +233,113 @@ class WeatherParticleSystem {
   // Rolls a chance to kick up one dust mote on a random shaking quake hex.
   emitDust(chance, anchors) {
     if (!anchors?.length) return;
-    if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) return;
+    if (this._weatherFull) return;
     if (Math.random() > chance) return;
     const anchor = anchors[(Math.random() * anchors.length) | 0];
     this.particles.push(this._spawnDust(anchor));
   }
 
-  // Flame licks + embers off every currently-burning hex — anchors here are
-  // {x, y, spread, intensity} from fire-field.js via renderer.js's terrain
-  // pass, one per burning hex (not a single random pick like the weather
-  // emitters above): a fire needs to visibly keep burning on every hex it
-  // occupies, not just flicker on one at a time. Rolled per-hex per-frame
-  // rather than a fixed count so a hotter hex reads busier without a
-  // separate frame counter.
+  // ── Fire ───────────────────────────────────────────────────────────────
+  // anchors are {x, y, spread, intensity, q, r} from fire-field.js via
+  // renderer.js's terrain pass, one per burning hex (not a single random pick
+  // like the weather emitters above): a fire has to visibly keep burning on
+  // every hex it occupies, not flicker on one at a time.
+  //
+  // Three emitters, because a fire isn't one kind of thing:
+  //   licks  — the body of the flame; several per frame per seat so each spot
+  //            burns continuously instead of twinkling
+  //   embers — sparks that break free and loft, with a motion trail
+  //   smoke  — intensity 2+ only; dark, non-additive, and the reason the
+  //            licks under it read as *bright* rather than merely orange
+  //
+  // Everything is emitted per seat (see fireSeats), so a hex reads as an area
+  // alight seen from above rather than one plume at the tile's centre.
+  //
+  // Each hex is capped independently via _pushFire instead of break-ing out at
+  // a shared cap: that break meant that with many hexes burning, whichever
+  // came first in the list ate the budget and the rest of the fire silently
+  // went out on screen.
   emitFire(anchors) {
     if (!anchors?.length) return;
+    // Split the budget across however many hexes are burning, so a big blaze
+    // thins every fire evenly instead of the first few hexes eating the cap
+    // and the rest going dark. Floored at a third: a hex still has to read as
+    // on fire even in a firestorm.
+    const share = Math.max(0.34, Math.min(1, FIRE_PARTICLE_CAP / (anchors.length * 70)));
     for (const anchor of anchors) {
-      if (this.particles.length >= WEATHER_PARTICLE_HARD_CAP) break;
-      if (Math.random() < 0.35 + anchor.intensity * 0.15) this.particles.push(this._spawnFlame(anchor));
-      if (anchor.intensity >= 2 && Math.random() < 0.12 * anchor.intensity) this.particles.push(this._spawnEmber(anchor));
+      const i = anchor.intensity;
+      const seats = fireSeats(anchor.q ?? anchor.x, anchor.r ?? anchor.y, i);
+      for (const seat of seats) {
+        // Deliberately sparse per spot: enough overlap for 'lighter' to build
+        // a core, but few enough that individual tongues still read. Pile on
+        // more and each spot blends into a flat disc of light.
+        for (let budget = (0.24 + i * 0.10) * seat.scale * share; budget > 0; budget -= 1) {
+          if (Math.random() < Math.min(1, budget)) this._pushFire(this._spawnFlame(anchor, seat));
+        }
+      }
+      // Embers and smoke pick one seat at a time — they're accents over the
+      // whole burning tile, not per-spot fixtures, and they live 3-5x longer
+      // than a lick, so a per-seat rate here turns into a swarm at steady state.
+      const pick = seats[(Math.random() * seats.length) | 0];
+      if (Math.random() < (0.03 + 0.05 * i) * share) this._pushFire(this._spawnEmber(anchor, pick));
+      if (i >= 2 && Math.random() < 0.018 * i * share) this._pushFire(this._spawnSmoke(anchor, pick));
     }
+  }
+
+  // Ground-level firelight, drawn straight to the canvas (not a particle)
+  // every frame: one faint wash over the whole tile so it reads as burning
+  // ground at a glance, plus a tight pool at each seat so the hot spots show
+  // through from above. Each pool flickers on its own sum of three
+  // incommensurate sines — one clean period, or one phase shared across the
+  // tile, immediately reads as an animated overlay rather than as fire.
+  // Call before update()/render() so the licks sit on top of it.
+  renderFireGlow(ctx, anchors) {
+    if (!anchors?.length) return;
+    const spr = FireSprites().glow;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const anchor of anchors) {
+      const i  = anchor.intensity;
+      const ph = fireHexPhase(anchor.q ?? anchor.x, anchor.r ?? anchor.y);
+      // Tile-wide wash, breathing slowly.
+      const wash = 0.78 + 0.16 * Math.sin(this._t * 0.055 + ph);
+      const wrad = anchor.spread * (0.85 + i * 0.16);
+      ctx.globalAlpha = Math.max(0, (0.05 + i * 0.030) * wash);
+      ctx.drawImage(spr, anchor.x - wrad, anchor.y - wrad, wrad * 2, wrad * 2);
+
+      for (const seat of fireSeats(anchor.q ?? anchor.x, anchor.r ?? anchor.y, i)) {
+        const f = 0.70
+          + 0.18 * Math.sin(this._t * 0.085 + seat.phase)
+          + 0.09 * Math.sin(this._t * 0.213 + seat.phase * 1.7)
+          + 0.05 * Math.sin(this._t * 0.491 + seat.phase * 2.9);
+        const sx  = anchor.x + seat.dx * anchor.spread;
+        const sy  = anchor.y + seat.dy * anchor.spread + anchor.spread * 0.08;
+        const rad = anchor.spread * 0.42 * seat.scale * (0.92 + f * 0.16);
+        ctx.globalAlpha = Math.max(0, (0.10 + i * 0.045) * f);
+        ctx.drawImage(spr, sx - rad, sy - rad, rad * 2, rad * 2);
+        // Tight white-hot core in the spot, only once it is really burning.
+        if (i >= 2) {
+          const cr = rad * 0.36;
+          ctx.globalAlpha = Math.max(0, 0.07 * i * f);
+          ctx.drawImage(spr, sx - cr, sy - cr, cr * 2, cr * 2);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  _pushFire(p) {
+    if (this._fireCount >= FIRE_PARTICLE_CAP) return;
+    this._fireCount++;
+    this.particles.push(p);
   }
 
   // Advance all particles one frame and cull dead ones.
   update() {
+    this._t++;
     for (const p of this.particles) {
+      if (p.fx) { this._stepFire(p); continue; }
+
       p.x += p.dx;
       p.y += p.dy;
       p.age++;
@@ -108,12 +359,75 @@ class WeatherParticleSystem {
 
       p.opacity = opacity;
     }
-    this.particles = this.particles.filter(p => !p.dead);
+
+    let fire = 0;
+    this.particles = this.particles.filter(p => {
+      if (p.dead) return false;
+      if (p.fx) fire++;
+      return true;
+    });
+    this._fireCount = fire;
+  }
+
+  // Fire integration, separate from the generic path above because none of
+  // fire's motion is linear: licks accelerate upward while hot and stall as
+  // they cool, embers arc under gravity, smoke expands as it climbs.
+  _stepFire(p) {
+    p.age++;
+    const t = p.age / p.ttl;
+    if (t >= 1) { p.dead = true; return; }
+    p.prevX = p.x; p.prevY = p.y;
+
+    if (p.fx === 'flame') {
+      // Buoyancy while hot, then drag takes over: a lick shoots up out of the
+      // bed and slows as it cools, instead of tracking at one fixed speed.
+      // Drag is heavy on purpose — with light drag the licks reach terminal
+      // velocity and keep going, and a fire turns into a row of rockets.
+      p.vy -= p.buoy * (1 - t);
+      p.vy *= 0.94;
+      p.axis += p.drift;
+      p.sway += p.swayRate;
+      // Lateral wander widens with height — the plume is narrow at the bed
+      // and frays at the top, which is most of what reads as turbulence.
+      const lateral = Math.sin(p.sway) * p.swayAmp * (0.25 + t * 1.15);
+      p.x = p.axis + lateral;
+      p.y += p.vy;
+      p.lean = Math.max(-0.5, Math.min(0.5, lateral * 0.035));
+      // Swell fast off the bed, then taper to a point over the rest of life.
+      p.scale = t < 0.25
+        ? 0.42 + (t / 0.25) * 0.58
+        : Math.pow(1 - (t - 0.25) / 0.75, 0.7) * 0.98 + 0.02;
+      p.band = Math.min(FIRE_RAMP.length - 1, (p.heat + t * p.cool) | 0);
+      p.opacity = p.maxOpacity * (t < 0.3 ? t / 0.3 : Math.pow(1 - (t - 0.3) / 0.7, 1.15));
+      return;
+    }
+
+    if (p.fx === 'ember') {
+      p.vy += 0.014;        // loses lift and starts to fall back
+      p.vy *= 0.996;
+      p.x += p.vx + Math.sin(p.age * 0.09 + p.phase) * 0.4;
+      p.y += p.vy;
+      p.band = Math.min(FIRE_RAMP.length - 1, (p.heat + t * p.cool) | 0);
+      // Sparks twinkle as they tumble; a steady dot reads as a UI pip.
+      const twinkle = 0.55 + 0.45 * Math.sin(p.age * 0.42 + p.phase);
+      p.opacity = p.maxOpacity * twinkle * (t < 0.1 ? t / 0.1 : Math.pow(1 - (t - 0.1) / 0.9, 0.9));
+      return;
+    }
+
+    // smoke
+    p.vy *= 0.992;
+    p.vx += p.shear;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.scale *= 1.005;       // a plume opens out as it climbs
+    p.lean += p.spin;
+    p.opacity = p.maxOpacity * (t < 0.18 ? t / 0.18 : Math.pow(1 - (t - 0.18) / 0.82, 1.3));
   }
 
   render(ctx) {
     for (const p of this.particles) {
       if (p.opacity <= 0.01) continue;
+      if (p.fx) { this._renderFire(ctx, p); continue; }
       ctx.save();
       ctx.globalAlpha = p.opacity;
       if (p.shape === 'line') {
@@ -143,20 +457,6 @@ class WeatherParticleSystem {
           ctx.lineTo(p.x + Math.cos(a) * p.size, p.y + Math.sin(a) * p.size);
           ctx.stroke();
         }
-      } else if (p.shape === 'flame') {
-        // Elongated, upward-stretched blob — a hot core fading to
-        // transparent, taller than wide so it reads as a rising flame lick
-        // rather than a round puff like 'dust'/'fog'.
-        ctx.translate(p.x, p.y);
-        ctx.scale(1, 1.6);
-        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size);
-        g.addColorStop(0,   `rgba(${p.color},0.95)`);
-        g.addColorStop(0.5, `rgba(${p.color},0.5)`);
-        g.addColorStop(1,   `rgba(${p.color},0)`);
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(0, 0, p.size, 0, Math.PI * 2);
-        ctx.fill();
       } else if (p.shape === 'dust') {
         // Soft puff, not a hard-edged dot — a dense-ish core fading smoothly
         // to nothing, like a real cloud of kicked-up dirt.
@@ -176,6 +476,50 @@ class WeatherParticleSystem {
       }
       ctx.restore();
     }
+  }
+
+  // Flames and embers composite with 'lighter' because fire is emissive:
+  // overlapping licks have to *sum* toward white, which is what gives a plume
+  // a hot core and soft edges. Under the old source-over they just stacked
+  // muddy orange on muddy orange. Smoke stays source-over — it occludes.
+  _renderFire(ctx, p) {
+    const bank = FireSprites();
+    ctx.save();
+    ctx.globalAlpha = p.opacity;
+    ctx.translate(p.x, p.y);
+
+    if (p.fx === 'smoke') {
+      const s = p.size * p.scale;
+      ctx.rotate(p.lean);
+      ctx.drawImage(bank.smoke, -s, -s, s * 2, s * 2);
+      ctx.restore();
+      return;
+    }
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    if (p.fx === 'ember') {
+      // Short streak behind the spark so it reads as moving, rather than as a
+      // dot teleporting up the screen one frame at a time.
+      const [r, g, b] = FIRE_RAMP[p.band];
+      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      ctx.lineWidth   = Math.max(0.6, p.size * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(p.prevX - p.x, p.prevY - p.y);
+      ctx.lineTo(0, 0);
+      ctx.stroke();
+      const s = p.size * 2.6;
+      ctx.drawImage(bank.ember[p.band], -s, -s, s * 2, s * 2);
+      ctx.restore();
+      return;
+    }
+
+    // flame
+    const w = p.size * p.scale;
+    const h = w * p.stretch;
+    ctx.rotate(p.lean);
+    ctx.drawImage(bank.flame[p.band], -w, -h, w * 2, h * 2);
+    ctx.restore();
   }
 
   _spawn(phase, w, h, anchor) {
@@ -323,42 +667,103 @@ class WeatherParticleSystem {
     };
   }
 
-  // A single rising, flickering flame lick — short-lived and reborn
-  // constantly by emitFire() so a burning hex always has a few licks
-  // active, not one that flares and vanishes. Color and speed scale with
-  // intensity: dim orange smolder (1) through white-hot roar (3).
-  _spawnFlame(anchor) {
-    const hue = anchor.intensity >= 3 ? '255,225,130' : anchor.intensity === 2 ? '255,130,30' : '255,85,20';
+  // A single flame tongue, rooted at one seat of the hex's fire. Within the
+  // seat it still wanders on two incommensurate sines, so the spot breathes in
+  // and out instead of being a fixed jet pinned to one pixel.
+  // `heat`/`cool` are its start and end positions on FIRE_RAMP — an inferno
+  // lick starts white-hot and has further to fall than a smoulder that starts
+  // out orange already.
+  _spawnFlame(anchor, seat) {
+    const i    = anchor.intensity;
+    const wob  = Math.sin(this._t * 0.013 + seat.phase) * 0.10
+               + Math.sin(this._t * 0.031 + seat.phase * 2.1) * 0.05;
+    // Squaring biases toward the seat: a tight body with a few stragglers,
+    // rather than a uniform scatter around it.
+    const off  = (Math.random() - 0.5) * Math.abs(Math.random() - 0.5) * 2;
+    const axis = anchor.x + (seat.dx + wob + off * 0.26) * anchor.spread;
+    const base = anchor.y + seat.dy * anchor.spread;
+    // Spread of starting temperatures within the one spot, not a single heat
+    // for every lick: the cooler ones are bigger and slower and fray at the
+    // top, the hot ones stay small and low. That vertical white→orange→red
+    // gradient is most of what makes a plume look like a plume — with every
+    // lick starting at the same band it just reads as a lamp.
+    const cooler = Math.random() * 1.7;
+    const heat   = (i >= 3 ? 0.2 : i === 2 ? 1.6 : 2.8) + cooler;
     return {
-      id: this._nextId++, shape: 'flame',
-      x: anchor.x + (Math.random() - 0.5) * anchor.spread * 0.7,
-      y: anchor.y + anchor.spread * 0.3,
-      dx: (Math.random() - 0.5) * 0.4,
-      dy: -(0.6 + Math.random() * 0.6 + anchor.intensity * 0.15),
-      color: hue,
-      size: anchor.spread * (0.16 + Math.random() * 0.12) * (0.8 + anchor.intensity * 0.15),
-      maxOpacity: 0.55 + Math.random() * 0.25,
+      id: this._nextId++, fx: 'flame',
+      x: axis, y: base + anchor.spread * (0.04 + Math.random() * 0.10),
+      prevX: axis, prevY: base,
+      axis,
+      vy: -(0.25 + Math.random() * 0.25),
+      buoy: 0.10 + Math.random() * 0.06 + i * 0.022,
+      drift: (Math.random() - 0.5) * 0.16,
+      sway: Math.random() * Math.PI * 2,
+      swayRate: 0.10 + Math.random() * 0.13,
+      swayAmp: anchor.spread * (0.04 + Math.random() * 0.05) * seat.scale,
+      lean: 0,
+      heat,
+      cool: FIRE_RAMP.length - heat - 0.2,
+      band: heat | 0,
+      // Cooler licks are the fat, ragged ones; the hot core stays tight. Scaled
+      // by the seat so the hex has big spots and small ones, not a uniform row.
+      size: anchor.spread * (0.13 + Math.random() * 0.06 + cooler * 0.035)
+            * (0.80 + i * 0.14) * seat.scale,
+      // The sprite is already a tall tongue; stretching it much past 1 on top
+      // of that is what turned the licks into streaks.
+      stretch: 1.5 + Math.random() * 0.5,
+      scale: 0.42,
+      maxOpacity: 0.30 + Math.random() * 0.16,
       opacity: 0, age: 0, dead: false,
-      maxY: null,
-      ttl: 14 + Math.random() * 10, fade: 6,
+      ttl: 20 + Math.random() * 14 + i * 3,
     };
   }
 
-  // A bright ember breaking free of the flame — rises higher/faster and
-  // outlasts the flame licks themselves, like real sparks lofting off a fire.
-  _spawnEmber(anchor) {
+  // A spark breaking free of the plume: leaves faster than the licks, cools
+  // most of the way down the ramp, and outlives them, so a hot fire always
+  // has a few points of light thrown above it.
+  _spawnEmber(anchor, seat) {
+    const heat = anchor.intensity >= 3 ? 0 : 1;
+    const sx = anchor.x + seat.dx * anchor.spread;
+    const sy = anchor.y + seat.dy * anchor.spread;
     return {
-      id: this._nextId++, shape: 'circle',
-      x: anchor.x + (Math.random() - 0.5) * anchor.spread * 0.5,
-      y: anchor.y,
-      dx: (Math.random() - 0.5) * 0.3,
-      dy: -1 - Math.random() * 1.2,
-      color: 'rgba(255,200,90,0.9)',
-      size: 1 + Math.random() * 1.2,
-      maxOpacity: 0.7 + Math.random() * 0.3,
+      id: this._nextId++, fx: 'ember',
+      x: sx + (Math.random() - 0.5) * anchor.spread * 0.2,
+      y: sy + anchor.spread * 0.05,
+      prevX: sx, prevY: sy,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -(1.1 + Math.random() * 1.4),
+      phase: Math.random() * Math.PI * 2,
+      heat,
+      cool: FIRE_RAMP.length - heat - 1.2,
+      band: heat,
+      size: 0.8 + Math.random() * 0.9,
+      maxOpacity: 0.6 + Math.random() * 0.35,
       opacity: 0, age: 0, dead: false,
-      maxY: null,
-      ttl: 25 + Math.random() * 20, fade: 8,
+      ttl: 45 + Math.random() * 40,
+    };
+  }
+
+  // Dark, non-additive plume off a serious burn. Spawns above the flame tips
+  // so it never dulls the hot part, shears sideways as it climbs and expands.
+  // The contrast is what makes the licks underneath read as bright.
+  _spawnSmoke(anchor, seat) {
+    const sx = anchor.x + seat.dx * anchor.spread;
+    const sy = anchor.y + seat.dy * anchor.spread;
+    return {
+      id: this._nextId++, fx: 'smoke',
+      x: sx + (Math.random() - 0.5) * anchor.spread * 0.3,
+      y: sy - anchor.spread * (0.3 + Math.random() * 0.25),
+      prevX: sx, prevY: sy,
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: -(0.45 + Math.random() * 0.35),
+      shear: 0.002 + Math.random() * 0.004,
+      lean: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 0.012,
+      size: anchor.spread * (0.18 + Math.random() * 0.12) * seat.scale,
+      scale: 1,
+      maxOpacity: 0.16 + Math.random() * 0.14,
+      opacity: 0, age: 0, dead: false,
+      ttl: 110 + Math.random() * 80,
     };
   }
 }

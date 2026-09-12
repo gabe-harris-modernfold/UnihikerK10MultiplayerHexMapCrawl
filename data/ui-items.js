@@ -283,3 +283,109 @@ function renderHexGroundItems(q, r) {
 // Close item menu on cancel button or backdrop tap
 document.getElementById('item-menu-close')?.addEventListener('click', closeItemMenu);
 document.getElementById('item-menu-backdrop')?.addEventListener('click', closeItemMenu);
+
+// ── Resource drop sheet ───────────────────────────────────────────
+// The five char-sheet inventory boxes (.inv-box[data-res]) are the only way to
+// dump resource *tokens*, which is what the carry cap counts — `drop_item`
+// only touches the typed item grid. Clicking one asks how many to abandon and
+// sends {t:'drop_res',res,qty}; the server drops them on the current hex when
+// it can hold them (see dropResource() in survival_state.hpp) and refunds the
+// 10 pts/token the pickup awarded.
+const RES_DOT_CLASSES = ['dot-water', 'dot-food', 'dot-fuel', 'dot-med', 'dot-scrap'];
+
+let _resDropRes = 0;   // 1-5 while the sheet is open, 0 when closed
+
+function _resDropHave() {
+  if (_resDropRes < 1 || myId < 0) return 0;
+  return players[myId]?.inv?.[_resDropRes - 1] ?? 0;
+}
+
+// Clamp the box to 1..have and mirror it onto the buttons/confirm label.
+function _resDropSync() {
+  const have  = _resDropHave();
+  const input = document.getElementById('res-drop-qty');
+  if (!input) return 0;
+  let qty = parseInt(input.value, 10);
+  if (!Number.isFinite(qty)) qty = 1;
+  qty = Math.max(1, Math.min(have, qty));
+  input.value = String(qty);
+  input.max   = String(have);
+  document.getElementById('res-drop-have').textContent = String(have);
+  document.getElementById('res-drop-confirm-qty').textContent = String(qty);
+  document.getElementById('res-drop-minus').disabled = qty <= 1;
+  document.getElementById('res-drop-plus').disabled  = qty >= have;
+  document.getElementById('res-drop-all').disabled   = qty >= have;
+  return qty;
+}
+
+function openResDropMenu(res) {
+  if (myId < 0 || res < 1 || res > 5) return;
+  const have = players[myId]?.inv?.[res - 1] ?? 0;
+  const name = RES_NAMES[res];
+  console.log('%c[INV] openResDropMenu', 'color:#fc0;font-weight:bold', `res=${res} name="${name}" have=${have}`);
+  if (have <= 0) { showToast(`Nothing to abandon \u2014 you carry no ${name}.`); return; }
+  _resDropRes = res;
+
+  document.getElementById('res-drop-dot').className  = 'dot ' + RES_DOT_CLASSES[res - 1];
+  document.getElementById('res-drop-name').textContent = 'Abandon ' + name;
+  document.getElementById('res-drop-qty').value = '1';
+
+  // Tell the player where the tokens go before they commit: a hex already
+  // holding a different resource cannot take them and they are gone for good.
+  const me   = players[myId];
+  const cell = gameMap[me.r]?.[me.q];
+  const note = document.getElementById('res-drop-note');
+  const lost = !!(cell && cell.resource > 0 && cell.resource !== res);
+  note.classList.toggle('warn', lost);
+  note.textContent = lost
+    ? `This hex already holds ${RES_NAMES[cell.resource]} \u2014 anything you drop here is lost for good.`
+    : 'Dropped on this hex \u2014 you can pick it back up. Costs back the 10 pts per token you scored for it.';
+
+  _resDropSync();
+  document.getElementById('res-drop-menu').classList.add('open');
+  document.getElementById('res-drop-backdrop').classList.add('open');
+}
+
+function closeResDropMenu() {
+  _resDropRes = 0;
+  document.getElementById('res-drop-menu')?.classList.remove('open');
+  document.getElementById('res-drop-backdrop')?.classList.remove('open');
+}
+
+// Wire the five inventory boxes (click + keyboard, they are role="button")
+document.querySelectorAll('.inv-box[data-res]').forEach(box => {
+  const res = parseInt(box.dataset.res, 10);
+  box.addEventListener('click', () => openResDropMenu(res));
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openResDropMenu(res); }
+  });
+});
+
+document.getElementById('res-drop-minus')?.addEventListener('click', () => {
+  const input = document.getElementById('res-drop-qty');
+  input.value = String(parseInt(input.value, 10) - 1);
+  _resDropSync();
+});
+document.getElementById('res-drop-plus')?.addEventListener('click', () => {
+  const input = document.getElementById('res-drop-qty');
+  input.value = String(parseInt(input.value, 10) + 1);
+  _resDropSync();
+});
+document.getElementById('res-drop-all')?.addEventListener('click', () => {
+  document.getElementById('res-drop-qty').value = String(_resDropHave());
+  _resDropSync();
+});
+document.getElementById('res-drop-qty')?.addEventListener('input', _resDropSync);
+document.getElementById('res-drop-qty')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('res-drop-confirm').click(); }
+});
+document.getElementById('res-drop-confirm')?.addEventListener('click', () => {
+  const res = _resDropRes;
+  const qty = _resDropSync();
+  if (res < 1 || qty < 1) { closeResDropMenu(); return; }
+  console.log('%c[INV] drop_res', 'color:#fc0;font-weight:bold', `res=${res} name="${RES_NAMES[res]}" qty=${qty}`);
+  closeResDropMenu();
+  send({ t: 'drop_res', res, qty });
+});
+document.getElementById('res-drop-close')?.addEventListener('click', closeResDropMenu);
+document.getElementById('res-drop-backdrop')?.addEventListener('click', closeResDropMenu);

@@ -220,6 +220,10 @@ static void collectResource(int pid, int q, int r) {
                pid, q, r, (int)cell.resource, totalInv, cap);
     GameEvent ev = {}; ev.type = EVT_COLLECT_FAIL; ev.pid = (uint8_t)pid;
     ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = COL_FAIL_INV_FULL;
+    // Reuse dawnLL (unused for collect events, same trick as EVT_COLLECT's
+    // `remaining`) to carry the effective pack size, so the client can say
+    // "pack full (8/8)" without guessing at equipment slot bonuses.
+    ev.dawnLL = (uint8_t)cap;
     enqEvt(ev);
     return;  // cell stays untouched — icon correctly remains visible
   }
@@ -256,6 +260,49 @@ static void collectResource(int pid, int q, int r) {
   // Note: gain is clamped to remaining pack room above, so collection can
   // never push a survivor over the cap.  Actions, encounter loot, and trades
   // can; effectiveMP() charges the encumbrance penalty at the next dawn.
+}
+
+// ── Voluntary resource drop ────────────────────────────────────
+// The carry cap counts resource tokens, so a survivor with a full pack needs a
+// way to dump them — this is it (WS "drop_res", char-sheet inventory boxes).
+// Tokens land back on the hex when it can hold them (empty, or already holding
+// the same resource) so the pile can be picked up again later; a hex already
+// holding a *different* resource can't take them and they are lost to the dust.
+// Either way the 10 pts/token collectResource() granted comes back off —
+// without that, drop→collect on the same hex is an infinite score pump.
+// Mirrored in mock-server/server.js (dropResource).
+// Returns tokens removed from the pack (0 = nothing happened). *outOnGround is
+// true when they landed on the hex, *outRem is the hex pile after the drop.
+static uint8_t dropResource(int pid, uint8_t res, uint8_t qty,
+                            bool* outOnGround, uint8_t* outRem) {
+  if (outOnGround) *outOnGround = false;
+  if (outRem)      *outRem      = 0;
+  if (res < 1 || res > 5 || qty == 0) return 0;
+  Player& p   = G.players[pid];
+  uint8_t idx = (uint8_t)(res - 1);
+  uint8_t take = (uint8_t)min((int)qty, (int)p.inv[idx]);
+  if (take == 0) {
+    Log.notice("drop_res SKIP empty pid=%d res=%d qty=%d", pid, (int)res, (int)qty);
+    return 0;
+  }
+  p.inv[idx] = (uint8_t)(p.inv[idx] - take);
+  uint16_t refund = (uint16_t)take * 10;
+  p.score = (p.score > refund) ? (uint16_t)(p.score - refund) : 0;
+
+  HexCell& cell = G.map[p.r][p.q];
+  bool onGround = (cell.resource == 0 || cell.resource == res);
+  if (onGround) {
+    int pile = (cell.resource == res ? (int)cell.amount : 0) + (int)take;
+    cell.resource     = res;
+    cell.amount       = (uint8_t)min(pile, 99);
+    cell.respawnTimer = 0;   // occupied hexes never respawn — don't leave one armed
+    if (outRem) *outRem = cell.amount;
+  }
+  if (outOnGround) *outOnGround = onGround;
+  Log.notice("drop_res OK pid=%d q=%d r=%d res=%d qty=%d ground=%d pile=%d sc=%d",
+             pid, (int)p.q, (int)p.r, (int)res, (int)take,
+             onGround ? 1 : 0, (int)cell.amount, (int)p.score);
+  return take;
 }
 
 // ── Valid move bitmask ────────────────────────────────────────────────────────

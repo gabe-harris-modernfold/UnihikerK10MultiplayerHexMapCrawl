@@ -490,3 +490,16 @@ static void wInit() {
   W.caravan.active = true;
   restockCaravan();
 }
+
+// ── Minimap markers ────────────────────────────────────────────────────────
+// Declared in ui-screens.hpp (included before this file) so drawMapScreen()
+// can plot the Caravan and Creeping Doom. Caller holds G.mutex.
+static void snapshotWorldMarkers(WorldMarkers& out) {
+  out.caravanQ      = W.caravan.q;
+  out.caravanR      = W.caravan.r;
+  out.caravanActive = W.caravan.active;
+  out.doomQ         = W.creepingDoom.q;
+  out.doomR         = W.creepingDoom.r;
+  out.doomAwareness = W.creepingDoom.awareness;
+  out.doomRadius    = (int16_t)doomDetectionRadius();
+}

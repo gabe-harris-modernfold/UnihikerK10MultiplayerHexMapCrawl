@@ -1407,6 +1407,55 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
 }
 #item-menu-backdrop.open{display:block}
 
+/* Resource drop sheet — quantity picker behind the char-sheet inventory boxes */
+.inv-box[data-res]{cursor:pointer;transition:border-color 0.12s,background 0.12s}
+.inv-box[data-res]:hover,.inv-box[data-res]:focus-visible{
+  border-color:var(--gold);background:var(--bg-card);outline:none
+}
+#res-drop-menu{
+  /* width:auto overrides the UA <dialog> width:fit-content, which would
+     otherwise size the sheet to its longest line (the note text changes). */
+  position:fixed;bottom:0;left:0;right:0;width:auto;z-index:52;
+  background:var(--bg-panel);border-top:2px solid var(--blood);
+  padding:12px 16px 20px;display:none;
+  animation:slide-up 0.18s ease-out
+}
+#res-drop-menu.open{display:block}
+#res-drop-title{
+  font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-h);
+  color:var(--gold-hi);margin-bottom:6px;display:flex;align-items:center;gap:8px
+}
+#res-drop-title .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+#res-drop-sub{font-size:var(--fs-d);color:var(--txt-dim);margin-bottom:10px}
+#res-drop-have{color:var(--gold-hi);font-weight:bold}
+#res-drop-stepper{display:flex;align-items:stretch;gap:6px;margin-bottom:8px}
+.res-step-btn{
+  width:46px;flex-shrink:0;background:var(--bg-card);border:1px solid var(--bdr-mid);
+  border-radius:2px;color:var(--gold);font-family:'Courier New',monospace;
+  font-size:var(--fs-b);cursor:pointer
+}
+.res-step-btn.wide{width:62px;font-size:var(--fs-l);letter-spacing:var(--ls-l)}
+.res-step-btn:hover:not(:disabled){border-color:var(--gold);color:var(--gold-hi)}
+.res-step-btn:active:not(:disabled){background:var(--rust)}
+.res-step-btn:disabled{opacity:0.35;cursor:default}
+#res-drop-qty{
+  flex:1;min-width:0;text-align:center;
+  background:var(--bg-input);border:1px solid var(--bdr-mid);border-radius:2px;
+  color:var(--gold-hi);font-family:'Courier New',monospace;font-size:var(--fs-v);
+  font-weight:bold;padding:8px 4px;-moz-appearance:textfield;appearance:textfield
+}
+#res-drop-qty::-webkit-outer-spin-button,
+#res-drop-qty::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+#res-drop-note{
+  font-size:var(--fs-d);color:var(--txt-dim);font-style:italic;
+  margin-bottom:10px;line-height:1.4
+}
+#res-drop-note.warn{color:#C84040;font-style:normal}
+#res-drop-backdrop{
+  position:fixed;inset:0;z-index:51;display:none;background:rgba(0,0,0,0.55)
+}
+#res-drop-backdrop.open{display:block}
+
 /* Ground items in hex-info panel */
 .hi-ground-pickup{
   display:inline-flex;align-items:center;gap:4px;

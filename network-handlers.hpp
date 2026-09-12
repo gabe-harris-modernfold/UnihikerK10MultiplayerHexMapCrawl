@@ -34,6 +34,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (strncmp(tv, "equip_item",    tl) == 0) handleMsg_equip_item(client, data, len);
   else if (strncmp(tv, "unequip_item",  tl) == 0) handleMsg_unequip_item(client, data, len);
   else if (strncmp(tv, "drop_item",     tl) == 0) handleMsg_drop_item(client, data, len);
+  else if (strncmp(tv, "drop_res",      tl) == 0) handleMsg_drop_res(client, data, len);
   else if (strncmp(tv, "pickup_item",   tl) == 0) handleMsg_pickup_item(client, data, len);
   else if (strncmp(tv, "settings",      tl) == 0) handleMsg_settings(client, data, len);
   else if (strncmp(tv, "enc_start",     tl) == 0) handleMsg_enc_start(client, data, len);

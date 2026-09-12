@@ -6,6 +6,56 @@
 //       evtMux) remain in Esp32HexMapCrawl.ino — all game_logic files depend on
 //       them and are included before this file.
 
+// ── Chronicle phrasing for the eight action types ────────────────────────────
+// Index matches ev.actType (5 is unused). Each returns a predicate — the
+// screen supplies the name in front of it. Keep these under ~46 chars so they
+// fit K10LogEntry::text.
+static const char* actProse(uint8_t type, bool ok) {
+  switch (type) {
+    case 0: return ok ? K10_SAY("coaxes a meal out of dead ground.",
+                                "finds what the birds missed.",
+                                "brings back roots, and they are enough.")
+                      : K10_SAY("turns over stones and finds only stones.",
+                                "comes back with dirt and nothing else.",
+                                "goes hungry for the trying.");
+    case 1: return ok ? K10_SAY("draws water clean enough to keep.",
+                                "finds a seep still running.",
+                                "fills the cans and does not hurry back.")
+                      : K10_SAY("tastes the water and spits it out.",
+                                "finds the well dry to the stone.",
+                                "comes back with the cans light.");
+    case 2: return ok ? K10_SAY("binds the wound and it holds.",
+                                "stitches what can be stitched.",
+                                "cleans the rot out before it spreads.")
+                      : K10_SAY("does what can be done. It is not much.",
+                                "runs out of clean cloth.",
+                                "cannot stop the bleeding for long.");
+    case 3: return ok ? K10_SAY("pries something useful from the wreck.",
+                                "strips the ruin down to its good bones.",
+                                "finds a cache nobody else did.")
+                      : K10_SAY("finds the ruin picked clean already.",
+                                "cuts a hand on rusted nothing.",
+                                "comes out of the wreck empty.");
+    case 4: return ok ? K10_SAY("raises a roof against the night.",
+                                "makes a place out of the wind.",
+                                "builds it low and builds it to last.")
+                      : K10_SAY("loses the frame to the wind.",
+                                "builds it twice and it falls twice.",
+                                "gives up on the shelter before dark.");
+    case 6: return ok ? K10_SAY("reads the land and marks the map.",
+                                "takes the high ground and looks long.",
+                                "puts a name to what was blank.")
+                      : K10_SAY("climbs high and sees only haze.",
+                                "loses the horizon to dust.",
+                                "maps nothing worth keeping.");
+    case 7: return     K10_SAY("sleeps, badly, and wakes anyway.",
+                               "rests. The dark passes over.",
+                               "lies down and lets the day go.");
+    default: return ok ? "does the work and it comes good."
+                       : "does the work and it comes to nothing.";
+  }
+}
+
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
   int16_t  pq[MAX_PLAYERS], pr[MAX_PLAYERS];
@@ -60,12 +110,13 @@ static void drainEvents() {
         break;
 
       case EVT_COLLECT_FAIL:
-        Log.notice("EVT col_fail pid=%d q=%d r=%d res=%d reason=%d",
-                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
+        Log.notice("EVT col_fail pid=%d q=%d r=%d res=%d reason=%d cap=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt, (int)ev.dawnLL);
         // Sent only to the player who attempted the pickup — others don't need to know.
+        // `cap` (dawnLL) is the effective pack size; 0 for the desync reason.
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"col_fail\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"reason\":%d}",
-          ev.pid, ev.q, ev.r, ev.res, ev.amt);
+          "{\"t\":\"ev\",\"k\":\"col_fail\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"reason\":%d,\"cap\":%d}",
+          ev.pid, ev.q, ev.r, ev.res, ev.amt, (int)ev.dawnLL);
         if (ev.pid < MAX_PLAYERS && conn[ev.pid]) {
           AsyncWebSocketClient* cl = ws.client(wsId[ev.pid]);
           if (cl) cl->text(buf, len);
@@ -100,8 +151,10 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"join\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d joined", (int)ev.pid);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("takes up the road with us.",
+                          "arrives out of the haze, still walking.",
+                          "falls in with the line of march."),
+                  (int8_t)ev.pid, TONE_GOOD);
         k10Play(MOTIF_SEWER_ECHO);
         break;
       }
@@ -111,8 +164,10 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", ev.pid);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d left", (int)ev.pid);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("walks out and does not look back.",
+                          "is gone before the fire burns down.",
+                          "leaves an empty place at the watch."),
+                  (int8_t)ev.pid, TONE_PLAIN);
         break;
       }
 
@@ -131,9 +186,14 @@ static void drainEvents() {
           (int)ev.radR, (int)ev.dawnExpD,
           (int)ev.dawnWndMin, (int)ev.dawnWndMaj);
         ws.textAll(buf, len);
-        // K10 event log — only once per day (pid==0 guards double-logging for 6-player dawn)
+        // Chronicle — only once per day (pid==0 guards double-logging for 6-player dawn)
         if (ev.pid == 0) {
-          char lb[34]; snprintf(lb, sizeof(lb), "Day %d dawn", (int)ev.dawnDay);
+          char lb[48];
+          snprintf(lb, sizeof(lb),
+                   K10_SAY("Day %d comes up grey over the waste.",
+                           "Day %d. Thin light, and we are still here.",
+                           "Another sun. Day %d begins."),
+                   (int)ev.dawnDay);
           k10LogAdd(lb);
         }
         break;
@@ -153,16 +213,15 @@ static void drainEvents() {
         break;
 
       case EVT_ACTION: {
-        // K10 event log — brief action summary
         static const char* ACT_SHORT[8] = {"FORAGE","WATER","TREAT","SCAV","SHELTER","?","SURVEY","REST"};
         const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
         Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d mp=%d fd=%d wd=%d scoreD=%d",
                    (int)ev.pid, aShort, (int)ev.actType, (int)ev.actOut,
                    (int)ev.actNewLL, (int)ev.actNewMP,
                    (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actScoreD);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d: %s%s",
-            (int)ev.pid, aShort, ev.actOut ? " OK" : " FAIL");
-          k10LogAdd(lb); }
+        // Chronicle — REST has no failure state, so it stays neutral ink.
+        k10LogAdd(actProse(ev.actType, ev.actOut), (int8_t)ev.pid,
+                  (ev.actType == 7) ? TONE_PLAIN : (ev.actOut ? TONE_GOOD : TONE_ILL));
       }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
@@ -210,6 +269,7 @@ static void drainEvents() {
         // 4. Tell all lobby clients (including the downed player) archetypes now available
         broadcastLobbyUpdate();
         k10Play(MOTIF_DEAD_BATTERY);
+        ledPerish();  // red heartbeat across all 3 lamps — see ui-leds.hpp
         break;
       }
 
@@ -250,8 +310,10 @@ static void drainEvents() {
           ev.tradeWant[0], ev.tradeWant[1], ev.tradeWant[2],
           ev.tradeWant[3], ev.tradeWant[4]);
         ws.textAll(tbuf, tlen);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d\xE2\x86\x92P%d offer", (int)ev.pid, (int)ev.tradeTo);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("holds out a bargain to \x01.",
+                          "names a price to \x01.",
+                          "offers \x01 a trade and waits."),
+                  (int8_t)ev.pid, TONE_PLAIN, (int8_t)ev.tradeTo);
         break;
       }
 
@@ -266,11 +328,23 @@ static void drainEvents() {
           "\"from\":%d,\"to\":%d,\"res\":%d}",
           (int)ev.pid, (int)ev.tradeTo, (int)ev.tradeResult);
         ws.textAll(tbuf, tlen);
-        static const char* TR_LABEL[5] = {"?", "DONE", "DECLINED", "EXPIRED", "FAILED"};
-        const char* rl = (ev.tradeResult < 5) ? TR_LABEL[ev.tradeResult] : "?";
-        { char lb[40]; snprintf(lb, sizeof(lb), "Trade P%d\xE2\x86\x94P%d %s",
-            (int)ev.pid, (int)ev.tradeTo, rl);
-          k10LogAdd(lb); }
+        const char* trProse;
+        uint8_t     trTone;
+        switch (ev.tradeResult) {
+          case 1:  trProse = K10_SAY("and \x01 strike a bargain.",
+                                     "and \x01 shake on it.");
+                   trTone  = TONE_GOOD; break;
+          case 2:  trProse = K10_SAY("is turned down flat by \x01.",
+                                     "asks. \x01 says no.");
+                   trTone  = TONE_PLAIN; break;
+          case 3:  trProse = K10_SAY("waits on \x01. Nothing comes.",
+                                     "lets the offer to \x01 go cold.");
+                   trTone  = TONE_PLAIN; break;
+          default: trProse = K10_SAY("and \x01 cannot make it work.",
+                                     "and \x01 walk away from it.");
+                   trTone  = TONE_ILL; break;
+        }
+        k10LogAdd(trProse, (int8_t)ev.pid, trTone, (int8_t)ev.tradeTo);
         break;
       }
 
@@ -283,9 +357,11 @@ static void drainEvents() {
          
         ws.textAll(buf, len);
          
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d enters encounter", (int)ev.pid);
-          k10LogAdd(lb); }
-         
+        k10LogAdd(K10_SAY("steps off the map and into the dark.",
+                          "goes in where the light stops.",
+                          "crosses the threshold alone."),
+                  (int8_t)ev.pid, TONE_OMEN);
+
         k10Play(MOTIF_DARK_ENTRY);
          
         break;
@@ -316,19 +392,27 @@ static void drainEvents() {
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);
         ws.textAll(buf, len);
-        static const char* SK_SHORT[5] = {"NAV","FORAGE","SCAV","SHELT","ENDURE"};
-        const char* sks = (ev.encSkill < 5) ? SK_SHORT[ev.encSkill] : "?";
+        // Success reads through the skill that carried it.
+        static const char* ENC_WON[5] = {
+          "picks the safe line through.",
+          "reads the ground right and lives on it.",
+          "gets the panel open and the dark gives.",
+          "finds cover before it matters.",
+          "takes it and keeps standing.",
+        };
         if (ev.encOut) {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: %s OK", (int)ev.pid, sks);
-          k10LogAdd(lb);
+          k10LogAdd(ENC_WON[(ev.encSkill < 5) ? ev.encSkill : 0],
+                    (int8_t)ev.pid, TONE_GOOD);
           k10Play(MOTIF_DARK_DEPART);
         } else if (ev.encEnds) {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD! Ejected", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("is thrown back into daylight, bleeding.",
+                            "comes out the way they went in, worse."),
+                    (int8_t)ev.pid, TONE_ILL);
           k10Play(MOTIF_BROKEN_TECH);
         } else {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d ENC: HAZARD (cont.)", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("takes a hard turn and presses on.",
+                            "is hurt by the place and stays in it."),
+                    (int8_t)ev.pid, TONE_ILL);
           k10Play(MOTIF_SYSTEM_FAULT);
         }
         break;
@@ -345,12 +429,14 @@ static void drainEvents() {
           (int)ev.actScoreD);
         ws.textAll(buf, len);
         if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d FULL CLEAR! +%d", (int)ev.pid, (int)ev.actScoreD);
-          k10LogAdd(lb);
+          char lb[48];
+          snprintf(lb, sizeof(lb), "clears the place out entire. +%d.", (int)ev.actScoreD);
+          k10LogAdd(lb, (int8_t)ev.pid, TONE_GOOD);
           k10Play(MOTIF_WEIRD_ANOMALY);
         } else {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d banked enc loot", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("carries the haul back into the light.",
+                            "brings out what the dark was keeping."),
+                    (int8_t)ev.pid, TONE_GOOD);
         }
         break;
       }
@@ -367,14 +453,17 @@ static void drainEvents() {
           ev.pid, (int)ev.q, (int)ev.r, reason);
         ws.textAll(buf, len);
         if (ev.encOut == ENC_END_ABORT) {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d aborted encounter", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("turns back before the dark takes more.",
+                            "leaves it unfinished, and lives."),
+                    (int8_t)ev.pid, TONE_PLAIN);
         } else if (ev.encOut == ENC_END_DAWN) {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d enc ended (dawn)", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("comes out of it as the sun does.",
+                            "is still walking when the light finds them."),
+                    (int8_t)ev.pid, TONE_PLAIN);
         } else if (ev.encOut == ENC_END_DOWNED) {
-          char lb[34]; snprintf(lb, sizeof(lb), "P%d DOWNED in encounter", (int)ev.pid);
-          k10LogAdd(lb);
+          k10LogAdd(K10_SAY("does not come out standing.",
+                            "falls in there, and the dark keeps it."),
+                    (int8_t)ev.pid, TONE_ILL);
         }
         break;
       }
@@ -387,9 +476,22 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
           (int)ev.q, (int)ev.r);
         ws.textAll(buf, len);
-        char lb[34]; snprintf(lb, sizeof(lb), "Weather: %s", (ev.q < 6) ? WX[ev.q] : "?");
-        k10LogAdd(lb);
+        // Weather is written as the world's own line — no name in front of it.
+        static const char* WX_PROSE[6] = {
+          "The sky clears. Small mercy, and brief.",
+          "Rain comes in thin and cold.",
+          "A storm walks in off the flats.",
+          "The rain turns wrong. Chem burn.",
+          "Strangle fog settles in the low ground.",
+          "Fog closes the world to arm's length.",
+        };
+        k10LogAdd(WX_PROSE[(ev.q < 6) ? ev.q : 0], -1,
+                  (ev.q == 0) ? TONE_GOOD : TONE_OMEN);
         if (ev.q == WEATHER_STORM) k10Play(MOTIF_MUTANT_BREATH); else k10Play(MOTIF_DISTANT_THUD);
+        // Announce the new phase on the lamps in its own signature colour; the
+        // ambient sky picks the phase up on the next updateLEDs() tick anyway.
+        { uint8_t wr, wg, wb; weatherFlashColour((uint8_t)ev.q, wr, wg, wb);
+          ledFlash(wr, wg, wb); }
         break;
       }
       case EVT_CARAVAN_TRADE: {
@@ -397,8 +499,9 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"car_avail\",\"pid\":%d}", (int)ev.pid);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d meets caravan", (int)ev.pid);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("meets a caravan on the road.",
+                          "falls in with traders for an hour."),
+                  (int8_t)ev.pid, TONE_GOOD);
         break;
       }
 
@@ -409,8 +512,10 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"fire_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d burned (fire %d)", (int)ev.pid, (int)ev.amt);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("is caught in the burn.",
+                          "walks into fire and wears it out.",
+                          "comes through the flames marked."),
+                  (int8_t)ev.pid, TONE_ILL);
         break;
       }
 
@@ -440,8 +545,9 @@ static void drainEvents() {
         Log.notice("EVT doom_warn pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"doom_warn\",\"pid\":%d}", (int)ev.pid);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "Dread: P%d senses it", (int)ev.pid);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("feels the Doom turn its head.",
+                          "goes quiet. Something out there noticed."),
+                  (int8_t)ev.pid, TONE_OMEN);
         break;
       }
 
@@ -454,8 +560,9 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"doom_act\",\"pid\":%d,\"q\":%d,\"r\":%d,\"llLost\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
         ws.textAll(buf, len);
-        { char lb[34]; snprintf(lb, sizeof(lb), "P%d: the Doom acts", (int)ev.pid);
-          k10LogAdd(lb); }
+        k10LogAdd(K10_SAY("loses something to the Doom.",
+                          "pays the Doom what it came for."),
+                  (int8_t)ev.pid, TONE_OMEN);
         break;
       }
 

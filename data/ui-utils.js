@@ -182,6 +182,15 @@ const keyMap = {
 };
 const heldKeys = new Map();
 document.addEventListener('keydown', e => {
+  // Innermost overlay first: the resource-drop sheet (ui-items.js) sits above
+  // the char sheet, so Escape must dismiss it *instead of* closing the sheet
+  // underneath. Checked before the INPUT guard so Escape also works while the
+  // quantity box has focus.
+  if (e.key === 'Escape' && document.getElementById('res-drop-menu')?.classList.contains('open')) {
+    e.preventDefault();
+    globalThis.closeResDropMenu?.();
+    return;
+  }
   if (e.target.tagName === 'INPUT') return;
   // Prevent scroll keys from scrolling any overlay or page
   if (['Space','PageUp','PageDown','Home','End'].includes(e.code)) { e.preventDefault(); return; }
@@ -195,8 +204,11 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyR') { e.preventDefault(); document.getElementById('fab-rest-btn')?.click(); return; }
   if (e.code === 'KeyA') { e.preventDefault(); document.getElementById('fab-action-btn')?.click(); return; }
   if (e.code === 'KeyC') { e.preventDefault(); document.getElementById('fab-char-btn')?.click(); return; }
-  // Block movement while character selection screen is showing
+  // Block movement while the character selection screen or the resource-drop
+  // sheet is showing — stepping off the hex mid-drop would land the tokens
+  // somewhere other than the hex the sheet just described.
   if (document.getElementById('char-select-overlay')?.classList.contains('open')) return;
+  if (document.getElementById('res-drop-menu')?.classList.contains('open')) return;
   const dir = keyMap[e.code];
   if (dir === undefined) return;
   e.preventDefault();

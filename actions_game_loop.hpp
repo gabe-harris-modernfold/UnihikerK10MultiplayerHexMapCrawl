@@ -192,14 +192,16 @@ static void broadcastQuake(const QuakeResult& q) {
   ws.textAll(buf, len);
   Log.notice("EVT quake len=%d destroyed=%d converted=%d start=(%d,%d)",
              (int)q.len, (int)q.destroyedCount, (int)q.convertedCount, (int)q.cellQ[0], (int)q.cellR[0]);
-  char lb[34];
+  char lb[48];
   if (q.convertedCount > 0)
-    snprintf(lb, sizeof(lb), "Quake leveled %d settlement%s", (int)q.convertedCount, q.convertedCount > 1 ? "s" : "");
+    snprintf(lb, sizeof(lb), "The earth heaves. %d settlement%s falls.",
+             (int)q.convertedCount, q.convertedCount > 1 ? "s" : "");
   else if (q.destroyedCount > 0)
-    snprintf(lb, sizeof(lb), "Quake destroyed %d shelter%s", (int)q.destroyedCount, q.destroyedCount > 1 ? "s" : "");
+    snprintf(lb, sizeof(lb), "The earth heaves. %d shelter%s lost.",
+             (int)q.destroyedCount, q.destroyedCount > 1 ? "s" : "");
   else
-    snprintf(lb, sizeof(lb), "Earthquake!");
-  k10LogAdd(lb);
+    snprintf(lb, sizeof(lb), "The earth heaves. Nothing stays put.");
+  k10LogAdd(lb, -1, TONE_ILL);
   k10Play(MOTIF_DISTANT_THUD);
 }
 
@@ -585,7 +587,7 @@ static void broadcastSettle(const SettleResult& s) {
   ws.textAll(buf, len);
   Log.notice("EVT settle removed=%d settlement=(%d,%d)",
              (int)s.removedCount, (int)s.settleQ, (int)s.settleR);
-  k10LogAdd("A settlement rises!");
+  k10LogAdd("A settlement takes root. Someone will stay.", -1, TONE_GOOD);
 }
 
 static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* survLen) {

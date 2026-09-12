@@ -278,6 +278,7 @@ function _msgSync(msg) {
     players[p.id].rest = !!p.rt;  // map rt → rest (mirrors 's' handler)
     if (p.on) { renderPos[p.id].q = p.q; renderPos[p.id].r = p.r; }
   });
+  _packFullRearmCheck();   // reconnect/resync — re-arm if the pack shrank meanwhile
   if (msg.vc) loadTerrainVariants(msg.vc);
   if (msg.sv) loadShelterVariants(msg.sv);
   if (msg.fa) loadForrageAnimalImgs(msg.fa);
@@ -328,6 +329,7 @@ function _msgState(msg) {
     if (pd.eq) p.eq = pd.eq;   // equipment slots
     if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
   });
+  _packFullRearmCheck();   // fresh token totals — did the player free up room?
   // Sync can carry stale eq after item_result; refresh equipment grid only if open.
   // Do NOT call renderInventory here — sync fires on every tick and would hammer
   // the item icon requests on every cycle. Inventory is already up-to-date from item_result.
@@ -353,12 +355,13 @@ function _handleSelfVis() {
     if (_mc === 255) _mc = 2;
     if (_mc) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * (_mc + (WEATHER_MOVE_PENALTY[weatherPhase] ?? 0));
   }
-  // If the current hex still has a resource after the move, collection was
-  // blocked. The only server-side reason is a full inventory — notify the player.
+  // A "hex still holds a resource after the move → pack must be full" toast
+  // used to live here. It guessed, and it misfired: the server answers *every*
+  // `m` frame with a vis disk (rejected moves included) and use_item fog
+  // reveals send one too, so standing on an uncollectable pile re-toasted on
+  // every keypress — on top of the col_fail toast for the same pickup. The
+  // server's col_fail (reason 2) is authoritative; it is the only notice now.
   const _cur = gameMap[_me.r]?.[_me.q];
-  if (_cur?.resource > 0 && _cur?.amount > 0) {
-    showToast('Carry limit reached — drop or use items to collect resources.');
-  }
   // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
   if (_cur?.poi) {
     globalThis._lastEncStartT = Date.now();
@@ -413,6 +416,7 @@ function handleMsg(msg) {
     case 'ev':            handleEvent(msg);      break;
     case 'ground_update': _msgGroundUpdate(msg); break;
     case 'item_result':   _evItemResult(msg);    break;
+    case 'res_result':    _evResResult(msg);     break;
     case 'full':
       console.warn('[RX] Server full — all slots taken');
       document.getElementById('connect-box').innerHTML =
@@ -443,6 +447,34 @@ function handleMsg(msg) {
 
 // ── handleEvent sub-handlers ─────────────────────────────────────────────────
 
+// ── Pack-full pickup notice (armed once per "pack filled up" episode) ────────
+// The carry cap counts resource *tokens* (Water/Food/Fuel/Med/Scrap), not the
+// typed item grid — so `drop_item` does nothing for it. The sinks are: the
+// char-sheet inventory boxes (`drop_res` — dumps tokens straight onto the hex),
+// TREAT (spends Med), SHELTER (spends Scrap), a trade, an encounter cost, and
+// the dawn upkeep that eats Food/Water. Word the notice accordingly, and only
+// show it when the situation is actually new:
+// with a full pack every step onto a resource hex produces a col_fail, which
+// used to mean one toast per step for the rest of the day.
+let _packFullNotified = false;   // notice already shown for the current episode
+let _packFullAtTotal  = 0;       // token total when it was shown — re-arm below this
+
+function _invTokenTotal(pid) {
+  const inv = players[pid]?.inv;
+  return Array.isArray(inv) ? inv.reduce((a, b) => a + (b || 0), 0) : 0;
+}
+
+// Called whenever fresh server totals land for us. Spending anything (treat,
+// shelter, trade, dawn upkeep) re-arms the notice so the next blocked pickup
+// tells the player their pack filled up again.
+function _packFullRearmCheck() {
+  if (!_packFullNotified || myId < 0) return;
+  if (_invTokenTotal(myId) < _packFullAtTotal) {
+    _packFullNotified = false;
+    console.log('[COL] pack-full notice re-armed — tokens dropped below', _packFullAtTotal);
+  }
+}
+
 function _evCol(ev) {
   // `rem` (post-pickup remaining amount on hex, 0 = drained) was added with the
   // partial-pickup leak fix. Older servers that don't send it default to 0,
@@ -465,6 +497,17 @@ function _evCol(ev) {
     // before the next 's' broadcast confirms the server-side inv state.
     const idx = ev.res - 1;
     if (idx >= 0 && idx < 5) players[myId].inv[idx] = (players[myId].inv[idx] ?? 0) + ev.amt;
+    // Partial pickup: the pack filled mid-pile and the remainder stayed on the
+    // hex. Say so once, here — no col_fail is sent for a pickup that partly
+    // succeeded, and the player should know the hex still has something on it.
+    if (rem > 0) {
+      addLog(`<span class="log-col">🎒 Pack full — left ${rem}× ${RES_NAMES[ev.res]} on the hex.</span>`);
+      if (!_packFullNotified) {
+        showToast(`🎒 Pack full — left ${rem}× ${RES_NAMES[ev.res]} behind.`);
+        _packFullNotified = true;
+        _packFullAtTotal  = _invTokenTotal(myId);
+      }
+    }
     updateSidebar();
   }
 }
@@ -474,8 +517,24 @@ function _evColFail(ev) {
   // reason: 1 = desync (client thought hex had a resource, server says no),
   //         2 = inventory full
   if (ev.reason === 2) {
-    showToast('🎒 Inventory full — drop or use items first.');
-    addLog('<span class="log-col">🎒 Pickup blocked: inventory full.</span>');
+    // `cap` is the server's effective pack size (archetype base + equipment
+    // slot bonuses). Older firmware doesn't send it — fall back to the base
+    // `is` from sync, and to no numbers at all if neither is known.
+    // The server only blocks at total >= cap, so floor the displayed count at
+    // cap: our local total can lag a broadcast, and reading "(4/6) pack full"
+    // is worse than no numbers. Over-cap (encounter loot, trades) still shows.
+    const have = Math.max(_invTokenTotal(myId), ev.cap ?? 0);
+    const cap  = ev.cap ?? players[myId]?.is ?? 0;
+    const size = cap ? ` (${have}/${cap})` : '';
+    addLog(`<span class="log-col">🎒 Pickup blocked — pack full${size}: ${RES_NAMES[ev.res]} left on the hex.</span>`);
+    if (!_packFullNotified) {
+      // Deliberately does NOT say "drop items": drop_item only touches the
+      // typed item grid, which is not what the carry cap counts. Tapping a
+      // resource box on the character sheet (`drop_res`) is what dumps tokens.
+      showToast(`🎒 Pack full${size} — make room: tap a resource on your character sheet to dump it, treat wounds, build a shelter, or trade.`);
+      _packFullNotified = true;
+      _packFullAtTotal  = have;
+    }
   } else {
     // Desync: server's hex is empty but our gameMap still showed a resource.
     // Clear our stale icon so future renders match server truth.
@@ -790,6 +849,35 @@ function _evCarAvail(ev) {
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   addLog(`<span class="log-col">⇄ ${escHtml(who)} met the caravan</span>`);
   if (ev.pid === myId) showToast('⇄ A caravan rolls up. Trade available.');
+}
+
+// Server ack for `drop_res` — the char sheet's inventory boxes dumping resource
+// tokens. The hex is updated by the 'rsp' event the server broadcasts next to
+// this ack (same event the respawn tick uses), so all this does is take the
+// authoritative token/score totals and say where the tokens went.
+function _evResResult(ev) {
+  console.log('%c[INV] _evResResult', 'color:#fc0;font-weight:bold',
+              `ok=${ev.ok} pid=${ev.pid} res=${ev.res} qty=${ev.qty} grd=${ev.grd} rem=${ev.rem}`, ev);
+  if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
+    const p = players[ev.pid];
+    if (ev.inv) p.inv = ev.inv;
+    if (ev.sc !== undefined) p.sc = ev.sc;
+  }
+  if (!ev.ok) {
+    console.warn('[INV] drop_res rejected by server', `res=${ev.res} pid=${ev.pid}`);
+    showToast('Nothing to abandon.');
+  } else if (ev.pid === myId) {
+    const name = RES_NAMES[ev.res] ?? '?';
+    if (ev.grd) {
+      addLog(`<span class="log-col">\u25BC You set down ${ev.qty}\u00d7 ${name} \u2014 ${ev.rem}\u00d7 on this hex now.</span>`);
+      showToast(`\u25BC Dropped ${ev.qty}\u00d7 ${name} \u2014 still here if you want it back.`);
+    } else {
+      addLog(`<span class="log-col">\u25BC You dumped ${ev.qty}\u00d7 ${name} into the dust \u2014 gone for good.</span>`);
+      showToast(`\u25BC Dumped ${ev.qty}\u00d7 ${name} \u2014 this hex was already spoken for.`);
+    }
+  }
+  updateSidebar();
+  _packFullRearmCheck();   // the pack just shrank — re-arm the pack-full notice
 }
 
 function _evItemResult(ev) {

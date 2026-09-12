@@ -670,11 +670,27 @@ static LGFX           tft;
 static LGFX_Sprite    canvas(&tft);
 
 // ── K10 multi-screen state ─────────────────────────────────────────────────
-#define K10_LOG_SIZE 15
-struct K10LogEntry { char text[34]; uint32_t ms; };
+// The event log is kept as a chronicle, not a log: each entry stores a
+// *predicate* ("finds a seep still running.") plus the player it belongs to,
+// and the screen prepends the name at draw time. drainEvents() runs without
+// G.mutex and must not read Player.name, so the name cannot be baked in at
+// log time. `who` < 0 means the text is already a whole sentence (a world
+// event). A '\x01' byte inside the text is replaced with who2's name, for
+// sentences about two people.
+#define K10_LOG_SIZE 16
+enum K10Tone : uint8_t { TONE_PLAIN = 0, TONE_GOOD, TONE_ILL, TONE_OMEN, TONE_COUNT };
+struct K10LogEntry {
+  char     text[48];
+  uint32_t ms;
+  uint16_t day;
+  int8_t   who;
+  int8_t   who2;
+  uint8_t  tone;
+};
 static K10LogEntry  k10Log[K10_LOG_SIZE];
 static uint8_t      k10LogHead  = 0;
 static uint8_t      k10LogCount = 0;
+static uint16_t     k10LogTotal = 0;   // entries ever set down — the page number
 static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 
 static uint8_t  k10Screen     = 1;
@@ -709,6 +725,9 @@ static void saveK10Prefs() {
 // ── LED flash state ─────────────────────────────────────────────────────────
 static volatile uint8_t  g_ledR = 0, g_ledG = 0, g_ledB = 0;
 static volatile uint32_t g_ledEndMs = 0;
+// Perish alarm (ui-leds.hpp): set by ledPerish() from the EVT_DOWNED handler,
+// outranks both the event flash and the weather/time-of-day sky.
+static volatile uint32_t g_ledPerishEndMs = 0;
 
 AsyncWebServer server(80);
 AsyncWebSocket  ws("/ws");
@@ -1028,7 +1047,13 @@ void loop() {
     if (!uploadActive) k10ScreenLast = k10Screen; else k10ScreenLast = 255;  // force repaint when leaving upload
   }
 
-  if (g_ledEndMs && now >= g_ledEndMs) {
+  // Perish alarm drives the lamps every tick until it expires (updateLEDs
+  // clears g_ledPerishEndMs itself); otherwise hold an event flash for its
+  // 300 ms, and fall through to the weather/time-of-day sky the rest of time.
+  if (g_ledPerishEndMs) {
+    g_ledEndMs = 0;
+    updateLEDs();
+  } else if (g_ledEndMs && now >= g_ledEndMs) {
     g_ledEndMs = 0;
     updateLEDs();
   } else if (!g_ledEndMs) {

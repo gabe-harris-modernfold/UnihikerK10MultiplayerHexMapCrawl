@@ -200,6 +200,56 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   if (ack[0]) client->text(ack);
 }
 
+// Dump resource tokens (Water/Food/Fuel/Med/Scrap) out of the pack — the
+// char sheet's inventory boxes send {"t":"drop_res","res":1-5,"qty":N}.
+// dropResource() puts them back on the hex when it can hold them; the "rsp"
+// broadcast is what tells every client the pile is there (same event the
+// respawn tick uses), so no extra client-side map plumbing is needed.
+static void handleMsg_drop_res(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
+  const char* rp = strstr(data, "\"res\"");
+  if (!rp) return;
+  const char* rv = strchr(rp + 5, ':'); if (!rv) return;
+  int res = atoi(rv + 1);
+  const char* qp = strstr(data, "\"qty\"");
+  const char* qv = qp ? strchr(qp + 5, ':') : nullptr;   // "qty" without a ':' would crash strchr()+1
+  int qty = qv ? atoi(qv + 1) : 1;
+  if (res < 1 || res > 5 || qty <= 0) return;
+  if (qty > 99) qty = 99;
+  static char ack[256];
+  static char upd[96];
+  ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
+  upd[0] = '\0';
+  uint8_t dropped = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    int mySlot = findSlot(client->id());
+    if (mySlot >= 0 && G.players[mySlot].connected) {
+      bool    onGround = false;
+      uint8_t rem      = 0;
+      dropped = dropResource(mySlot, (uint8_t)res, (uint8_t)qty, &onGround, &rem);
+      Player& pl = G.players[mySlot];
+      if (dropped && onGround) {
+        snprintf(upd, sizeof(upd),
+          "{\"t\":\"ev\",\"k\":\"rsp\",\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
+          (int)pl.q, (int)pl.r, res, (int)rem);
+      }
+      snprintf(ack, sizeof(ack),
+        "{\"t\":\"res_result\",\"ok\":%s,\"pid\":%d,\"res\":%d,\"qty\":%d,"
+        "\"grd\":%d,\"rem\":%d,\"q\":%d,\"r\":%d,\"inv\":[%d,%d,%d,%d,%d],\"sc\":%d}",
+        dropped ? "true" : "false", mySlot, res, (int)dropped,
+        onGround ? 1 : 0, (int)rem, (int)pl.q, (int)pl.r,
+        pl.inv[0], pl.inv[1], pl.inv[2], pl.inv[3], pl.inv[4], (int)pl.score);
+    }
+    xSemaphoreGive(G.mutex);
+  }
+  // saveGame outside the mutex so it can acquire it itself (same as drop_item)
+  if (dropped) {
+    saveGame();
+    if (upd[0]) ws.textAll(upd);
+  }
+  if (ack[0]) client->text(ack);
+}
+
 static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* gp = strstr(data, "\"gslot\"");

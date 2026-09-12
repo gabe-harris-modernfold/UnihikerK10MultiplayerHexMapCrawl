@@ -1183,7 +1183,8 @@ function tryCollect(p, ws) {
   const total = p.inv.reduce((a, b) => a + b, 0);
   if (total >= INV_SLOTS) {
     // Inv-full: send col_fail to the moving player only.
-    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2 });
+    // cap mirrors the firmware's effectiveInvSlots() — the client shows it as "(have/cap)".
+    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2, cap: INV_SLOTS });
     console.log(`[col] FAIL inv-full pid=${p.id} q=${p.q} r=${p.r}`);
     return;
   }
@@ -1202,6 +1203,35 @@ function tryCollect(p, ws) {
   }
   console.log(`[col] OK pid=${p.id} q=${p.q} r=${p.r} res=${resType} gain=${gain} rem=${rem}`);
   broadcast({ t: 'ev', k: 'col', pid: p.id, q: p.q, r: p.r, res: resType, amt: gain, rem });
+}
+
+// Mirror of firmware's dropResource — must stay in sync with survival_state.hpp.
+// Tokens land back on the hex when it can hold them (empty, or the same
+// resource); a hex holding a different resource can't take them and they are
+// lost. The collect award is refunded off the score either way, otherwise
+// drop→collect on one hex is an infinite score pump.
+function dropResource(p, res, qty) {
+  if (res < 1 || res > RES_MAX_TYPE) return { dropped: 0, onGround: false, rem: 0 };
+  const idx  = res - 1;
+  const take = Math.min(Math.max(0, qty | 0), p.inv[idx] || 0);
+  if (take === 0) {
+    console.log(`[drop_res] SKIP empty pid=${p.id} res=${res} qty=${qty}`);
+    return { dropped: 0, onGround: false, rem: 0 };
+  }
+  p.inv[idx] -= take;
+  p.sc = Math.max(0, p.sc - take * 10);
+
+  const k    = `${p.q}_${p.r}`;
+  const cell = resources[k];
+  const onGround = !cell || cell.res === 0 || cell.res === res;
+  let rem = 0;
+  if (onGround) {
+    const pile = (cell && cell.res === res ? cell.amt : 0) + take;
+    rem = Math.min(pile, 99);
+    resources[k] = { res, amt: rem, respawnTimer: 0 };
+  }
+  console.log(`[drop_res] OK pid=${p.id} q=${p.q} r=${p.r} res=${res} qty=${take} ground=${onGround} pile=${rem} sc=${p.sc}`);
+  return { dropped: take, onGround, rem };
 }
 
 // Respawn tick — broadcasts EVT_RESPAWN to all (no vision cull, mirrors fix).
@@ -1758,6 +1788,23 @@ wss.on('connection', (ws) => {
         const ok = dropItem(p, slotIdx, qty);
         send(ws, { t: 'item_result', ok, act: 'drop', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq });
         if (ok) { broadcast(groundUpdateMsg(p.q, p.r)); broadcast(stateMsg()); }
+        break;
+      }
+
+      case 'drop_res': {
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        const res = msg.res | 0;
+        const qty = msg.qty | 0;
+        const { dropped, onGround, rem } = dropResource(p, res, qty);
+        send(ws, { t: 'res_result', ok: dropped > 0, pid: id, res, qty: dropped,
+                   grd: onGround ? 1 : 0, rem, q: p.q, r: p.r, inv: p.inv, sc: p.sc });
+        if (dropped > 0) {
+          // Same event the respawn tick uses — every client updates the hex.
+          if (onGround) broadcast({ t: 'ev', k: 'rsp', q: p.q, r: p.r, res, amt: rem });
+          broadcast(stateMsg());
+        }
         break;
       }
 
