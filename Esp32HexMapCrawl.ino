@@ -427,7 +427,7 @@ struct ToneStep { int freq; int beat; };
 // Score-up is the only upbeat/positive sound — kept distinct from the dark motifs
 static const ToneStep SEQ_SCORE_UP[] = {{220, 400}, {277, 400}, {330, 600}, {0,0}};
 
-#include "tone-motifs.hpp"  // 18 post-apocalyptic motifs (MOTIF_*)
+#include "tone-motifs.hpp"  // 19 post-apocalyptic motifs (MOTIF_*)
 
 enum EvtType : uint8_t {
   EVT_COLLECT      = 1,

@@ -366,8 +366,17 @@ static void resolveDoomProximity() {
 
     // 76-99: destroy one resource node on the player's hex. 100: that, plus
     // LL-1 per world tick (amt carries the LL actually lost, 0 or 1).
+    // Mirrors collectResource()'s own drained-to-zero branch (clear
+    // `resource` + arm `respawnTimer`) — leaving `resource` non-zero would
+    // never satisfy the dawn respawn loop's `resource==0` gate, so the node
+    // would stay dead forever instead of eventually respawning. No-op if
+    // the hex had nothing to destroy.
     HexCell& cell = G.map[p.r][p.q];
-    cell.amount = 0;
+    if (cell.resource != 0) {
+      cell.resource     = 0;
+      cell.amount       = 0;
+      cell.respawnTimer = RESPAWN_TICKS;
+    }
     uint8_t llLost = 0;
     if (W.creepingDoom.awareness >= 100 && p.ll > 0) {
       p.ll--;

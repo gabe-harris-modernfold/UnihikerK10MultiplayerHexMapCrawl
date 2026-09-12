@@ -154,15 +154,26 @@ bool tryLoadSave() {
   G.badWeatherTicks = hdr.badWeatherTicks;
   // World-system entities (v13+ only — the version check above already
   // rejects anything older). wInit() first for its side effects (zero-clear
-  // W_hex/fireCount/debounce — tracks/fire are deliberately not persisted),
-  // then overwrite the persisted fields it randomized.
+  // W_hex/fireCount/debounce — tracks/fire are deliberately not persisted,
+  // and it also gives both entities a valid random q/r as a fallback),
+  // then overwrite the persisted fields it randomized. q/r are bounds-
+  // checked before trusting them — a corrupted/short SD write (see
+  // dev-loop.md's "Short SD writes" note) could otherwise feed an
+  // out-of-range index straight into W_hex[r][q]/G.map[r][q] everywhere
+  // world-system.hpp touches these entities. Mirrors the weatherPhase/
+  // dayTick bound checks above: invalid means "keep wInit()'s value" rather
+  // than crash.
   wInit();
-  W.caravan.q = hdr.caravanQ; W.caravan.r = hdr.caravanR;
+  if (hdr.caravanQ >= 0 && hdr.caravanQ < MAP_COLS && hdr.caravanR >= 0 && hdr.caravanR < MAP_ROWS) {
+    W.caravan.q = hdr.caravanQ; W.caravan.r = hdr.caravanR;
+  }
   W.caravan.restockTimer = hdr.caravanRestockTimer;
   memcpy(W.caravan.inv, hdr.caravanInv, 5);
   W.caravan.active = hdr.caravanActive != 0;
-  W.creepingDoom.q = hdr.doomQ; W.creepingDoom.r = hdr.doomR;
-  W.creepingDoom.awareness = hdr.doomAwareness;
+  if (hdr.doomQ >= 0 && hdr.doomQ < MAP_COLS && hdr.doomR >= 0 && hdr.doomR < MAP_ROWS) {
+    W.creepingDoom.q = hdr.doomQ; W.creepingDoom.r = hdr.doomR;
+  }
+  W.creepingDoom.awareness = (hdr.doomAwareness <= 100) ? hdr.doomAwareness : 0;
   Log.notice("Save map loaded day=%u tick=%lu tc=%u weather=%u groundItems=%d",
              (unsigned)G.dayCount, (unsigned long)G.dayTick, (unsigned)G.threatClock,
              (unsigned)G.weatherPhase, giLoaded);

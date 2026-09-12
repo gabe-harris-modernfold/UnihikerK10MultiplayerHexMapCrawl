@@ -6,7 +6,7 @@ const WEATHER_PARTICLE_HARD_CAP = 300;
 // Fire gets its own budget rather than sharing the weather cap: a fire has to
 // keep burning through a storm, and a storm has to keep raining over a fire.
 // Sharing one pool meant whichever emitted first that frame starved the other.
-const FIRE_PARTICLE_CAP = 360;
+const FIRE_PARTICLE_CAP = 480;
 
 // ── Fire sprite bank ─────────────────────────────────────────────────────────
 // Flames are drawn as pre-baked sprites, not per-particle canvas gradients:
@@ -77,17 +77,22 @@ const FireSprites = (() => {
     return c;
   };
 
+  // Near-black and dense through most of its radius, not a pale grey wisp:
+  // puffs overlap heavily inside a plume, so each one has to hold its value or
+  // the stack still reads as haze. Bigger sprite than the flames' so it stays
+  // smooth when a puff expands to most of a hex.
   const smokeSprite = () => {
-    const S = 64, cx = S / 2;
+    const S = 96, cx = S / 2;
     const c = canvas(S), x = c.getContext('2d');
     const grad = x.createRadialGradient(cx, cx, 0, cx, cx, cx);
-    grad.addColorStop(0,   'rgba(34,30,28,0.95)');
-    grad.addColorStop(0.5, 'rgba(28,25,24,0.45)');
-    grad.addColorStop(1,   'rgba(24,22,21,0)');
-    x.filter    = 'blur(4px)';
+    grad.addColorStop(0,    'rgba(14,12,11,0.98)');
+    grad.addColorStop(0.42, 'rgba(19,16,15,0.74)');
+    grad.addColorStop(0.75, 'rgba(24,21,20,0.30)');
+    grad.addColorStop(1,    'rgba(26,23,22,0)');
+    x.filter    = 'blur(5px)';
     x.fillStyle = grad;
     x.beginPath();
-    x.arc(cx, cx, cx * 0.88, 0, Math.PI * 2);
+    x.arc(cx, cx, cx * 0.86, 0, Math.PI * 2);
     x.fill();
     return c;
   };
@@ -263,26 +268,41 @@ class WeatherParticleSystem {
     if (!anchors?.length) return;
     // Split the budget across however many hexes are burning, so a big blaze
     // thins every fire evenly instead of the first few hexes eating the cap
-    // and the rest going dark. Floored at a third: a hex still has to read as
-    // on fire even in a firestorm.
-    const share = Math.max(0.34, Math.min(1, FIRE_PARTICLE_CAP / (anchors.length * 70)));
-    for (const anchor of anchors) {
+    // and the rest going dark. The floor keeps a hex readable as on fire even
+    // in a firestorm; it is set low enough that ~24 simultaneous hexes still
+    // fit under the cap, since past that point _pushFire starts dropping.
+    const share = Math.max(0.20, Math.min(1, FIRE_PARTICLE_CAP / (anchors.length * 78)));
+    // Rotate which hex is served first each frame. Beyond the share floor the
+    // cap does bind, and _pushFire drops silently — without rotating, the same
+    // tail of the list would be starved every frame and those hexes would sit
+    // there visibly unlit while the head of the list burned normally.
+    for (let n = 0; n < anchors.length; n++) {
+      const anchor = anchors[(n + this._t) % anchors.length];
       const i = anchor.intensity;
       const seats = fireSeats(anchor.q ?? anchor.x, anchor.r ?? anchor.y, i);
       for (const seat of seats) {
         // Deliberately sparse per spot: enough overlap for 'lighter' to build
         // a core, but few enough that individual tongues still read. Pile on
         // more and each spot blends into a flat disc of light.
-        for (let budget = (0.24 + i * 0.10) * seat.scale * share; budget > 0; budget -= 1) {
+        for (let budget = (0.20 + i * 0.085) * seat.scale * share; budget > 0; budget -= 1) {
           if (Math.random() < Math.min(1, budget)) this._pushFire(this._spawnFlame(anchor, seat));
         }
       }
-      // Embers and smoke pick one seat at a time — they're accents over the
-      // whole burning tile, not per-spot fixtures, and they live 3-5x longer
-      // than a lick, so a per-seat rate here turns into a swarm at steady state.
-      const pick = seats[(Math.random() * seats.length) | 0];
-      if (Math.random() < (0.03 + 0.05 * i) * share) this._pushFire(this._spawnEmber(anchor, pick));
-      if (i >= 2 && Math.random() < 0.018 * i * share) this._pushFire(this._spawnSmoke(anchor, pick));
+      // Embers pick one seat at a time — they're an accent over the whole
+      // burning tile, not a per-spot fixture, and they live ~3x longer than a
+      // lick, so a per-seat rate here turns into a swarm at steady state.
+      if (Math.random() < (0.03 + 0.05 * i) * share) {
+        this._pushFire(this._spawnEmber(anchor, seats[(Math.random() * seats.length) | 0]));
+      }
+      // Smoke burns at every intensity, not just 2+: a smoulder throws more of
+      // it than a clean inferno does. Emitted as a budget loop rather than one
+      // coin flip so a plume actually has body — a single puff per frame never
+      // stacks into a column no matter how long it lives.
+      for (let budget = (0.03 + 0.03 * i) * share; budget > 0; budget -= 1) {
+        if (Math.random() < Math.min(1, budget)) {
+          this._pushFire(this._spawnSmoke(anchor, seats[(Math.random() * seats.length) | 0]));
+        }
+      }
     }
   }
 
@@ -419,14 +439,23 @@ class WeatherParticleSystem {
     p.vx += p.shear;
     p.x += p.vx;
     p.y += p.vy;
-    p.scale *= 1.005;       // a plume opens out as it climbs
+    p.scale *= 1.004;       // a plume opens out as it climbs, but slowly
     p.lean += p.spin;
-    p.opacity = p.maxOpacity * (t < 0.18 ? t / 0.18 : Math.pow(1 - (t - 0.18) / 0.82, 1.3));
+    // Linear falloff after a quick fade-in, so a puff holds most of its value
+    // through mid-life. Any easing above linear here dumps the alpha early and
+    // the plume reads as thin haze however many puffs are in it.
+    p.opacity = p.maxOpacity * (t < 0.12 ? t / 0.12 : 1 - (t - 0.12) / 0.88);
   }
 
   render(ctx) {
+    // Smoke first, as its own pass: it has to sit *behind* the flames, or a
+    // thick plume dulls the fire throwing it. Spawn order alone would put
+    // later puffs on top of earlier licks.
     for (const p of this.particles) {
-      if (p.opacity <= 0.01) continue;
+      if (p.fx === 'smoke' && p.opacity > 0.01) this._renderFire(ctx, p);
+    }
+    for (const p of this.particles) {
+      if (p.opacity <= 0.01 || p.fx === 'smoke') continue;
       if (p.fx) { this._renderFire(ctx, p); continue; }
       ctx.save();
       ctx.globalAlpha = p.opacity;
@@ -743,27 +772,40 @@ class WeatherParticleSystem {
     };
   }
 
-  // Dark, non-additive plume off a serious burn. Spawns above the flame tips
-  // so it never dulls the hot part, shears sideways as it climbs and expands.
-  // The contrast is what makes the licks underneath read as bright.
+  // One slowly-swinging wind direction shared by every plume on the map. Smoke
+  // that all leans the same way reads as weather; smoke where each puff picks
+  // its own drift reads as a particle system. Two very slow, incommensurate
+  // sines so the wind wanders instead of sweeping back and forth on a beat.
+  get _wind() {
+    return Math.sin(this._t * 0.0006) * 0.9 + Math.sin(this._t * 0.00017) * 0.45;
+  }
+
+  // Dark, non-additive plume. Starts just off the flame tips and climbs
+  // slowly while expanding, so successive puffs stack into a column rather
+  // than scattering. Rendered behind the flames (see render), so it can begin
+  // low on the fire without dulling the hot part — and that contrast is what
+  // makes the licks underneath read as bright rather than merely orange.
   _spawnSmoke(anchor, seat) {
-    const sx = anchor.x + seat.dx * anchor.spread;
-    const sy = anchor.y + seat.dy * anchor.spread;
+    const sx   = anchor.x + seat.dx * anchor.spread;
+    const sy   = anchor.y + seat.dy * anchor.spread;
+    const wind = this._wind;
     return {
       id: this._nextId++, fx: 'smoke',
-      x: sx + (Math.random() - 0.5) * anchor.spread * 0.3,
-      y: sy - anchor.spread * (0.3 + Math.random() * 0.25),
+      x: sx + (Math.random() - 0.5) * anchor.spread * 0.34,
+      y: sy - anchor.spread * (0.10 + Math.random() * 0.22),
       prevX: sx, prevY: sy,
-      vx: (Math.random() - 0.5) * 0.25,
-      vy: -(0.45 + Math.random() * 0.35),
-      shear: 0.002 + Math.random() * 0.004,
+      vx: wind * 0.28 + (Math.random() - 0.5) * 0.2,
+      // Slow climb: fast-rising puffs string out into a dotted line, slow ones
+      // pile up on each other into something with mass.
+      vy: -(0.32 + Math.random() * 0.28),
+      shear: wind * 0.009 + (Math.random() - 0.5) * 0.003,
       lean: Math.random() * Math.PI * 2,
       spin: (Math.random() - 0.5) * 0.012,
-      size: anchor.spread * (0.18 + Math.random() * 0.12) * seat.scale,
+      size: anchor.spread * (0.30 + Math.random() * 0.16) * seat.scale,
       scale: 1,
-      maxOpacity: 0.16 + Math.random() * 0.14,
+      maxOpacity: 0.34 + Math.random() * 0.22,
       opacity: 0, age: 0, dead: false,
-      ttl: 110 + Math.random() * 80,
+      ttl: 150 + Math.random() * 110,
     };
   }
 }
