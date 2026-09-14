@@ -1,0 +1,100 @@
+{
+  "id": "settlement_clinic_01",
+  "title": "{{doc_name}}'s Clinic",
+  "start_node": "waiting_room",
+  "nodes": {
+    "waiting_room": {
+      "text": "A door made of a stop sign. Inside, {{doc_name}} is elbow-deep in something that used to bark. 'Sit, sit,' they say, not looking up. 'Everyone's got a bug going around. I fixed it. Mostly.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask what's in the jars.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "demonstration",
+          "hazard_id": "wrong_jar"
+        }
+      ]
+    },
+    "demonstration": {
+      "text": "{{doc_name}} uncorks a jar that smells like a dare. 'Expired Meds, boiled down proper. That's the base for near everything I make here.' They scrawl a ratio on a rib bone and hand it over.",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 1 }
+      ],
+      "choices": [
+        {
+          "label": "Ask about the sock trick.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "bandage_notes",
+          "hazard_id": "wrong_jar"
+        }
+      ]
+    },
+    "bandage_notes": {
+      "text": "'Clean underwear, if you've got it,' {{doc_name}} says, not even a little embarrassed. 'Boiled with the meds, it wraps like a dream. Don't ask about the smell.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 2 }
+      ],
+      "choices": [
+        {
+          "label": "Ask about the back room, where the screaming was coming from.",
+          "cost": { "med": 1 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "back_room",
+          "hazard_id": "patient_zero"
+        }
+      ]
+    },
+    "back_room": {
+      "text": "A survivor with a leg wrapped in something that used to squelch and now just sits there, cured. 'Fur and meds,' {{doc_name}} says proudly. 'Keeps infection out. Wraps ugly, works clean.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 3 }
+      ],
+      "choices": [
+        {
+          "label": "Ask what's behind the second curtain.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "deeper_room",
+          "hazard_id": "syrup_spill"
+        }
+      ]
+    },
+    "deeper_room": {
+      "text": "Behind the curtain, a paste the color of a bruise sits in an unmarked jar. 'Corrosive syrup, cut with meds,' {{doc_name}} explains. 'Draws the glow out through the skin. Ugly. Works.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 4 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "wrong_jar": {
+      "text": "You knock over the wrong jar. Whatever was in it is now on you.",
+      "penalty": { "food": -1 },
+      "ends_encounter": false
+    },
+    "patient_zero": {
+      "text": "The 'patient' sits up faster than anything cured should. You leave without asking again.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "syrup_spill": {
+      "text": "A jar of something corrosive tips as you reach past it. It finds skin before you can pull back.",
+      "penalty": { "radiation": 1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "doc_name": ["Doc Bartho", "Nurse Kessel", "Old Man Pruitt", "Sister Marrow"]
+  }
+}

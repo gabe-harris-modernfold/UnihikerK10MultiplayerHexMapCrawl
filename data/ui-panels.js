@@ -25,6 +25,7 @@ function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, maj
     if (def.id === ACT_SCAV)   return 'Needs Salvage terrain (Broken Urban · Flooded District · Glass Fields)';
     if (def.id === ACT_TRADE)  return 'No survivors on this hex';
     if (def.id === ACT_TREAT)  return 'Only the Medic can treat outside a Settlement';
+    if (def.id === ACT_CRAFT)  return 'Needs a Settlement hex';
     return 'Not available here';
   }
   if (!hasMP)    return `Needs ${def.mpCost} MP (have ${mp})`;
@@ -139,6 +140,65 @@ function initActionPanel() {
     }
   }
 
+  // ── Craft sub-control ────────────────────────────────────────────
+  // Total qty of itemId held across a player's typed-item slots (it[]/iq[]
+  // are index-stable, 0 = empty — mirrors the server's invType[]/invQty[]).
+  function invCountOf(p, itemId) {
+    let n = 0;
+    const it = p?.it, iq = p?.iq;
+    if (!Array.isArray(it)) return 0;
+    for (let s = 0; s < it.length; s++) if (it[s] === itemId) n += iq?.[s] ?? 0;
+    return n;
+  }
+
+  function buildCraftList() {
+    const el = document.getElementById('action-craft-list');
+    el.innerHTML = '';
+    if (myId < 0) return;
+    const me = players[myId];
+    const known = RECIPES.filter(r => knowsRecipe(me.kr, r.id));
+    if (known.length === 0) {
+      el.innerHTML = '<div class="action-no-cond">You don’t know how to make anything yet — find out in the wasteland</div>';
+      return;
+    }
+    known.forEach(r => {
+      const missing = [];
+      for (let m = 0; m < 3; m++) {
+        const matId = r.matItem[m];
+        if (!matId) continue;
+        const have = invCountOf(me, matId);
+        const need = r.matQty[m];
+        if (have < need) missing.push(`${getItemById(matId)?.name ?? '?'} ${have}/${need}`);
+      }
+      for (let i = 0; i < 5; i++) {
+        const need = r.resCost[i];
+        if (!need) continue;
+        const have = me.inv?.[i] ?? 0;
+        if (have < need) missing.push(`${RES_SHORT[i]} ${have}/${need}`);
+      }
+      const affordable = missing.length === 0;
+      const reqParts = [];
+      for (let m = 0; m < 3; m++) {
+        if (r.matItem[m]) reqParts.push(`${r.matQty[m]}× ${getItemById(r.matItem[m])?.name ?? '?'}`);
+      }
+      for (let i = 0; i < 5; i++) {
+        if (r.resCost[i]) reqParts.push(`${r.resCost[i]} ${RES_SHORT[i]}`);
+      }
+      const btn = document.createElement('button');
+      btn.className = 'chk-action-btn craft-card' + (affordable ? '' : ' action-disabled');
+      btn.innerHTML =
+        `<span class="act-label">${escHtml(r.name)}</span>` +
+        `<span class="act-desc">${escHtml(reqParts.join(' + '))} → ${escHtml(getItemById(r.outputItem)?.name ?? '?')}</span>` +
+        (affordable ? '' : `<span class="act-unavail-reason">Needs ${escHtml(missing.join(', '))}</span>`);
+      btn.addEventListener('click', () => {
+        if (!affordable) return;
+        send({ t: 'act', a: ACT_CRAFT, r: r.id });
+        closeActionPanel();
+      });
+      el.appendChild(btn);
+    });
+  }
+
   document.getElementById('action-trade-send').addEventListener('click', () => {
     if (myId < 0 || tradeTargetPid < 0) return;
     const allZero = tradeGive.every(v => v === 0) && tradeWant.every(v => v === 0);
@@ -162,6 +222,7 @@ function initActionPanel() {
     if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
     document.getElementById('action-water-ctrl').style.display = 'none';
     document.getElementById('action-trade-ctrl').style.display = 'none';
+    document.getElementById('action-craft-ctrl').style.display = 'none';
   }
 
   function showExhaustedPanel(me) {
@@ -246,7 +307,14 @@ function initActionPanel() {
       `<span class="act-mp-badge">MP: ${mp}</span>` +
       `<span class="act-terrain-ctx">${terrName}${terrTags ? ' · ' + terrTags : ''}</span>`;
 
+    // Rebuilding the main list must also hide any sub-panel left open from
+    // before — the FAB can call openActionPanel() again while a sub-panel is
+    // already showing (panel still .open, nothing routed through
+    // closeActionPanel() in between), and only water was reset here, leaving
+    // trade/craft visible stacked on top of the freshly rebuilt list.
     document.getElementById('action-water-ctrl').style.display = 'none';
+    document.getElementById('action-trade-ctrl').style.display = 'none';
+    document.getElementById('action-craft-ctrl').style.display = 'none';
 
     // Shelter cost mirrors doShelter(): improved when affordable, basic otherwise;
     // an existing basic shelter can only be upgraded (2 scrap, 2 MP).
@@ -259,6 +327,7 @@ function initActionPanel() {
       { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
       { id: ACT_SHELTER, icon: '\u2302', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_CRAFT,   icon: '⚒', label: 'CRAFT', mpCost: 1, desc: 'Craft a known recipe — Settlement only' },
       { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
     ];
     // TREAT is only offered when there is a Major Wound to treat.
@@ -274,6 +343,9 @@ function initActionPanel() {
     // TRADE availability: requires another connected player, or the caravan, on the same hex
     const tradeAvail  = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r) ||
       !!(worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r);
+    // CRAFT: Settlement only, same terrain check TREAT uses for non-Medics — which
+    // recipes are actually affordable is decided per-card inside the craft sub-panel.
+    const craftAvail  = terr === null || terr === 9;
 
     actionDefs.forEach(def => {
       // Fix: shelter unavailable if improved shelter already built here
@@ -285,6 +357,7 @@ function initActionPanel() {
       const treatAvail = isMedic || terr === null || terr === 9;
       const available  = def.id === ACT_TRADE ? tradeAvail
                        : def.id === ACT_TREAT ? treatAvail
+                       : def.id === ACT_CRAFT ? craftAvail
                        :                        terrAvail;
       const hasMP      = mp >= def.mpCost;
       const hasScrap   = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
@@ -327,6 +400,12 @@ function initActionPanel() {
         if (def.id === ACT_TRADE) {
           buildTradeTargetList();
           document.getElementById('action-trade-ctrl').style.display = '';
+          actionBtnList.style.display = 'none';
+          return;
+        }
+        if (def.id === ACT_CRAFT) {
+          buildCraftList();
+          document.getElementById('action-craft-ctrl').style.display = '';
           actionBtnList.style.display = 'none';
           return;
         }

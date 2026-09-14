@@ -92,9 +92,9 @@ static const ToneStep MOTIF_ROTTEN_CHORD[] = {
   {208, 40}, {220, 40}, {233, 40}, {147, 280}, {0, 0}
 };
 
-// 16. Sewer Echo — player join: same-note echo taps on D3, final tap drops a tritone — different chamber
+// 16. Charge Up — player join: D-minor arpeggio rising and quickening (D3-F3-A3-D4), lands a clean octave — a build, not a drop
 static const ToneStep MOTIF_SEWER_ECHO[] = {
-  {147, 150}, {-140, 0}, {147, 100}, {-140, 0}, {104, 70}, {0, 0}
+  {147, 100}, {175, 80}, {220, 60}, {294, 280}, {0, 0}
 };
 
 // 17. Weird Anomaly — full clear bonus: whole-tone run A4-B4-C#5, lands on the tritone-related D#5

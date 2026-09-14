@@ -338,7 +338,7 @@ static void movePlayer(int pid, int dir) {
   if (!canEnterTerrain(pid, destTerrain, &mc)) return;
 
   // ── Weather movement penalty ─────────────────────────────────────────────
-  mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase]);
+  mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase] + floodMovePenalty(nq, nr));
 
   // ── Guide trait (archetype 0): a companion moving into a hex the Guide is
   //    standing on follows their line and pays MC−1 (min 1).

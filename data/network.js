@@ -100,7 +100,7 @@ const Diag = (() => {
   setInterval(report, 60_000);
   globalThis.diag = { report, data: d, avgRtt };
 
-  return { onSend, onDropped, onMsg, onConnect, onDisconnect, onError, report, wsState };
+  return { onSend, onDropped, onMsg, onConnect, onDisconnect, onError, report, wsState, data: d };
 })();
 
 // ── Move cooldown tracking (client-side estimate) ─────────────────
@@ -133,6 +133,8 @@ const CONN_LOST_QUIPS = [
   '📡 The uplink is gone. Ashes, mostly.',
 ];
 let socket;
+let reconnectAttempts = 0;  // drives backoff; reset on a successful onopen
+let pendingActions = [];    // [{obj, ts}] — move/act dropped while offline, replayed on reconnect (oldest first)
 
 // Set to true once server confirms it has saved creds; prevents redundant auto-sends.
 let serverHasWifiCreds = false;
@@ -146,6 +148,8 @@ function connect() {
   socket = new WebSocket(wsUrl);
   socket.onopen    = () => {
     Diag.onConnect();
+    Diag.data.lastMsgAt = Date.now();  // else the staleness watchdog re-trips on the stale pre-disconnect value
+    reconnectAttempts = 0;
     setStatus('Connected');
     serverHasWifiCreds = false;  // reset on each new connection
     // Auto-send saved WiFi credentials if server doesn't already have them
@@ -161,7 +165,14 @@ function connect() {
     const msSinceEnc = globalThis._lastEncStartT ? (Date.now() - globalThis._lastEncStartT) : '—';
     console.warn('%c[WS ▼] Closed', 'color:#fa0;font-weight:bold', `code=${ev.code} wasClean=${ev.wasClean} reason="${ev.reason}" msSinceEncStart=${msSinceEnc}`);
     showToast(CONN_LOST_QUIPS[Math.floor(Math.random() * CONN_LOST_QUIPS.length)]);
-    Diag.onDisconnect(); setStatus('Reconnecting...'); setTimeout(connect, RECONNECT_DELAY_MS);
+    Diag.onDisconnect(); setStatus('Reconnecting...');
+    // Exponential backoff + proportional jitter — spreads out up to 6 clients
+    // reconnecting at once (e.g. right after a board reboot) instead of
+    // hammering it in lockstep on a flat interval.
+    const backoff = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+    const delay = backoff * (1 - RECONNECT_JITTER_PCT / 2 + Math.random() * RECONNECT_JITTER_PCT);
+    reconnectAttempts++;
+    setTimeout(connect, delay);
   };
   socket.onerror   = (event) => {
     Diag.onError(event);
@@ -176,8 +187,43 @@ function send(obj) {
     socket.send(JSON.stringify(obj));
   } else {
     Diag.onDropped();
+    // Silent auto-replay: only for move/act (server-validated on replay via
+    // the existing col_fail/err paths, same as any other rejected action) —
+    // not pick/wifi/trade_*/use_item, which either already resend themselves
+    // or carry more risk if fired again after the world moved on.
+    if (obj.t === 'm' || obj.t === 'act') {
+      pendingActions.push({ obj, ts: Date.now() });
+      if (pendingActions.length > PENDING_ACTION_MAX) pendingActions.shift();
+    }
   }
 }
+
+// Replays queued move/act input once a fresh sync confirms we're back in the
+// game with current state — called from _msgSync(), not onopen, since a full
+// reconnect still has to clear the lobby→pick→sync handshake server-side
+// before there's a slot to apply these to. Anything older than the TTL is
+// dropped outright rather than replayed into a world that's moved on.
+function _flushPendingActions() {
+  if (!pendingActions.length) return;
+  const now = Date.now();
+  const toSend = pendingActions.filter(a => now - a.ts <= PENDING_ACTION_TTL_MS);
+  pendingActions = [];
+  toSend.forEach(a => send(a.obj));
+}
+
+// Staleness watchdog: once in-game, broadcastState() is unconditional every
+// 100ms server-side, so a healthy connection is never quiet this long. Catches
+// a half-dead socket the browser itself hasn't noticed yet and forces the
+// existing reconnect path instead of waiting on it. Gated on myId >= 0: the
+// lobby/char-select screen has no such guarantee (no player slot yet =
+// nothing to broadcast) and already has its own pick-timeout handling.
+setInterval(() => {
+  if (myId >= 0 && socket?.readyState === WebSocket.OPEN &&
+      Date.now() - Diag.data.lastMsgAt > WS_STALE_THRESHOLD_MS) {
+    console.warn('%c[WS ⚠] Stale connection (no msg in %dms) — forcing reconnect', 'color:#fa0', WS_STALE_THRESHOLD_MS);
+    socket.close();
+  }
+}, WS_STALE_CHECK_INTERVAL_MS);
 
 
 function checkAutoRest() {
@@ -242,6 +288,13 @@ function _msgAsgn(msg) {
 
 function _msgLobby(msg) {
   lobbyAvail.val = Array.isArray(msg.avail) ? msg.avail : [];
+  // Start preloading hex/shelter/forage-animal art immediately on connect,
+  // before the player has picked a character — these counts are static for
+  // the boot session, so there's no need to wait for sync. loadTerrainVariants
+  // et al. guard against a redundant reload when sync arrives later.
+  if (msg.vc) loadTerrainVariants(msg.vc);
+  if (msg.sv) loadShelterVariants(msg.sv);
+  if (msg.fa) loadForrageAnimalImgs(msg.fa);
   _clearPickTimeout();
   uiPickPending.val = false;
   console.log('%c[LOBBY] avail=%o myId=%d pendingLobbyRedirect=%s', 'color:#09f;font-weight:bold', lobbyAvail.val, myId, pendingLobbyRedirect);
@@ -294,6 +347,7 @@ function _msgSync(msg) {
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
+  if (myId >= 0) _flushPendingActions();  // _checkDownedState may have reset myId to -1 above — skip replay for a dead slot
   // Re-render char-sheet if open — ensures wounds/inventory reflect fresh server state (BUG-10)
   if (document.getElementById('char-overlay')?.classList.contains('open')) {
     renderInventory?.();
@@ -327,6 +381,7 @@ function _msgState(msg) {
     if (pd.it) p.it = pd.it;   // typed inventory types
     if (pd.iq) p.iq = pd.iq;   // typed inventory quantities
     if (pd.eq) p.eq = pd.eq;   // equipment slots
+    if (pd.kr !== undefined) p.kr = pd.kr;  // known-recipes bitmask (mock's 's' sends it; firmware's doesn't — kr there only ever arrives via 'sync' or a craft item_result)
     if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
   });
   _packFullRearmCheck();   // fresh token totals — did the player free up room?
@@ -689,6 +744,7 @@ function _buildActDetail(ev) {
   if (ev.wd)     d += ` +${ev.wd}Water`;
   if (ev.lld)    d += ` ${ev.lld > 0 ? '+' : ''}${ev.lld}LL`;
   if (ev.radd)   d += ` ${ev.radd > 0 ? '+' : ''}${ev.radd}R`;
+  if (ev.ar)     d += ` \u2192 ${getRecipeById(ev.ar)?.name ?? 'something'}`;
   if (ev.scoreD) d += ` \u271F${ev.scoreD}pts`;
   return d;
 }
@@ -707,7 +763,7 @@ function _handleShelterSuccess(ev) {
 }
 
 function _narrateActResult(ev, actNm) {
-  const actNames = ['Forage','Water','Treat','Scavenge','Shelter','','Survey','Rest'];
+  const actNames = ['Forage','Water','Treat','Scavenge','Shelter','Craft','Survey','Rest'];
   const outNames = ['','Success','Partial','Failed'];
   const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
   narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
@@ -823,6 +879,27 @@ function _evFireDamage(ev) {
   }
 }
 
+function _evFloodWashout(ev) {
+  // ev.intensity is NOT a flood intensity level here — it's the terrain id
+  // the hex just became: 3 (Marsh, a swamped edge pushed under by the
+  // advancing flood front) or 5 (Flooded District, a swamp that's stayed
+  // under long enough to fully drown). See world-system.hpp's spreadFlood()
+  // two-stage progression. No dedicated flood effect needed beyond this —
+  // the terrain art itself (already rendered generically by whatever
+  // gameMap[...].terrain is) tells the story, same as the storm's existing
+  // rain/lightning already selling "it's flooding right now".
+  if (gameMap[ev.r]?.[ev.q]) gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], terrain: ev.intensity };
+}
+
+function _evFloodDamage(ev) {
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-check-fail">🌊 ${escHtml(who)} swept off their feet by a flash flood</span>`);
+  if (ev.pid === myId) {
+    showToast('🌊 The ground gives way — you\'re swept downstream.');
+    updateSidebar();
+  }
+}
+
 function _evDoomWarn(ev) {
   // 51-75 awareness, adjacent — a world-level dread notice, sent to everyone
   // regardless of position (see world-system-spec.md), not just the named pid.
@@ -895,6 +972,17 @@ function _evItemResult(ev) {
     if (ev.it) { console.log('[INV] applying server inv state', ev.it); p.it = ev.it; }
     if (ev.iq) p.iq = ev.iq;
     if (ev.eq) { console.log('[INV] applying server eq state', ev.eq); p.eq = ev.eq; }
+    // CRAFT is the one item action that also spends resource tokens (inv[]),
+    // unlike use/equip/unequip/drop which only touch it[]/iq[]/eq[].
+    if (ev.act === 'craft') {
+      if (ev.inv) p.inv = ev.inv;
+      if (ev.kr !== undefined) p.kr = ev.kr;
+      if (ev.pid === myId) {
+        const outName = getItemById?.(getRecipeById(ev.recipe)?.outputItem)?.name ?? 'something';
+        addLog?.(`<span class="log-col">⚒ Crafted ${escHtml ? escHtml(outName) : outName}.</span>`);
+        updateSidebar?.();
+      }
+    }
   }
   // Always refresh char-sheet inventory/equipment — ghost-tap on mobile can close
   // char-overlay between item-menu dismiss and server ack, causing the open-check to fail
@@ -948,6 +1036,17 @@ function _evEncBank(ev) {
       ev.loot.forEach((v, i) => {
         if (i >= 0 && i < 5 && v > 0) players[myId].inv[i] = (players[myId].inv[i] ?? 0) + v;
       });
+    }
+    // recs is a bitmask — a single scene can walk through several nodes,
+    // each granting a different recipe, before ever banking.
+    if (ev.recs) {
+      players[myId].kr = (players[myId].kr ?? 0) | ev.recs;
+      for (let rid = 1; rid <= 32; rid++) {
+        if (!((ev.recs >>> (rid - 1)) & 1)) continue;
+        const rname = getRecipeById(rid)?.name ?? `recipe ${rid}`;
+        addLog(`<span class="log-col">⚒ You learned how to make ${escHtml(rname)}!</span>`);
+        showToast(`⚒ Recipe learned: ${rname}`);
+      }
     }
     showToast(`★ You drag the spoils from the ruin. +${ev.scoreD}`);
     globalThis._onEncBank?.(ev);
@@ -1019,8 +1118,10 @@ function handleEvent(ev) {
     case 'car_avail':   _evCarAvail(ev);   break;
     case 'doom_warn':   _evDoomWarn(ev);   break;
     case 'doom_act':    _evDoomAct(ev);    break;
-    case 'fire_spread': _evFireSpread(ev); break;
-    case 'fire_dmg':    _evFireDamage(ev); break;
+    case 'fire_spread':   _evFireSpread(ev);   break;
+    case 'fire_dmg':      _evFireDamage(ev);   break;
+    case 'flood_washout': _evFloodWashout(ev); break;
+    case 'flood_dmg':     _evFloodDamage(ev);  break;
     case 'item_result': _evItemResult(ev); break;
     case 'enc_start': {
       // POI consumed — clear it from local map so eye disappears immediately

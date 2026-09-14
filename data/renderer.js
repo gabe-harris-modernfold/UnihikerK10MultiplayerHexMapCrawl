@@ -396,9 +396,9 @@ function drawFootprints(cx, cy, cell) {
     const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
     const fx = cx + Math.cos(angle) * radius;
     const fy = cy + Math.sin(angle) * radius;
-    // Worn-in tracks: dim amber boot sole
+    // Worn-in tracks: black boot sole
     drawGlyph(ctx, GLYPH.FOOTPRINT, fx - footprintSize / 2, fy - footprintSize / 2,
-              footprintSize, '#6B4010', 0.75);
+              footprintSize, '#000000', 0.75);
     footprintIdx++;
   }
 }

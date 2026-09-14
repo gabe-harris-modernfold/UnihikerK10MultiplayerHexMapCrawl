@@ -188,6 +188,7 @@ static constexpr uint8_t ACT_WATER   = 1;
 static constexpr uint8_t ACT_TREAT   = 2;
 static constexpr uint8_t ACT_SCAV    = 3;
 static constexpr uint8_t ACT_SHELTER = 4;
+static constexpr uint8_t ACT_CRAFT   = 5;
 static constexpr uint8_t ACT_SURVEY  = 6;
 static constexpr uint8_t ACT_REST    = 7;
 
@@ -223,8 +224,11 @@ static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1, WEATHER_STORM = 2
 // dangerous variant.
 static const int8_t  WEATHER_VIS_PENALTY[6]  = { 0, 1, 3, 5, 4, 2 };
 static const uint8_t WEATHER_MOVE_PENALTY[6] = { 0, 1, 2, 3, 1, 1 };
-static const uint16_t WEATHER_DUR_MIN[6]     = { 3, 1, 1, 1, 1, 1 };
-static const uint16_t WEATHER_DUR_MAX[6]     = { 7, 3, 2, 1, 2, 3 };
+// Index 0 (Clear) trimmed from {3,7} to {2,5} days — the dominant knob for
+// how often weather becomes an incident at all, since every other phase is
+// already short-lived (1-3 days) and Clear was the long stretch between them.
+static const uint16_t WEATHER_DUR_MIN[6]     = { 2, 1, 1, 1, 1, 1 };
+static const uint16_t WEATHER_DUR_MAX[6]     = { 5, 3, 2, 1, 2, 3 };
 // Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
@@ -323,6 +327,24 @@ struct GroundItem {
   uint8_t  qty;
 };
 
+// ── Crafting ──────────────────────────────────────────────────────────────
+// Recipes are secret — a survivor must discover one via an encounter
+// ("recipe" loot entry, see encounter_engine.hpp) before CRAFT will offer it.
+// Crafting itself is an MP-costing, Settlement-only action (see ACT_CRAFT).
+static constexpr uint8_t MAX_RECIPES     = 32;
+static constexpr uint8_t RECIPE_MAX_MATS = 3;
+static constexpr uint8_t TERRAIN_SETTLEMENT = 9;
+
+struct RecipeDef {
+  uint8_t id;
+  char    name[16];
+  uint8_t outputItem;
+  uint8_t outputQty;
+  uint8_t matItem[RECIPE_MAX_MATS];  // material ItemDef ids required (0 = unused slot)
+  uint8_t matQty[RECIPE_MAX_MATS];
+  uint8_t resCost[5];                // water/food/fuel/med/scrap tokens consumed
+};
+
 static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255 };
 static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0, -3 };
 static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0 };
@@ -419,6 +441,8 @@ struct Player {
   uint8_t  llCapPenalty;  // permanent LL-ceiling reduction (Uranium Candy)
 
   uint8_t  surveyedMap[SURVEYED_BYTES];
+
+  uint32_t knownRecipes;  // bit (id-1) per discovered RecipeDef, learned via encounters
 };
 
 // ── Tone sequences and motifs ────────────────────────────────────────────────
@@ -452,7 +476,9 @@ enum EvtType : uint8_t {
   EVT_FIRE_SPREAD  = 21,   // hex caught fire: q, r, intensity (vision-culled) — Phase 2
   EVT_CARAVAN_TRADE = 22,  // caravan trade available: pid (co-located player)
   EVT_DOOM_WARNING = 23,   // creeping doom adjacent, low threshold: pid — Phase 3
-  EVT_DOOM_ACT     = 24    // creeping doom destroyed resource / drained LL: pid, q, r — Phase 3
+  EVT_DOOM_ACT     = 24,   // creeping doom destroyed resource / drained LL: pid, q, r — Phase 3
+  EVT_FLOOD_WASHOUT = 25,  // hex terrain just changed: q, r, amt=resulting terrain (3=Marsh edge, 5=Flooded District core) (vision-culled)
+  EVT_FLOOD_DAMAGE  = 26   // player swept off their feet by a flash flood: pid, q, r, amt (sentinel)
 };
 
 struct GameEvent {
@@ -477,6 +503,7 @@ struct GameEvent {
   int8_t   actMedD;
   int16_t  actScoreD;
   uint8_t  actCnd;
+  uint8_t  actRecipe;   // recipe id crafted this action (ACT_CRAFT success only)
   uint8_t  actWndMin, actWndMaj;   // wound counts after a TREAT action
   uint32_t evWsId;
   uint8_t  actDn;
@@ -503,6 +530,8 @@ struct GameEvent {
   uint8_t  encItemQty;
   uint8_t  encItemType2;  // second typed item, when a node grants both
   uint8_t  encItemQty2;
+  uint8_t  encRecipe;     // recipe id granted THIS choice (node "recipe" loot entry), for the in-scene toast
+  uint32_t bankedRecipes; // enc_bank only: full bitmask of every recipe committed to knownRecipes just now
   uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
 };
 
@@ -532,6 +561,7 @@ struct ActiveEncounter {
   uint8_t  pendingItemType[ENC_MAX_ITEMS];
   uint8_t  pendingItemQty[ENC_MAX_ITEMS];
   uint8_t  pendingItemCount;
+  uint32_t pendingRecipes;  // bitmask (bit id-1) of every recipe learned this scene, granted on enc_bank
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
 
@@ -595,7 +625,7 @@ static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 13;
+static constexpr uint8_t  SAVE_VERSION = 14;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -642,6 +672,7 @@ struct __attribute__((packed)) SavePlayer {
   uint8_t  radClean;      // v12
   uint8_t  llCapPenalty;  // v12
   uint8_t  surveyedMap[SURVEYED_BYTES];
+  uint32_t knownRecipes;  // v14
 };
 
 struct __attribute__((packed)) SaveGroundItem {
@@ -658,6 +689,10 @@ static TradeOffer     tradeOffers[MAX_PLAYERS];
 // ── Item registry ─────────────────────────────────────────────
 static ItemDef* itemRegistry = nullptr;          // [MAX_ITEMS], PSRAM (allocPsramGlobals)
 static uint8_t  itemCount = 0;
+
+// ── Recipe registry ────────────────────────────────────────────
+static RecipeDef* recipeRegistry = nullptr;      // [MAX_RECIPES], PSRAM (allocPsramGlobals)
+static uint8_t     recipeCount = 0;
 
 // ── Ground items ──────────────────────────────────────────────
 static GroundItem groundItems[MAX_GROUND];
@@ -806,11 +841,13 @@ static void allocPsramGlobals() {
   W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
   pendingEvents = (GameEvent*)              psramStaticAlloc(sizeof(GameEvent) * EVT_QUEUE_SIZE);
   itemRegistry  = (ItemDef*)                psramStaticAlloc(sizeof(ItemDef)   * MAX_ITEMS);
+  recipeRegistry= (RecipeDef*)              psramStaticAlloc(sizeof(RecipeDef) * MAX_RECIPES);
   imgCache      = (ImgFile*)                psramStaticAlloc(sizeof(ImgFile)   * MAX_IMG_CACHE);
   webFiles      = (WebFile*)                psramStaticAlloc(sizeof(WebFile)   * MAX_WEB_FILES);
-  Log.notice("PSRAM globals: map=%u whex=%u evq=%u items=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
+  Log.notice("PSRAM globals: map=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
              (unsigned)MAP_BYTES, (unsigned)W_HEX_BYTES,
              (unsigned)(sizeof(GameEvent) * EVT_QUEUE_SIZE), (unsigned)(sizeof(ItemDef) * MAX_ITEMS),
+             (unsigned)(sizeof(RecipeDef) * MAX_RECIPES),
              (unsigned)(sizeof(ImgFile) * MAX_IMG_CACHE), (unsigned)(sizeof(WebFile) * MAX_WEB_FILES),
              (unsigned)(heapBefore / 1024), (unsigned)(ESP.getFreeHeap() / 1024),
              (unsigned)(ESP.getFreePsram() / 1024));
@@ -959,6 +996,13 @@ void setup() {
   Log.notice("Items loaded: %d", (int)itemCount);
   { char ib[30]; snprintf(ib, 30, "Items: %d loaded", (int)itemCount);
     splashAdd(ib, 0x60A040); }
+
+  Log.notice("Recipes load start");
+  splashAdd("Loading recipes...");
+  loadRecipeRegistry();
+  Log.notice("Recipes loaded: %d", (int)recipeCount);
+  { char rb[30]; snprintf(rb, 30, "Recipes: %d loaded", (int)recipeCount);
+    splashAdd(rb, 0x60A040); }
 
   Log.notice("Encounter index load start");
   splashAdd("Loading encounters...");

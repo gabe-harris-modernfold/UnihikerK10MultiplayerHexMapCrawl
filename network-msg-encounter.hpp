@@ -166,6 +166,16 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
       else if (shown == 1) { ev.encItemType2 = itm[k]; ev.encItemQty2 = qty[k]; }
       shown++;
     }
+    // A recipe is a one-time knowledge grant, pending like the loot above
+    // until the player banks — see handleMsg_enc_bank. OR'd into a bitmask
+    // (not overwritten) since a single scene can walk through several nodes,
+    // each granting a different recipe, before ever banking.
+    // Bound the id before the shift (1u << 32+ is UB) — content is hand-authored
+    // and should never exceed MAX_RECIPES, but this is parsed from a data file.
+    if (ch.recipeId && ch.recipeId <= MAX_RECIPES) {
+      enc.pendingRecipes |= (1u << (ch.recipeId - 1));
+      ev.encRecipe = ch.recipeId;
+    }
     // Advance to the destination node
     strncpy(enc.nodeKey, ch.nextKey, ENC_KEY_LEN - 1); enc.nodeKey[ENC_KEY_LEN - 1] = 0;
     enc.canBank = ch.nextCanBank ? 1 : 0;
@@ -235,11 +245,13 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       }
       for (int j = 0; j < enc.pendingItemCount; j++)
         grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
+      p.knownRecipes |= enc.pendingRecipes;
       int scoreGain = totalRes * 3 + (fullClear ? 10 : 0);
       GameEvent ev = {};
       ev.type = EVT_ENC_BANK; ev.pid = (uint8_t)pid;
       ev.q = (int16_t)enc.hexQ; ev.r = (int16_t)enc.hexR;
       memcpy(ev.encLoot, enc.pendingLoot, 5);
+      ev.bankedRecipes = enc.pendingRecipes;
       addScore(p, ev, scoreGain);
       p.encCount++;
       enqEvt(ev);

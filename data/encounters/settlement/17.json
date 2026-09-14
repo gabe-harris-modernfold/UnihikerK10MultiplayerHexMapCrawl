@@ -1,0 +1,78 @@
+{
+  "id": "settlement_sparky_01",
+  "title": "{{vendor_name}}'s Swap Meet",
+  "start_node": "stalls",
+  "nodes": {
+    "stalls": {
+      "text": "{{vendor_name}} has a folding table covered in batteries, wire, and things that spark when you least expect it. A hand-painted sign reads 'NO REFUNDS, NO EXCEPTIONS, NO TOUCHING.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Touch something anyway.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "haggle",
+          "hazard_id": "static_shock"
+        }
+      ]
+    },
+    "haggle": {
+      "text": "{{vendor_name}} doesn't yell, just names a price and taps the Sparky Bits until you agree. 'Two of these and a splash of fuel makes a knuckle-duster that bites back,' they say.",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 8 }
+      ],
+      "choices": [
+        {
+          "label": "Ask if there's something smaller, for a headache.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "the_salts",
+          "hazard_id": "static_shock"
+        }
+      ]
+    },
+    "the_salts": {
+      "text": "'One of these'll clear your sinuses instead, if you're into that,' {{vendor_name}} says, tossing over something that smells faintly of ozone.",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 9 }
+      ],
+      "choices": [
+        {
+          "label": "Ask what the ones that hum are for.",
+          "cost": { "scrap": 1 },
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "the_humming_box",
+          "hazard_id": "bad_wire"
+        }
+      ]
+    },
+    "the_humming_box": {
+      "text": "{{vendor_name}} opens a box lined with foam and mutant cactus spines. 'Chew it with a live one in your cheek. You'll see farther for about ten seconds. After that it's your problem.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 10 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "static_shock": {
+      "text": "Something on the table was live. Your arm doesn't work right for a minute.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    },
+    "bad_wire": {
+      "text": "A wire you weren't supposed to touch finds your hand first. {{vendor_name}} doesn't apologize.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "vendor_name": ["Sparky Mo", "Auntie Volt", "The Fuse", "Copperhead Ruiz"]
+  }
+}

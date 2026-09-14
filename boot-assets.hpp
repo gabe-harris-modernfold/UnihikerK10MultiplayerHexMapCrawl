@@ -276,6 +276,94 @@ static const ItemDef* getItemDef(uint8_t id) {
   return nullptr;
 }
 
+// ── Recipe registry parser ─────────────────────────────────────────────────────
+// Same tiny line-parser as loadItemRegistry(), for /data/recipes.cfg.
+static void commitRecipe(RecipeDef& cur, bool& hasRecipe) {
+  if (!hasRecipe || cur.id == 0) return;
+  if (recipeCount < MAX_RECIPES) {
+    recipeRegistry[recipeCount++] = cur;
+  } else {
+    Log.warning("Recipe registry FULL at %d — dropping id=%d name=%s",
+                (int)MAX_RECIPES, (int)cur.id, cur.name);
+  }
+  hasRecipe = false;
+  cur = RecipeDef{};
+}
+
+static void loadRecipeRegistry() {
+  recipeCount = 0;
+  memset(recipeRegistry, 0, MAX_RECIPES * sizeof(RecipeDef));  // recipeRegistry lives in PSRAM (pointer)
+
+  File f = SD.open("/data/recipes.cfg");
+  if (!f) {
+    Log.warning("SD MISSING: /data/recipes.cfg");
+    return;
+  }
+  Log.notice("Recipes load: /data/recipes.cfg size=%u", (unsigned)f.size());
+
+  RecipeDef cur = {};
+  bool hasRecipe = false;
+  char line[128];
+
+  while (f.available()) {
+    int n = 0;
+    while (f.available() && n < (int)sizeof(line) - 1) {
+      char c = (char)f.read();
+      if (c == '\n') break;
+      line[n++] = c;
+    }
+    line[n] = 0;
+    stripComment(line);
+    const char* t = trimLeft(line);
+    if (*t == 0) continue;
+
+    if (strncmp(t, "[recipe]", 8) == 0 || strncmp(t, "[Recipe]", 8) == 0) {
+      commitRecipe(cur, hasRecipe);
+      cur = RecipeDef{}; cur.outputQty = 1;
+      hasRecipe = true;
+      continue;
+    }
+
+    if (!hasRecipe) continue;
+
+    const char* eq = strchr(t, '=');
+    if (!eq) continue;
+
+    char key[32] = {};
+    int klen = (int)(eq - t);
+    if (klen <= 0 || klen >= (int)sizeof(key)) continue;
+    memcpy(key, t, klen); key[klen] = 0;
+    trimRight(key);
+
+    const char* val = trimLeft(eq + 1);
+
+    if      (strcmp(key, "id")          == 0) cur.id         = (uint8_t)atoi(val);
+    else if (strcmp(key, "name")        == 0) { strncpy(cur.name, val, 15); cur.name[15] = 0; }
+    else if (strcmp(key, "output_item") == 0) cur.outputItem = (uint8_t)atoi(val);
+    else if (strcmp(key, "output_qty")  == 0) cur.outputQty  = (uint8_t)max(1, atoi(val));
+    else if (strcmp(key, "mat1")        == 0) cur.matItem[0] = (uint8_t)atoi(val);
+    else if (strcmp(key, "matqty1")     == 0) cur.matQty[0]  = (uint8_t)atoi(val);
+    else if (strcmp(key, "mat2")        == 0) cur.matItem[1] = (uint8_t)atoi(val);
+    else if (strcmp(key, "matqty2")     == 0) cur.matQty[1]  = (uint8_t)atoi(val);
+    else if (strcmp(key, "mat3")        == 0) cur.matItem[2] = (uint8_t)atoi(val);
+    else if (strcmp(key, "matqty3")     == 0) cur.matQty[2]  = (uint8_t)atoi(val);
+    else if (strcmp(key, "water_cost")  == 0) cur.resCost[0] = (uint8_t)atoi(val);
+    else if (strcmp(key, "food_cost")   == 0) cur.resCost[1] = (uint8_t)atoi(val);
+    else if (strcmp(key, "fuel_cost")   == 0) cur.resCost[2] = (uint8_t)atoi(val);
+    else if (strcmp(key, "med_cost")    == 0) cur.resCost[3] = (uint8_t)atoi(val);
+    else if (strcmp(key, "scrap_cost")  == 0) cur.resCost[4] = (uint8_t)atoi(val);
+  }
+  commitRecipe(cur, hasRecipe);
+  f.close();
+}
+
+// Lookup recipe by ID — O(N) scan over loaded registry.
+static const RecipeDef* getRecipeDef(uint8_t id) {
+  for (int i = 0; i < (int)recipeCount; i++)
+    if (recipeRegistry[i].id == id) return &recipeRegistry[i];
+  return nullptr;
+}
+
 // ── Encounter engine: boot loading ────────────────────────────────────────────
 
 // JSON helpers (minimal, for known encounter JSON formats)

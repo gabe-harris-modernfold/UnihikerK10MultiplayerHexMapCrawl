@@ -20,6 +20,20 @@ struct WorldMarkers {
 static void snapshotWorldMarkers(WorldMarkers& out);
 
 // ── Screen 1: player status dashboard ──────────────────────────
+// Built on the 16 px font (12×16 glyphs → 20 columns) with the 24 px title;
+// nothing here uses the 8 px font. Top to bottom: header band with uptime,
+// a day / threat / weather strip, six fixed-height survivor cards, then a
+// two-line network footer. Every colour is from the existing amber palette.
+//
+//   y   0-28   header band        "WASTELAND"          uptime (right)
+//   y  31-47   strip              DAY n   TC n         weather (right)
+//   y  53-274  6 cards × 37 px    [n] ARCH name        MP n / DOWN
+//                                 L n  F n  W n  R n   + 3 px bars
+//   y 281-316  footer             AP ip                local time (right)
+//                                 ST ip / status       free heap (right)
+
+static inline int dashRightX(int chars) { return 238 - chars * 12; }
+
 static void drawPlayerScreen() {
   struct {
     bool    on;
@@ -28,12 +42,13 @@ static void drawPlayerScreen() {
     uint8_t archetype;
     int8_t  movesLeft;
   } snap[MAX_PLAYERS];
-  uint8_t  snapTC = 0;
+  uint8_t  snapTC = 0, snapWx = 0;
   uint16_t snapDay = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
   snapTC  = G.threatClock;
   snapDay = G.dayCount;
+  snapWx  = G.weatherPhase;
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p          = G.players[i];
     snap[i].on         = p.connected;
@@ -48,104 +63,138 @@ static void drawPlayerScreen() {
   xSemaphoreGive(G.mutex);
 
   static const char* ARCH_SHORT[NUM_ARCHETYPES] = {"GUID","QTMR","MEDC","MULE","SCUT","ENDR"};
-  static const uint32_t C_HDR  = 0xD06818;
-  static const uint32_t C_INFO = 0x904030;
-  static const uint32_t C_LINE = 0x502010;
-  static const uint32_t C_TXT  = 0xC87840;
-  static const uint32_t C_DIM  = 0x3A1808;
+  // Weather strings: 5 chars max so the strip's right column never collides
+  // with the threat clock. Index = G.weatherPhase (see WEATHER_* in the .ino).
+  static const char*    WX_NAME[6] = {"CLEAR","RAIN","STORM","CHEM","S.FOG","FOG"};
+
+  static const uint32_t C_HDR   = 0xD06818;
+  static const uint32_t C_INFO  = 0x904030;
+  static const uint32_t C_LINE  = 0x502010;
+  static const uint32_t C_TXT   = 0xC87840;
+  static const uint32_t C_DIM   = 0x3A1808;
+  static const uint32_t C_BAND  = 0x1E0A00;   // header fill / badge digit
+  static const uint32_t C_TRACK = 0x2E1206;   // empty bar track
 
   static const uint32_t C_OK   = 0xC05810;
   static const uint32_t C_WARN = 0xC87020;
   static const uint32_t C_CRIT = 0xE89018;
-
-  canvas.fillScreen(0x0000);
-  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
-  canvasText24("WASTELAND", 2, 3, C_HDR);
-  canvasLine(0, 28, 239, 28, C_LINE);
+  static const uint32_t WX_COL[6] = { C_TXT, C_INFO, C_WARN, C_CRIT, C_WARN, C_INFO };
 
   char buf[40];
-  snprintf(buf, sizeof(buf), "Day:%-2u TC:%-2u  %luk",
-           snapDay, snapTC,
-           (unsigned long)(ESP.getFreeHeap() / 1024));
-  canvasText8(buf, 2, 32, C_INFO);
-  canvasLine(0, 42, 239, 42, C_LINE);
+  canvas.fillScreen(0x0000);
 
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    int y1 = 46 + i * 22;
-    int y2 = y1 + 11;
-
-    if (snap[i].on) {
-      uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
-      uint32_t nameCol = C_TXT;
-      snprintf(buf, sizeof(buf), "P%d %-4s  %-8.8s", i, ARCH_SHORT[arch], snap[i].name);
-      canvasText8(buf, 2, y1, nameCol);
-
-      uint32_t sc;
-      if (snap[i].ll <= 2 || snap[i].food <= 1 || snap[i].water <= 1 || snap[i].radiation >= 7)
-        sc = C_CRIT;
-      else if (snap[i].ll <= 3 || snap[i].food <= 2 || snap[i].water <= 2 ||
-               snap[i].radiation >= 4)
-        sc = C_WARN;
-      else
-        sc = C_OK;
-
-      snprintf(buf, sizeof(buf), "   LL:%-2u F:%-2u W:%-2u R:%-2u M:%-2d",
-               snap[i].ll, snap[i].food, snap[i].water,
-               snap[i].radiation, snap[i].movesLeft);
-      canvasText8(buf, 2, y2, sc);
-    } else {
-      snprintf(buf, sizeof(buf), "P%d ----  (offline)", i);
-      canvasText8(buf, 2, y1, C_DIM);
-    }
-  }
-
-  canvasLine(0, 258, 239, 258, C_LINE);
+  // ── Header band ─────────────────────────────────────────────
+  canvasRect(0, 0, 240, 29, C_BAND, true);
+  canvasText24("WASTELAND", 4, 3, C_HDR);
+  canvasLine(0, 29, 239, 29, C_LINE);
 
   uint32_t upSec = millis() / 1000;
-  snprintf(buf, sizeof(buf), "up: %lum%02lus",
-           (unsigned long)(upSec / 60), (unsigned long)(upSec % 60));
-  canvasText8(buf, 2, 262, C_INFO);
+  uint32_t upMin = upSec / 60, upHr = upMin / 60;
+  if      (upHr >= 100) snprintf(buf, sizeof(buf), "%luh", (unsigned long)upHr);
+  else if (upHr >= 1)   snprintf(buf, sizeof(buf), "%luh%02lum", (unsigned long)upHr, (unsigned long)(upMin % 60));
+  else                  snprintf(buf, sizeof(buf), "%lum", (unsigned long)upMin);
+  canvasText16(buf, dashRightX((int)strlen(buf)), 7, C_INFO);
 
-  if (checkRtcReady()) {
-    time_t nowEpoch  = time(nullptr);
-    time_t bootEpoch = nowEpoch - (time_t)upSec;
+  // ── Day / threat / weather strip ────────────────────────────
+  canvasText16("DAY", 2, 31, C_INFO);
+  snprintf(buf, sizeof(buf), "%u", (unsigned)snapDay);
+  canvasText16(buf, 50, 31, C_TXT);
+  canvasText16("TC", 98, 31, C_INFO);
+  snprintf(buf, sizeof(buf), "%u", (unsigned)snapTC);
+  canvasText16(buf, 134, 31, snapTC >= 15 ? C_CRIT : snapTC >= 8 ? C_WARN : C_TXT);
+  uint8_t wx = snapWx < 6 ? snapWx : 0;
+  canvasText16(WX_NAME[wx], dashRightX((int)strlen(WX_NAME[wx])), 31, WX_COL[wx]);
+  canvasLine(0, 50, 239, 50, C_LINE);
 
-    struct tm bt; gmtime_r(&bootEpoch, &bt);
-    snprintf(buf, sizeof(buf), "boot: %02d:%02d:%02d", bt.tm_hour, bt.tm_min, bt.tm_sec);
-    canvasText8(buf, 122, 262, C_INFO);
+  // ── Survivor cards ──────────────────────────────────────────
+  // One stat cell: dim label letter, value in its own status colour, and a
+  // 3 px bar underneath whose fill is value/max in the same colour. x is the
+  // cell's left edge; four cells at 59 px pitch span the 240 px width.
+  auto statCell = [&](int x, int y, const char* lbl, uint8_t v, uint8_t vmax, uint32_t col) {
+    canvasText16(lbl, x, y, C_INFO);
+    char b[4]; snprintf(b, sizeof(b), "%u", (unsigned)v);
+    canvasText16(b, x + 12, y, col);
+    canvasRect(x, y + 15, x + 55, y + 18, C_TRACK, true);
+    int w = (vmax == 0) ? 0 : (55 * (int)(v < vmax ? v : vmax)) / (int)vmax;
+    if (w > 0) canvasRect(x, y + 15, x + w, y + 18, col, true);
+  };
+  static const int CARD_Y0 = 53, CARD_H = 37, CELL_X[4] = { 2, 61, 120, 179 };
 
-    struct tm ut; gmtime_r(&nowEpoch, &ut);
-    snprintf(buf, sizeof(buf), "UTC: %02d:%02d:%02d", ut.tm_hour, ut.tm_min, ut.tm_sec);
-    canvasText8(buf, 2, 275, C_INFO);
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    int  y = CARD_Y0 + i * CARD_H;
+    char num[2] = { (char)('1' + i), 0 };
 
-    setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1); tzset();
-    struct tm it; localtime_r(&nowEpoch, &it);
-    setenv("TZ", "UTC0", 1); tzset();
-    snprintf(buf, sizeof(buf), "IN:  %02d:%02d:%02d", it.tm_hour, it.tm_min, it.tm_sec);
-    canvasText8(buf, 122, 275, C_INFO);
+    if (!snap[i].on) {
+      canvasRect(2, y + 1, 18, y + 17, C_DIM, false);
+      canvasText16(num, 4, y + 1, C_DIM);
+      canvasText16("offline", 22, y + 1, C_DIM);
+      for (int c = 0; c < 4; c++) canvasRect(CELL_X[c], y + 33, CELL_X[c] + 55, y + 36, C_BAND, true);
+      continue;
+    }
+
+    // Row A: slot badge, archetype, name, moves.
+    uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
+    canvasRect(2, y + 1, 18, y + 17, C_HDR, true);
+    canvasText16(num, 4, y + 1, C_BAND);
+    canvasText16(ARCH_SHORT[arch], 22, y + 1, C_INFO);
+    snprintf(buf, sizeof(buf), "%.8s", snap[i].name);
+    canvasText16(buf, 76, y + 1, C_TXT);
+    if (snap[i].ll == 0) {
+      canvasText16("DOWN", dashRightX(4), y + 1, C_CRIT);
+    } else {
+      snprintf(buf, sizeof(buf), "MP %d", (int)snap[i].movesLeft);
+      canvasText16(buf, dashRightX((int)strlen(buf)), y + 1, C_TXT);
+    }
+
+    // Row B: the four survival stats, each judged on its own thresholds
+    // (same cut-offs the old single-colour row used).
+    uint32_t cL = snap[i].ll        <= 2 ? C_CRIT : snap[i].ll    <= 3 ? C_WARN : C_OK;
+    uint32_t cF = snap[i].food      <= 1 ? C_CRIT : snap[i].food  <= 2 ? C_WARN : C_OK;
+    uint32_t cW = snap[i].water     <= 1 ? C_CRIT : snap[i].water <= 2 ? C_WARN : C_OK;
+    uint32_t cR = snap[i].radiation >= 7 ? C_CRIT : snap[i].radiation >= 4 ? C_WARN : C_OK;
+    statCell(CELL_X[0], y + 18, "L", snap[i].ll,        7,  cL);
+    statCell(CELL_X[1], y + 18, "F", snap[i].food,      8,  cF);
+    statCell(CELL_X[2], y + 18, "W", snap[i].water,     8,  cW);
+    statCell(CELL_X[3], y + 18, "R", snap[i].radiation, 10, cR);
   }
+
+  // ── Footer: network ─────────────────────────────────────────
+  canvasLine(0, 277, 239, 277, C_LINE);
 
   IPAddress apIp  = WiFi.softAPIP();
   IPAddress staIp = WiFi.localIP();
-  snprintf(buf, sizeof(buf), "AP: %d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
-  canvasText8(buf, 2, 292, 0x5C2C10);
-  bool staConn = (staIp[0] != 0);
-  uint32_t stColor;
-  char stBuf[42];
-  if (staConn) {
-    snprintf(stBuf, sizeof(stBuf), "ST: %d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
-    stColor = 0x5C2C10;
-  } else if (bootWifiPending) {
-    snprintf(stBuf, sizeof(stBuf), "ST: connecting...");
-    stColor = 0x904030;
-  } else if (savedSsid[0]) {
-    snprintf(stBuf, sizeof(stBuf), "ST: \"%s\"", savedSsid);
-    stColor = 0x904030;
-  } else {
-    snprintf(stBuf, sizeof(stBuf), "ST: no creds");
-    stColor = 0x3A1808;
+  canvasText16("AP", 2, 281, C_INFO);
+  snprintf(buf, sizeof(buf), "%d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
+  canvasText16(buf, 38, 281, C_TXT);
+
+  if (checkRtcReady()) {
+    time_t nowEpoch = time(nullptr);
+    setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1); tzset();
+    struct tm it; localtime_r(&nowEpoch, &it);
+    setenv("TZ", "UTC0", 1); tzset();
+    snprintf(buf, sizeof(buf), "%02d:%02d", it.tm_hour, it.tm_min);
+    canvasText16(buf, dashRightX(5), 281, C_INFO);
   }
-  canvasText8(stBuf, 122, 292, stColor);
+
+  canvasText16("ST", 2, 301, C_INFO);
+  uint32_t stColor;
+  if (staIp[0] != 0) {
+    snprintf(buf, sizeof(buf), "%d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
+    stColor = C_TXT;
+  } else if (bootWifiPending) {
+    snprintf(buf, sizeof(buf), "connecting");
+    stColor = C_INFO;
+  } else if (savedSsid[0]) {
+    snprintf(buf, sizeof(buf), "%.12s", savedSsid);
+    stColor = C_INFO;
+  } else {
+    snprintf(buf, sizeof(buf), "no creds");
+    stColor = C_DIM;
+  }
+  canvasText16(buf, 38, 301, stColor);
+
+  snprintf(buf, sizeof(buf), "%luk", (unsigned long)(ESP.getFreeHeap() / 1024));
+  canvasText16(buf, dashRightX((int)strlen(buf)), 301, C_DIM);
 }
 
 // ── Screen 2: the chronicle ────────────────────────────────────
@@ -339,78 +388,216 @@ static void drawEventLogScreen() {
 }
 
 // ── Screen 3: resources ────────────────────────────────────────
+// One survivor per page, rotating through the online players every
+// RES_PAGE_MS (the LCD repaints every SCREEN_MS, so a flip lands on the first
+// repaint after that). Same 16 px-minimum rule and amber palette as screen 1.
+//
+//   y   0-28   header band        "RESOURCES"          page n/m (right)
+//   y  33-48   who                [n] name             ARCH (right)
+//   y  56-101  5 resource tiles   WTR FOD FUL MED SCR  (24 px values)
+//   y 109-124  pack heading       PACK used/slots
+//   y 129-     pack contents      ▪ item name          xqty   (▪ = equipped)
+
+static constexpr uint32_t RES_PAGE_MS = 8000;
+
 static void drawResourceScreen() {
-  static const uint32_t C_HDR  = 0xD06818;
-  static const uint32_t C_TXT  = 0xC8A878;
-  static const uint32_t C_INFO = 0x904030;
-  static const uint32_t C_LINE = 0x502010;
-  static const uint32_t C_DIM  = 0x3A1808;
+  static const uint32_t C_HDR   = 0xD06818;
+  static const uint32_t C_TXT   = 0xC87840;
+  static const uint32_t C_INFO  = 0x904030;
+  static const uint32_t C_LINE  = 0x502010;
+  static const uint32_t C_DIM   = 0x3A1808;
+  static const uint32_t C_BAND  = 0x1E0A00;
+  static const uint32_t C_WARN  = 0xC87020;
+  static const uint32_t C_CRIT  = 0xE89018;
+  static const char* ARCH_SHORT[NUM_ARCHETYPES] = {"GUID","QTMR","MEDC","MULE","SCUT","ENDR"};
+  static const char* RS[5] = {"WTR","FOD","FUL","MED","SCR"};
 
   struct PSnap {
     bool    on;
+    uint8_t archetype;
     char    name[16];
     uint8_t inv[5];
     uint8_t invType[INV_SLOTS_MAX];
     uint8_t invQty[INV_SLOTS_MAX];
     uint8_t invSlots;
+    uint8_t equip[EQUIP_SLOTS];
   } snap[MAX_PLAYERS];
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
   for (int i = 0; i < MAX_PLAYERS; i++) {
-    Player& p       = G.players[i];
-    snap[i].on      = p.connected;
+    Player& p         = G.players[i];
+    snap[i].on        = p.connected;
+    snap[i].archetype = p.archetype;
     memcpy(snap[i].name,    p.name,    16);
     memcpy(snap[i].inv,     p.inv,     5);
     memcpy(snap[i].invType, p.invType, INV_SLOTS_MAX);
     memcpy(snap[i].invQty,  p.invQty,  INV_SLOTS_MAX);
+    memcpy(snap[i].equip,   p.equip,   EQUIP_SLOTS);
     snap[i].invSlots = p.invSlots;
   }
   xSemaphoreGive(G.mutex);
 
+  char buf[40];
   canvas.fillScreen(0x0000);
-  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
-  canvasText24("RESOURCES", 2, 3, C_HDR);
-  canvasLine(0, 28, 239, 28, C_LINE);
+  canvasRect(0, 0, 240, 29, C_BAND, true);
+  canvasText24("RESOURCES", 4, 3, C_HDR);
+  canvasLine(0, 29, 239, 29, C_LINE);
 
-  static const char* RS[5] = {"Wtr","Fod","Ful","Med","Scr"};
-  char buf[48];
-  int y = 32;
-  bool anyOn = false;
-
-  for (int i = 0; i < MAX_PLAYERS && y < 300; i++) {
-    if (!snap[i].on) continue;
-    anyOn = true;
-    snprintf(buf, sizeof(buf), "P%d -- %.11s", i, snap[i].name);
-    canvasText8(buf, 2, y, C_HDR);
-    y += 10;
-    snprintf(buf, sizeof(buf), " %s:%-2u %s:%-2u %s:%-2u %s:%-2u %s:%-2u",
-      RS[0], snap[i].inv[0], RS[1], snap[i].inv[1], RS[2], snap[i].inv[2],
-      RS[3], snap[i].inv[3], RS[4], snap[i].inv[4]);
-    canvasText8(buf, 2, y, C_TXT);
-    y += 10;
-    for (int s = 0; s < snap[i].invSlots && s < INV_SLOTS_MAX && y < 295; s++) {
-      if (!snap[i].invType[s]) continue;
-      const ItemDef* def = getItemDef(snap[i].invType[s]);
-      snprintf(buf, sizeof(buf), " %-14.14s x%u",
-               def ? def->name : "???", snap[i].invQty[s]);
-      canvasText8(buf, 2, y, C_INFO);
-      y += 10;
-    }
-    if (y < 295) { canvasLine(4, y+3, 235, y+3, C_LINE); y += 10; }
+  // Which survivor is on the page.
+  int online[MAX_PLAYERS], cnt = 0;
+  for (int i = 0; i < MAX_PLAYERS; i++) if (snap[i].on) online[cnt++] = i;
+  if (cnt == 0) {
+    static const char E[] = "No survivors online";
+    canvasText16(E, (240 - (int)(sizeof(E) - 1) * 12) / 2, 150, C_DIM);
+    return;
   }
-  if (!anyOn)
-    canvasText8("No survivors online", 2, 50, C_DIM);
+  static uint8_t  page   = 0;
+  static uint32_t flipMs = 0;
+  uint32_t now = millis();
+  if (now - flipMs >= RES_PAGE_MS) { page++; flipMs = now; }
+  page %= (uint8_t)cnt;
+  const int   pid = online[page];
+  const PSnap& P  = snap[pid];
+
+  snprintf(buf, sizeof(buf), "%d/%d", (int)page + 1, cnt);
+  canvasText16(buf, dashRightX((int)strlen(buf)), 7, C_INFO);
+
+  // ── Who ─────────────────────────────────────────────────────
+  char num[2] = { (char)('1' + pid), 0 };
+  canvasRect(2, 33, 18, 49, C_HDR, true);
+  canvasText16(num, 4, 33, C_BAND);
+  snprintf(buf, sizeof(buf), "%.13s", P.name);
+  canvasText16(buf, 22, 33, C_TXT);
+  uint8_t arch = P.archetype < NUM_ARCHETYPES ? P.archetype : 0;
+  canvasText16(ARCH_SHORT[arch], dashRightX(4), 33, C_INFO);
+  canvasLine(0, 52, 239, 52, C_LINE);
+
+  // ── Resource tiles ──────────────────────────────────────────
+  // 5 × 46 px tiles at 48 px pitch: 3-letter label on top, 24 px count below.
+  // A count of 0 is critical, 1-2 is a warning — the same reading the web
+  // client gives these bars.
+  for (int k = 0; k < 5; k++) {
+    int tx = 2 + k * 48, ty = 56;
+    canvasRect(tx, ty, tx + 46, ty + 46, C_BAND, true);
+    canvasText16(RS[k], tx + 5, ty + 3, C_INFO);
+    uint8_t v = P.inv[k];
+    snprintf(buf, sizeof(buf), "%u", (unsigned)v);
+    uint32_t vc = (v == 0) ? C_CRIT : (v <= 2) ? C_WARN : C_TXT;
+    canvasText24(buf, tx + (46 - (int)strlen(buf) * 18) / 2, ty + 19, vc);
+  }
+  canvasLine(0, 106, 239, 106, C_LINE);
+
+  // ── Pack ────────────────────────────────────────────────────
+  int used = 0;
+  for (int s = 0; s < P.invSlots && s < INV_SLOTS_MAX; s++) if (P.invType[s]) used++;
+  canvasText16("PACK", 2, 109, C_INFO);
+  snprintf(buf, sizeof(buf), "%d/%u", used, (unsigned)P.invSlots);
+  canvasText16(buf, 62, 109, C_TXT);
+
+  if (used == 0) {
+    canvasText16("pack is empty", 14, 131, C_DIM);
+    return;
+  }
+  static constexpr int ROW_H = 17, ROW_Y0 = 129, ROWS_MAX = 11;
+  int row = 0, shown = 0;
+  for (int s = 0; s < P.invSlots && s < INV_SLOTS_MAX; s++) {
+    if (!P.invType[s]) continue;
+    if (row == ROWS_MAX - 1 && used - shown > 1) {
+      snprintf(buf, sizeof(buf), "+%d more", used - shown);
+      canvasText16(buf, 14, ROW_Y0 + row * ROW_H, C_DIM);
+      break;
+    }
+    int y = ROW_Y0 + row * ROW_H;
+    bool equipped = false;
+    for (int e = 0; e < EQUIP_SLOTS; e++) if (P.equip[e] && P.equip[e] == P.invType[s]) equipped = true;
+    if (equipped) canvasRect(2, y + 5, 8, y + 11, C_HDR, true);
+    const ItemDef* def = getItemDef(P.invType[s]);
+    snprintf(buf, sizeof(buf), "%.14s", def ? def->name : "???");
+    canvasText16(buf, 14, y, equipped ? C_TXT : C_INFO);
+    snprintf(buf, sizeof(buf), "x%u", (unsigned)P.invQty[s]);
+    canvasText16(buf, dashRightX((int)strlen(buf)), y, C_TXT);
+    row++; shown++;
+  }
 }
 
 // ── Screen 4: encounter tracking ──────────────────────────────
+// What the encounter system is doing right now, not just a leaderboard:
+// sites left on the map, the party's hit rate, the most recent roll in full
+// (who, skill, target number, what they rolled), and per survivor whether
+// they are inside an encounter (which biome, how much unbanked loot is at
+// stake) or, if not, their own record and how their last one ended.
+//
+//   y   0-28   header band        "ENCOUNTERS"
+//   y  31-47   strip              POI left/total       WON wins/rolls (right)
+//   y  54-88   last roll          [n] Skill            WON / LOST (right)
+//                                 NEED dn  GOT total
+//   y  96-317  6 cards × 37 px    [n] name             ENC count (right)
+//                                 IN biome   LOOT n  |  WON w/r   last end
+//
+// The tallies come from the event stream: drainEvents() in
+// network-events.hpp calls encStatsNote() for every event it drains (that is
+// the one place every EVT_ENC_* passes through). Counters are session-only —
+// they are not saved and start at zero after a reboot.
+
+struct EncStats {
+  uint16_t rolls, wins;                 // party-wide
+  bool     hasLast;
+  uint8_t  lastPid, lastSkill, lastDN;
+  int8_t   lastTotal;
+  uint8_t  lastOut;                     // 1 = success
+  struct {
+    uint8_t rolls, wins;
+    uint8_t lastEnd;                    // ENC_END_* reason
+    bool    hasEnd;
+  } p[MAX_PLAYERS];
+};
+static EncStats     encStats    = {};
+static portMUX_TYPE encStatsMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Called once per drained GameEvent, from whichever task runs drainEvents().
+static void encStatsNote(const GameEvent& ev) {
+  if (ev.type != EVT_ENC_RESULT && ev.type != EVT_ENC_END) return;
+  if (ev.pid >= MAX_PLAYERS) return;
+  taskENTER_CRITICAL(&encStatsMux);
+  if (ev.type == EVT_ENC_RESULT) {
+    encStats.rolls++;
+    if (ev.encOut) encStats.wins++;
+    if (encStats.p[ev.pid].rolls < 255) encStats.p[ev.pid].rolls++;
+    if (ev.encOut && encStats.p[ev.pid].wins < 255) encStats.p[ev.pid].wins++;
+    encStats.hasLast   = true;
+    encStats.lastPid   = ev.pid;
+    encStats.lastSkill = ev.encSkill;
+    encStats.lastDN    = ev.encDN;
+    encStats.lastTotal = ev.encTotal;
+    encStats.lastOut   = ev.encOut ? 1 : 0;
+  } else {
+    encStats.p[ev.pid].lastEnd = ev.encOut;
+    encStats.p[ev.pid].hasEnd  = true;
+  }
+  taskEXIT_CRITICAL(&encStatsMux);
+}
+
 static void drawEncounterScreen() {
   static const uint32_t C_HDR  = 0xD06818;
-  static const uint32_t C_TXT  = 0xC8A878;
+  static const uint32_t C_TXT  = 0xC87840;
+  static const uint32_t C_INFO = 0x904030;
   static const uint32_t C_LINE = 0x502010;
   static const uint32_t C_DIM  = 0x3A1808;
+  static const uint32_t C_BAND = 0x1E0A00;
+  static const uint32_t C_OK   = 0xC05810;
+  static const uint32_t C_WARN = 0xC87020;
+  static const uint32_t C_CRIT = 0xE89018;
+  static const char* SKILL_UP[NUM_SKILLS] = {"NAVIGATE","FORAGE","SCAVENGE","SHELTER","ENDURE"};
+  static const char* END_NAME[ENC_END_COUNT] = {"hazard","abort","dawn","downed","dropped","regen"};
 
-  uint16_t poiLeft = 0;
-  struct ESnap { bool on; char name[16]; uint16_t encCount; } snap[MAX_PLAYERS];
+  struct ESnap {
+    bool     on, inEnc;
+    char     name[16];
+    uint16_t encCount;
+    char     biome[12];
+    uint8_t  loot;          // unbanked resources + items at stake
+  } snap[MAX_PLAYERS];
+  uint16_t poiLeft = 0, poiTotal = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
   for (int r = 0; r < MAP_ROWS; r++)
@@ -420,41 +607,104 @@ static void drawEncounterScreen() {
     snap[i].on       = G.players[i].connected;
     snap[i].encCount = G.players[i].encCount;
     memcpy(snap[i].name, G.players[i].name, 16);
+    const ActiveEncounter& e = encounters[i];
+    snap[i].inEnc = (e.active & 1) != 0;
+    snap[i].loot  = 0;
+    snap[i].biome[0] = 0;
+    if (snap[i].inEnc) {
+      uint8_t t = e.terrain < 10 ? e.terrain : 0;
+      strlcpy(snap[i].biome, encPools[t].path, sizeof(snap[i].biome));
+      int l = e.pendingItemCount;
+      for (int k = 0; k < 5; k++) l += e.pendingLoot[k];
+      snap[i].loot = (uint8_t)min(99, l);
+    }
   }
   xSemaphoreGive(G.mutex);
+  // Every encounter file is placed once at map generation, so the pool sizes
+  // are the number of sites the map started with.
+  for (int t = 0; t < 10; t++) poiTotal += encPools[t].count;
 
-  // sort connected players by encCount descending
-  int order[MAX_PLAYERS], cnt = 0;
-  for (int i = 0; i < MAX_PLAYERS; i++) if (snap[i].on) order[cnt++] = i;
-  for (int a = 1; a < cnt; a++) {
-    int key = order[a], b = a - 1;
-    while (b >= 0 && snap[order[b]].encCount < snap[key].encCount) {
-      order[b+1] = order[b]; b--;
-    }
-    order[b+1] = key;
-  }
+  EncStats st;
+  taskENTER_CRITICAL(&encStatsMux);
+  st = encStats;
+  taskEXIT_CRITICAL(&encStatsMux);
 
+  char buf[40];
   canvas.fillScreen(0x0000);
-  canvasRect(0, 0, 240, 27, 0x1E0A00, true);
-  canvasText24("ENCOUNTERS", 2, 3, C_HDR);
-  canvasLine(0, 28, 239, 28, C_LINE);
+  canvasRect(0, 0, 240, 29, C_BAND, true);
+  canvasText24("ENCOUNTERS", 4, 3, C_HDR);
+  canvasLine(0, 29, 239, 29, C_LINE);
 
-  char buf[48];
-  snprintf(buf, sizeof(buf), "POIs remaining: %u", (unsigned)poiLeft);
-  canvasText8(buf, 2, 32, C_HDR);
-  canvasLine(0, 42, 239, 42, C_LINE);
-  canvasText8("#   NAME         ENCS", 2, 46, C_DIM);
+  // ── Strip: sites left, party hit rate ───────────────────────
+  canvasText16("POI", 2, 31, C_INFO);
+  snprintf(buf, sizeof(buf), "%u/%u", (unsigned)poiLeft, (unsigned)poiTotal);
+  canvasText16(buf, 50, 31, poiLeft == 0 ? C_DIM : C_TXT);
+  snprintf(buf, sizeof(buf), "%u/%u", (unsigned)st.wins, (unsigned)st.rolls);
+  int wx = dashRightX((int)strlen(buf));
+  canvasText16(buf, wx, 31, st.rolls == 0 ? C_DIM : C_TXT);
+  canvasText16("WON", wx - 48, 31, C_INFO);
+  canvasLine(0, 50, 239, 50, C_LINE);
 
-  if (cnt == 0) {
-    canvasText8("No survivors online", 2, 80, C_DIM);
+  // ── Last roll ───────────────────────────────────────────────
+  if (st.hasLast) {
+    char num[2] = { (char)('1' + (st.lastPid < MAX_PLAYERS ? st.lastPid : 0)), 0 };
+    canvasRect(2, 54, 18, 70, C_HDR, true);
+    canvasText16(num, 4, 54, C_BAND);
+    canvasText16(SKILL_UP[st.lastSkill < NUM_SKILLS ? st.lastSkill : 0], 22, 54, C_TXT);
+    if (st.lastOut) canvasText16("WON",  dashRightX(3), 54, C_OK);
+    else            canvasText16("LOST", dashRightX(4), 54, C_CRIT);
+    canvasText16("NEED", 22, 72, C_INFO);
+    snprintf(buf, sizeof(buf), "%u", (unsigned)st.lastDN);
+    canvasText16(buf, 82, 72, C_TXT);
+    canvasText16("GOT", 130, 72, C_INFO);
+    snprintf(buf, sizeof(buf), "%d", (int)st.lastTotal);
+    canvasText16(buf, 178, 72, st.lastOut ? C_OK : C_CRIT);
   } else {
-    int y = 74;
-    for (int rank = 0; rank < cnt && y < 310; rank++) {
-      int i = order[rank];
-      uint32_t col = (rank == 0) ? C_HDR : C_TXT;
-      snprintf(buf, sizeof(buf), "%-2d  %-12.12s %u", rank + 1, snap[i].name, snap[i].encCount);
-      canvasText8(buf, 2, y, col);
-      y += 18;
+    canvasText16("No rolls yet", 22, 63, C_DIM);
+  }
+  canvasLine(0, 92, 239, 92, C_LINE);
+
+  // ── Survivor cards ──────────────────────────────────────────
+  static const int CARD_Y0 = 96, CARD_H = 37;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    int  y = CARD_Y0 + i * CARD_H;
+    char num[2] = { (char)('1' + i), 0 };
+
+    if (!snap[i].on) {
+      canvasRect(2, y + 1, 18, y + 17, C_DIM, false);
+      canvasText16(num, 4, y + 1, C_DIM);
+      canvasText16("offline", 22, y + 1, C_DIM);
+      continue;
+    }
+
+    // Row A: badge (hot while inside an encounter), name, lifetime count.
+    canvasRect(2, y + 1, 18, y + 17, snap[i].inEnc ? C_CRIT : C_HDR, true);
+    canvasText16(num, 4, y + 1, C_BAND);
+    snprintf(buf, sizeof(buf), "%.10s", snap[i].name);
+    canvasText16(buf, 22, y + 1, C_TXT);
+    snprintf(buf, sizeof(buf), "ENC %u", (unsigned)snap[i].encCount);
+    canvasText16(buf, dashRightX((int)strlen(buf)), y + 1, C_INFO);
+
+    // Row B: live encounter, or the record so far.
+    if (snap[i].inEnc) {
+      canvasText16("IN", 22, y + 18, C_INFO);
+      snprintf(buf, sizeof(buf), "%.8s", snap[i].biome);
+      canvasText16(buf, 58, y + 18, C_WARN);
+      snprintf(buf, sizeof(buf), "LOOT %u", (unsigned)snap[i].loot);
+      canvasText16(buf, dashRightX((int)strlen(buf)), y + 18, snap[i].loot ? C_TXT : C_DIM);
+    } else {
+      if (st.p[i].rolls == 0) {
+        canvasText16("no rolls yet", 22, y + 18, C_DIM);
+      } else {
+        canvasText16("WON", 22, y + 18, C_INFO);
+        snprintf(buf, sizeof(buf), "%u/%u", (unsigned)st.p[i].wins, (unsigned)st.p[i].rolls);
+        canvasText16(buf, 70, y + 18, C_TXT);
+      }
+      if (st.p[i].hasEnd) {
+        const char* r = END_NAME[st.p[i].lastEnd < ENC_END_COUNT ? st.p[i].lastEnd : 0];
+        uint32_t rc = (st.p[i].lastEnd == ENC_END_DOWNED || st.p[i].lastEnd == ENC_END_HAZARD) ? C_WARN : C_INFO;
+        canvasText16(r, dashRightX((int)strlen(r)), y + 18, rc);
+      }
     }
   }
 }

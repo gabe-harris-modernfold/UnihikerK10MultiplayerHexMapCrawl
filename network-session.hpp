@@ -6,6 +6,13 @@ static void handleConnect(AsyncWebSocketClient* client) {
   Log.notice("WS CONNECT id=%u ip=%s",
              (unsigned)client->id(), client->remoteIP().toString().c_str());
 
+  // Idle-ping keepalive (defense-in-depth alongside AsyncClient's own 5s ack
+  // timeout) and: don't force-close a client whose 32-msg send queue fills —
+  // broadcastState() re-sends full state every 100ms, so a superseded queued
+  // message is safe to drop; closing the connection over it is not.
+  client->keepAlivePeriod(15);
+  client->setCloseClientOnQueueFull(false);
+
   // Cleanup stale connections: p.connected=true but WS client is gone (ungraceful close)
   {
     bool freedAny = false;

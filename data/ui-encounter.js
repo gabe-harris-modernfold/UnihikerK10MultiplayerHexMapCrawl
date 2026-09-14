@@ -99,6 +99,9 @@ function initEncounterOverlay() {
   let phase        = 'idle';  // idle | reading | rolling | ejected
   let pendingLoot  = [0, 0, 0, 0, 0];
   let pendingItems = [];      // [{id, qty}] rolled from loot tables, banked on leave
+  let pendingRecipes = 0;     // bitmask (bit id-1) of recipes learned this scene, banked on leave —
+                               // a scene can walk through several nodes before ever banking, each
+                               // granting a different recipe, so this accumulates rather than overwrites
   let terminal     = false;   // reached a node with no choices
   let pendingNext  = '';      // node key we move to if the pending roll succeeds
   let pendingHaz   = '';      // hazard copy shown if the pending roll fails
@@ -109,8 +112,17 @@ function initEncounterOverlay() {
   const me = () => (myId >= 0 ? players[myId] : null);
 
   // ── Helpers ─────────────────────────────────────────────────────
+  // Recipe ids set in a bitmask (bit id-1 per recipe) — mirrors the server's
+  // knownRecipes/pendingRecipes representation.
+  function recipeIdsInMask(mask) {
+    const out = [];
+    for (let rid = 1; rid <= 32; rid++) if ((mask >>> (rid - 1)) & 1) out.push(rid);
+    return out;
+  }
+
   function haulCount() {
-    return pendingLoot.reduce((a, b) => a + b, 0) + pendingItems.reduce((a, it) => a + it.qty, 0);
+    return pendingLoot.reduce((a, b) => a + b, 0) + pendingItems.reduce((a, it) => a + it.qty, 0)
+      + recipeIdsInMask(pendingRecipes).length;
   }
 
   function canBankHere() { return terminal || !!(node?.can_bank); }
@@ -198,6 +210,13 @@ function initEncounterOverlay() {
       }
       chip.appendChild(el('span', 'enc-haul-qty', it.qty > 1 ? `${it.qty}×` : ''));
       chip.appendChild(el('span', 'enc-haul-name', def?.name ?? `Item ${it.id}`));
+      haulItems.appendChild(chip);
+    });
+    recipeIdsInMask(pendingRecipes).forEach(rid => {
+      any = true;
+      const rname = typeof getRecipeById === 'function' ? getRecipeById(rid)?.name : null;
+      const chip = el('span', 'enc-haul-chip enc-haul-item');
+      chip.appendChild(el('span', 'enc-haul-name', `⚒ ${rname ?? `Recipe ${rid}`}`));
       haulItems.appendChild(chip);
     });
     haulEmpty.hidden = any;
@@ -380,6 +399,11 @@ function initEncounterOverlay() {
         const def = typeof getItemById === 'function' ? getItemById(id) : null;
         deltas.push({ txt: `+${qty > 1 ? qty + '× ' : ''}${def?.name ?? 'Item'}`, pos: true });
       });
+      if (ev.rec) {
+        pendingRecipes |= (1 << (ev.rec - 1));
+        const rname = typeof getRecipeById === 'function' ? getRecipeById(ev.rec)?.name : null;
+        deltas.push({ txt: `Recipe: ${rname ?? ev.rec}`, pos: true });
+      }
       const next = pendingNext;
       pendingNext = ''; pendingHaz = '';
       if (next && enc.nodes?.[next]) renderNode(next);
@@ -408,7 +432,7 @@ function initEncounterOverlay() {
       phase = 'ejected';
       choiceEl.innerHTML = '';
       choiceEl.appendChild(el('div', 'enc-terminal bad', 'You’re driven out. Whatever you hadn’t pocketed is lost.'));
-      pendingLoot = [0, 0, 0, 0, 0]; pendingItems = [];
+      pendingLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
       renderHaul(); haulEmpty.textContent = 'lost'; renderLeave();
       showResult({ ok: false, verdict: 'DRIVEN OUT', roll: rollTxt, text: hazText, deltas });
       return;
@@ -448,6 +472,7 @@ function initEncounterOverlay() {
     picked       = pickPlaceholders(json.placeholders);
     pendingLoot  = [0, 0, 0, 0, 0];
     pendingItems = [];
+    pendingRecipes = 0;
     terminal     = false;
     pendingNext  = ''; pendingHaz = '';
     haulEmpty.textContent = 'nothing yet';
@@ -475,7 +500,7 @@ function initEncounterOverlay() {
     overlay.style.display = 'none';
     enc = null; node = null; nodeKey = '';
     phase = 'idle';
-    pendingLoot = [0, 0, 0, 0, 0]; pendingItems = [];
+    pendingLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
     terminal = false; pendingNext = ''; pendingHaz = '';
     hideResult();
     choiceEl.innerHTML = ''; haulItems.innerHTML = '';

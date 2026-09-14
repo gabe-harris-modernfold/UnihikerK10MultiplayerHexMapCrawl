@@ -1,0 +1,78 @@
+{
+  "id": "settlement_stew_01",
+  "title": "The Stew Circle at {{camp_name}}",
+  "start_node": "approach",
+  "nodes": {
+    "approach": {
+      "text": "A pot the size of a bathtub simmers over a burning filing cabinet. Everyone in {{camp_name}} adds something to it and nobody asks what. The smell is somehow both appetizing and a war crime.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Get in line with a bowl.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 1,
+          "success_node": "first_bowl",
+          "hazard_id": "mystery_lump"
+        }
+      ]
+    },
+    "first_bowl": {
+      "text": "The cook ladles out something gray and generous. 'Garbage broth,' she says, like it's a menu item. 'Boil it long enough and the water's the only part that matters.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 5 }
+      ],
+      "choices": [
+        {
+          "label": "Ask what the chewy stuff in the corner pot is.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 1,
+          "success_node": "second_bowl",
+          "hazard_id": "mystery_lump"
+        }
+      ]
+    },
+    "second_bowl": {
+      "text": "'Tentacle, ground fine,' the cook says, unbothered. 'Chewy, but it's protein. Twice through the grinder and you can't tell what it used to be.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 6 }
+      ],
+      "choices": [
+        {
+          "label": "Ask what's in the good pot, the one they don't serve to strangers.",
+          "cost": { "food": 1 },
+          "base_risk": 30,
+          "skill": 1,
+          "success_node": "good_pot",
+          "hazard_id": "declined"
+        }
+      ]
+    },
+    "good_pot": {
+      "text": "The cook sighs and waves you over. 'Marrow jelly. Garbage and fur, rendered down slow.' She won't say which animal. 'It's wet. It works. Don't look at it while it's cooking.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 7 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "mystery_lump": {
+      "text": "You bite down on something that was never meant to be eaten. You spit it out, but not before it costs you.",
+      "penalty": { "food": -1 },
+      "ends_encounter": false
+    },
+    "declined": {
+      "text": "'Strangers don't get the good pot,' the cook says, and means it. You back off before it becomes a bigger problem.",
+      "penalty": {},
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "camp_name": ["Dustbowl", "Ashfield", "Cinder Camp", "The Rustworks"]
+  }
+}

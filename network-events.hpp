@@ -42,6 +42,12 @@ static const char* actProse(uint8_t type, bool ok) {
                       : K10_SAY("loses the frame to the wind.",
                                 "builds it twice and it falls twice.",
                                 "gives up on the shelter before dark.");
+    case 5: return ok ? K10_SAY("puts something together that mostly works.",
+                                "follows the scrawled notes and it holds.",
+                                "assembles it exactly the way the notes said.")
+                      : K10_SAY("can't make the pieces fit today.",
+                                "is missing something the recipe needs.",
+                                "gives up on the recipe for now.");
     case 6: return ok ? K10_SAY("reads the land and marks the map.",
                                 "takes the high ground and looks long.",
                                 "puts a name to what was blank.")
@@ -98,6 +104,7 @@ static void drainEvents() {
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
+    encStatsNote(ev);   // K10 Encounters screen tallies (ui-screens.hpp)
     switch (ev.type) {
 
       case EVT_COLLECT:
@@ -213,7 +220,7 @@ static void drainEvents() {
         break;
 
       case EVT_ACTION: {
-        static const char* ACT_SHORT[8] = {"FORAGE","WATER","TREAT","SCAV","SHELTER","?","SURVEY","REST"};
+        static const char* ACT_SHORT[8] = {"FORAGE","WATER","TREAT","SCAV","SHELTER","CRAFT","SURVEY","REST"};
         const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
         Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d mp=%d fd=%d wd=%d scoreD=%d",
                    (int)ev.pid, aShort, (int)ev.actType, (int)ev.actOut,
@@ -227,7 +234,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
           "\"mp\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
           "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,"
-          "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d}",
+          "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d,\"ar\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
           (int)ev.actNewMP, (int)ev.actNewLL,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
@@ -235,7 +242,7 @@ static void drainEvents() {
           (int)ev.radD, (int)ev.radR,
           (int)ev.actCnd, (int)ev.actScrapD,
           (int)ev.actMedD, (int)ev.actWndMin, (int)ev.actWndMaj,
-          (int)ev.actScoreD);
+          (int)ev.actScoreD, (int)ev.actRecipe);
         ws.textAll(buf, len);
         break;
 
@@ -379,7 +386,7 @@ static void drainEvents() {
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"it2\":%d,\"iq2\":%d,\"penLL\":%d,\"penRad\":%d,"
           "\"penRes\":[%d,%d,%d,%d,%d],\"penWnd\":[%d,%d],"
-          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d]}",
+          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d],\"rec\":%d}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
@@ -390,7 +397,8 @@ static void drainEvents() {
           (int)ev.encPenWndMin, (int)ev.encPenWndMaj,
           (int)ev.encEnds,
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
-          (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5]);
+          (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5],
+          (int)ev.encRecipe);
         ws.textAll(buf, len);
         // Success reads through the skill that carried it.
         static const char* ENC_WON[5] = {
@@ -423,10 +431,10 @@ static void drainEvents() {
                    (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.actScoreD);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_bank\",\"pid\":%d,\"q\":%d,\"r\":%d,"
-          "\"loot\":[%d,%d,%d,%d,%d],\"scoreD\":%d}",
+          "\"loot\":[%d,%d,%d,%d,%d],\"scoreD\":%d,\"recs\":%lu}",
           ev.pid, (int)ev.q, (int)ev.r,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
-          (int)ev.actScoreD);
+          (int)ev.actScoreD, (unsigned long)ev.bankedRecipes);
         ws.textAll(buf, len);
         if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
           char lb[48];
@@ -534,6 +542,41 @@ static void drainEvents() {
           AsyncWebSocketClient* cl = ws.client(wsId[i]);
           if (cl) cl->text(buf, len);
         }
+        break;
+      }
+
+      case EVT_FLOOD_WASHOUT: {
+        // Vision-culled like EVT_FIRE_SPREAD above — a washed-out hex is map
+        // information. amt/"intensity" here is the resulting terrain id, not
+        // a flood intensity level: 3 (Marsh — dry ground pushed under by the
+        // advancing edge) or 5 (Flooded District — a swamped hex that stayed
+        // under long enough to fully drown, see spreadFlood()'s two-stage
+        // progression). There's no "receded" sentinel the way fire has amt=0
+        // for "just went out" — flood recession is a silent per-tick decay
+        // with no broadcast-worthy moment.
+        Log.verbose("EVT flood_washout q=%d r=%d terrain=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"flood_washout\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
+          (int)ev.q, (int)ev.r, (int)ev.amt);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+          if (!conn[i]) continue;
+          if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
+          AsyncWebSocketClient* cl = ws.client(wsId[i]);
+          if (cl) cl->text(buf, len);
+        }
+        break;
+      }
+
+      case EVT_FLOOD_DAMAGE: {
+        Log.notice("EVT flood_dmg pid=%d q=%d r=%d", (int)ev.pid, (int)ev.q, (int)ev.r);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"flood_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,\"intensity\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        ws.textAll(buf, len);
+        k10LogAdd(K10_SAY("is swept off their feet by the flash flood.",
+                          "loses their footing as the ground gives way.",
+                          "goes under for a moment in the rising water."),
+                  (int8_t)ev.pid, TONE_ILL);
         break;
       }
 

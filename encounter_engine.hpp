@@ -166,6 +166,7 @@ struct EncChoice {
   bool     nextTerminal;
   uint8_t  loot[5];                       // rolled resource loot on the destination node
   uint8_t  itemType[2], itemQty[2];       // rolled "item" loot entries (max two)
+  uint8_t  recipeId;                      // "recipe" loot entry — a recipe learned on success
   char     lootTable[20];
   int      hazLL, hazRad;
   uint8_t  hazRes[5];                     // resources taken on failure (amounts)
@@ -211,14 +212,19 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
       if (mx < mn) mx = mn;
       int q = mn + (mx > mn ? (int)(esp_random() % (uint32_t)(mx - mn + 1)) : 0);
       q = constrain(q, 0, 99);
-      const char* resV  = jsonObjGet(e, "res");
-      const char* itemV = jsonObjGet(e, "item");
+      const char* resV    = jsonObjGet(e, "res");
+      const char* itemV   = jsonObjGet(e, "item");
+      const char* recipeV = jsonObjGet(e, "recipe");
       if (resV) {
         int res = jsonNum(resV, -1);
         if (res >= 0 && res < 5) out.loot[res] = (uint8_t)min(99, (int)out.loot[res] + q);
       } else if (itemV && items < 2) {
         int item = jsonNum(itemV, 0);
         if (item > 0 && q > 0) { out.itemType[items] = (uint8_t)item; out.itemQty[items] = (uint8_t)q; items++; }
+      } else if (recipeV) {
+        // No qty — a recipe is a one-time knowledge grant, not a stack.
+        int rid = jsonNum(recipeV, 0);
+        if (rid > 0) out.recipeId = (uint8_t)rid;
       }
     }
   } else {

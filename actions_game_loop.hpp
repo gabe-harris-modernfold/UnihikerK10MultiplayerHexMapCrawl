@@ -9,13 +9,13 @@
 // can end early the moment every connected player is resting — so a group
 // spamming REST back-to-back could otherwise collapse days to seconds and
 // cycle weather absurdly fast. lastWeatherChangeMs/weatherNextGapMs enforce
-// a ~2-3 real-minute floor between actual phase changes regardless of how
+// a ~1.5-2.5 real-minute floor between actual phase changes regardless of how
 // fast in-game days are flying by; the day-counter mechanic above still
 // governs everything else (bad-weather streak, duration-in-days) untouched.
 // Not persisted across reboot/load — same as lastQuakeMs — a slightly-early
 // first change right after a fresh boot is a harmless edge case.
 static uint32_t lastWeatherChangeMs = 0;
-static uint32_t weatherNextGapMs    = 120000;
+static uint32_t weatherNextGapMs    = 90000;
 static void updateWeatherPhase() {
   // Accumulate bad-weather streak in game-days
   if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
@@ -59,7 +59,7 @@ static void updateWeatherPhase() {
     (uint16_t)(esp_random() % (WEATHER_DUR_MAX[next] - WEATHER_DUR_MIN[next] + 1));
   G.weatherPhase      = next;
   lastWeatherChangeMs = millis();
-  weatherNextGapMs    = 120000 + (esp_random() % 60001);  // 2-3 real minutes until the next one
+  weatherNextGapMs    = 90000 + (esp_random() % 60001);  // 1.5-2.5 real minutes until the next one
   GameEvent ev = {}; ev.type = EVT_WEATHER;
   ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
   enqEvt(ev);
@@ -354,6 +354,8 @@ static void tickGame() {
     resolveFireDamage();
     resolveDoomProximity();
     spreadFire();
+    maybeTriggerFlashFlood();
+    spreadFlood();
     tickCaravan();
     resolveCaravanProximity();
   }
@@ -630,19 +632,43 @@ static void doRest(int pid, GameEvent& ev) {
   ev.actOut = AO_SUCCESS;
 }
 
+// CRAFT: Settlement-only, 1 MP, deterministic — no skill roll. Requires the
+// player to have already discovered recipeId via an encounter (see
+// encounter_engine.hpp's "recipe" loot entries). applyRecipe() (in
+// inventory_items.hpp) does the material/resource bookkeeping and confirms
+// the output has somewhere to go before anything is consumed, so a blocked
+// craft never costs MP or materials.
+static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev) {
+  Player& p = G.players[pid];
+  if (terr != TERRAIN_SETTLEMENT) return;                                // AO_BLOCKED: not at a Settlement
+  if (p.movesLeft < 1) return;                                           // AO_BLOCKED: exhausted
+  // recipeId is client-supplied — bound it before the shift (1u << 32+ is UB).
+  if (!recipeId || recipeId > MAX_RECIPES) return;                       // AO_BLOCKED: no such recipe
+  if (!(p.knownRecipes & (1u << (recipeId - 1)))) return;                // AO_BLOCKED: not discovered
+  if (!applyRecipe(pid, recipeId)) return;                               // AO_BLOCKED: can't afford it / pack full
+  spendMP(p, 1);
+  ev.actOut    = AO_SUCCESS;
+  ev.actRecipe = recipeId;
+  addScore(p, ev, 2);
+}
+
 // ── §5 Action dispatcher ──────────────────────────────────────────────────────
 // Call while holding G.mutex.  Enqueues EVT_ACTION.
 // survBuf/survLen: optional out-param for SURVEY response (send to client directly).
 // settleOut: out-param for a settlement founded by this action (only ACT_SHELTER
 // can set it — caller zero-inits and broadcastSettle()s after releasing G.mutex).
-static void handleAction(int pid, uint8_t actType, int mpParam,
+// Returns true if the action succeeded (ev.actOut == AO_SUCCESS) — the only
+// caller (handleMsg_act) uses this to know whether ACT_CRAFT actually
+// mutated invType[]/invQty[]/knownRecipes and needs a targeted resync +
+// saveGame().
+static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId,
                          char* survBuf, int survCap, int* survLen,
                          SettleResult& settleOut) {
   Player& p    = G.players[pid];
   uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   if (terr >= NUM_TERRAIN) terr = 0;
-  if (p.ll == 0) return;  // downed — no actions until respawn
-  if (encounters[pid].active)  return;  // locked during active encounter
+  if (p.ll == 0) return false;  // downed — no actions until respawn
+  if (encounters[pid].active)  return false;  // locked during active encounter
 
   GameEvent ev = {};
   ev.type    = EVT_ACTION;
@@ -657,6 +683,7 @@ static void handleAction(int pid, uint8_t actType, int mpParam,
     case ACT_TREAT:   doTreat  (pid, terr, ev);                      break;
     case ACT_SCAV:    doScav   (pid, terr, ev);                      break;
     case ACT_SHELTER: doShelter(pid, ev, settleOut);                 break;
+    case ACT_CRAFT:   doCraft  (pid, terr, recipeId, ev);            break;
     case ACT_SURVEY:  doSurvey (pid, ev, survBuf, survCap, survLen); break;
     case ACT_REST:    doRest   (pid, ev);                            break;
     default: break;
@@ -665,4 +692,5 @@ static void handleAction(int pid, uint8_t actType, int mpParam,
   ev.actNewLL  = p.ll;
   ev.actNewMP  = p.movesLeft;
   enqEvt(ev);
+  return ev.actOut == AO_SUCCESS;
 }

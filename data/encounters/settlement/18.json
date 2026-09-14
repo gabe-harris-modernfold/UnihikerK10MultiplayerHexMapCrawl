@@ -1,0 +1,61 @@
+{
+  "id": "settlement_distillery_01",
+  "title": "The {{still_name}} Distillery",
+  "start_node": "approach",
+  "nodes": {
+    "approach": {
+      "text": "A still built from a fuel can and hope hisses behind a curtain of rags. The distiller, missing several teeth they insist are 'in the mash for flavor,' pours you a taster nobody asked for.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Drink it to be polite.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "the_recipe",
+          "hazard_id": "rough_batch"
+        }
+      ]
+    },
+    "the_recipe": {
+      "text": "Somehow you're still standing, and the distiller respects that. 'Burn Juice and battery scrap, charged proper. Tastes like a electrical fire. Goes down easier than you'd think — twice.' They write the ratio on the back of a burnt playing card.",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 11 }
+      ],
+      "choices": [
+        {
+          "label": "Ask about the flare jars kept away from the still, for obvious reasons.",
+          "cost": { "water": 1 },
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "the_flares",
+          "hazard_id": "flare_pop"
+        }
+      ]
+    },
+    "the_flares": {
+      "text": "'Corrosive syrup and cactus spine, sealed tight,' the distiller says, holding one at arm's length. 'Pop it and it hisses and stinks so bad whatever's chasing you reconsiders its whole life.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 12 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "rough_batch": {
+      "text": "The taster was worse than advertised. You feel it in your teeth.",
+      "penalty": { "food": -1 },
+      "ends_encounter": false
+    },
+    "flare_pop": {
+      "text": "One of the jars goes off early. You get a face full of whatever's in it before you can back away.",
+      "penalty": { "radiation": 1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "still_name": ["Rustworks", "Backlot", "Two-Can", "Ashpour"]
+  }
+}

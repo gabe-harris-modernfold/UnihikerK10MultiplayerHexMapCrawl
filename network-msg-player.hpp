@@ -307,10 +307,23 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   const char* mpp = strstr(data, "\"mp\"");
   if (mpp) { const char* mpv = strchr(mpp + 4, ':'); if (mpv) mpParam = atoi(mpv + 1); }
 
+  int recipeId = 0;  // ACT_CRAFT only — which known recipe to craft
+  const char* rp = strstr(data, "\"r\"");
+  if (rp) { const char* rv = strchr(rp + 3, ':'); if (rv) recipeId = atoi(rv + 1); }
+  if (recipeId < 0 || recipeId > 255) recipeId = 0;
+
   static char survBuf[1100];
   int  survLen = 0;
   int  slot    = -1;
+  bool actOk   = false;
   SettleResult settleResult = {};
+  // CRAFT mutates invType[]/invQty[]/knownRecipes, which — like use_item/
+  // equip_item — are private state never carried by the broadcastState()
+  // tick or the 'ev'/'act' broadcast below, so a successful craft needs its
+  // own targeted snapshot back to the crafting client (and a saveGame(),
+  // same as use_item/equip_item/drop_item do for the same kind of mutation).
+  static char craftAck[320];
+  craftAck[0] = '\0';
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -320,13 +333,36 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
         return;
       }
-      handleAction(slot, (uint8_t)actType, mpParam,
-                   survBuf, sizeof(survBuf), &survLen, settleResult);
+      actOk = handleAction(slot, (uint8_t)actType, mpParam, (uint8_t)recipeId,
+                            survBuf, sizeof(survBuf), &survLen, settleResult);
+      if (actType == ACT_CRAFT && actOk) {
+        Player& pl = G.players[slot];
+        snprintf(craftAck, sizeof(craftAck),
+          "{\"t\":\"item_result\",\"ok\":true,\"act\":\"craft\",\"pid\":%d,\"recipe\":%d,"
+          "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
+          "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
+          "\"inv\":[%d,%d,%d,%d,%d],\"kr\":%lu}",
+          slot, recipeId,
+          pl.invType[0],  pl.invType[1],  pl.invType[2],  pl.invType[3],
+          pl.invType[4],  pl.invType[5],  pl.invType[6],  pl.invType[7],
+          pl.invType[8],  pl.invType[9],  pl.invType[10], pl.invType[11],
+          pl.invQty[0],   pl.invQty[1],   pl.invQty[2],   pl.invQty[3],
+          pl.invQty[4],   pl.invQty[5],   pl.invQty[6],   pl.invQty[7],
+          pl.invQty[8],   pl.invQty[9],   pl.invQty[10],  pl.invQty[11],
+          pl.inv[0], pl.inv[1], pl.inv[2], pl.inv[3], pl.inv[4],
+          (unsigned long)pl.knownRecipes);
+      }
     }
     xSemaphoreGive(G.mutex);
   }
+  // saveGame outside the mutex (it acquires it itself) — same pattern as
+  // handleMsg_use_item, and for the same reason: a craft just changed
+  // invType[]/invQty[]/knownRecipes.
+  if (actType == ACT_CRAFT && actOk) saveGame();
   if (survLen > 0)
     client->text(survBuf, (size_t)survLen);
+  if (craftAck[0])
+    client->text(craftAck);
   if (settleResult.fired)
     broadcastSettle(settleResult);
 }

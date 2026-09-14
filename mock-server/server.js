@@ -184,6 +184,7 @@ function makePlayer(id) {
     sk: (ARCHETYPE_SKILLS[id] ?? [0, 0, 0, 0, 0]).slice(),
     wnd: [0, 0],
     enc: false,
+    kr: 0,  // knownRecipes bitmask — bit (id-1) per discovered RecipeDef, learned via encounters
   };
 }
 
@@ -226,6 +227,73 @@ function loadItemRegistry() {
   return defs;
 }
 const ITEM_DEFS = loadItemRegistry();
+
+// ── Recipe registry — mirrors boot-assets.hpp's loadRecipeRegistry() for
+// /data/recipes.cfg. Recipes are secret: a player only sees/can-craft one
+// once its bit is set in p.kr (learned via an encounter's "recipe" loot).
+function loadRecipeRegistry() {
+  const defs = {};
+  let text;
+  try { text = fs.readFileSync(path.join(DATA_DIR, 'recipes.cfg'), 'utf8'); }
+  catch { return defs; }
+  let cur = null;
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.split('#')[0].trim();
+    if (!line) continue;
+    if (line === '[recipe]') { cur = { outputQty: 1, matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 0, 0, 0, 0] }; continue; }
+    if (!cur) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq).trim();
+    const val = line.slice(eq + 1).trim();
+    if      (key === 'id')          { cur.id = parseInt(val, 10) || 0; defs[cur.id] = cur; }
+    else if (key === 'name')        cur.name       = val;
+    else if (key === 'output_item') cur.outputItem = parseInt(val, 10) || 0;
+    else if (key === 'output_qty')  cur.outputQty  = Math.max(1, parseInt(val, 10) || 1);
+    else if (key === 'mat1')        cur.matItem[0] = parseInt(val, 10) || 0;
+    else if (key === 'matqty1')     cur.matQty[0]  = parseInt(val, 10) || 0;
+    else if (key === 'mat2')        cur.matItem[1] = parseInt(val, 10) || 0;
+    else if (key === 'matqty2')     cur.matQty[1]  = parseInt(val, 10) || 0;
+    else if (key === 'mat3')        cur.matItem[2] = parseInt(val, 10) || 0;
+    else if (key === 'matqty3')     cur.matQty[2]  = parseInt(val, 10) || 0;
+    else if (key === 'water_cost')  cur.resCost[0] = parseInt(val, 10) || 0;
+    else if (key === 'food_cost')   cur.resCost[1] = parseInt(val, 10) || 0;
+    else if (key === 'fuel_cost')   cur.resCost[2] = parseInt(val, 10) || 0;
+    else if (key === 'med_cost')    cur.resCost[3] = parseInt(val, 10) || 0;
+    else if (key === 'scrap_cost')  cur.resCost[4] = parseInt(val, 10) || 0;
+  }
+  return defs;
+}
+const RECIPE_DEFS = loadRecipeRegistry();
+
+// Mirrors applyRecipe() in inventory_items.hpp: resource + material
+// affordability and output-room checks all happen before any mutation.
+function craftRecipe(p, recipeId) {
+  const r = RECIPE_DEFS[recipeId];
+  if (!r || !r.outputItem) return false;
+  for (let i = 0; i < 5; i++) if (r.resCost[i] > (p.inv[i] || 0)) return false;
+  for (let m = 0; m < 3; m++) {
+    if (!r.matItem[m]) continue;
+    let have = 0;
+    for (let s = 0; s < INV_SLOTS_MAX; s++) if (p.it[s] === r.matItem[m]) have += p.iq[s];
+    if (have < r.matQty[m]) return false;
+  }
+  if (!canAddItemToInv(p, r.outputItem, r.outputQty)) return false;
+
+  for (let i = 0; i < 5; i++) p.inv[i] -= r.resCost[i];
+  for (let m = 0; m < 3; m++) {
+    if (!r.matItem[m]) continue;
+    let need = r.matQty[m];
+    for (let s = 0; s < INV_SLOTS_MAX && need > 0; s++) {
+      if (p.it[s] !== r.matItem[m]) continue;
+      const take = Math.min(need, p.iq[s]);
+      p.iq[s] -= take; need -= take;
+      if (!p.iq[s]) p.it[s] = 0;
+    }
+  }
+  grantItemOrDrop(p, r.outputItem, r.outputQty);
+  return true;
+}
 
 // ── Ground items — mirrors GroundItem groundItems[MAX_GROUND] in the .ino ───
 const MAX_GROUND = 32;
@@ -289,7 +357,7 @@ function resolveChoice(json, nodeKey, ci) {
     cost:     { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
                 water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0 },
     nextKey, nextCanBank: true, nextTerminal: true,
-    loot: [0, 0, 0, 0, 0], items: [], lootTable: '',
+    loot: [0, 0, 0, 0, 0], items: [], lootTable: '', recipeId: 0,
     hazLL: 0, hazRad: 0, hazRes: [0, 0, 0, 0, 0], hazWMin: 0, hazWMaj: 0, hazEnds: false,
   };
   if (next) {
@@ -300,7 +368,9 @@ function resolveChoice(json, nodeKey, ci) {
       const mn = e.qty?.[0] ?? 1, mx = e.qty?.[1] ?? mn;
       const q  = Math.max(0, Math.min(99, mn + Math.floor(Math.random() * (Math.max(mn, mx) - mn + 1))));
       if (e.res !== undefined) { if (e.res >= 0 && e.res < 5) out.loot[e.res] = Math.min(99, out.loot[e.res] + q); }
-      else if (e.item && q && out.items.length < 2) out.items.push({ it: e.item | 0, iq: q });
+      else if (e.item !== undefined && q && out.items.length < 2) out.items.push({ it: e.item | 0, iq: q });
+      // "recipe": N — a one-time knowledge grant, no qty involved.
+      else if (e.recipe !== undefined && (e.recipe | 0) > 0) out.recipeId = e.recipe | 0;
     }
   }
   const haz = ch.hazard_id ? json.hazards?.[ch.hazard_id] : null;
@@ -325,7 +395,7 @@ function openEncounter(ws, id, p, q, r, biome, encId, consumePoi) {
   const start = json.nodes?.[startKey];
   encounters[id] = { q, r, biome, encId, json, nodeKey: startKey,
                      canBank: !!start?.can_bank,
-                     pendingLoot: [0, 0, 0, 0, 0], pendingItems: [],
+                     pendingLoot: [0, 0, 0, 0, 0], pendingItems: [], pendingRecipes: 0,
                      fullClear: !(Array.isArray(start?.choices) && start.choices.length) };
   p.enc = true;
   send(ws, { t: 'enc_path', biome, id: encId });
@@ -481,10 +551,13 @@ function dawnUpkeepAll() {
 // Real-time floor: a day normally takes DAY_TICKS (5 real minutes) but ends
 // early the moment every connected player is resting, so back-to-back REST
 // spam could otherwise collapse days to seconds and cycle weather absurdly
-// fast. Mirrors the same ~2-3 real-minute floor as actions_game_loop.hpp's
-// updateWeatherPhase() — not persisted, resets on server restart.
+// fast. Mirrors the same ~1.5-2.5 real-minute floor as actions_game_loop.hpp's
+// updateWeatherPhase() — not persisted, resets on server restart. Unlike the
+// firmware (which also has a WEATHER_DUR_MIN/MAX days-per-phase counter),
+// this floor is the mock's ONLY weather-pacing knob — it has no day-duration
+// concept, so advanceWeather() re-rolls every dawn once this elapses.
 let lastWeatherChangeAt = 0;
-let weatherNextGapMs    = 120000;
+let weatherNextGapMs    = 90000;
 function advanceWeather() {
   if (lastWeatherChangeAt && Date.now() - lastWeatherChangeAt < weatherNextGapMs) return;
   const prev = weatherPhase;
@@ -499,7 +572,7 @@ function advanceWeather() {
   }
   if (weatherPhase !== prev) {
     lastWeatherChangeAt = Date.now();
-    weatherNextGapMs    = 120000 + Math.random() * 60000; // 2-3 real minutes until the next one
+    weatherNextGapMs    = 90000 + Math.random() * 60000; // 1.5-2.5 real minutes until the next one
     broadcast({ t: 'ev', k: 'weather', phase: weatherPhase, ticks: 0 });
     console.log(`[weather] ${WEATHER_NAMES[prev]} -> ${WEATHER_NAMES[weatherPhase]}`);
   }
@@ -643,6 +716,8 @@ setInterval(() => {
     resolveFireDamage(connected);
     resolveDoomProximity(connected);
     spreadFire();
+    maybeTriggerFlashFlood(connected);
+    spreadFlood(connected);
     tickCaravan();
     resolveCaravanProximity(connected);
     // Firmware's broadcastState() runs unconditionally every game tick (see
@@ -653,6 +728,19 @@ setInterval(() => {
     broadcast(stateMsg());
   }
 }, TICK_MS);
+
+// Lightweight heartbeat, independent of the game-tick/world-tick timing above:
+// firmware's broadcastState() is unconditional every 100ms, so an idle
+// in-game client there always sees frequent traffic. This mock's own
+// broadcasts are opportunistic (player actions) plus the 15s world tick,
+// which is fine for game-state correctness but too sparse for the client's
+// staleness watchdog (network.js, WS_STALE_THRESHOLD_MS=3000) — an idle
+// player in the mock would get force-reconnected every few seconds without
+// this. Just re-sends current state; doesn't touch simulation timing.
+setInterval(() => {
+  if (Object.keys(players).length === 0) return;
+  broadcast(stateMsg());
+}, 2000);
 
 function encStart(ws, id, msg) {
   const p = players[id];
@@ -714,7 +802,7 @@ function encChoice(ws, id, m) {
   const ev    = { t: 'ev', k: 'enc_res', pid: id, out: ok ? 1 : 0, skill, dn, tot,
                   loot: [0, 0, 0, 0, 0], it: 0, iq: 0, it2: 0, iq2: 0, penLL: 0, penRad: 0,
                   penRes: [0, 0, 0, 0, 0], penWnd: [0, 0], ends: 0,
-                  drains: [0, 0, 0, 0, 0, 0] };
+                  drains: [0, 0, 0, 0, 0, 0], rec: 0 };
   let ended = false;
   if (ok) {
     for (let i = 0; i < 5; i++) {
@@ -729,6 +817,11 @@ function encChoice(ws, id, m) {
       if (k === 0)      { ev.it  = it.it; ev.iq  = it.iq; }
       else if (k === 1) { ev.it2 = it.it; ev.iq2 = it.iq; }
     });
+    // A recipe is a one-time knowledge grant, pending like the loot above
+    // until the player banks — see encBank below. OR'd into a bitmask (not
+    // overwritten): a scene can walk through several nodes, each granting a
+    // different recipe, before ever banking.
+    if (ch.recipeId) { e.pendingRecipes |= (1 << (ch.recipeId - 1)); ev.rec = ch.recipeId; }
     e.nodeKey = ch.nextKey;
     e.canBank = ch.nextCanBank;
     if (ch.nextTerminal) e.fullClear = true;
@@ -768,9 +861,10 @@ function encBank(ws, id) {
   let total = 0;
   for (let i = 0; i < 5; i++) { p.inv[i] = Math.min(99, p.inv[i] + e.pendingLoot[i]); total += e.pendingLoot[i]; }
   for (const { it, iq } of e.pendingItems) grantItemOrDrop(p, it, iq);
+  p.kr = (p.kr | 0) | (e.pendingRecipes | 0);
   const scoreD = total * 3 + (e.fullClear ? 10 : 0);
   p.sc += scoreD;
-  broadcast({ t: 'ev', k: 'enc_bank', pid: id, q: e.q, r: e.r, loot: e.pendingLoot, scoreD });
+  broadcast({ t: 'ev', k: 'enc_bank', pid: id, q: e.q, r: e.r, loot: e.pendingLoot, scoreD, recs: e.pendingRecipes || 0 });
   delete encounters[id];
   p.enc = false;
   broadcast(stateMsg());
@@ -982,6 +1076,125 @@ function fireArray() {
   });
 }
 
+// ── World system: Flash Flood — the other storm-gated hazard alongside
+// lightning. Mirrors world-system.hpp's maybeTriggerFlashFlood()/
+// spreadFlood(): instead of igniting flammable terrain, it needs to find
+// actual water terrain (River Channel(11)/Flooded District(5)) to start
+// from, then can permanently wash out an adjacent dry hex into Flooded
+// District. Unlike fire, a flooded hex never "burns out" — it recedes
+// (decays) once the storm passes, and the permanent conversion only ever
+// happens to the washed-out neighbour, never the source.
+const FLASH_FLOOD_CHANCE      = 12;  // % per world tick while a storm (phase 2) is active
+const FLOOD_SPREAD_CHANCE     = 20;  // % chance a flooded hex (intensity >=2) washes out each eligible neighbour per world tick
+const FLOOD_CAP               = 15;  // max simultaneously flooded hexes
+const FLOOD_MAX_INTENSITY     = 3;
+const FLOOD_SEARCH_RADIUS     = 4;   // jitter box (± radius) searched for a water hex near the reference player
+const TERRAIN_MARSH             = 3;
+const TERRAIN_FLOODED_DISTRICT  = 5;
+const floodGrid = {};  // "q_r" -> intensity (1-3)
+let   floodCount = 0;
+
+function hasWater(t) {
+  return t === 5 || t === 11;  // Flooded District, River Channel
+}
+
+// Washout-eligible: Open Scrub(0), Rolling Hills(7) only — mirrors
+// world-system.hpp's isWashoutEligible().
+function isWashoutEligible(t) {
+  return t === 0 || t === 7;
+}
+
+function maybeTriggerFlashFlood(connected) {
+  if (weatherPhase !== 2) return;  // 2 = STORM
+  if (Math.random() * 100 >= FLASH_FLOOD_CHANCE) return;
+  if (connected.length === 0) return;
+  const ref = connected[Math.floor(Math.random() * connected.length)];
+  const span = FLOOD_SEARCH_RADIUS * 2 + 1;
+  for (let i = 0; i < span * span; i++) {
+    const dq = Math.floor(Math.random() * span) - FLOOD_SEARCH_RADIUS;
+    const dr = Math.floor(Math.random() * span) - FLOOD_SEARCH_RADIUS;
+    const q = ((ref.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+    const r = ((ref.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+    if (!hasWater(terrainAt(q, r))) continue;
+    const key = `${q}_${r}`;
+    const wasDry = !floodGrid[key];
+    if (wasDry) {
+      if (floodCount >= FLOOD_CAP) return;
+      floodCount++;
+    }
+    floodGrid[key] = Math.max(floodGrid[key] || 0, 2);
+    return;
+  }
+}
+
+// Snapshot-iterates current flood keys, same non-cascading intent as
+// spreadFire(). While the storm continues, every flooded hex rises in
+// intensity and (once >=2) can wash out an eligible dry neighbour —
+// permanent, one-way, and the newly-flooded neighbour keeps carrying flood
+// intensity afterward instead of self-extinguishing. Once the storm passes,
+// floods simply recede (decay by 1/tick, no spread) — there's no single-tick
+// "doused outright" moment the way rain douses fire.
+function spreadFlood(connected) {
+  if (weatherPhase !== 2) {
+    for (const key of Object.keys(floodGrid)) {
+      const next = floodGrid[key] - 1;
+      if (next <= 0) { delete floodGrid[key]; floodCount--; }
+      else floodGrid[key] = next;
+    }
+    return;
+  }
+
+  for (const key of Object.keys(floodGrid)) {
+    const [q, r] = key.split('_').map(Number);
+    const intensity = floodGrid[key];
+    if (intensity < FLOOD_MAX_INTENSITY) {
+      floodGrid[key] = intensity + 1;
+      // Second stage: a swamped edge hex that's stayed underwater long
+      // enough (just reached max intensity) fully drowns into Flooded
+      // District — mirrors world-system.hpp's spreadFlood().
+      if (floodGrid[key] === FLOOD_MAX_INTENSITY && terrainAt(q, r) === TERRAIN_MARSH) {
+        terrainOverrides.set(key, TERRAIN_FLOODED_DISTRICT);
+        broadcast({ t: 'ev', k: 'flood_washout', q, r, intensity: TERRAIN_FLOODED_DISTRICT });
+      }
+    }
+
+    if (intensity >= 2) {
+      for (const dir of Object.keys(DIR_DELTA)) {
+        const [dq, dr] = DIR_DELTA[dir];
+        const nq = ((q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+        const nr = ((r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+        const nkey = `${nq}_${nr}`;
+        if (floodGrid[nkey]) continue;                        // already flooded this pass
+        if (!isWashoutEligible(terrainAt(nq, nr))) continue;   // not washout-eligible
+        if (Math.random() * 100 >= FLOOD_SPREAD_CHANCE) continue;
+        if (floodCount >= FLOOD_CAP) continue;
+
+        // First stage: dry ground pushed by the advancing flood front
+        // becomes Marsh — a swampy edge, not open water outright.
+        terrainOverrides.set(nkey, TERRAIN_MARSH);
+        floodGrid[nkey] = 1;
+        floodCount++;
+        broadcast({ t: 'ev', k: 'flood_washout', q: nq, r: nr, intensity: TERRAIN_MARSH });
+
+        // Anyone standing on the hex the instant it washes out is swept —
+        // same "hit the player who happened to be there" idiom as
+        // maybeIgniteLightning()'s direct strike.
+        for (const p of connected) {
+          if (p.q !== nq || p.r !== nr) continue;
+          broadcast({ t: 'ev', k: 'flood_dmg', pid: p.id, q: nq, r: nr, intensity: 10 }); // 10 = swept-away sentinel, outside flood's 1-3 range
+        }
+      }
+    }
+  }
+}
+
+function floodArray() {
+  return Object.entries(floodGrid).map(([key, intensity]) => {
+    const [q, r] = key.split('_').map(Number);
+    return [q, r, intensity];
+  });
+}
+
 // ── World system: Creeping Doom — simplified, not behaviour-parity: no
 // track/scent modeling here (nothing needs the AI to be faithful, just the
 // client-visible position/awareness/effects to exercise the aura render and
@@ -1155,6 +1368,7 @@ function worldStateMsg() {
     caravan: { q: caravan.q, r: caravan.r, active: caravan.active, inv: caravan.inv },
     doom: { q: doom.q, r: doom.r, awareness: doom.awareness },
     fire: fireArray(),
+    flood: floodArray(),
   };
 }
 
@@ -1279,7 +1493,10 @@ function lobbyMsg() {
   const taken = new Set(Object.keys(players).map(Number));
   const avail = [];
   for (let i = 0; i < MAX_PLAYERS; i++) if (!taken.has(i)) avail.push(i);
-  return { t: 'lobby', avail };
+  // vc/sv/fa mirror syncMsg()'s fields — firmware now sends these on the
+  // lobby message too (see network-sync.hpp sendLobbyMsg), so the client can
+  // start preloading hex/shelter/forage-animal art before a character is picked.
+  return { t: 'lobby', avail, vc: VARIANT_COUNTS.vc, sv: VARIANT_COUNTS.sv, fa: VARIANT_COUNTS.fa };
 }
 
 // ── Item actions — mirrors equipItem()/unequipItem()/useItem()/dropItem()/
@@ -1318,6 +1535,22 @@ function grantItemOrDrop(p, itemId, qty) {
   groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
   groundItems[gslot].itemType = itemId;
   groundItems[gslot].qty = Math.min(255, groundItems[gslot].qty + qty);
+}
+
+// True if `qty` more of itemId could be placed right now (existing stack
+// with room, or a free slot) — a non-mutating dry-run of grantItemOrDrop,
+// so craftRecipe() never partially consumes materials for an item with no
+// room to land. Mirrors canAddItemToInv() in inventory_items.hpp.
+function canAddItemToInv(p, itemId, qty) {
+  if (!itemId || !qty) return false;
+  const cap = ITEM_DEFS[itemId]?.maxStack || 1;
+  for (let s = 0; s < p.is; s++) {
+    if (p.it[s] === itemId && cap - p.iq[s] >= qty) return true;
+  }
+  for (let s = 0; s < p.is; s++) {
+    if (!p.it[s]) return qty <= cap;
+  }
+  return false;
 }
 
 // Use the item in inventory slot slotIdx. Consumables apply their stat deltas
@@ -1665,6 +1898,32 @@ wss.on('connection', (ws) => {
               p.sc += 2;
             }
           }
+        } else if (msg.a === 5) {
+          // ACT_CRAFT — mirrors doCraft()/applyRecipe() in
+          // actions_game_loop.hpp/inventory_items.hpp: Settlement-only,
+          // 1 MP, deterministic (no skill roll). Recipes are secret — p.kr
+          // must already have this bit set (learned via an encounter's
+          // "recipe" loot entry, see encChoice/encBank below).
+          const recipeId      = msg.r | 0;
+          const inSettlement   = terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT;
+          const knownRecipe    = recipeId > 0 && ((p.kr >> (recipeId - 1)) & 1) === 1;
+          if (!inSettlement) {
+            send(ws, { t: 'err', msg: 'CRAFT requires a Settlement' });
+          } else if (p.mp < 1) {
+            send(ws, { t: 'err', msg: 'Not enough MP' });
+          } else if (!knownRecipe) {
+            send(ws, { t: 'err', msg: "You don't know that recipe" });
+          } else if (!craftRecipe(p, recipeId)) {
+            send(ws, { t: 'err', msg: "Can't craft that right now" });
+          } else {
+            p.mp -= 1;
+            p.sc += 2;
+            // Targeted ack — mirrors the firmware's craftAck in
+            // network-msg-player.hpp so the client's "Crafted X" log line
+            // fires the same way against the mock as against real hardware.
+            send(ws, { t: 'item_result', ok: true, act: 'craft', pid: id, recipe: recipeId,
+                       it: p.it, iq: p.iq, inv: p.inv, kr: p.kr });
+          }
         } else {
           // Generic: drain a bit, give a resource.
           p.mp = Math.max(0, p.mp - (msg.mp || 1));
@@ -1920,6 +2179,24 @@ wss.on('connection', (ws) => {
         igniteHex(p.q, p.r, 2);
         broadcast(stateMsg());
         console.log(`[fire] dbg_ignite at (${p.q},${p.r}) by pid=${id}`);
+        break;
+      }
+
+      case 'dbg_flood': {
+        // Test-only: force-flood the sender's own hex at intensity 2,
+        // ignoring the water-terrain/storm gates (still respects FLOOD_CAP).
+        // {"t":"dbg_flood"}
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        const key = `${p.q}_${p.r}`;
+        if (!floodGrid[key]) {
+          if (floodCount >= FLOOD_CAP) break;
+          floodCount++;
+        }
+        floodGrid[key] = Math.max(floodGrid[key] || 0, 2);
+        broadcast(stateMsg());
+        console.log(`[flood] dbg_flood at (${p.q},${p.r}) by pid=${id}`);
         break;
       }
 

@@ -25,6 +25,15 @@ static constexpr uint8_t  FIRE_CAP              = 20;   // max simultaneously bu
 // ignition source alongside Creeping Doom, which can also set fires deliberately.
 static constexpr uint8_t  LIGHTNING_IGNITE_CHANCE = 15; // % per world tick while WEATHER_STORM is active
 
+// Flash flood: another storm-gated hazard alongside lightning, but hits
+// water terrain instead of flammable terrain and washes out neighbours
+// rather than burning them.
+static constexpr uint8_t  FLASH_FLOOD_CHANCE  = 12;  // % per world tick while WEATHER_STORM is active
+static constexpr uint8_t  FLOOD_SPREAD_CHANCE = 20;  // % chance a flooded hex (intensity >=2) washes out each eligible neighbour per world tick
+static constexpr uint8_t  FLOOD_CAP           = 15;  // max simultaneously flooded hexes
+static constexpr uint8_t  FLOOD_MAX_INTENSITY = 3;
+static constexpr uint8_t  FLOOD_SEARCH_RADIUS = 4;   // jitter box (± radius) searched for a water hex near the reference player
+
 static constexpr uint8_t  SCENT_THRESHOLD = 8;   // min track intensity Doom will pursue
 static constexpr uint8_t  AWARENESS_GAIN  = 12;  // per world tick when following scent
 static constexpr uint8_t  AWARENESS_DECAY = 5;   // per world tick when cold
@@ -92,13 +101,14 @@ static bool moveOneStep(int16_t& q, int16_t& r, int16_t tq, int16_t tr, bool ign
   return true;
 }
 
-// ── Hex-level dynamic state: fire + scent tracks ─────────────────────────
+// ── Hex-level dynamic state: fire + scent tracks + flood ─────────────────
 // Parallel to G.map — NOT part of HexCell, which is wire-encoded and shared
 // with clients unchanged. Zero-initialised at boot (static global); also
 // explicitly cleared in wInit() on map regen (see below).
 struct HexDynamic {
   uint8_t fire;   // 0 = none, 1-3 = burning (1=ember, 2=burning, 3=inferno)
   uint8_t track;  // AP footprint intensity; 0-255, decays each world tick
+  uint8_t flood;  // 0 = none, 1-3 = flash-flood intensity, rises while storming, recedes after
 };
 // PSRAM-resident (allocated by allocPsramGlobals() in the .ino before setup()
 // touches the world). Pointer-to-row keeps W_hex[r][q] indexing unchanged;
@@ -116,6 +126,18 @@ static uint16_t fireCount = 0;
 // cannot spread onto it from a burning neighbour.
 static inline bool isFlammable(uint8_t terrain) {
   return terrain == 0 || terrain == 2 || terrain == 3 || terrain == 4 || terrain == 7 || terrain == 9;
+}
+
+// Hexes currently flooded (flood>0) — mirrors fireCount, so
+// maybeTriggerFlashFlood()/spreadFlood() can enforce FLOOD_CAP in O(1).
+static uint16_t floodCount = 0;
+
+// Washout-eligible: Open Scrub(0) and Rolling Hills(7) only — the two dry
+// terrains a flash flood can permanently drown into Flooded District(5).
+// Existing water terrain (River Channel(11), Flooded District(5) itself)
+// is never a washout target, just a flood source.
+static inline bool isWashoutEligible(uint8_t terrain) {
+  return terrain == 0 || terrain == 7;
 }
 
 // Ignites (q,r) to at least `intensity` if flammable and (for a hex not
@@ -144,6 +166,13 @@ static void wIgnite(int16_t q, int16_t r, uint8_t intensity = 1) {
 // weather penalties in WEATHER_VIS_PENALTY (STORM=3, CHEM=5).
 static int fireVisionPenalty(int q, int r) {
   return (int)W_hex[r][q].fire;
+}
+
+// Flash flood cuts move speed, not vision — additive alongside
+// WEATHER_MOVE_PENALTY in survival_state.hpp's move-cost calc. Forward-
+// declared in hex-map.hpp next to fireVisionPenalty for the same reason.
+static int floodMovePenalty(int q, int r) {
+  return (int)W_hex[r][q].flood;
 }
 
 static void decayTracks() {
@@ -202,6 +231,38 @@ static void maybeIgniteLightning() {
   }
 }
 
+// Flash flood: the other storm-gated hazard alongside lightning. Rather than
+// striking directly at a jittered point (lightning's approach), it needs to
+// find actual water terrain to start from, so it searches a small jittered
+// box around a random connected player and seeds the first water hex
+// (TERRAIN_HAS_WATER) it finds. No-op that tick if none is found nearby —
+// a storm doesn't always happen to be over a river.
+static void maybeTriggerFlashFlood() {
+  if (G.weatherPhase != WEATHER_STORM) return;
+  if ((int)(esp_random() % 100) >= FLASH_FLOOD_CHANCE) return;
+  int connectedCount = 0;
+  int16_t refQ[MAX_PLAYERS], refR[MAX_PLAYERS];
+  for (int i = 0; i < MAX_PLAYERS; i++)
+    if (G.players[i].connected) { refQ[connectedCount] = G.players[i].q; refR[connectedCount] = G.players[i].r; connectedCount++; }
+  if (connectedCount == 0) return;
+  int pick = (int)(esp_random() % connectedCount);
+  int span = FLOOD_SEARCH_RADIUS * 2 + 1;
+  for (int i = 0; i < span * span; i++) {
+    int dq = (int)(esp_random() % span) - FLOOD_SEARCH_RADIUS;
+    int dr = (int)(esp_random() % span) - FLOOD_SEARCH_RADIUS;
+    int q = wrapQ((int)refQ[pick] + dq);
+    int r = wrapR((int)refR[pick] + dr);
+    if (!TERRAIN_HAS_WATER[G.map[r][q].terrain]) continue;
+    HexDynamic& cell = W_hex[r][q];
+    if (cell.flood == 0) {
+      if (floodCount >= FLOOD_CAP) return;
+      floodCount++;
+    }
+    cell.flood = max(cell.flood, (uint8_t)2);
+    return;
+  }
+}
+
 // Fire on (q,r) just went out — a permanent, one-way transition: Ash Dunes(1)
 // isn't flammable (see isFlammable()), so a hex only ever burns once before
 // it's permanently spent. Caller has already zeroed W_hex[r][q].fire (or is
@@ -257,6 +318,87 @@ static void spreadFire() {
     }
   }
   memcpy(W_hex, next, W_HEX_BYTES);
+}
+
+// Double-buffered like spreadFire(), but the branches are inverted: while
+// the storm that caused it continues, every flooded hex rises in intensity
+// and (once >=2) can wash out an eligible dry neighbour — permanent,
+// one-way, just like fire's burnout, except two-staged instead of one pop:
+// dry Scrub(0)/Hills(7) floods into Marsh(3) first (a swampy edge), and a
+// Marsh hex that stays at max intensity long enough fully drowns into
+// Flooded District(5). The newly-flooded hex keeps carrying flood intensity
+// afterward instead of self-extinguishing, so the "core" of the flood keeps
+// advancing behind its own edge. Once the storm passes, floods simply
+// recede (decay by 1/tick, no spread) rather than being doused outright —
+// there's no single-tick "rain washes away a flood" moment the way plain
+// rain douses fire.
+static void spreadFlood() {
+  if (G.weatherPhase != WEATHER_STORM) {
+    for (int r = 0; r < MAP_ROWS; r++)
+      for (int q = 0; q < MAP_COLS; q++)
+        if (W_hex[r][q].flood > 0 && --W_hex[r][q].flood == 0) floodCount--;
+    return;
+  }
+
+  PSRAM_STATIC(HexDynamic, nextFlood, [MAP_ROWS][MAP_COLS]);
+  memcpy(nextFlood, W_hex, W_HEX_BYTES);
+
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int q = 0; q < MAP_COLS; q++) {
+      if (W_hex[r][q].flood == 0) continue;
+      if (nextFlood[r][q].flood < FLOOD_MAX_INTENSITY && ++nextFlood[r][q].flood == FLOOD_MAX_INTENSITY
+          && G.map[r][q].terrain == 3) {
+        // Second stage: a swamped edge hex that's stayed underwater long
+        // enough (reached max intensity) fully drowns into Flooded
+        // District — the flood's "core" advances behind its own edge
+        // instead of the whole washed area popping straight to open water.
+        G.map[r][q].terrain = 5;
+        GameEvent sev = {}; sev.type = EVT_FLOOD_WASHOUT;
+        sev.q = (int16_t)q; sev.r = (int16_t)r; sev.amt = 5;
+        enqEvt(sev);
+      }
+
+      if (W_hex[r][q].flood >= 2) {
+        for (int d = 0; d < 6; d++) {
+          int nq = wrapQ(q + DQ[d]);
+          int nr = wrapR(r + DR[d]);
+          if (nextFlood[nr][nq].flood > 0) continue;                 // already flooded this tick
+          if (!isWashoutEligible(G.map[nr][nq].terrain)) continue;   // not a washout-eligible terrain
+          if ((int)(esp_random() % 100) >= FLOOD_SPREAD_CHANCE) continue;
+          if (floodCount >= FLOOD_CAP) continue;
+
+          // First stage: dry ground pushed by the advancing flood front
+          // becomes Marsh — a swampy edge, not open water outright (see
+          // isWashoutEligible(): only ever dry Scrub(0)/Hills(7) reach this
+          // branch, since a hex already at Marsh/water carries flood>0 and
+          // is skipped by the check above).
+          G.map[nr][nq].terrain = 3;
+          nextFlood[nr][nq].flood = 1;
+          floodCount++;
+          GameEvent ev = {}; ev.type = EVT_FLOOD_WASHOUT;
+          ev.q = (int16_t)nq; ev.r = (int16_t)nr; ev.amt = 3;
+          enqEvt(ev);
+
+          // Anyone standing on the hex the instant it washes out is swept —
+          // independent of the water damage/movement penalty the flood
+          // leaves behind, same "hit the player who happened to be there"
+          // idiom as maybeIgniteLightning()'s direct strike.
+          for (int i = 0; i < MAX_PLAYERS; i++) {
+            Player& p = G.players[i];
+            if (!p.connected || encounters[i].active || p.q != nq || p.r != nr) continue;
+            p.movesLeft = 0;
+            ledFlash(80, 160, 255);
+            k10Play(MOTIF_SEWER_ECHO);
+            GameEvent dev = {}; dev.type = EVT_FLOOD_DAMAGE;
+            dev.pid = (uint8_t)i; dev.q = (int16_t)nq; dev.r = (int16_t)nr;
+            dev.amt = 10;  // sentinel, outside flood's 1-3 intensity range: swept off your feet
+            enqEvt(dev);
+          }
+        }
+      }
+    }
+  }
+  memcpy(W_hex, nextFlood, W_HEX_BYTES);
 }
 
 // ── Creeping Doom ─────────────────────────────────────────────────────────
@@ -491,6 +633,7 @@ static void wInit() {
   memset(&W, 0, sizeof(W));
   memset(W_hex, 0, W_HEX_BYTES);
   fireCount = 0;
+  floodCount = 0;
   clearCaravanDebounce();
   pickPassableHex(W.creepingDoom.q, W.creepingDoom.r);  // placed first: pickCaravanWaypoint scores against it
   W.creepingDoom.awareness = 0;

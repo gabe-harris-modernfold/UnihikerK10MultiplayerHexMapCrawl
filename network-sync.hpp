@@ -7,6 +7,11 @@
 // Each slot holds a WS client ID (0 = empty). Guarded by evtMux spinlock.
 static uint32_t lobbyIds[MAX_PLAYERS] = {0};
 
+// ── broadcastState() telemetry, surfaced via /state (game-server.hpp) ────────
+static uint32_t g_broadcastSkips       = 0;  // total ticks skipped: G.mutex busy
+static uint32_t g_broadcastSkipsConsec = 0;  // current consecutive-skip streak
+static uint32_t g_broadcastPartial     = 0;  // ticks where >=1 client missed the send (queue full)
+
 // ── Skill check broadcast ─────────────────────────────────────────────────────
 static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
   Log.notice("CHECK pid=%d skill=%d dn=%d r1=%d r2=%d sv=%d mod=%d tot=%d suc=%d",
@@ -25,7 +30,7 @@ static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
 // {"t":"lobby","avail":[0,1,2,4,5]}  — indices of unconnected archetype slots
 static void sendLobbyMsg(AsyncWebSocketClient* client) {
   Log.verbose("Lobby unicast id=%u", (unsigned)client->id());
-  char buf[72]; int pos;
+  char buf[200]; int pos;   // was 72 — now also carries vc/sv/fa, worst case ~115B
   pos = snprintf(buf, sizeof(buf), "{\"t\":\"lobby\",\"avail\":[");
   bool first = true;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -38,7 +43,19 @@ static void sendLobbyMsg(AsyncWebSocketClient* client) {
     }
     xSemaphoreGive(G.mutex);
   }
-  int len = snprintf(buf + pos, sizeof(buf) - pos, "]}") + pos;
+  // Variant counts are static for the boot session (set once by
+  // setupVariantCounts() in setup()) — send them on first connect so the
+  // client can start preloading hex/shelter/forage-animal art immediately,
+  // instead of waiting for sync (which only arrives after picking a
+  // character, by which point the boot loading screen has already closed).
+  int len = snprintf(buf + pos, sizeof(buf) - pos,
+    "],\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],\"sv\":[%d,%d],\"fa\":%d}",
+    terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
+    terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
+    terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
+    terrainVariantCount[9],  terrainVariantCount[10], terrainVariantCount[11],
+    shelterVariantCount[0], shelterVariantCount[1],
+    forrageAnimalCount) + pos;
   client->text(buf, len);
 }
 
@@ -96,12 +113,37 @@ static int appendFireArray(char* buf, size_t cap) {
   return pos;
 }
 
+// Sparse flooded-hex list, same shape/convention as appendFireArray() above
+// (caller wraps it in "flood":[ ... ]). At FLOOD_CAP of 15 this is at most
+// ~165 bytes.
+static int appendFloodArray(char* buf, size_t cap) {
+  int  pos = 0;
+  bool first = true;
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int q = 0; q < MAP_COLS; q++) {
+      if (W_hex[r][q].flood == 0) continue;
+      if (!first) buf[pos++] = ',';
+      pos += snprintf(buf + pos, cap - pos, "[%d,%d,%d]", q, r, (int)W_hex[r][q].flood);
+      first = false;
+    }
+  }
+  return pos;
+}
+
 // ── Sync message (unicast to one client on connect) ──────────────────────────
 // Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin
 static void sendSync(AsyncWebSocketClient* client, int pid) {
   PSRAM_STATIC(char, buf, [40000]);  // 75×57 map fog encoding (6 chars/cell); PSRAM — was 40 KB of internal .bss
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
-    Log.warning("sendSync pid=%d: G.mutex timeout - skipped", pid);
+  // One-shot (join/regen), never on the hot 100ms tick path, so a few retries
+  // here is cheap insurance against leaving a joining player with no map at
+  // all — previously a single 20ms miss sent the client nothing.
+  bool gotMutex = false;
+  for (int attempt = 0; attempt < 3 && !gotMutex; attempt++) {
+    gotMutex = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE);
+  }
+  if (!gotMutex) {
+    Log.error("sendSync pid=%d: G.mutex timeout after 3 attempts", pid);
+    client->text("{\"t\":\"err\",\"msg\":\"Sync failed, try reconnecting\"}");
     return;
   }
 
@@ -143,7 +185,7 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
       "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"eq\":[%d,%d,%d,%d,%d],\"enc\":%d}",
+      "\"eq\":[%d,%d,%d,%d,%d],\"kr\":%lu,\"enc\":%d}",
       p.invType[0],  p.invType[1],  p.invType[2],  p.invType[3],
       p.invType[4],  p.invType[5],  p.invType[6],  p.invType[7],
       p.invType[8],  p.invType[9],  p.invType[10], p.invType[11],
@@ -151,6 +193,7 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
       p.invQty[4],   p.invQty[5],   p.invQty[6],   p.invQty[7],
       p.invQty[8],   p.invQty[9],   p.invQty[10],  p.invQty[11],
       p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4],
+      (unsigned long)p.knownRecipes,
       encounters[i].active ? 1 : 0);
   }
   // Ground items visible to this player
@@ -175,6 +218,8 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
+  pos += appendFloodArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "]},"
     "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
@@ -202,15 +247,27 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
 // the FIRE_CAP of 20 — sized up front when caravan alone landed).
 static void broadcastState() {
   PSRAM_STATIC(char, buf, [3072]);
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+  // Runs unconditionally every 100ms tick, so keep the retry tight: 2× 8ms
+  // (16ms worst case) instead of one 5ms try — enough to ride out the brief
+  // holders elsewhere (drainEvents ~5ms, trade-expiry sweep ~2ms/offer)
+  // without risking a meaningfully late tick.
+  bool gotMutex = false;
+  for (int attempt = 0; attempt < 2 && !gotMutex; attempt++) {
+    gotMutex = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(8)) == pdTRUE);
+  }
+  if (!gotMutex) {
+    g_broadcastSkips++;
+    g_broadcastSkipsConsec++;
     static uint32_t lastBusyLogMs = 0;
     uint32_t nowMs = millis();
     if (nowMs - lastBusyLogMs >= 1000) {
       lastBusyLogMs = nowMs;
-      Log.verbose("broadcastState: G.mutex busy (rate-limited)");
+      Log.verbose("broadcastState: G.mutex busy (rate-limited) totalSkips=%lu consec=%lu",
+                  (unsigned long)g_broadcastSkips, (unsigned long)g_broadcastSkipsConsec);
     }
     return;
   }
+  g_broadcastSkipsConsec = 0;
 
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"s\",\"tk\":%lu,\"p\":[", (unsigned long)G.tickId);
@@ -248,7 +305,26 @@ static void broadcastState() {
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
+  pos += appendFloodArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "]}}");
   xSemaphoreGive(G.mutex);
-  ws.textAll(buf, (size_t)pos);
+  // setCloseClientOnQueueFull(false) (see handleConnect) means a backlogged
+  // client silently misses this tick's send instead of getting force-closed —
+  // track how often that happens so a chronically-lagging client is visible.
+  AsyncWebSocket::SendStatus st = ws.textAll(buf, (size_t)pos);
+  // textAll() returns DISCARDED whenever there are zero WS clients at all
+  // (hit==0), same as it would for a real all-clients-backlogged case — guard
+  // on count() so an idle/empty server doesn't masquerade as one every tick.
+  if (st != AsyncWebSocket::ENQUEUED && ws.count() > 0) {
+    g_broadcastPartial++;
+    static uint32_t lastPartialLogMs = 0;
+    uint32_t nowMs = millis();
+    if (nowMs - lastPartialLogMs >= 1000) {
+      lastPartialLogMs = nowMs;
+      Log.verbose("broadcastState: send %s (rate-limited) totalPartial=%lu",
+                  st == AsyncWebSocket::DISCARDED ? "DISCARDED" : "PARTIAL",
+                  (unsigned long)g_broadcastPartial);
+    }
+  }
 }

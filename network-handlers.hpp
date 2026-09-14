@@ -53,6 +53,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
     case WS_EVT_CONNECT:    tn = "CONNECT"; break;
     case WS_EVT_DISCONNECT: tn = "DISCONNECT"; break;
     case WS_EVT_DATA:       tn = "DATA"; break;
+    case WS_EVT_PING:       tn = "PING"; break;
     case WS_EVT_PONG:       tn = "PONG"; break;
     case WS_EVT_ERROR:      tn = "ERROR"; break;
     default:                tn = "?"; break;
@@ -75,7 +76,12 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
       break;
     }
     case WS_EVT_ERROR: {
-      Log.error("WS ERROR id=%u len=%u", (unsigned)client->id(), (unsigned)len);
+      // Only raised when the peer sends a WS close frame with reason code >
+      // 1001 (see AsyncWebSocket.cpp) — arg is that code, data/len its reason
+      // string, so this is a real signal worth reading rather than dropping.
+      uint16_t code = arg ? *(uint16_t*)arg : 0;
+      Log.error("WS ERROR id=%u code=%u reason=%.*s",
+                (unsigned)client->id(), code, (int)len, (const char*)data);
       break;
     }
     default: break;

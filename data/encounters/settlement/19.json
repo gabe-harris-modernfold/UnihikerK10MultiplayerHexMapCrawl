@@ -1,0 +1,61 @@
+{
+  "id": "settlement_tannery_01",
+  "title": "{{tanner_name}}'s Tannery",
+  "start_node": "yard",
+  "nodes": {
+    "yard": {
+      "text": "Hides are stretched on frames across the yard, some of them from animals that shouldn't exist. {{tanner_name}} works a scraper over something with too many legs' worth of fur and doesn't look up.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask about the good pelts.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_pelts",
+          "hazard_id": "flesh_fly"
+        }
+      ]
+    },
+    "the_pelts": {
+      "text": "'Irradiated fur, cured slow and lined tight,' {{tanner_name}} says, tossing you a cape that still smells faintly of ozone. 'Warm. Glows a little in the dark. That's normal, probably.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 13 }
+      ],
+      "choices": [
+        {
+          "label": "Ask about the workbench with the melted tools.",
+          "cost": { "scrap": 1 },
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_workbench",
+          "hazard_id": "syrup_splash"
+        }
+      ]
+    },
+    "the_workbench": {
+      "text": "'Corrosive syrup, if you're patient,' {{tanner_name}} says, dipping a blade edge into a jar that hisses. 'Eats through anything soft. Keep it away from your gloves. And your face.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 14 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "flesh_fly": {
+      "text": "Something with too many wings lands on you before you can swat it away.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    },
+    "syrup_splash": {
+      "text": "A jar tips. The syrup finds skin before you can move.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "tanner_name": ["Old Hendrix", "Skinner Faye", "The Scraper", "Cutgut Nadia"]
+  }
+}

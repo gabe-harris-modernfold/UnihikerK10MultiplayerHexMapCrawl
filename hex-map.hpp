@@ -29,6 +29,11 @@ static int equipVisionBonus(int pid);
 // independently of the weather phase — see docs/world-system-spec.md.
 static int fireVisionPenalty(int q, int r);
 
+// Defined in world-system.hpp, same reason as fireVisionPenalty above.
+// Flash-flood intensity adds to move cost instead of cutting vision — see
+// survival_state.hpp's move-cost calc.
+static int floodMovePenalty(int q, int r);
+
 // ── Group vision bonus ──────────────────────────────────────────
 // Survivors watching the same hex together see farther: +1 vision radius per
 // other connected player stacked on pid's hex, capped so a full party stack

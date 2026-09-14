@@ -52,7 +52,24 @@ const SHADOW_ALPHA           = 0.72;  // shadow under character icons
 
 // WebSocket connection
 const WIFI_CREDS_SEND_DELAY_MS = 300; // delay before auto-sending WiFi creds
-const RECONNECT_DELAY_MS      = 2000; // delay before attempting reconnect
+
+// Reconnect backoff: base * 2^attempts, capped, ± jitter — spreads out up to
+// 6 clients reconnecting at once (e.g. right after a board reboot) instead of
+// all retrying in lockstep on a flat interval.
+const RECONNECT_BASE_MS       = 1000;
+const RECONNECT_MAX_MS        = 8000;
+const RECONNECT_JITTER_PCT    = 0.25;
+
+// Dropped move/act input while disconnected: replayed on reconnect (silent
+// auto-replay), bounded so a long outage doesn't replay stale intent.
+const PENDING_ACTION_MAX      = 3;    // a couple of clicks, not a backlog
+const PENDING_ACTION_TTL_MS   = 3000;
+
+// Staleness watchdog: broadcastState() is unconditional every 100ms
+// server-side, so no message for this long means the connection is half-dead
+// even though the browser hasn't noticed yet.
+const WS_STALE_THRESHOLD_MS      = 3000;
+const WS_STALE_CHECK_INTERVAL_MS = 2000;
 
 // ── Shared animation state (written by network, read by renderer) ─
 let maxMP    = 6;   // plain copy used by non-reactive rendering (time-of-day clock)
@@ -92,6 +109,10 @@ const TERRAIN_IMG_NAMES = [
 const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
 
 function loadTerrainVariants(vc) {
+  // Counts are static for the whole session (fixed at boot from the SD card
+  // scan) — now arrives on both 'lobby' (on connect) and 'sync' (on pick), so
+  // guard against rebuilding every array and re-fetching every image twice.
+  if (terrainImgVariants.some(a => a.length)) return;
   for (let t = 0; t < NUM_TERRAIN; t++) {
     const name = TERRAIN_IMG_NAMES[t];
     const count = vc?.[t] || 0;
@@ -127,6 +148,7 @@ let forrageAnimalImgs = [];
 const collectedCells = new Set(); // cells cleared by 'col' — guards against vis disk overwrite
 
 function loadForrageAnimalImgs(count) {
+  if (forrageAnimalImgs.length) return;  // static for the session — see loadTerrainVariants
   forrageAnimalImgs = Array.from(
     { length: count },
     (_, v) => createImageWithLoadTracking(`/img/forrageAnimal${v}.png`)
@@ -140,6 +162,7 @@ const shelterImgs = [];
 const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
 
 function loadShelterVariants(sv) {
+  if (shelterImgs.some(a => a?.length)) return;  // static for the session — see loadTerrainVariants
   for (let s = 0; s < 2; s++) {
     const count = sv?.[s] || 0;
     shelterImgs[s] = Array.from(

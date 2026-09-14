@@ -269,6 +269,10 @@ canvas{display:block;width:100%;height:100%}
 .chk-action-btn:hover{background:var(--rust)}
 .chk-action-btn.push-btn{border-color:var(--ash);color:var(--ash)}
 .chk-action-btn.push-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--rust)}
+/* CRAFT recipe cards — chk-action-btn's block layout, laid out like a mini action-item-btn */
+.chk-action-btn.craft-card{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left}
+.chk-action-btn.craft-card .act-label{color:var(--gold)}
+.chk-action-btn.craft-card.action-disabled{opacity:0.38;cursor:not-allowed;border-color:var(--bdr)}
 #hex-info h2{
   font-family:var(--stencil);
   font-size:var(--fs-h);color:var(--gold);letter-spacing:var(--ls-h);margin-bottom:8px;

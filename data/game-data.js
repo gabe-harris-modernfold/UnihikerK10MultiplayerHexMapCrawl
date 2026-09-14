@@ -110,12 +110,57 @@ const ARCHETYPE_COLORS = [
 
 // ── Action system constants (mirrors server ACT_* / AO_*) ────────
 const ACT_FORAGE  = 0, ACT_WATER = 1, ACT_TREAT = 2, ACT_SCAV = 3;
-const ACT_SHELTER = 4, ACT_SURVEY = 6, ACT_REST = 7;
-const ACT_TRADE = 8;  // client-only sentinel — no server action type (above server's 0–7 range)
+const ACT_SHELTER = 4, ACT_CRAFT = 5, ACT_SURVEY = 6, ACT_REST = 7;
+// ACT_TRADE is a client-only sentinel (no server action type, above the
+// server's 0-7 range) — ACT_CRAFT=5 is a REAL server action id (fills the
+// slot TRADE used before it got its own trade_offer/trade_accept protocol).
+const ACT_TRADE = 8;
 const RES_SHORT = ['WAT', 'FOD', 'FUL', 'MED', 'SCP'];  // short labels for trade resource steppers
 const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
 const ACT_NAMES = ['FORAGE','COLLECT WATER','TREAT WOUND','SCAVENGE',
-                   'BUILD SHELTER','','SURVEY','REST'];
+                   'BUILD SHELTER','CRAFT','SURVEY','REST'];
+
+// ── Recipes — secret until learned via an encounter's "recipe" loot entry
+// (see data/ui-encounter.js), then craftable at any Settlement (ACT_CRAFT).
+// Mirrors data/recipes.cfg / RecipeDef in Esp32HexMapCrawl.ino byte-for-byte:
+// matItem/matQty are up to 3 material ItemDef ids + counts, resCost is
+// water/food/fuel/med/scrap tokens consumed (same order as RES_SHORT).
+const RECIPES = [
+  { id: 1,  name: 'Field Trauma Patch', outputItem: 1,  outputQty: 1,
+    matItem: [24, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 0, 1, 0] },
+  { id: 2,  name: 'Sock Puppet Bandage', outputItem: 53, outputQty: 1,
+    matItem: [36, 24, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 3,  name: 'Squelch Bandage', outputItem: 57, outputQty: 1,
+    matItem: [39, 24, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 4,  name: 'Blister Balm', outputItem: 61, outputQty: 1,
+    matItem: [48, 24, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 5,  name: 'Gutter Broth', outputItem: 52, outputQty: 1,
+    matItem: [21, 0, 0], matQty: [2, 0, 0], resCost: [1, 0, 0, 0, 0] },
+  { id: 6,  name: 'Cricket Paste', outputItem: 55, outputQty: 1,
+    matItem: [35, 0, 0], matQty: [2, 0, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 7,  name: 'Marrow Jelly', outputItem: 59, outputQty: 1,
+    matItem: [21, 39, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 8,  name: 'Wired Knuckles', outputItem: 40, outputQty: 1,
+    matItem: [22, 0, 0], matQty: [2, 0, 0], resCost: [0, 0, 1, 0, 0] },
+  { id: 9,  name: 'Nostril Salts', outputItem: 58, outputQty: 1,
+    matItem: [22, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 1, 0, 0] },
+  { id: 10, name: 'Static Chew', outputItem: 60, outputQty: 1,
+    matItem: [22, 46, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 11, name: 'Tooth Whiskey', outputItem: 56, outputQty: 1,
+    matItem: [23, 22, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 12, name: 'Bile Flare', outputItem: 54, outputQty: 1,
+    matItem: [48, 46, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 13, name: 'Fur-Lined Cape', outputItem: 34, outputQty: 1,
+    matItem: [39, 0, 0], matQty: [2, 0, 0], resCost: [0, 0, 0, 0, 1] },
+  { id: 14, name: 'Corroded Edge', outputItem: 42, outputQty: 1,
+    matItem: [48, 0, 0], matQty: [2, 0, 0], resCost: [0, 0, 0, 0, 1] },
+  { id: 15, name: 'Screaming Spike', outputItem: 8,  outputQty: 1,
+    matItem: [46, 0, 0], matQty: [3, 0, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 16, name: 'Panic Dart', outputItem: 5,  outputQty: 1,
+    matItem: [35, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 0, 0, 0] },
+];
+function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
+function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
 // MP costs live on the action cards in ui-panels.js (shelter and water are dynamic).
 // Which terrain indices allow each action (matches server terrain arrays)
 // Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8, River(11) DN6
@@ -426,6 +471,57 @@ const ITEMS = [
     img:'img/items/item_51.png', icon:'img/items/icon_51.png',
     preUse:  null, postUse: null,
     story:   'A faded yellow post-it note. In careful ballpoint: "admin / admin". The most powerful document in the wasteland.' },
+  // ── CRAFTED CONCOCTIONS — recipe-only outputs (data/recipes.cfg), never drop as loot ──
+  { id:52, name:'Gutter Broth',       category:0, slot:0,
+    img:'img/items/item_52.png', icon:'img/items/icon_52.png',
+    preUse:  'It\'s gray. It\'s warm. Something in it used to have a wrapper.',
+    postUse: 'Tastes like a dumpster\'s memory of soup. Fills you up anyway. +2 Food, +1 Rad.',
+    story:   null },
+  { id:53, name:'Sock Puppet Bandage', category:0, slot:0,
+    img:'img/items/item_53.png', icon:'img/items/icon_53.png',
+    preUse:  'A sock, boiled, folded, and pretending very hard to be medical gauze.',
+    postUse: 'It holds. You decide not to think about which sock. Closes a minor wound.',
+    story:   null },
+  { id:54, name:'Bile Flare',         category:0, slot:0,
+    img:'img/items/item_54.png', icon:'img/items/icon_54.png',
+    preUse:  'The jar hisses when you crack the seal. Your eyes water in advance.',
+    postUse: 'It pops, hisses, and stinks so bad that whatever was watching reconsiders. Threat Clock −2.',
+    story:   null },
+  { id:55, name:'Cricket Paste',      category:0, slot:0,
+    img:'img/items/item_55.png', icon:'img/items/icon_55.png',
+    preUse:  'Ground fine. Still faintly chirping, somehow.',
+    postUse: 'Crunchy, then chewy, then gone. Better than it has any right to be. +1 Food, +1 LL.',
+    story:   null },
+  { id:56, name:'Tooth Whiskey',      category:0, slot:0,
+    img:'img/items/item_56.png', icon:'img/items/icon_56.png',
+    preUse:  'It\'s the color of an electrical fire and smells about the same.',
+    postUse: 'Goes down like a live wire, twice. You feel great. You also feel slightly warm inside. +2 LL, +1 Rad.',
+    story:   null },
+  { id:57, name:'Squelch Bandage',    category:0, slot:0,
+    img:'img/items/item_57.png', icon:'img/items/icon_57.png',
+    preUse:  'Wet. Warm. You were told not to ask what cured it. You don\'t.',
+    postUse: 'It squelches once, then sets. Closes a minor wound.',
+    story:   null },
+  { id:58, name:'Nostril Salts',      category:0, slot:0,
+    img:'img/items/item_58.png', icon:'img/items/icon_58.png',
+    preUse:  'One whiff and your eyes are already open.',
+    postUse: 'A jolt of ammonia-and-worse snaps you upright, wide awake. +1 MP.',
+    story:   null },
+  { id:59, name:'Marrow Jelly',       category:0, slot:0,
+    img:'img/items/item_59.png', icon:'img/items/icon_59.png',
+    preUse:  'Rendered down slow, from something with bones you didn\'t recognize.',
+    postUse: 'Wet, rich, and hydrating in a way you choose not to examine too closely. +2 Water, +1 LL.',
+    story:   null },
+  { id:60, name:'Static Chew',        category:0, slot:0,
+    img:'img/items/item_60.png', icon:'img/items/icon_60.png',
+    preUse:  'A live wire, chewed like gum. This was, at some point, someone\'s idea.',
+    postUse: 'Your teeth go numb and the wasteland snaps into focus for a moment. Reveals the terrain nearby.',
+    story:   null },
+  { id:61, name:'Blister Balm',       category:0, slot:0,
+    img:'img/items/item_61.png', icon:'img/items/icon_61.png',
+    preUse:  'A paste the color of a bruise, and it smells like one too.',
+    postUse: 'It draws the glow out through weeping blisters. Unpleasant. Effective. −2 Rad.',
+    story:   null },
 ];
 
 // Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist.

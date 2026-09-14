@@ -5,6 +5,8 @@
 // Included LAST, after all gameplay and network .hpp files.
 
 // ── Game loop task (Core 1) ────────────────────────────────────
+static uint32_t g_maxTickMs = 0;  // worst-case tickGame+drainEvents+broadcastState time, surfaced via /state
+
 static void gameLoopTask(void* param) {
   Log.notice("gameLoopTask running core=%d prio=%d stack_free=%u",
              (int)xPortGetCoreID(), (int)uxTaskPriorityGet(NULL),
@@ -22,7 +24,7 @@ static void gameLoopTask(void* param) {
                   (unsigned)(ESP.getFreePsram() / 1024),
                   (unsigned long)G.tickId, (int)G.connectedCount);
     }
-    [[maybe_unused]] uint32_t t0tick = millis();
+    uint32_t t0tick = millis();
     tickGame();
     drainEvents();
     // ── Trade offer expiry sweep ──────────────────────────────────
@@ -48,6 +50,8 @@ static void gameLoopTask(void* param) {
       }
     }
     broadcastState();
+    uint32_t tickDurMs = millis() - t0tick;
+    if (tickDurMs > g_maxTickMs) g_maxTickMs = tickDurMs;
   }
 }
 
@@ -134,9 +138,53 @@ static const char* cacheControlFor(const char* url, const char* mime) {
   return "public, max-age=31536000, immutable";
 }
 
+// ── HTTP asset admission control ────────────────────────────────────────────
+// Bounds concurrent in-flight sendWebFile()/img requests. Both routes serve
+// already-in-PSRAM bytes with no blocking I/O, so the constraint isn't per-
+// request time — it's aggregate concurrent-connection load on the single
+// async_tcp task (see docs/dev-loop.md "Web asset pipeline"). Measured: 5-6
+// simultaneous full page loads (each tab's own 2-concurrent asset queue, with
+// zero cross-tab coordination) took the whole WiFi stack down in ~15-20s even
+// with heap healthy (170KB+ free) — this caps aggregate concurrency instead.
+//
+// async_tcp-task-only: increment (here) and decrement (onDisconnect below)
+// both run exclusively on the single AsyncTCP dispatch task — never from
+// gameLoopTask/Core 1 — so a plain int needs no lock/atomic/volatile. If that
+// ever changes, add evtMux protection the same way lobbyIds[] has it.
+static const int MAX_CONCURRENT_ASSET_REQS = 4;  // conservative default; tune from telemetry
+static int      g_activeAssetReqs = 0;   // current in-flight requests
+static uint32_t g_assetReqRejects = 0;   // lifetime 429 count, surfaced via /state
+
+// Call as the FIRST statement in a gated handler. Sends 429 and returns false
+// if over the cap; otherwise increments, registers the release, returns true.
+static bool admitAssetRequest(AsyncWebServerRequest* req) {
+  if (g_activeAssetReqs >= MAX_CONCURRENT_ASSET_REQS) {
+    g_assetReqRejects++;
+    static uint32_t lastRejectLogMs = 0;
+    uint32_t nowMs = millis();
+    if (nowMs - lastRejectLogMs >= 1000) {
+      lastRejectLogMs = nowMs;
+      Log.warning("HTTP 429 %s active=%d cap=%d totalRejects=%lu (rate-limited) heap=%uKB",
+                  req->url().c_str(), g_activeAssetReqs, MAX_CONCURRENT_ASSET_REQS,
+                  (unsigned long)g_assetReqRejects, (unsigned)(ESP.getFreeHeap() / 1024));
+    }
+    AsyncWebServerResponse* r = req->beginResponse(429, "text/plain", "Busy");
+    r->addHeader("Retry-After", "1");
+    r->addHeader("Cache-Control", "no-store");
+    req->send(r);
+    return false;
+  }
+  g_activeAssetReqs++;
+  req->onDisconnect([]() {                              // no captures — req may be mid-teardown
+    if (g_activeAssetReqs > 0) g_activeAssetReqs--;     // defensive floor, same pattern as
+  });                                                     // G.connectedCount-- in network-session.hpp
+  return true;
+}
+
 // Serve webFiles[i] (PSRAM) for one request: 304 on ETag match, else 200 with
 // the cached bytes. Runs on the async_tcp task — keep it allocation-light.
 static void sendWebFile(AsyncWebServerRequest* req, int i) {
+  if (!admitAssetRequest(req)) return;
   const WebFile& wf = webFiles[i];
   const char* cc = cacheControlFor(wf.url, wf.mime);
   if (req->hasHeader("If-None-Match") &&
@@ -356,6 +404,14 @@ static void setupWiFiAndServer() {
       j += ",\"uptimeMs\":";         j += (uint32_t)millis();
       j += ",\"uploadResumes\":";    j += g_uploadResumes;
       j += ",\"lastUploadErr\":\"";  j += g_uploadLastErr; j += "\"";
+      // WS resilience telemetry — see docs/dev-loop.md "Diagnosing HTTP stalls"
+      // sibling section for the WS equivalent. All near-zero in normal play.
+      j += ",\"maxTickMs\":";        j += g_maxTickMs;
+      j += ",\"broadcastSkips\":";   j += g_broadcastSkips;
+      j += ",\"broadcastSkipsConsec\":"; j += g_broadcastSkipsConsec;
+      j += ",\"broadcastPartial\":"; j += g_broadcastPartial;
+      j += ",\"assetReqActive\":";   j += g_activeAssetReqs;
+      j += ",\"assetReqRejects\":";  j += g_assetReqRejects;
       if (req->hasParam("sd")) {     // opt-in: f_getfree can take a while on big cards
         uint64_t tot = SD.totalBytes(), used = SD.usedBytes();
         j += ",\"sdTotal\":";        j += (uint32_t)(tot / 1024);
@@ -584,6 +640,7 @@ static void setupWiFiAndServer() {
     String url = req->url();
     Log.verbose("HTTP 404-check %s", url.c_str());
     if (url.startsWith("/img/")) {
+      if (!admitAssetRequest(req)) return;
       String filename = url.substring(5);
       for (int i = 0; i < imgCacheCount; i++) {
         if (filename.equalsIgnoreCase(imgCache[i].name)) {

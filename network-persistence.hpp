@@ -84,6 +84,7 @@ void saveGame() {
         memcpy(sp.surveyedMap, pl.surveyedMap, sizeof(sp.surveyedMap));
         sp.radClean     = pl.radClean ? 1 : 0;
         sp.llCapPenalty = pl.llCapPenalty;
+        sp.knownRecipes = pl.knownRecipes;
         sp.used = (pl.name[0] != '\0') ? 1 : 0;
         plyBytes += p.write((uint8_t*)&sp, sizeof(sp));
       }
@@ -206,6 +207,7 @@ bool tryLoadSave() {
       memcpy(pl.surveyedMap, sp.surveyedMap, sizeof(pl.surveyedMap));
       pl.radClean     = sp.radClean != 0;
       pl.llCapPenalty = sp.llCapPenalty;
+      pl.knownRecipes = sp.knownRecipes;
       pl.resting      = false;
       pl.connected = false; pl.wsClientId = 0;
       plyLoaded++;

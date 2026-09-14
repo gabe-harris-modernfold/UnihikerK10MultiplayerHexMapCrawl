@@ -354,6 +354,66 @@ static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
   return true;
 }
 
+// ── addItemToInv ──────────────────────────────────────────────────────────
+// Place up to `qty` of itemId into the player's pack: an existing stack with
+// room first, then a free slot. Returns how many were actually placed
+// (0..qty) — the caller is responsible for whatever didn't fit (ground pile,
+// abort, etc). Must hold G.mutex.
+static uint8_t addItemToInv(Player& p, uint8_t itemId, uint8_t qty) {
+  if (!itemId || !qty) return 0;
+
+  int freeSlot = -1, stackSlot = -1;
+  uint8_t slots = effectiveInvSlots(p);
+  for (int i = 0; i < slots; i++) {
+    if (p.invType[i] == itemId && stackSlot < 0) stackSlot = i;
+    if (!p.invType[i] && freeSlot < 0) freeSlot = i;
+  }
+  int targetSlot = (stackSlot >= 0) ? stackSlot : freeSlot;
+  if (targetSlot < 0) return 0;
+  const ItemDef* def = getItemDef(itemId);
+  uint8_t maxStack = def ? def->maxStack : 1;
+
+  uint8_t canTake = qty;
+  if (stackSlot >= 0) {
+    uint8_t room = (uint8_t)max(0, (int)maxStack - (int)p.invQty[stackSlot]);
+    canTake = min(qty, room);
+  }
+  if (!canTake) return 0;
+
+  p.invType[targetSlot] = itemId;
+  p.invQty[targetSlot]  = (uint8_t)min((int)maxStack, (int)p.invQty[targetSlot] + (int)canTake);
+  return canTake;
+}
+
+// ── canAddItemToInv ───────────────────────────────────────────────────────
+// True if `qty` more of itemId could be placed right now — a non-mutating
+// dry-run of addItemToInv, used so a failed craft never partially consumes
+// materials. Must mirror addItemToInv's slot-selection EXACTLY (first
+// matching stack, else first free slot) rather than searching for any stack
+// with room: if two stacks of itemId exist (the first full, a later one
+// with room — e.g. a stack topped out at maxStack from an earlier pickup,
+// then a second one started later), addItemToInv still only ever targets
+// the first one it finds and reports back how much of qty actually fit
+// there. A dry-run that credited the later stack's free room would predict
+// success for a placement addItemToInv would never actually make, and
+// applyRecipe() would have already spent the materials by the time it found
+// out — silently destroying the crafted item. Must hold G.mutex.
+static bool canAddItemToInv(const Player& p, uint8_t itemId, uint8_t qty) {
+  if (!itemId || !qty) return false;
+  int freeSlot = -1, stackSlot = -1;
+  uint8_t slots = effectiveInvSlots(p);
+  for (int i = 0; i < slots; i++) {
+    if (p.invType[i] == itemId && stackSlot < 0) stackSlot = i;
+    if (!p.invType[i] && freeSlot < 0) freeSlot = i;
+  }
+  int targetSlot = (stackSlot >= 0) ? stackSlot : freeSlot;
+  if (targetSlot < 0) return false;
+  const ItemDef* def = getItemDef(itemId);
+  uint8_t maxStack = def ? def->maxStack : 1;
+  uint8_t room = (stackSlot >= 0) ? (uint8_t)max(0, (int)maxStack - (int)p.invQty[stackSlot]) : maxStack;
+  return qty <= room;
+}
+
 // ── pickupGroundItem ──────────────────────────────────────────────────────
 // Pick up all of a ground item at gslot. Player must be in same hex.
 // Returns true on success, false if blocked (different hex / no inv space).
@@ -365,38 +425,53 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   if (!gi.itemType) return false;
   if (gi.q != p.q || gi.r != p.r) return false; // wrong hex
 
-  uint8_t itemId = gi.itemType;
-  uint8_t qty    = gi.qty;
+  uint8_t canTake = addItemToInv(p, gi.itemType, gi.qty);
+  if (!canTake) return false;
 
-  // Find existing stack or free slot in inventory
-  int freeSlot = -1, stackSlot = -1;
-  uint8_t slots = effectiveInvSlots(p);
-  for (int i = 0; i < slots; i++) {
-    if (p.invType[i] == itemId && stackSlot < 0) stackSlot = i;
-    if (!p.invType[i] && freeSlot < 0) freeSlot = i;
-  }
-  int targetSlot = (stackSlot >= 0) ? stackSlot : freeSlot;
-  if (targetSlot < 0) {
-    return false;
-  }
-  const ItemDef* def = getItemDef(itemId);
-  uint8_t maxStack = def ? def->maxStack : 1;
-
-  // How many can we take?
-  uint8_t canTake = qty;
-  if (stackSlot >= 0) {
-    uint8_t room = (uint8_t)max(0, (int)maxStack - (int)p.invQty[stackSlot]);
-    canTake = min(qty, room);
-  }
-  if (!canTake) {
-    return false;
-  }
-
-  p.invType[targetSlot] = itemId;
-  p.invQty[targetSlot]  = (uint8_t)min((int)maxStack, (int)p.invQty[targetSlot] + (int)canTake);
   gi.qty -= canTake;
   if (!gi.qty) { gi.itemType = 0; gi.q = 0; gi.r = 0; }
 
+  return true;
+}
+
+// ── applyRecipe ───────────────────────────────────────────────────────────
+// Consumes a known recipe's material items + resource tokens and grants its
+// output item. Every affordability + output-room check runs before any
+// mutation, so a failed craft never partially consumes materials. Must hold
+// G.mutex. Caller (doCraft in actions_game_loop.hpp) has already verified
+// terrain, MP, and that the player has discovered this recipe.
+static bool applyRecipe(int pid, uint8_t recipeId) {
+  Player& p = G.players[pid];
+  const RecipeDef* r = getRecipeDef(recipeId);
+  if (!r || !r->outputItem) return false;
+
+  for (int i = 0; i < 5; i++) if (r->resCost[i] > p.inv[i]) return false;
+
+  for (int m = 0; m < RECIPE_MAX_MATS; m++) {
+    if (!r->matItem[m]) continue;
+    int have = 0;
+    for (int s = 0; s < INV_SLOTS_MAX; s++)
+      if (p.invType[s] == r->matItem[m]) have += p.invQty[s];
+    if (have < (int)r->matQty[m]) return false;
+  }
+
+  if (!canAddItemToInv(p, r->outputItem, r->outputQty)) return false;
+
+  for (int i = 0; i < 5; i++) p.inv[i] = (uint8_t)(p.inv[i] - r->resCost[i]);
+
+  for (int m = 0; m < RECIPE_MAX_MATS; m++) {
+    if (!r->matItem[m]) continue;
+    int need = (int)r->matQty[m];
+    for (int s = 0; s < INV_SLOTS_MAX && need > 0; s++) {
+      if (p.invType[s] != r->matItem[m]) continue;
+      int take = min(need, (int)p.invQty[s]);
+      p.invQty[s] = (uint8_t)(p.invQty[s] - take);
+      need -= take;
+      if (!p.invQty[s]) p.invType[s] = 0;
+    }
+  }
+
+  addItemToInv(p, r->outputItem, r->outputQty);
   return true;
 }
 
@@ -551,6 +626,7 @@ static void resetSurvivor(Player& p, uint8_t arch) {
   memset(p.equip,       0, sizeof(p.equip));
   memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
   memset(p.wounds,      0, sizeof(p.wounds));
+  p.knownRecipes = 0;  // fresh survivor knows no recipes, even if this slot held someone else before
 
   p.ll = 7; p.food = 6; p.water = 6; p.radiation = 0;
   p.llCapPenalty = 0;

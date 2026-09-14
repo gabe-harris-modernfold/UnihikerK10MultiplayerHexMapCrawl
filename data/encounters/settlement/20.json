@@ -1,0 +1,61 @@
+{
+  "id": "settlement_spinevendor_01",
+  "title": "{{vendor_name}}'s Spine Cart",
+  "start_node": "cart",
+  "nodes": {
+    "cart": {
+      "text": "A cart heaped with dried cactus spines and something dark and rubbery coiled in a bucket. {{vendor_name}} grins with too many teeth and not enough of them straight.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask what the spines are for.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 2,
+          "success_node": "the_spines",
+          "hazard_id": "spine_prick"
+        }
+      ]
+    },
+    "the_spines": {
+      "text": "'Bundle three tight and they scream when they fly,' {{vendor_name}} says, demonstrating on a fence post that now has a hole in it. 'Scares the life out of whatever's listening. Sometimes yours too.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 15 }
+      ],
+      "choices": [
+        {
+          "label": "Ask about the thing in the bucket.",
+          "cost": { "food": 1 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_bucket",
+          "hazard_id": "it_moved"
+        }
+      ]
+    },
+    "the_bucket": {
+      "text": "'Tentacle. Still twitches if you poke it, don't ask.' {{vendor_name}} snaps off a length and hands it over. 'Whittle it right and it flies true. Sticks in whatever's chasing you, and it panics.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 16 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "spine_prick": {
+      "text": "A spine gets you before you can pull your hand back. It stings for hours.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    },
+    "it_moved": {
+      "text": "The thing in the bucket moves on its own. You decide not to find out why.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "vendor_name": ["Rattler Hobbs", "The Prickly One", "Spine-Eyed Cass", "Old Man Twitch"]
+  }
+}
