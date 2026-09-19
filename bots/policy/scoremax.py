@@ -30,7 +30,9 @@ STAPLE_BONUS = 12      # extra pull toward water/food piles when running low
 
 class ScoreMaxPolicy(SurvivorPolicy):
     name = "scoremax"
-    engage_encounters = False
+    # Opens a POI it is standing on (handled in SurvivorPolicy.decide) but
+    # never detours for one -- that is the contrast against ContentMax.
+    engage_encounters = True
     rest_below_ll = 2
 
     def pursue(self, obs) -> Action:

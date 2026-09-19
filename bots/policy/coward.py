@@ -26,7 +26,7 @@ NUKE_CRATER = 10
 
 class CowardPolicy(SurvivorPolicy):
     name = "coward"
-    engage_encounters = False
+    engage_encounters = True
     rest_below_ll = 4          # rests much earlier than the others
     pack_headroom = 2
 

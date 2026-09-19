@@ -121,6 +121,18 @@ class SurvivorPolicy(Policy):
         if act is not None:
             return act
 
+        # Standing on an unopened POI: take it, whatever the policy is.
+        # Walking past one is pure waste -- POIs are consumed permanently, so
+        # the alternative is leaving it for a rival -- and exercising the
+        # encounter content is the whole point of these runs.
+        if self.engage_encounters:
+            me = obs.me
+            here = obs.map[(me.q, me.r)]
+            if here is not None and here.poi and me.mp > 0:
+                opened = self.try_open_poi(obs, "POI underfoot")
+                if opened is not None:
+                    return opened
+
         return self.pursue(obs)
 
     # --- survival floor -------------------------------------------------
@@ -248,7 +260,8 @@ class SurvivorPolicy(Policy):
         if tries >= 2:
             return None
         self._poi_tries[key] = tries + 1
-        return Action("enc_start", why=why)
+        # q/r are required and are validated against our own position.
+        return Action("enc_start", q=me.q, r=me.r, why=why)
 
     # --- encounters -----------------------------------------------------
     def ensure_run(self, obs) -> None:
@@ -271,28 +284,27 @@ class SurvivorPolicy(Policy):
             # Banking keeps whatever was already won rather than gambling blind.
             return Action("enc_bank", why="unknown encounter, bank out")
 
-        choices = run.choices
-        rated = [(success_chance(c, obs), i, c) for i, c in enumerate(choices)]
-        rated.sort(reverse=True, key=lambda x: x[0])
-        best = rated[0] if rated else None
-
+        # Drive straight down the first branch until the node is bankable,
+        # then take the haul.  Deliberately simple, and deliberately not
+        # odds-weighted: the point of these runs is to find out whether the
+        # encounter content is reachable and what it pays, and an
+        # odds-weighted policy that walks away from anything risky answers a
+        # different question while never finishing a scene.  Aborting also
+        # consumes the POI for good (restorePoi=false), so it is pure loss.
         if run.can_bank():
-            # Push on only when the next step is clearly worth the risk.
-            if best and best[0] >= self.bank_greed:
-                run.choose(best[1])
-                return Action("enc_choice", ci=best[1],
-                              why=f"push on p={best[0]:.2f}")
-            return Action("enc_bank", why="bank the haul")
+            run.banked = True
+            return Action("enc_bank", why=f"bankable at node {run.node_key}")
 
-        if best and best[0] >= self.min_success:
-            run.choose(best[1])
-            return Action("enc_choice", ci=best[1], why=f"best p={best[0]:.2f}")
+        choices = run.choices
+        if not choices:
+            # Terminal node with nothing to take: nothing to do but leave.
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort", why=f"dead end at node {run.node_key}")
 
-        # Nothing bankable and nothing safe enough.  Walking away closes the
-        # POI for good (restorePoi=false) but keeps the survivor.
-        self.stats["encounters_aborted"] += 1
-        p = f"{best[0]:.2f}" if best else "n/a"
-        return Action("enc_abort", why=f"no safe branch (best p={p})")
+        run.choose(0)
+        p = success_chance(choices[0], obs)
+        return Action("enc_choice", ci=0,
+                      why=f"first option at {run.node_key} (p={p:.2f})")
 
     # --- subclass hook --------------------------------------------------
     def pursue(self, obs) -> Action:

@@ -251,16 +251,25 @@ cm = pmod.make("contentmax", random.Random(3))
 w.grid[10][10] = mk(poi=True)
 check("contentmax opens a POI underfoot", cm.decide(o3).kind == "enc_start")
 w.grid[10][10] = mk()
-cw = pmod.make("coward", random.Random(3))
-w.grid[10][11] = mk(poi=True)
-moves = {cw.decide(o3).kind for _ in range(30)}
-check("coward never opens encounters", "enc_start" not in moves)
-w.grid[10][11] = mk()
+# enc_start REQUIRES q/r -- handleMsg_enc_start bails at the first strstr
+# without them, with no error reply. Every POI attempt in every early run was
+# discarded this way, which looked exactly like POIs being unreachable.
+check("enc_start carries q/r",
+      Action("enc_start", q=7, r=9).to_msg() == {"t": "enc_start", "q": 7, "r": 9})
+try:
+    Action("enc_start").to_msg()
+    check("enc_start without q/r is rejected", False)
+except ValueError:
+    check("enc_start without q/r is rejected", True)
 
 o3.encounter = {"biome": "dunes", "id": 1}
 cm2 = pmod.make("contentmax", random.Random(3))
 a = cm2.decide(o3)
 check("encounter binds to local json", a.kind in ("enc_choice", "enc_bank", "enc_abort"))
+# Drive the first branch until the node is bankable, then take the haul.
+check("takes the first option", a.kind == "enc_choice" and a.ci == 0)
+cm2.run.node_key = [k for k, n in cm2.run.enc["nodes"].items() if n.get("can_bank")][0]
+check("banks once bankable", cm2.decide(o3).kind == "enc_bank")
 check("content stats accumulate", cm2.content_score()["encounters_opened"] == 1)
 o3.encounter = {"biome": "nosuch", "id": 999}
 cm3 = pmod.make("contentmax", random.Random(3))

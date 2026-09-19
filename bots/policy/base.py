@@ -21,6 +21,8 @@ class Action:
     mp: int = 1                     # act: MP to spend (ACT_WATER reads this)
     recipe: int = 0                 # act: ACT_CRAFT recipe id
     ci: int = 0                     # enc_choice: choice index
+    q: int = -1                     # enc_start: hex being opened (REQUIRED)
+    r: int = -1
     keep: list = field(default_factory=list)   # enc_bank: per-resource keep
     slot: int = 0                   # use_item: inventory slot
     to: int = 0                     # trade_offer: target pid
@@ -37,7 +39,18 @@ class Action:
             m = {"t": "act", "a": self.a, "mp": self.mp}
             if self.recipe:    m["r"] = self.recipe
             return m
-        if k == "enc_start":   return {"t": "enc_start"}
+        if k == "enc_start":
+            # q/r are mandatory. handleMsg_enc_start does
+            #   strstr(data, "\"q\""); if (!qp) return;
+            # so a message without them is discarded at the first line with no
+            # error reply at all -- which is why every POI attempt across every
+            # early run silently did nothing and looked like the POIs simply
+            # were not reachable. The server also cross-checks them against the
+            # player's own position ("Not at that hex"), so these must be where
+            # the survivor actually is.
+            if self.q < 0 or self.r < 0:
+                raise ValueError("enc_start requires q and r")
+            return {"t": "enc_start", "q": self.q, "r": self.r}
         if k == "enc_choice":  return {"t": "enc_choice", "ci": self.ci}
         if k == "enc_bank":
             m = {"t": "enc_bank"}
