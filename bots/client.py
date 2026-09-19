@@ -83,7 +83,8 @@ class SlotBroker:
 class BotClient:
     def __init__(self, host, preferred_arch, policy, recorder, rng,
                  limiter, global_limiter, broker, decide_interval=0.35,
-                 connect_timeout=10.0, sync_timeout=12.0):
+                 connect_timeout=10.0, sync_timeout=12.0,
+                 respawn_after=15.0):
         self.host = host
         self.preferred_arch = preferred_arch
         self.arch = -1                  # assigned once a pick is confirmed
@@ -96,6 +97,9 @@ class BotClient:
         self.decide_interval = decide_interval
         self.connect_timeout = connect_timeout
         self.sync_timeout = sync_timeout
+        # Seconds to stay downed before reconnecting to respawn.  Long enough
+        # that a dawn heal can revive us in place first.
+        self.respawn_after = respawn_after
 
         self.obs = Observation()
         self.ws = None
@@ -109,7 +113,19 @@ class BotClient:
         # end-of-run summary.
         self.ever_joined = False
         self.seated_arch = -1
+        self.seats_lost = 0
+        self.respawns = 0
+        self._downed_since = None
         self.stop = asyncio.Event()
+        # Connection lifecycle.  Worth tracking explicitly rather than
+        # reconstructing from the log: the board can drop a player slot while
+        # the socket stays open, so "am I connected" and "do I have a seat"
+        # are two different questions and both can fail silently.
+        self.connects = 0
+        self.disconnects = 0
+        self.episodes = []          # one dict per socket lifetime
+        self._episode = None
+        self._close_reason = None
         self._pending_slot = None
         self._synced_evt = asyncio.Event()
 
@@ -142,27 +158,39 @@ class BotClient:
         backoff = 1.0
         while not self.stop.is_set():
             try:
+                self._episode = {"opened": time.monotonic(), "joined": None,
+                                 "arch": None, "closed": None, "reason": None,
+                                 "tx": self.sent, "rx": self.received}
+                self._close_reason = None
                 async with websockets.connect(
                     self.url, open_timeout=self.connect_timeout,
                     ping_interval=20, ping_timeout=20, max_size=2 ** 20,
                 ) as ws:
                     self.ws = ws
                     backoff = 1.0
-                    self.recorder.write("conn", self._log_arch(), {"url": self.url})
+                    self.connects += 1
+                    self.recorder.write("conn", self._log_arch(),
+                                        {"url": self.url, "n": self.connects})
                     await self._session()
+                self._close_reason = self._close_reason or "peer_closed"
             except asyncio.CancelledError:
+                self._close_reason = "cancelled"
+                self._finish_episode()
                 raise
             except Exception as e:
                 self.errors += 1
+                self._close_reason = f"{type(e).__name__}"
                 self.recorder.write("conn_err", self._log_arch(),
                                     {"err": f"{type(e).__name__}: {e}"})
             finally:
+                self._finish_episode()
                 self.ws = None
                 await self.broker.release(self._pending_slot)
                 await self.broker.release(self.arch)
                 self._pending_slot = None
                 self.arch = -1
                 self.obs.synced = False
+                self._downed_since = None
                 self._synced_evt.clear()
             if self.stop.is_set():
                 break
@@ -205,6 +233,7 @@ class BotClient:
                 await asyncio.wait_for(self._synced_evt.wait(), self.sync_timeout)
             except asyncio.TimeoutError:
                 self.pick_failures += 1
+                self._close_reason = "pick_timeout"
                 self.recorder.write("pick_timeout", self._log_arch(),
                                     {"slot": self._pending_slot})
                 await self.broker.release(self._pending_slot)
@@ -218,6 +247,7 @@ class BotClient:
         t = msg.get("t")
         if t == "full":
             self.refused_full += 1
+            self._close_reason = "board_full"
             self.recorder.write("full", self._log_arch(), {})
             await self.ws.close()
             return
@@ -226,6 +256,7 @@ class BotClient:
             avail = msg.get("avail", [])
             slot = await self.broker.claim(avail, self.preferred_arch)
             if slot is None:
+                self._close_reason = "no_slot"
                 self.recorder.write("no_slot", self._log_arch(), {"avail": avail})
                 await asyncio.sleep(2.0)
                 await self.ws.close()
@@ -244,6 +275,9 @@ class BotClient:
             self.arch = self.obs.pid if self.obs.pid >= 0 else self._pending_slot
             self.ever_joined = True
             self.seated_arch = self.arch
+            if self._episode is not None:
+                self._episode["joined"] = time.monotonic()
+                self._episode["arch"] = self.arch
             self._pending_slot = None
             self._synced_evt.set()
             # ev messages are broadcast to every client, so the policy needs
@@ -254,10 +288,101 @@ class BotClient:
 
         if t == "ev":
             self.policy.on_event(msg)
+
+        if t == "s" and self.arch >= 0 and self.obs.synced:
+            if await self._check_seat():
+                return
+
         if t != "s":
             self.recorder.write("rx", self._log_arch(), msg)
         elif self.obs.tick % 50 == 0:
             self.recorder.write("rx_s", self._log_arch(), self._digest())
+
+    def _finish_episode(self) -> None:
+        """Close out one socket lifetime and record how it ended."""
+        ep = self._episode
+        if ep is None:
+            return
+        self._episode = None
+        now = time.monotonic()
+        ep["closed"] = now
+        ep["reason"] = self._close_reason or "unknown"
+        ep["arch"] = self.arch if self.arch >= 0 else ep["arch"]
+        ep["open_s"] = round(now - ep["opened"], 1)
+        # Seated time is what actually matters -- a socket that never got a
+        # seat contributed nothing but broadcast load.
+        ep["seated_s"] = round(now - ep["joined"], 1) if ep["joined"] else 0.0
+        ep["tx"] = self.sent - ep["tx"]
+        ep["rx"] = self.received - ep["rx"]
+        self.episodes.append(ep)
+        if ep["joined"]:
+            self.disconnects += 1
+        self.recorder.write("disconn", self._log_arch(), ep)
+
+    def connection_report(self) -> dict:
+        """Everything about this bot's time on the wire."""
+        eps = self.episodes + ([self._episode] if self._episode else [])
+        seated = sum(e.get("seated_s") or 0 for e in self.episodes)
+        if self._episode and self._episode.get("joined"):
+            seated += time.monotonic() - self._episode["joined"]
+        reasons = {}
+        for e in self.episodes:
+            reasons[e.get("reason", "?")] = reasons.get(e.get("reason", "?"), 0) + 1
+        return {"connects": self.connects, "disconnects": self.disconnects,
+                "episodes": len(eps), "seated_s": round(seated, 1),
+                "seats_lost": self.seats_lost, "respawns": self.respawns,
+                "pick_failures": self.pick_failures,
+                "refused_full": self.refused_full,
+                "close_reasons": reasons,
+                "currently_seated": self.joined()}
+
+    async def _check_seat(self) -> bool:
+        """Watch for two states the socket alone will not tell us about.
+
+        **Seat loss.** The board can drop our player slot while the WebSocket
+        stays open -- observed on a realtime run where two bots kept streaming
+        state, believing they were seated, while /state showed conn=false and
+        their scores frozen. The broadcast's own `on` flag is the only signal,
+        and a downed survivor keeps connected=true, so on:0 unambiguously
+        means the seat is gone. Reconnecting re-picks it.
+
+        **Death.** handleMsg_pick treats a pick on an LL-0 slot as a respawn:
+        fresh survivor, lifetime score and steps carried over. So reconnecting
+        is the respawn mechanism, exactly as it is for the browser client.
+        Without this a downed bot sits at 0 MP for the rest of the run and the
+        fleet quietly hollows out.
+
+        Returns True if the connection was closed and the caller should stop
+        processing this message.
+        """
+        me = self.obs.players[self.arch]
+
+        if not me.connected:
+            self.seats_lost += 1
+            self._close_reason = "seat_lost"
+            self.recorder.write("seat_lost", self.arch,
+                                {"tick": self.obs.tick, "score": me.score})
+            await self.ws.close()
+            return True
+
+        if me.ll == 0:
+            now = time.monotonic()
+            if self._downed_since is None:
+                self._downed_since = now
+                self.recorder.write("downed", self.arch,
+                                    {"day": self.obs.day, "score": me.score,
+                                     "steps": me.steps})
+            elif now - self._downed_since >= self.respawn_after:
+                self.respawns += 1
+                self._downed_since = None
+                self._close_reason = "respawn"
+                self.recorder.write("respawn", self.arch,
+                                    {"day": self.obs.day, "score": me.score})
+                await self.ws.close()
+                return True
+        else:
+            self._downed_since = None
+        return False
 
     def _digest(self) -> dict:
         me = self.obs.me
@@ -300,7 +425,9 @@ class BotClient:
                "ll": me.ll, "day": self.obs.day, "sent": self.sent,
                "received": self.received, "errors": self.errors,
                "refused_full": self.refused_full,
-               "pick_failures": self.pick_failures}
+               "pick_failures": self.pick_failures,
+               "seats_lost": self.seats_lost, "respawns": self.respawns,
+               "connection": self.connection_report()}
         out["pts_per_step"] = round(me.score / me.steps, 2) if me.steps else None
         # ContentMax is judged on this rather than score, so it has to reach
         # the summary even when the policy is wrapped for sprint mode.

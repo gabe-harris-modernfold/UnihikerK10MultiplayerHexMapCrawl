@@ -240,6 +240,41 @@ class RunReport:
             days[arch] = dead[0].get("day") if dead else None
         return {"downed_events": out, "first_death_day": days}
 
+    def connections(self):
+        """Connection lifecycle per bot.
+
+        Tracked explicitly because "connected" and "seated" are two different
+        states here and both fail quietly.  A refused pick leaves a client in
+        the lobby still receiving every broadcast, and the board can drop a
+        player slot while the socket stays open -- observed on a realtime run
+        where two bots streamed state for minutes with frozen scores.
+        `seated_s` is the only number that reflects time actually spent
+        playing.
+        """
+        ev = Counter()
+        for r in self.rows:
+            if r["ch"] in ("conn", "disconn", "seat_lost", "respawn",
+                           "pick_timeout", "full", "no_slot", "conn_err",
+                           "slot_busy", "claim", "joined", "downed"):
+                ev[r["ch"]] += 1
+        per_bot = {a: b.get("connection") for a, b in self.bots.items()
+                   if b.get("connection")}
+        gaps = defaultdict(list)
+        for r in self.rows:
+            if r["ch"] == "disconn":
+                gaps[r["arch"]].append(r["d"])
+        elapsed = self.summary.get("elapsed_s") or 0
+        for a, rep in per_bot.items():
+            if elapsed:
+                rep["seated_pct"] = round(100.0 * rep.get("seated_s", 0) / elapsed, 1)
+            eps = gaps.get(a, [])
+            if eps:
+                rep["mean_episode_s"] = round(
+                    statistics.mean(e.get("open_s", 0) for e in eps), 1)
+                rep["shortest_episode_s"] = min(e.get("open_s", 0) for e in eps)
+        return {"events": dict(ev), "per_bot": per_bot,
+                "run_elapsed_s": elapsed}
+
     def board(self):
         tel = [r["d"] for r in self.rows
                if r["ch"] == "telemetry" and "err" not in r["d"]]
@@ -265,7 +300,7 @@ class RunReport:
                 "check_margins": self.check_margins(), "action_mix": self.action_mix(),
                 "resource_slack": self.resource_slack(), "crises": self.crises(),
                 "poi_reach": self.poi_reach(), "deaths": self.deaths(),
-                "board": self.board()}
+                "connections": self.connections(), "board": self.board()}
 
     # --- rendering ------------------------------------------------------
     def render(self):
@@ -331,6 +366,20 @@ class RunReport:
             L.append(f"   {self.label(a):<32} nodes={c['nodes_seen']} "
                      f"rolls={c['rolls_won']}/{c['rolls']} recipes={c['recipes']} "
                      f"aborted={c['encounters_aborted']}")
+
+        cn = m["connections"]
+        L.append("\n-- connections (seated != connected; both fail quietly)")
+        L.append(f"   events: {cn['events']}")
+        for a, rep in sorted(cn["per_bot"].items()):
+            L.append(f"   {self.label(a):<32} seated {rep.get('seated_s', 0)}s "
+                     f"({rep.get('seated_pct', '?')}% of run)  "
+                     f"connects={rep['connects']} drops={rep['disconnects']} "
+                     f"seatsLost={rep['seats_lost']} respawns={rep['respawns']} "
+                     f"pickFail={rep['pick_failures']} full={rep['refused_full']}")
+            if rep.get("close_reasons"):
+                L.append(f"       closed by: {rep['close_reasons']}"
+                         + (f"  mean episode {rep['mean_episode_s']}s"
+                            if rep.get("mean_episode_s") else ""))
 
         bd = m["board"]
         if bd:
