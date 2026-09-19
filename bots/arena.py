@@ -86,11 +86,49 @@ class SprintPolicy(Policy):
         return getter() if callable(getter) else None
 
 
+async def verify_reset(host: str, recorder, attempts: int = 8,
+                       delay: float = 2.0) -> bool:
+    """Confirm the reset actually landed, by reading /state rather than by
+    trusting the WebSocket round-trip.
+
+    A fresh world is day <= 2 with every slot at score 0 and steps 0.  This is
+    the authoritative check: the control socket routinely dies mid-regen (see
+    reset_world), so its survival says nothing about whether regen ran.
+    """
+    for i in range(attempts):
+        try:
+            st = await asyncio.to_thread(fetch_state, host)
+            day = st.get("day", 99)
+            players = st.get("players", [])
+            dirty = [(p.get("pid"), p.get("score"), p.get("steps")) for p in players
+                     if p.get("score") or p.get("steps")]
+            if day <= 2 and not dirty:
+                recorder.write("reset", -1, {"verified": True, "day": day,
+                                             "attempt": i + 1})
+                return True
+            recorder.write("reset", -1, {"verified": False, "day": day,
+                                         "dirty": dirty, "attempt": i + 1})
+        except Exception as e:
+            recorder.write("reset", -1, {"probe_err": f"{type(e).__name__}: {e}",
+                                         "attempt": i + 1})
+        await asyncio.sleep(delay)
+    return False
+
+
 async def reset_world(host: str, recorder, timeout: float = 20.0) -> bool:
     """Wipe every slot and regenerate the map.  Destructive by design --
-    deletes both SD save files.  Returns True if the control connection got
-    its messages out."""
+    deletes both SD save files.
+
+    Verified against /state, not against the socket.  regen runs generateMap()
+    and wInit() while holding G.mutex, which blocks the AsyncTCP task long
+    enough that the control connection is routinely dropped with
+    ConnectionClosedError *after* the command has been accepted.  Treating
+    that as a failure made a successful reset look like a failed one -- and
+    the run then started on a dirty board, which against a score target means
+    it can finish before it begins.
+    """
     url = f"ws://{host}/ws"
+    sent_regen = False
     try:
         async with websockets.connect(url, open_timeout=timeout,
                                       ping_interval=None, max_size=2 ** 20) as ws:
@@ -111,13 +149,16 @@ async def reset_world(host: str, recorder, timeout: float = 20.0) -> bool:
                 await asyncio.sleep(0.25)
             await asyncio.sleep(0.5)
             await ws.send(json.dumps({"t": "regen"}))
-            # generateMap() + wInit() run under G.mutex and take a moment.
+            sent_regen = True
             await asyncio.sleep(3.0)
-            recorder.write("reset", -1, {"ok": True})
-            return True
     except Exception as e:
-        recorder.write("reset", -1, {"err": f"{type(e).__name__}: {e}"})
-        return False
+        if not sent_regen:
+            recorder.write("reset", -1, {"err": f"{type(e).__name__}: {e}"})
+            return False
+        recorder.write("reset", -1,
+                       {"note": "socket dropped after regen was sent (expected)",
+                        "err": f"{type(e).__name__}"})
+    return await verify_reset(host, recorder)
 
 
 async def run_once(args, run_idx: int, seed: int) -> dict:
@@ -134,7 +175,14 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
         if not args.no_reset:
             print("  reset: eraseslot x6 + regen ...", end="", flush=True)
             ok = await reset_world(args.host, rec)
-            print(" ok" if ok else " FAILED (continuing)")
+            print(" verified" if ok else " FAILED")
+            if not ok:
+                # Against a score target a dirty board can end the run
+                # instantly, so this is not something to continue past.
+                print("  aborting: board not clean (use --no-reset to override)")
+                rec.write("run", -1, {"reason": "reset_failed"})
+                return {"run": run_idx, "seed": seed, "reason": "reset_failed",
+                        "bots": [], "board": {}, "log": str(path)}
 
         global_limiter = RateLimiter(args.global_interval, rng, jitter=0.25)
         broker = SlotBroker()
