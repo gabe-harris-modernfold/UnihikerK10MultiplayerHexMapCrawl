@@ -25,28 +25,50 @@ python arena.py --host 192.168.4.234 --bots 1 --no-reset --max-minutes 1
 
 ## Board limits (measured 2026-09-19, firmware at commit e4c3517+)
 
-A 5-bot / 62-second sprint run against the K10:
+**Read `/state` numbers only against a known uptime.** `maxTickMs` and
+`minHeap` are high-water marks that never reset, so a board that has been up
+for hours reports the worst moment it ever had, not its current health. An
+earlier revision of this file quoted "95 ms idle with 0 clients" as a
+baseline; that was a stale high-water mark from a prior browser session. A
+freshly booted board idles at **`maxTickMs` 3 and `minHeap` ~185 KB**.
+Power-cycle before any run whose numbers you intend to trust.
 
-| Metric | Idle, 0 clients | 1 client | 5 clients |
-|---|---|---|---|
-| `maxTickMs` (budget 100) | 95 | 117 | **190** |
-| `minHeap` | 43 468 | 43 468 | **10 164** |
-| `broadcastPartial` | 1 195 | — | **10 910** (+9 715 in 62 s) |
+From a clean boot, four bots over ~10 minutes:
 
-**The load is fan-out, not inbound traffic.** The bots sent 222 messages in
-62 s (3.6/s aggregate) — trivial. The cost is `broadcastState()` serialising
-~3.3 KB per client every 100 ms tick: five clients is ~165 KB/s outbound off
-one ESP32-S3. So *reducing the send rate barely helps; reducing client count
-does*. `broadcastSkips` stayed at 0, so mutex contention is not the problem.
+| Metric | Fresh boot, 0 clients | 4 bots, sprint |
+|---|---|---|
+| `maxTickMs` (budget 100) | 3 | 305 → 805 |
+| `minHeap` | 184 964 | 53 084 |
+| `broadcastPartial` | 0 | 0 |
+| `broadcastSkips` | 0 | 0 |
 
-`minHeap` of 10 KB is the number to respect — `docs/dev-loop.md` attributes
-the 2026-09-12 HTTP wedge to internal heap starvation at ~46 KB idle. It did
-not wedge, but there is not much margin. Power-cycle between serious runs:
-`maxTickMs` and `minHeap` are high-water marks that never reset.
+The 805 ms spike is almost certainly `saveGame()`: `tickGame()` calls it on
+every dawn, and sprint mode produces a dawn every ~2.3 s, so an SD write that
+would normally happen once per 5 real minutes runs constantly. Worth knowing
+for normal play too — a dawn save can stall the game loop for most of a
+second.
 
-**Practical ceiling: 4 bots**, leaving one slot for a browser and one of
-headroom. `handleConnect` rejects once `connectedCount + lobbySize >=
-MAX_PLAYERS` (6), and a rejected bot gets `{"t":"full"}` and retries forever.
+`broadcastPartial` and `broadcastSkips` both stayed at 0 across these runs,
+so with 4 clients the fan-out is keeping up. Inbound traffic is negligible
+either way: the bots send a few messages per second at most.
+
+**Practical ceiling: 4 bots.** `handleConnect` rejects once
+`connectedCount + lobbySize >= MAX_PLAYERS` (6), and a rejected bot gets
+`{"t":"full"}` and retries forever — so 5 bots plus a browser does not fit,
+and any stale slot eats into the budget.
+
+## Sprint mode distorts balance measurement — use it as a stress test only
+
+Sprint reaches ~2.3 s per game-day (a ~130× speedup), which is excellent for
+soak testing and useless for tuning. A survivor gets `ll + 3` ≈ 10 MP per day,
+enough for six or seven moves, but at a 2.3 s day and a shared send budget
+each bot only gets four or five *messages* per day. The bots therefore play
+every day with roughly a third of their action budget, which makes survival
+look far harder than it is and starves the economy of the moves that drive it.
+
+Use `--mode realtime` for anything you intend to draw a balance conclusion
+from. At 5 real minutes per game-day a 30-day run is ~2.5 hours, which is
+what the auto-loop is for.
 
 ## Gotchas the firmware imposes
 
@@ -88,8 +110,30 @@ skills. Walking is the game:
 10–30 points, against 3 for a 2-MP FORAGE. Pile density is the single
 highest-leverage balance lever.
 
+## Gameplay findings so far
+
+**The thirst spiral is real and sharp.** Water is the binding constraint:
+`ACT_WATER` needs Marsh, Flooded or River terrain (~4.7% of the map once the
+raft-gated River is excluded), so most water comes from piles. A survivor that
+lets water tokens reach zero goes: track falls → LL falls → MP is `ll + 3`, so
+mobility falls → cannot reach water → dead. Measured on hardware: tokens hit 0
+on day 2, dead on day 7. Resting through a shortage makes it strictly worse,
+because dawn drinks 2 water whether you moved or not. Policies now hunt water
+as an override (`staple_hunt`), which roughly tripled survival distance.
+
+**Encounters are barely reachable.** Across every run so far, ContentMax has
+opened **zero** POIs — with 105 POIs on 4275 hexes (2.5%) and fog limiting
+vision, a bot simply never walks onto one by chance. Whether that holds in
+realtime mode with a full MP budget is the open question, but if it does, the
+authored content is effectively unreachable rather than merely underpaid.
+
 ## Status
 
-Phase 1 (transport, parser, slot claiming, soak, telemetry) is done and
-verified on hardware. Phase 2 — `scoremax`, `contentmax`, `coward`, `rival`
-policies and local encounter-JSON loading — is not built yet.
+Phase 1 (transport, parser, slot claiming, soak, telemetry) and Phase 2
+(`scoremax`, `contentmax`, `coward`, `rival`, local encounter JSON,
+pathfinding) are built and verified on hardware — 113 offline checks in
+`smoke.py`.
+
+Not done: a realtime-mode run long enough to draw balance conclusions from,
+and `metrics.py` (score spread, snowball correlation, POI race outcomes,
+check-margin histogram) over the recorded JSONL.

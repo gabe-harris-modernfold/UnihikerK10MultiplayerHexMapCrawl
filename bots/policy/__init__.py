@@ -1,19 +1,44 @@
 from .base import Policy, Action, NOOP
+from .survivor import SurvivorPolicy
 from .drunk import DrunkPolicy
+from .scoremax import ScoreMaxPolicy
+from .contentmax import ContentMaxPolicy
+from .coward import CowardPolicy
+from .rival import RivalPolicy
 
-# Registry used by arena.py --policies.  Phase 2 adds scoremax, contentmax,
-# coward and rival here.
 REGISTRY = {
     "drunk": DrunkPolicy,
+    "scoremax": ScoreMaxPolicy,
+    "contentmax": ContentMaxPolicy,
+    "coward": CowardPolicy,
+    "rival": RivalPolicy,
 }
+
+# The encounter library is ~100 JSON files; parse it once and share the
+# instance across every policy in a run rather than per bot.
+_SHARED_LIBRARY = None
+
+
+def shared_library():
+    global _SHARED_LIBRARY
+    if _SHARED_LIBRARY is None:
+        from encounters import EncounterLibrary
+        _SHARED_LIBRARY = EncounterLibrary()
+        _SHARED_LIBRARY.load_all()
+    return _SHARED_LIBRARY
 
 
 def make(name: str, rng, **kw) -> Policy:
     try:
         cls = REGISTRY[name]
     except KeyError:
-        raise SystemExit(f"unknown policy {name!r}; have: {', '.join(sorted(REGISTRY))}")
+        raise SystemExit(
+            f"unknown policy {name!r}; have: {', '.join(sorted(REGISTRY))}")
+    if issubclass(cls, SurvivorPolicy):
+        kw.setdefault("library", shared_library())
     return cls(rng, **kw)
 
 
-__all__ = ["Policy", "Action", "NOOP", "DrunkPolicy", "REGISTRY", "make"]
+__all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
+           "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
+           "REGISTRY", "make", "shared_library"]

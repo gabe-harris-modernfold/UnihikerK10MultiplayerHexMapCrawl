@@ -56,6 +56,23 @@ IMPASSABLE = 255
 TERR_SETTLEMENT = 9
 TERR_RIVER      = 11
 
+# Which terrain supports which action (Esp32HexMapCrawl.ino:254-264).
+# FORAGE only works where the DN is non-zero: Scrub, Forest, Marsh, River.
+TERRAIN_FORAGE_DN = (7, 0, 6, 8, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0)
+# Drinkable water is genuinely scarce -- Marsh (26 hexes) and Flooded (175)
+# on a 4275-cell map, plus River which needs a Raft to stand on.  Most water
+# therefore has to come from collected piles, not the WATER action.
+TERRAIN_HAS_WATER = (0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0)
+TERRAIN_IS_RUINS  = (0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+
+def can_forage(terrain: int) -> bool:
+    return 0 <= terrain < NUM_TERRAIN and TERRAIN_FORAGE_DN[terrain] != 0
+
+
+def has_water(terrain: int) -> bool:
+    return 0 <= terrain < NUM_TERRAIN and bool(TERRAIN_HAS_WATER[terrain])
+
 # ── Weather phases (G.weatherPhase) ──────────────────────────────────────────
 WEATHER_CLEAR, WEATHER_RAIN, WEATHER_STORM = 0, 1, 2
 WEATHER_CHEM, WEATHER_FOG, WEATHER_MIST    = 3, 4, 5

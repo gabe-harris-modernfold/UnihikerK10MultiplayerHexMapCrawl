@@ -58,17 +58,32 @@ class SprintPolicy(Policy):
         super().__init__(inner.rng)
         self.inner = inner
         self.name = f"sprint:{inner.name}"
+        self._rested_day = None
 
     def decide(self, obs) -> Action:
         me = obs.me
-        if obs.encounter is None and me.connected and me.ll > 0:
-            if me.mp <= 0 and not me.resting:
-                from config import ACT_REST
-                return Action("act", a=ACT_REST, why="sprint: out of MP")
+        # Once per game-day only.  REST is a no-op server-side when already
+        # resting (doRest returns early) and the periodic broadcast carries no
+        # `rt` field, so an unguarded "rest while mp <= 0" re-sends forever --
+        # it produced 2054 dead messages in the first four-policy run.
+        if (obs.encounter is None and me.connected and me.ll > 0
+                and me.mp <= 0 and not me.resting
+                and self._rested_day != obs.day):
+            from config import ACT_REST
+            self._rested_day = obs.day
+            return Action("act", a=ACT_REST, why="sprint: out of MP")
         return self.inner.decide(obs)
 
     def on_event(self, ev):
         self.inner.on_event(ev)
+
+    def set_pid(self, pid):
+        self.pid = pid
+        self.inner.set_pid(pid)
+
+    def content_score(self):
+        getter = getattr(self.inner, "content_score", None)
+        return getter() if callable(getter) else None
 
 
 async def reset_world(host: str, recorder, timeout: float = 20.0) -> bool:
@@ -191,9 +206,17 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
         rec.write("run", -1, summary)
         print(f"  end: {reason} after {summary['elapsed_s']}s, day {summary['day']}")
         for b in summary["bots"]:
-            seat = "seated" if b["joined"] else f"NOT SEATED (pickfail={b['pick_failures']})"
-            print(f"    {b['label']:<28} score={b['score']:<5} steps={b['steps']:<4} "
-                  f"ll={b['ll']} tx={b['sent']} rx={b['received']} err={b['errors']} {seat}")
+            seat = "" if b["joined"] else f" NOT SEATED (pickfail={b['pick_failures']})"
+            pps = b.get("pts_per_step")
+            print(f"    {b['label']:<30} score={b['score']:<5} steps={b['steps']:<4} "
+                  f"pts/step={pps if pps is not None else '-':<5} ll={b['ll']} "
+                  f"tx={b['sent']} err={b['errors']}{seat}")
+            c = b.get("content")
+            if c:
+                print(f"       content: opened={c['encounters_opened']} "
+                      f"banked={c['encounters_banked']} aborted={c['encounters_aborted']} "
+                      f"nodes={c['nodes_seen']} rolls={c['rolls_won']}/{c['rolls']} "
+                      f"recipes={c['recipes']} downed={c['downed']}")
         bd = summary["board"]
         print(f"    board: worst maxTickMs={bd['worst_maxTickMs']} "
               f"minHeap={bd['min_heap']} pollFail={bd['poll_failures']}")

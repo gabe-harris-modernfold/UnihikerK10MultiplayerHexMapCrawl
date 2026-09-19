@@ -63,6 +63,13 @@ class Policy:
         # Every policy gets an injected RNG so a whole run is reproducible
         # from one seed.  Never use the module-level random module directly.
         self.rng = rng
+        # Set once the pick is confirmed.  Needed because ev messages are
+        # broadcast with ws.textAll() -- every bot sees every other bot's
+        # rolls, so any per-player bookkeeping must filter on this.
+        self.pid = -1
+
+    def set_pid(self, pid: int) -> None:
+        self.pid = pid
 
     def decide(self, obs) -> Action:
         raise NotImplementedError

@@ -208,15 +208,27 @@ class Observation:
 
     def _apply_event(self, ev):
         k = ev.get("k")
+        # NOTE: ev messages go out via ws.textAll(), so every one of these is
+        # about *some* player, not necessarily us.  Only act on our own.
+        mine = ev.get("pid") == self.pid
         if k == "enc_start":
-            self.encounter = self.encounter or {}
-        elif k in ("enc_end", "enc_bank"):
+            # Deliberately does NOT open self.encounter.  Only enc_path carries
+            # the biome/id needed to bind the local JSON; fabricating an empty
+            # dict here made every policy see an unidentifiable encounter and
+            # immediately bank out of it.
+            pass
+        elif k in ("enc_end", "enc_bank") and mine:
             self.encounter = None
         elif k == "regen":
             # New world: the cached map is meaningless now.
             self.synced = False
             self.map = WorldMap()
-        elif k == "dawn" and ev.get("pid") == self.pid:
+        elif k == "dawn":
             self.day = ev.get("day", self.day)
+            if mine:
+                # dawnUpkeep() clears p.resting, but the periodic broadcast
+                # carries no `rt` field -- only sync does -- so this event is
+                # the only way to learn we have stopped resting.
+                self.players[self.pid].resting = False
         elif k == "weather":
             self.weather = ev.get("wp", self.weather)

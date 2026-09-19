@@ -246,6 +246,9 @@ class BotClient:
             self.seated_arch = self.arch
             self._pending_slot = None
             self._synced_evt.set()
+            # ev messages are broadcast to every client, so the policy needs
+            # to know which pid is its own before it starts counting anything.
+            self.policy.set_pid(self.arch)
             self.recorder.write("joined", self.arch,
                                 {"policy": self.policy.name, "label": self.label})
 
@@ -291,10 +294,17 @@ class BotClient:
 
     def summary(self) -> dict:
         me = self.obs.me
-        return {"arch": self.seated_arch, "label": self.label,
-                "policy": self.policy.name,
-                "joined": self.ever_joined, "score": me.score, "steps": me.steps,
-                "ll": me.ll, "day": self.obs.day, "sent": self.sent,
-                "received": self.received, "errors": self.errors,
-                "refused_full": self.refused_full,
-                "pick_failures": self.pick_failures}
+        out = {"arch": self.seated_arch, "label": self.label,
+               "policy": self.policy.name,
+               "joined": self.ever_joined, "score": me.score, "steps": me.steps,
+               "ll": me.ll, "day": self.obs.day, "sent": self.sent,
+               "received": self.received, "errors": self.errors,
+               "refused_full": self.refused_full,
+               "pick_failures": self.pick_failures}
+        out["pts_per_step"] = round(me.score / me.steps, 2) if me.steps else None
+        # ContentMax is judged on this rather than score, so it has to reach
+        # the summary even when the policy is wrapped for sprint mode.
+        getter = getattr(self.policy, "content_score", None)
+        if callable(getter):
+            out["content"] = getter()
+        return out
