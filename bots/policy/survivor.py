@@ -17,6 +17,8 @@ Water is the real constraint.  ACT_WATER needs Marsh, Flooded or River
 terrain -- about 4.7% of the map once the raft-gated River is excluded --
 so most water has to come from walking onto piles.
 """
+import time
+
 from config import (ACT_FORAGE, ACT_REST, ACT_WATER, RES_FOOD, RES_WATER,
                     can_forage, has_water)
 from encounters import EncounterLibrary, EncounterRun, success_chance
@@ -37,6 +39,10 @@ EMERGENCY_WATER = 1
 EMERGENCY_FOOD = 0
 # Hunting staples justifies a much longer walk than ordinary pursuit.
 STAPLE_SEARCH_COST = 60
+# Seconds between REST retries when we cannot tell whether the last one
+# landed. Short enough to unstick a dropped REST within one dawn, long
+# enough that it is nothing like the old per-cycle spam.
+REST_RETRY_S = 4.0
 
 
 class SurvivorPolicy(Policy):
@@ -58,6 +64,7 @@ class SurvivorPolicy(Policy):
         # naive "rest while mp <= 0" check re-sends it every cycle forever.
         # Track it against the game-day instead; dawnUpkeep clears resting.
         self._rested_day = None
+        self._last_rest_sent = 0.0
         # enc_start is silent when the POI has already been consumed, and our
         # local map keeps the stale poi bit until the next vis disk. Cap the
         # attempts per hex so a stale bit cannot become an infinite loop.
@@ -191,16 +198,37 @@ class SurvivorPolicy(Policy):
         return Action("move", d=d, why=f"EMERGENCY {need} -> ({q},{r}) c={cost}")
 
     def rest_once(self, obs, why: str) -> Action | None:
-        """REST at most once per game-day.
+        """REST, with a cooldown rather than a once-per-day latch.
 
-        Resting is a trap to loop on: computeValidMoves() returns 0 while
-        resting and MP is not restored until dawn, so a bot that re-sends REST
-        whenever `mp <= 0` will sit still forever *and* burn a message every
-        cycle doing it.  One send per day, and the dawn event clears the flag.
+        Two failure modes to thread between.
+
+        Re-sending REST every decision cycle is a no-op server-side (doRest
+        returns early when already resting) but burns a message each time --
+        2054 dead sends in one early run.
+
+        A strict once-per-day latch is worse.  The decision is latched before
+        the send clears the rate limiter, so a REST decided just before a
+        reconnect never reaches the board while the bot still believes it
+        rested.  It then sits at mp == 0, *not* resting, unable to move and
+        unable to retry until dawn -- and because tickGame() only ends the day
+        early when every connected player is resting, one bot stuck like that
+        stops the whole fleet's day from collapsing.  Observed live: five bots
+        frozen at day 16, days reverting from ~3 s to the full 5 minutes.
+
+        There is no way to confirm it landed: the periodic broadcast carries no
+        `rt` field, so "resting" and "simply out of MP" look identical.  So
+        retry on a cooldown instead.  REST is idempotent, and one send every
+        few seconds is 60x less traffic than the original spam while being
+        self-healing.
         """
-        if self._rested_day == obs.day or obs.me.resting:
+        if obs.me.resting:
+            return None
+        now = time.monotonic()
+        if (self._rested_day == obs.day
+                and now - self._last_rest_sent < REST_RETRY_S):
             return None
         self._rested_day = obs.day
+        self._last_rest_sent = now
         return Action("act", a=ACT_REST, why=why)
 
     def pack_full(self, obs) -> bool:

@@ -30,6 +30,10 @@ import websockets
 from config import ARCHETYPE_NAME, MAX_PLAYERS
 from state import Observation
 
+# How often to re-log a persisting noop reason. A stalled fleet should be
+# obvious in the log within seconds, without a line every decide cycle.
+NOOP_HEARTBEAT_S = 15.0
+
 
 class RateLimiter:
     """Minimum spacing between sends, with jitter so N bots do not
@@ -116,6 +120,9 @@ class BotClient:
         self.seats_lost = 0
         self.respawns = 0
         self._downed_since = None
+        self._last_noop_why = None
+        self._last_noop_log = 0.0
+        self._noop_streak = 0
         self.stop = asyncio.Event()
         # Connection lifecycle.  Worth tracking explicitly rather than
         # reconstructing from the log: the board can drop a player slot while
@@ -407,7 +414,27 @@ class BotClient:
                 continue
             msg = action.to_msg()
             if msg is None:
+                # A noop sends nothing, so it used to leave no trace at all --
+                # which made a fully-stalled fleet look identical to dead
+                # decision loops when a run froze. Log the reason when it
+                # changes, and heartbeat while it persists, without writing a
+                # line every 0.35s for a bot that is legitimately idle.
+                now = time.monotonic()
+                if (action.why != self._last_noop_why
+                        or now - self._last_noop_log >= NOOP_HEARTBEAT_S):
+                    self.recorder.write("noop", self._log_arch(),
+                                        {"why": action.why,
+                                         "repeats": self._noop_streak,
+                                         "mp": self.obs.me.mp,
+                                         "vm": self.obs.me.valid_moves,
+                                         "day": self.obs.day})
+                    self._last_noop_log = now
+                    self._noop_streak = 0
+                self._last_noop_why = action.why
+                self._noop_streak += 1
                 continue
+            self._last_noop_why = None
+            self._noop_streak = 0
             self.recorder.write("decide", self._log_arch(),
                                 {"kind": action.kind, "why": action.why})
             await self._send(msg)

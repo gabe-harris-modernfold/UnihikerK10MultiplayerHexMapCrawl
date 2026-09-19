@@ -284,6 +284,21 @@ check("second call does not re-rest",
       all(g.decide(o4).to_msg() != first.to_msg() for _ in range(20)))
 o4.day = 6
 check("new day re-arms rest", g.decide(o4).to_msg()["a"] == config.ACT_REST)
+# A REST decided just before a reconnect never reaches the board, but the bot
+# has already marked itself rested. With a hard per-day latch it then sits at
+# mp 0 and awake forever -- and one awake player stops tickGame() ending the
+# day early for the whole fleet. Froze five bots at day 16 in a live run.
+import policy.survivor as _surv
+g._last_rest_sent -= (_surv.REST_RETRY_S + 1.0)
+check("dropped REST retries after cooldown",
+      g.decide(o4).to_msg()["a"] == config.ACT_REST)
+check("but not before the cooldown elapses",
+      all(g.decide(o4).to_msg() != {"t": "act", "a": config.ACT_REST, "mp": 1}
+          for _ in range(5)))
+# Server-confirmed resting (only ever seen via sync) suppresses it outright.
+me4.resting = True
+check("confirmed resting suppresses retry", g.rest_once(o4, "x") is None)
+me4.resting = False
 
 # ev is broadcast to everyone, so an unfiltered policy counts rivals' rolls.
 g2 = pmod.make("contentmax", random.Random(3))

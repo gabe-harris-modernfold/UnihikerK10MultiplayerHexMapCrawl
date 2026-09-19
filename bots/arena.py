@@ -34,6 +34,7 @@ import policy as policy_mod
 from client import BotClient, RateLimiter, SlotBroker
 from config import MAX_PLAYERS, ARCHETYPE_NAME
 from policy.base import Action, Policy
+from policy.survivor import REST_RETRY_S
 from record import Recorder
 from telemetry import TelemetryPoller, fetch_state
 
@@ -59,18 +60,23 @@ class SprintPolicy(Policy):
         self.inner = inner
         self.name = f"sprint:{inner.name}"
         self._rested_day = None
+        self._last_rest_sent = 0.0
 
     def decide(self, obs) -> Action:
         me = obs.me
-        # Once per game-day only.  REST is a no-op server-side when already
-        # resting (doRest returns early) and the periodic broadcast carries no
-        # `rt` field, so an unguarded "rest while mp <= 0" re-sends forever --
-        # it produced 2054 dead messages in the first four-policy run.
+        # Cooldown, not a once-per-day latch.  Unguarded re-sending produced
+        # 2054 dead messages in an early run, but latching per day is worse:
+        # a REST decided just before a reconnect never reaches the board while
+        # the bot still thinks it rested, leaving it at mp == 0 and awake --
+        # and one awake player stops tickGame() ending the day early for the
+        # whole fleet.  See SurvivorPolicy.rest_once for the full account.
         if (obs.encounter is None and me.connected and me.ll > 0
                 and me.mp <= 0 and not me.resting
-                and self._rested_day != obs.day):
+                and (self._rested_day != obs.day
+                     or time.monotonic() - self._last_rest_sent >= REST_RETRY_S)):
             from config import ACT_REST
             self._rested_day = obs.day
+            self._last_rest_sent = time.monotonic()
             return Action("act", a=ACT_REST, why="sprint: out of MP")
         return self.inner.decide(obs)
 
