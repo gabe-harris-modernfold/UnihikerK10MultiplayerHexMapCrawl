@@ -10,6 +10,11 @@ Other key references:
   HTTP `/upload`), `sync_data.sh` (bash mirror).
 - `mock-server/` — Node mock of `/ws` + `/upload` for offline UI work
   (`npm run dev` on `:8765`).
+- **[docs/bot-testing.md](docs/bot-testing.md)** — `bots/`, the Python harness
+  that plays the game over `/ws` against a real K10 so balance can be measured.
+  Read it before touching `bots/` or drawing conclusions from a run: the
+  protocol has several failure modes that are completely silent (a refused
+  `pick`, an `enc_start` without `q`/`r`, a dirty board at reset).
 - `usb_drive.h` — Hold-A-at-boot USB-MSC mode. Coexists with the live
   `/upload` flow; do not replace one with the other.
 - `ui-upload.hpp` — on-device "FILE UPLOAD" progress screen, driven by the
