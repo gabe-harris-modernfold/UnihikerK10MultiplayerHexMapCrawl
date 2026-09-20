@@ -38,6 +38,18 @@ from record import read as read_run
 RUNS_DIR = Path(__file__).parent / "runs"
 WATER, FOOD = 0, 1
 
+# Design target (stated 2026-09-19): a good tension arc across two hours of
+# play, with a character coming close to dying at most four times in that
+# window.
+TARGET_HOURS = 2.0
+TARGET_BRUSHES = 4
+NEAR_DEATH_LL = 2
+# A day ends the moment every connected player rests, so its real length is
+# set by how long a player takes to spend ~10 MP (six or seven moves), not by
+# DAY_TICKS. 3 real minutes per day is the working estimate for a human at a
+# deliberate pace; DAY_TICKS caps it at 5 and a brisk player is nearer 2.
+EST_MINUTES_PER_DAY = 3.0
+
 
 def _dedupe_events(rows, kind):
     """One copy of each broadcast event, keyed on (timestamp, pid)."""
@@ -240,6 +252,101 @@ class RunReport:
             days[arch] = dead[0].get("day") if dead else None
         return {"downed_events": out, "first_death_day": days}
 
+    def tension(self, minutes_per_day=EST_MINUTES_PER_DAY, hours=TARGET_HOURS):
+        """Measure against the stated design target: a good tension arc across
+        two hours of play, with a character coming close to dying at most four
+        times in that window.
+
+        Three separate questions, because they fail independently:
+
+        **Rate** -- how often does a survivor brush with death?  Counted per
+        game-day and projected onto a session, since a run is not two hours
+        long.  Deaths and near-deaths are counted apart on purpose: "came
+        close to dying" means it survived, and a death is a failure of the
+        target, not an instance of it.
+
+        **Dwell** -- where does LL actually sit?  Time at full health is time
+        with no tension at all; time in the wounded middle band is where the
+        interesting play is.  A bimodal distribution with a hole in the middle
+        means characters are either fine or already doomed.
+
+        **Arc** -- are the brushes spread evenly, or do they build?  A flat
+        distribution is not an arc, however many brushes it contains.
+        """
+        traj = self.trajectories()
+        days = [d.get("day", 0) for ds in traj.values() for d in ds if d.get("day")]
+        maxday = max(days) if days else 0
+        bots = len(traj) or 1
+
+        deaths = defaultdict(list)
+        for ts, d in _dedupe_events(self.rows, "downed"):
+            deaths[d.get("pid")].append(ts)
+        n_deaths = sum(len(v) for v in deaths.values())
+
+        near = 0
+        dwell = Counter()
+        for ds in traj.values():
+            prev = 9
+            for d in ds:
+                ll = d.get("ll")
+                if ll is None:
+                    continue
+                dwell[ll] += 1
+                # An entry into the danger band that is not itself a death.
+                if ll <= NEAR_DEATH_LL and prev > NEAR_DEATH_LL and ll > 0:
+                    near += 1
+                prev = ll
+        samples = sum(dwell.values()) or 1
+
+        per_day_death = n_deaths / bots / maxday if maxday else 0.0
+        per_day_near = near / bots / maxday if maxday else 0.0
+        session_days = hours * 60.0 / minutes_per_day
+        proj_death = per_day_death * session_days
+        proj_near = per_day_near * session_days
+
+        # Arc: deaths by decile of the run.
+        stamps = sorted({(r["ts"], r["d"]["day"]) for r in self.rows
+                         if r["ch"] == "rx_s" and r["d"].get("day")})
+
+        def day_at(ts):
+            best = 0
+            for t, dd in stamps:
+                if t > ts:
+                    break
+                best = dd
+            return best
+
+        arc = Counter()
+        for pid, times in deaths.items():
+            for ts in times:
+                if maxday:
+                    arc[min(9, int(day_at(ts) / maxday * 10))] += 1
+        early = sum(arc[i] for i in range(5))
+        late = sum(arc[i] for i in range(5, 10))
+
+        return {
+            "days": maxday, "bots": bots,
+            "deaths": n_deaths, "near_deaths": near,
+            "per_bot_per_day": {"deaths": round(per_day_death, 4),
+                                "near": round(per_day_near, 4)},
+            "session": {"hours": hours, "minutes_per_day": minutes_per_day,
+                        "game_days": round(session_days),
+                        "projected_deaths": round(proj_death, 1),
+                        "projected_near": round(proj_near, 1),
+                        "projected_brushes": round(proj_death + proj_near, 1),
+                        "target_brushes": TARGET_BRUSHES,
+                        "verdict": ("over" if proj_death + proj_near > TARGET_BRUSHES
+                                    else "within")},
+            "dwell_pct": {ll: round(100.0 * dwell.get(ll, 0) / samples, 1)
+                          for ll in range(8)},
+            "danger_pct": round(100.0 * sum(dwell.get(i, 0) for i in range(3)) / samples, 1),
+            "full_health_pct": round(100.0 * sum(dwell.get(i, 0) for i in (6, 7)) / samples, 1),
+            "arc_deciles": [arc[i] for i in range(10)],
+            "arc_early_vs_late": [early, late],
+            # Deaths should be the rare tail of near-misses, not half of them.
+            "death_to_near_ratio": round(n_deaths / near, 2) if near else None,
+        }
+
     def connections(self):
         """Connection lifecycle per bot.
 
@@ -300,6 +407,7 @@ class RunReport:
                 "check_margins": self.check_margins(), "action_mix": self.action_mix(),
                 "resource_slack": self.resource_slack(), "crises": self.crises(),
                 "poi_reach": self.poi_reach(), "deaths": self.deaths(),
+                "tension": self.tension(),
                 "connections": self.connections(), "board": self.board()}
 
     # --- rendering ------------------------------------------------------
@@ -366,6 +474,29 @@ class RunReport:
             L.append(f"   {self.label(a):<32} nodes={c['nodes_seen']} "
                      f"rolls={c['rolls_won']}/{c['rolls']} recipes={c['recipes']} "
                      f"aborted={c['encounters_aborted']}")
+
+        tn = m["tension"]
+        se = tn["session"]
+        L.append(f"\n-- tension vs target ({se['hours']}h session "
+                 f"~= {se['game_days']} game-days at {se['minutes_per_day']}min/day)")
+        L.append(f"   per bot per game-day: {tn['per_bot_per_day']['deaths']} deaths, "
+                 f"{tn['per_bot_per_day']['near']} near-deaths")
+        L.append(f"   projected per session: {se['projected_deaths']} deaths + "
+                 f"{se['projected_near']} near = {se['projected_brushes']} brushes "
+                 f"(target <= {se['target_brushes']})  ** {se['verdict'].upper()} **")
+        L.append(f"   deaths:near-misses = 1:{round(1 / tn['death_to_near_ratio'], 1)}"
+                 if tn["death_to_near_ratio"] else "   deaths:near-misses = n/a")
+        L.append("   time spent at each LL (tension lives in the middle):")
+        for ll in range(8):
+            pct = tn["dwell_pct"].get(ll, 0.0)
+            L.append(f"     LL {ll} {'#' * round(pct / 2):<26} {pct:>5.1f}%")
+        L.append(f"   danger (LL<=2) {tn['danger_pct']}%   "
+                 f"full health (LL>=6) {tn['full_health_pct']}%")
+        a = tn["arc_deciles"]
+        L.append(f"   arc, deaths by decile: {a}")
+        L.append(f"   first half {tn['arc_early_vs_late'][0]} vs "
+                 f"second half {tn['arc_early_vs_late'][1]} "
+                 f"(a rising arc wants the second half higher)")
 
         cn = m["connections"]
         L.append("\n-- connections (seated != connected; both fail quietly)")
