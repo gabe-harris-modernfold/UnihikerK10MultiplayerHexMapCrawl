@@ -21,10 +21,10 @@ let   toastActive = 0;      // currently visible count
 
 function _nextToast() {
   if (toastActive >= TOAST_MAX || toastQueue.length === 0) return;
-  const msg = toastQueue.shift();
+  const { msg, variant } = toastQueue.shift();
   toastActive++;
   const el = document.createElement('div');
-  el.className   = 'toast-item';
+  el.className   = 'toast-item' + (variant ? ` toast-${variant}` : '');
   el.textContent = msg;
   toastStack.appendChild(el);
   setTimeout(() => el.classList.add('dying'), TOAST_LIFE);
@@ -35,8 +35,12 @@ function _nextToast() {
   }, TOAST_LIFE + TOAST_FADE);
 }
 
-function showToast(msg) {
-  toastQueue.push(msg);
+// `variant` adds a `toast-<variant>` class for callers that need a different
+// voice from the default gold system notice — today just 'doom', which styles
+// the Creeping Doom's taunts as something speaking rather than the UI
+// reporting. Omitted by every other caller, so their toasts are unchanged.
+function showToast(msg, variant) {
+  toastQueue.push({ msg, variant });
   _nextToast();
 }
 
@@ -71,6 +75,73 @@ function dismissBanner() {
   setTimeout(() => { el.classList.remove('visible', 'dying'); }, 420);
   if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
 }
+
+// ── Direct-uplink (softAP) warning ──────────────────────────
+// Joining WASTELAND directly puts the board's single radio on double duty:
+// beaconing, handing out leases, sweeping for a network to join, AND running
+// the game. Over a real router it only has to be a client. Players feel that
+// difference and blame the game, so the game admits it first, in its own voice.
+// Driven by the {t:'wifi',status:'link'} message from handleConnect().
+const UPLINK_WARNINGS = [
+  ['ONE ANTENNA, TWO MASTERS',
+   'you are wired straight into the board. it beacons, it routes, it thinks — and it drops things.'],
+  ['THE BOARD IS ITS OWN TOWER NOW',
+   'no relay. no redundancy. no mercy. when the world stutters, that was not your reflexes.'],
+  ['DIRECT UPLINK — SURVIVABLE, NOT PLEASANT',
+   'the board is rationing airtime between hosting you and listening for rescue.'],
+  ['YOU ARE DRINKING FROM THE SOURCE',
+   'WASTELAND is the board talking to itself. it was never built to carry a crowd.'],
+  ['ROOM FOR {cap} AT THIS FIRE',
+   'a direct uplink seats {cap}. the next survivor waits outside in the dust.'],
+];
+let uplinkWarned = false;
+const UPLINK_BANNER_HOLD_MAX = 300000;   // stop waiting on character select after 5 min
+
+// cap   - softAP client limit the firmware reports (AP_MAX_CLIENTS)
+// staIp - the board's address on a real network, or '' if it has no uplink
+function showUplinkWarning(cap, staIp) {
+  if (uplinkWarned) return;   // this is a warning, not a nag — once per session
+  uplinkWarned = true;
+  const n = cap > 0 ? String(cap) : 'few';
+  const [main, sub] = UPLINK_WARNINGS[Math.floor(Math.random() * UPLINK_WARNINGS.length)];
+  // The log carries the fix and scrolls back, so write it now — it is already
+  // in the history by the time the player thinks to look for it.
+  addLog('<span class="log-check-fail">⚠ DIRECT UPLINK</span> — one radio is hosting you '
+       + 'and running the wasteland at the same time. expect it to stutter.');
+  if (staIp) {
+    addLog('<span class="log-join">⇒ THE TOWER STILL ANSWERS</span> at <b>' + escHtml(staIp)
+         + '</b> — leave WASTELAND, rejoin your own network, browse there. the world steadies.');
+  }
+  // The banner carries the joke, but it sits at z-index 30 and character select
+  // at 900 — firing it now buries it behind the picker and burns its six seconds
+  // unseen. Hold until the player is actually in the wasteland, which is also
+  // when the stutter it explains starts to show. If they never pick, drop it:
+  // the log lines above already said everything that matters.
+  const picking = () => !!document.getElementById('char-select-overlay')?.classList.contains('open');
+  let held = 0;
+  const arm = () => {
+    if (!picking()) { showBanner(main.replaceAll('{cap}', n), sub.replaceAll('{cap}', n)); return; }
+    held += 500;
+    if (held < UPLINK_BANNER_HOLD_MAX) setTimeout(arm, 500);
+  };
+  setTimeout(arm, 1200);
+}
+
+// Bad air. Its own list rather than a SHELTER_WARNINGS entry: the advice at
+// the bottom of a shelter warning is "build something", and down here the
+// only answer is to climb back out, so nothing in that list is true.
+const BAD_AIR_WARNINGS = [
+    ['YOU WOKE CHOKING ON DEAD AIR',   'the bunker does not breathe — surface to sleep'],
+    ['THE TUNNEL TOOK A BREATH BACK',  'no weather down here, but no air either'],
+    ['STILL AIR, HEAVY LUNGS',         'a night below costs what the sky would have'],
+    ['SOMETHING IN THE DARK IS FOUL',  'climb out before you sleep here again'],
+];
+
+function showBadAirWarning() {
+  const [main, sub] = BAD_AIR_WARNINGS[Math.floor(Math.random() * BAD_AIR_WARNINGS.length)];
+  showBanner(main, sub);
+}
+
 function showShelterWarning() {
   const scrap = players[myId]?.inv?.[4] ?? 0;
   if (scrap === 0) {
@@ -200,6 +271,10 @@ document.addEventListener('keydown', e => {
     uiHexInfoOpen.val = false;
     return;
   }
+  // Map zoom: +/= in, -/_ out, 0 reset (renderer.js owns the clamp + persistence)
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); nudgeZoom(+1); return; }
+  if (e.key === '-' || e.key === '_') { e.preventDefault(); nudgeZoom(-1); return; }
+  if (e.key === '0')                  { e.preventDefault(); resetZoom();   return; }
   // FAB shortcuts: R=Rest, A=Action, C=Survivor
   if (e.code === 'KeyR') { e.preventDefault(); document.getElementById('fab-rest-btn')?.click(); return; }
   if (e.code === 'KeyA') { e.preventDefault(); document.getElementById('fab-action-btn')?.click(); return; }
@@ -223,12 +298,49 @@ document.addEventListener('keyup', e => {
   if (heldKeys.has(e.code)) { clearInterval(heldKeys.get(e.code)); heldKeys.delete(e.code); }
 });
 
-// Swipe on canvas
+// Swipe on canvas (one finger = move) / pinch (two fingers = zoom).
+// Both gestures share the canvas, so pointer bookkeeping lives in one place:
+// the moment a second pointer lands, the pending swipe is cancelled so lifting
+// either finger can't fire a spurious move.
 let swipeStart = null;
 const _swipeEl = document.getElementById('hexCanvas');
-_swipeEl.addEventListener('pointerdown',  e => { swipeStart = { x: e.clientX, y: e.clientY }; });
-_swipeEl.addEventListener('pointercancel',() => { swipeStart = null; });
+const _pointers = new Map();   // pointerId -> {x, y}
+let   _pinchStartDist = 0;     // >0 while a pinch is in progress
+let   _pinchStartZoom = 0;
+
+const PINCH_PX_PER_STEP = 110; // finger-spread distance that equals one zoom step
+                               // (a step is 1.25x now, so this is deliberately long)
+
+function _pinchDist() {
+  const [a, b] = [..._pointers.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function _endPinch(e) {
+  _pointers.delete(e.pointerId);
+  if (_pointers.size < 2) _pinchStartDist = 0;
+}
+
+_swipeEl.addEventListener('pointerdown', e => {
+  _pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (_pointers.size === 1) swipeStart = { x: e.clientX, y: e.clientY };
+  if (_pointers.size >= 2) {
+    swipeStart      = null;              // cancel the move gesture
+    _pinchStartDist = _pinchDist();
+    _pinchStartZoom = getZoomStep();
+  }
+});
+_swipeEl.addEventListener('pointermove', e => {
+  if (!_pointers.has(e.pointerId)) return;
+  _pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (_pointers.size !== 2 || _pinchStartDist <= 0) return;
+  e.preventDefault();
+  setZoomStep(_pinchStartZoom + (_pinchDist() - _pinchStartDist) / PINCH_PX_PER_STEP);
+});
+_swipeEl.addEventListener('pointercancel', e => { _endPinch(e); swipeStart = null; });
 _swipeEl.addEventListener('pointerup',   e => {
+  const wasPinching = _pointers.size >= 2;
+  _endPinch(e);
+  if (wasPinching) { swipeStart = null; return; }
   if (!swipeStart) return;
   const dx = e.clientX - swipeStart.x, dy = e.clientY - swipeStart.y;
   if (Math.hypot(dx, dy) < 20) { swipeStart = null; return; }

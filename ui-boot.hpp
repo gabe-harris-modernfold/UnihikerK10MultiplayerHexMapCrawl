@@ -21,9 +21,11 @@ static void splashAdd(const char* msg, uint32_t col = 0) {
 // ── The chronicle (thread-safe ring buffer) ────────────────────────────────
 // `text` is a predicate when `who` names a player ("goes hungry for the
 // trying.") and a whole sentence when who is -1. See K10LogEntry for the
-// '\x01' second-name placeholder. Safe from either core.
-static void k10LogAdd(const char* text, int8_t who = -1,
-                      uint8_t tone = TONE_PLAIN, int8_t who2 = -1) {
+// '\x01' second-name placeholder. `glyph` is the
+// K10Glyph stamped in the margin beside the words. Safe from either core.
+static void k10LogAddEx(const char* text, int8_t who, uint8_t tone,
+                        uint8_t glyph, int8_t who2,
+                        uint8_t plate, const uint8_t* pv, uint8_t nv) {
   uint16_t day = G.dayCount;   // read outside the spinlock
   uint32_t now = millis();
   taskENTER_CRITICAL(&k10LogMux);
@@ -41,9 +43,28 @@ static void k10LogAdd(const char* text, int8_t who = -1,
   k10Log[idx].who  = who;
   k10Log[idx].who2 = who2;
   k10Log[idx].tone = tone;
+  k10Log[idx].glyph = glyph;
+  k10Log[idx].plate = plate;
+  memset(k10Log[idx].pv, 0, sizeof(k10Log[idx].pv));
+  if (pv && nv) memcpy(k10Log[idx].pv, pv,
+                       (nv < sizeof(k10Log[idx].pv)) ? nv : sizeof(k10Log[idx].pv));
   if (k10LogTotal < 0xFFFF) k10LogTotal++;
   taskEXIT_CRITICAL(&k10LogMux);
   k10Dirty = true;
+}
+
+// A line of handwriting — the common case.
+static inline void k10LogAdd(const char* text, int8_t who = -1,
+                             uint8_t tone = TONE_PLAIN, uint8_t glyph = GLY_NONE,
+                             int8_t who2 = -1) {
+  k10LogAddEx(text, who, tone, glyph, who2, PLATE_NONE, nullptr, 0);
+}
+
+// A plate: `text` is the citation or cause that goes on the block, and pv[]
+// carries the figures the layout for this kind reads (see BOOK_PLATE).
+static inline void k10LogPlate(uint8_t plate, const char* text, int8_t who,
+                               uint8_t tone, const uint8_t* pv, uint8_t nv) {
+  k10LogAddEx(text, who, tone, GLY_NONE, -1, plate, pv, nv);
 }
 
 // ── Chronicle phrasing ─────────────────────────────────────────────────────

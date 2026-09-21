@@ -37,6 +37,10 @@
     <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
     <span id="hud-day" class="hud-day" aria-label="day count"></span>
     <span id="hud-clock" class="hud-clock"></span>
+    <!-- Depth replaces weather in the same slot: underground the weather does
+         not apply at all (the hazard loops skip depth>0 players), and
+         #hud-status is overflow:hidden, so showing both clips one away. -->
+    <span id="hud-depth" class="hud-depth" aria-label="depth" aria-live="polite" style="display:none"></span>
     <span id="hud-weather" class="hud-weather" aria-label="weather" aria-live="polite"></span>
     <span id="hud-rest" class="hud-rest" aria-label="rest state" aria-live="polite"></span>
   </div>
@@ -59,7 +63,14 @@
   <div id="canvas-wrap" role="application" aria-label="game map">
     <canvas id="hexCanvas" tabindex="0"></canvas>
 
-
+    <!-- Map zoom controls. Siblings of the canvas, not children, so the
+         swipe-to-move pointer handlers in ui-utils.js never see these taps. -->
+    <div id="zoom-col">
+      <span id="zoom-chip" aria-hidden="true">1&#215;</span>
+      <button class="zoom-btn" id="zoom-in-btn"    aria-label="zoom in"  title="Zoom in (+)">&#43;</button>
+      <button class="zoom-btn" id="zoom-out-btn"   aria-label="zoom out" title="Zoom out (-)">&#8722;</button>
+      <button class="zoom-btn" id="zoom-reset-btn" aria-label="reset zoom" title="Reset zoom (0)">&#9678;</button>
+    </div>
 
   </div>
 
@@ -67,11 +78,13 @@
   <div id="sidebar">
     <div class="side-panel">
       <h3>Supplies</h3>
-      <div class="res-row"><div class="res-dot dot-water"></div><span class="res-val" id="inv0">0</span><span class="res-name">Water</span></div>
-      <div class="res-row"><div class="res-dot dot-food"></div><span class="res-val" id="inv1">0</span><span class="res-name">Food</span></div>
-      <div class="res-row"><div class="res-dot dot-fuel"></div><span class="res-val" id="inv2">0</span><span class="res-name">Fuel</span></div>
-      <div class="res-row"><div class="res-dot dot-med"></div><span class="res-val" id="inv3">0</span><span class="res-name">Medicine</span></div>
-      <div class="res-row"><div class="res-dot dot-scrap"></div><span class="res-val" id="inv4">0</span><span class="res-name">Scrap</span></div>
+      <!-- .res-drop-btn[data-res] mirrors the char-sheet .inv-box drop targets:
+           both open openResDropMenu() in ui-items.js, which sends `drop_res`. -->
+      <div class="res-row"><div class="res-dot dot-water"></div><span class="res-val" id="inv0">0</span><span class="res-name">Water</span><button type="button" class="fab-btn res-drop-btn" data-res="1" title="Abandon Water" aria-label="Abandon Water" disabled>DROP</button></div>
+      <div class="res-row"><div class="res-dot dot-food"></div><span class="res-val" id="inv1">0</span><span class="res-name">Food</span><button type="button" class="fab-btn res-drop-btn" data-res="2" title="Abandon Food" aria-label="Abandon Food" disabled>DROP</button></div>
+      <div class="res-row"><div class="res-dot dot-fuel"></div><span class="res-val" id="inv2">0</span><span class="res-name">Fuel</span><button type="button" class="fab-btn res-drop-btn" data-res="3" title="Abandon Fuel" aria-label="Abandon Fuel" disabled>DROP</button></div>
+      <div class="res-row"><div class="res-dot dot-med"></div><span class="res-val" id="inv3">0</span><span class="res-name">Medicine</span><button type="button" class="fab-btn res-drop-btn" data-res="4" title="Abandon Medicine" aria-label="Abandon Medicine" disabled>DROP</button></div>
+      <div class="res-row"><div class="res-dot dot-scrap"></div><span class="res-val" id="inv4">0</span><span class="res-name">Scrap</span><button type="button" class="fab-btn res-drop-btn" data-res="5" title="Abandon Scrap" aria-label="Abandon Scrap" disabled>DROP</button></div>
     </div>
     <div class="side-panel" id="score-panel">
       <h3>Score</h3>
@@ -157,6 +170,21 @@
     <div id="action-trade-ctrl" style="display:none">
       <div id="action-trade-target-list"><!-- co-located player buttons --></div>
       <div id="action-trade-offer-form" style="display:none">
+        <!-- Caravan only: consumables for sale (worldState.caravan.stock) -->
+        <div id="trade-stock-sec" style="display:none">
+          <div class="check-lbl" style="margin-top:10px">CARAVAN STOCK</div>
+          <div class="stock-hint">Prices are in tokens: food, meds and scrap count 1, fuel counts 2. Water is worth nothing out here.</div>
+          <div id="trade-stock-list"><!-- stock cards, populated by JS --></div>
+          <div id="trade-buy-form" style="display:none">
+            <div class="check-row" style="margin-top:8px;margin-bottom:2px">
+              <span class="check-lbl">PAY WITH</span>
+              <span id="trade-pay-total" class="trade-pay-total"></span>
+            </div>
+            <div id="trade-pay-row" class="trade-res-row"></div>
+            <button id="action-trade-buy" class="chk-action-btn" style="margin-top:10px">&#x21C4; BUY</button>
+          </div>
+          <div class="check-lbl" style="margin-top:14px">SWAP RESOURCES</div>
+        </div>
         <div class="check-lbl" style="margin-top:10px">OFFERING</div>
         <div id="trade-give-row" class="trade-res-row"></div>
         <div class="check-lbl" style="margin-top:8px">REQUESTING</div>
@@ -275,6 +303,7 @@
         <span class="enc-haul-lbl">HAUL</span>
         <div id="enc-haul-items"></div>
         <span id="enc-haul-empty">nothing yet</span>
+        <span id="enc-haul-carry" aria-live="polite" hidden></span>
       </div>
       <div id="enc-leave-wrap">
         <button id="enc-leave-btn" type="button">WALK AWAY</button>
@@ -358,6 +387,11 @@
           <div class="big" id="cs-score">0</div>
           <div class="lbl">SURVIVAL SCORE</div>
         </div>
+      </div>
+
+      <!-- Bottom close — mirrors #char-close for thumbs that never reach the corner -->
+      <div class="cs-close-row">
+        <button id="cs-close-btn" type="button">&#x2715; CLOSE SHEET</button>
       </div>
     </div>
 

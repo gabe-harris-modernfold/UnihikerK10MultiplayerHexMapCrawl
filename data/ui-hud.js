@@ -100,6 +100,12 @@ let quakeHudUntil = 0;
 function updateWeatherHUD() {
   const el = document.getElementById('hud-weather');
   if (!el) return;
+  // Underground the weather chip is hidden outright, not just muted: the
+  // hazard loops skip depth>0 players, so reporting a storm the player cannot
+  // feel is a lie, and #hud-status is overflow:hidden so the depth chip needs
+  // the room anyway.
+  if (typeof myDepth !== 'undefined' && myDepth) { el.style.display = 'none'; return; }
+  el.style.display = '';
   if (Date.now() < quakeHudUntil) {
     el.textContent = '\u26F0 EARTHQUAKE';
     el.className   = 'hud-weather wx-quake';
@@ -112,6 +118,21 @@ function updateWeatherHUD() {
   el.className = 'hud-weather ' + (classes[phase] ?? '');
 }
 
+// ── Depth chip ────────────────────────────────────────────────────
+// Sits beside the weather chip. Hidden entirely on the surface: a chip that
+// says "SURFACE" all game is noise, and its absence is the signal.
+function updateDepthHUD() {
+  const el = document.getElementById('hud-depth');
+  if (!el) return;
+  const below = !!(typeof myDepth !== 'undefined' && myDepth);
+  // Explicit inline: the surface path sets display:none, and clearing it back
+  // to '' would inherit whatever the cascade says rather than staying in-line
+  // with the rest of the status row.
+  el.style.display = below ? 'inline' : 'none';
+  if (below) el.textContent = '▼ UNDERGROUND';
+}
+van.derive(() => { uiDepth.val; updateDepthHUD(); updateWeatherHUD(); });
+
 // ── Sidebar UI ──────────────────────────────────────────────────
 function updateSidebar() {
   if (myId < 0) return;
@@ -122,6 +143,7 @@ function updateSidebar() {
   uiSteps.val  = me.sp ?? 0;
   uiVision.val = getEffectiveVR();
   uiLL.val      = me.ll   ?? 6;
+  uiLLCap.val   = me.llCap ?? 7;   // +LL gear raises the ceiling; draw to it
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
   uiMP.val      = me.mp   ?? 0;
@@ -314,8 +336,10 @@ van.derive(() => {
   }
   overlay.setAttribute('aria-hidden', uiCharOpen.val ? 'false' : 'true');
 });
-document.getElementById('char-close').addEventListener('click', () => { uiCharOpen.val = false; });
-document.getElementById('char-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uiCharOpen.val = false; } });
+for (const id of ['char-close', 'cs-close-btn']) {
+  document.getElementById(id).addEventListener('click', () => { uiCharOpen.val = false; });
+  document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uiCharOpen.val = false; } });
+}
 document.getElementById('char-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('char-overlay')) uiCharOpen.val = false;
 });
@@ -362,6 +386,7 @@ function initHudBindings() {
     const inv = document.getElementById(`inv${i}`);
     const hr  = document.getElementById(`hr${i}`);
     const cs  = document.getElementById(`cs-inv${i}`);
+    const drop = document.querySelector(`.res-drop-btn[data-res="${i + 1}"]`);
     inv.textContent = '';
     van.add(inv, () => String(uiInv[i].val));
     if (hr) { hr.textContent = ''; van.add(hr, () => String(uiInv[i].val)); }
@@ -370,6 +395,7 @@ function initHudBindings() {
     let prevInv = 0;
     van.derive(() => {
       const v = uiInv[i].val;
+      if (drop) drop.disabled = v <= 0;   // nothing to abandon
       if (v > prevInv) {
         [inv, hr, cs].filter(Boolean).forEach(el => {
           el.classList.remove('bumped');
@@ -391,8 +417,13 @@ function initHudBindings() {
     const sc    = uiScore.val;
     if (prevScore < 0) { prevScore = sc; return; }  // first sync — initialize silently, no animation
     const delta = sc - prevScore;
+    const from  = prevScore;                        // kept: admiredPassed() needs the span, not the delta
     prevScore   = sc;
     if (delta <= 0) return;
+    // Stepping over the dead (ADMIRED, game-data.js). A single +20 settlement
+    // find can clear two of the crowded middle rows, so this is a loop, not a
+    // lookup — each one gets its line, lowest first.
+    for (const a of admiredPassed(from, sc)) showToast(`☠ passed ${a.nm} — ${a.ln}`, 'admired');
     scoreEl.classList.remove('bumped');
     void scoreEl.offsetWidth;
     scoreEl.classList.add('bumped');
@@ -408,6 +439,16 @@ function initHudBindings() {
   const hudScore = document.getElementById('hud-score');
   if (csScore)  { csScore.textContent  = ''; van.add(csScore,  () => String(uiScore.val)); }
   if (hudScore) { hudScore.textContent = ''; van.add(hudScore, () => String(uiScore.val)); }
+
+  // A score only means something next to the other scores, so both places it
+  // is shown open the board. The sidebar panel is display:none on mobile —
+  // that layout only has the HUD readout, hence both handlers.
+  for (const id of ['score-panel', 'hud-score-wrap']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.title = 'The Admired — where this score stands';
+    el.addEventListener('click', () => openMenu('admired'));
+  }
 
 }
 
@@ -504,14 +545,16 @@ function initCharSheetBindings() {
   if (stepsEl)  { stepsEl.textContent  = ''; van.add(stepsEl,  () => String(uiSteps.val));  }
   if (visionEl) { visionEl.textContent = ''; van.add(visionEl, () => String(uiVision.val)); }
 
-  // LL track (survivor)
+  // LL track (survivor) — box count follows the survivor's own ceiling, not a
+  // literal 7. Dent Absorber / Bear Skin Cape push it to 9; Uranium Candy
+  // pulls it down. renderTrackBoxes trims and grows the row in place.
   van.derive(() => {
-    renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, 7);
+    renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, uiLLCap.val || 7);
   });
 
   // LL mini-track (HUD)
   van.derive(() => {
-    renderTrackBoxes('hud-ll-track', uiLL.val, [], 0, 7);
+    renderTrackBoxes('hud-ll-track', uiLL.val, [], 0, uiLLCap.val || 7);
     const v = document.getElementById('hud-ll-val');
     if (v) v.textContent = String(uiLL.val);
   });

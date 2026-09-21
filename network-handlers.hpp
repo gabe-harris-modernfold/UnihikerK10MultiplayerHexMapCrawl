@@ -22,6 +22,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (strncmp(tv, "m",             tl) == 0) handleMsg_move(client, data, len);
   else if (strncmp(tv, "n",             tl) == 0) handleMsg_name(client, data, len);
   else if (strncmp(tv, "wifi",          tl) == 0) handleMsg_wifi(client, data, len);
+  else if (strncmp(tv, "wifi_forget",   tl) == 0) handleMsg_wifi_forget(client, data, len);
   else if (strncmp(tv, "check",         tl) == 0) handleMsg_check(client, data, len);
   else if (strncmp(tv, "regen",         tl) == 0) handleMsg_regen(client, data, len);
   else if (strncmp(tv, "eraseslot",     tl) == 0) handleMsg_eraseslot(client, data, len);
@@ -30,6 +31,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (strncmp(tv, "trade_accept",  tl) == 0) handleMsg_trade_accept(client, data, len);
   else if (strncmp(tv, "trade_decline", tl) == 0) handleMsg_trade_decline(client, data, len);
   else if (strncmp(tv, "car_trade",     tl) == 0) handleMsg_caravan_trade(client, data, len);
+  else if (strncmp(tv, "car_buy",       tl) == 0) handleMsg_caravan_buy(client, data, len);
   else if (strncmp(tv, "use_item",      tl) == 0) handleMsg_use_item(client, data, len);
   else if (strncmp(tv, "equip_item",    tl) == 0) handleMsg_equip_item(client, data, len);
   else if (strncmp(tv, "unequip_item",  tl) == 0) handleMsg_unequip_item(client, data, len);

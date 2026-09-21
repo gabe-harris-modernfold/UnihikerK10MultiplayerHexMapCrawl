@@ -27,10 +27,22 @@ static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
 }
 
 // ── Build lobby message for one client ───────────────────────────────────────
+// ── Variant counts ───────────────────────────────────────────────────────────
+// Emits the bare "N,N,..." body of the "vc" array, one entry per terrain.
+// Built as a loop rather than a fixed %d list so widening NUM_TERRAIN (the
+// bunker tunnel terrains took it 12 -> 16) can't silently truncate the array
+// and leave the client's loadTerrainVariants() short.  Returns chars written.
+static int appendVariantCounts(char* buf, size_t cap) {
+  int pos = 0;
+  for (int t = 0; t < NUM_TERRAIN && pos < (int)cap; t++)
+    pos += snprintf(buf + pos, cap - pos, t ? ",%d" : "%d", terrainVariantCount[t]);
+  return pos;
+}
+
 // {"t":"lobby","avail":[0,1,2,4,5]}  — indices of unconnected archetype slots
 static void sendLobbyMsg(AsyncWebSocketClient* client) {
   Log.verbose("Lobby unicast id=%u", (unsigned)client->id());
-  char buf[200]; int pos;   // was 72 — now also carries vc/sv/fa, worst case ~115B
+  char buf[224]; int pos;   // was 72 — now also carries vc/sv/fa (NUM_TERRAIN entries), worst case ~130B
   pos = snprintf(buf, sizeof(buf), "{\"t\":\"lobby\",\"avail\":[");
   bool first = true;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -48,12 +60,10 @@ static void sendLobbyMsg(AsyncWebSocketClient* client) {
   // client can start preloading hex/shelter/forage-animal art immediately,
   // instead of waiting for sync (which only arrives after picking a
   // character, by which point the boot loading screen has already closed).
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"vc\":[");
+  pos += appendVariantCounts(buf + pos, sizeof(buf) - pos);
   int len = snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],\"sv\":[%d,%d],\"fa\":%d}",
-    terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
-    terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
-    terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
-    terrainVariantCount[9],  terrainVariantCount[10], terrainVariantCount[11],
+    "],\"sv\":[%d,%d],\"fa\":%d}",
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount) + pos;
   client->text(buf, len);
@@ -113,6 +123,25 @@ static int appendFireArray(char* buf, size_t cap) {
   return pos;
 }
 
+// The caravan's consumable shelf as [[itemId, qty, pricePerUnit], ...] —
+// empty slots are skipped so the client only ever sees what it can buy.
+// The price rides along (items.cfg "value" via caravanPrice()) rather than
+// being mirrored in game-data.js, so the server stays the only pricing
+// authority. ≤ CARAVAN_STOCK_SLOTS × ~12 chars.
+static int appendCaravanStock(char* buf, size_t cap) {
+  int  pos = 0;
+  bool first = true;
+  for (int s = 0; s < CARAVAN_STOCK_SLOTS; s++) {
+    uint8_t id = W.caravan.stockItem[s];
+    if (!id || !W.caravan.stockQty[s]) continue;
+    if (!first) buf[pos++] = ',';
+    pos += snprintf(buf + pos, cap - pos, "[%d,%d,%d]",
+                    (int)id, (int)W.caravan.stockQty[s], (int)caravanPrice(getItemDef(id)));
+    first = false;
+  }
+  return pos;
+}
+
 // Sparse flooded-hex list, same shape/convention as appendFireArray() above
 // (caller wraps it in "flood":[ ... ]). At FLOOD_CAP of 15 this is at most
 // ~165 bytes.
@@ -128,6 +157,37 @@ static int appendFloodArray(char* buf, size_t cap) {
     }
   }
   return pos;
+}
+
+// ── Tunnel sync (unicast) ───────────────────────────────────────────────────
+// The whole fogged bunker tunnel board in one message. Sent when a player
+// descends, and again from sendSync() when someone reconnects while already
+// underground -- without that second case they would come back to an empty
+// board with no way to redraw it.
+//
+// 16x10 at 6 chars/cell is 960 chars, so this fits a small stack buffer; it
+// deliberately does NOT reuse sendSync()'s 40 KB PSRAM buffer.
+static void sendTunnelSync(AsyncWebSocketClient* client) {
+  char buf[1280];
+  int pid = findSlot(client->id());
+  if (pid < 0) return;
+  int visR; bool maskRes;
+  int pq, pr;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+    Log.warning("sendTunnelSync: G.mutex timeout");
+    return;
+  }
+  playerVisParams(pid, &visR, &maskRes);
+  pq = G.players[pid].tq; pr = G.players[pid].tr;
+  int pos = snprintf(buf, sizeof(buf),
+    "{\"t\":\"tsync\",\"cols\":%d,\"rows\":%d,\"vr\":%d,\"q\":%d,\"r\":%d,\"map\":\"",
+    (int)TUN_COLS, (int)TUN_ROWS, visR, pq, pr);
+  pos += encodeTunnelFog(buf + pos, (int)sizeof(buf) - pos, pq, pr, visR, maskRes);
+  xSemaphoreGive(G.mutex);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "\"}");
+  client->text(buf, (size_t)pos);
+  Log.notice("tsync pid=%d %dx%d at (%d,%d) vr=%d bytes=%d",
+             pid, (int)TUN_COLS, (int)TUN_ROWS, pq, pr, visR, pos);
 }
 
 // ── Sync message (unicast to one client on connect) ──────────────────────────
@@ -169,32 +229,27 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
       i, p.connected ? 1 : 0, p.q, p.r, p.score, p.name,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.steps);
-    // Survivor vitals
+    // Survivor vitals.  "is" and "llCap" are NOT here: appendPackArrays()
+    // emits both, and they are the EFFECTIVE values (base + equipment), which
+    // is what the client sizes its pack grid and LIFE LEVEL track from.
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"arch\":%d,\"is\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"wnd\":[%d,%d],\"rt\":%d,",
+      "\"arch\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"wnd\":[%d,%d],\"rt\":%d,",
       p.ll, p.food, p.water, p.radiation,
-      p.archetype, p.invSlots,
+      p.archetype,
       (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.movesLeft,
       (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], p.resting ? 1 : 0);
     // Skills array
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"sk\":[%d,%d,%d,%d,%d],",
       p.skills[0], p.skills[1], p.skills[2], p.skills[3], p.skills[4]);
-    // Inventory grid + equipment slots
+    // Inventory grid + equipment slots + effective pack size / LL ceiling
+    pos = appendPackArrays(buf, sizeof(buf), pos, i);
     pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"eq\":[%d,%d,%d,%d,%d],\"kr\":%lu,\"enc\":%d}",
-      p.invType[0],  p.invType[1],  p.invType[2],  p.invType[3],
-      p.invType[4],  p.invType[5],  p.invType[6],  p.invType[7],
-      p.invType[8],  p.invType[9],  p.invType[10], p.invType[11],
-      p.invQty[0],   p.invQty[1],   p.invQty[2],   p.invQty[3],
-      p.invQty[4],   p.invQty[5],   p.invQty[6],   p.invQty[7],
-      p.invQty[8],   p.invQty[9],   p.invQty[10],  p.invQty[11],
-      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4],
+      ",\"kr\":%lu,\"enc\":%d,\"dp\":%d,\"tq\":%d,\"tr\":%d}",
       (unsigned long)p.knownRecipes,
-      encounters[i].active ? 1 : 0);
+      encounters[i].active ? 1 : 0,
+      (int)p.depth, (int)p.tq, (int)p.tr);
   }
   // Ground items visible to this player
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"gi\":[");
@@ -211,24 +266,21 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
-    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d]},"
-    "\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d],\"stock\":[",
     G.threatClock, G.dayCount, (int)G.weatherPhase,
     (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
-    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
+    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
+  pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
   pos += appendFloodArray(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "]},\"vc\":[");
+  pos += appendVariantCounts(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "]},"
-    "\"vc\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-    "\"sv\":[%d,%d],"
-    "\"fa\":%d}",
-    terrainVariantCount[0],  terrainVariantCount[1],  terrainVariantCount[2],
-    terrainVariantCount[3],  terrainVariantCount[4],  terrainVariantCount[5],
-    terrainVariantCount[6],  terrainVariantCount[7],  terrainVariantCount[8],
-    terrainVariantCount[9],  terrainVariantCount[10], terrainVariantCount[11],
+    "],\"sv\":[%d,%d],\"fa\":%d}",
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount);
   int mapBytesLog = mapLen;
@@ -238,15 +290,24 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   Log.notice("SYNC pid=%d tick=%lu mapBytes=%d totalBytes=%d",
              pid, (unsigned long)G.tickId, mapBytesLog, totalBytesLog);
   client->text(buf, (size_t)pos);
+  // Reconnecting while underground: the sync above only carries the surface
+  // map, so hand over the tunnel board too or this player comes back to an
+  // empty screen with no way to redraw it. Sent after the sync so the client
+  // has its player id (and therefore its own depth) first.
+  if (me.depth) sendTunnelSync(client);
 }
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
-// Buffer: 6 players × ~315 chars + header/footer ~80 = ~1970; sized at 3072
-// to safely accommodate it[12]+iq[12]+eq[5] per player (~125 chars × 6 = 750)
-// plus the "world" block (caravan + doom + sparse fire list, ~200 bytes at
-// the FIRE_CAP of 20 — sized up front when caravan alone landed).
+// Buffer: 6 players × ~385 chars + header/footer ~80 = ~2390; sized at 4096
+// to safely accommodate it[INV_SLOTS_MAX]+iq[INV_SLOTS_MAX]+eq[5]+is+llCap
+// per player (~195 chars × 6 = 1170) — see appendPackArrays()
+// plus the "world" block (caravan incl. its ≤4-entry shelf, doom, sparse
+// fire + flood lists — ~250 bytes at the FIRE_CAP of 20; sized up front when
+// caravan alone landed).
 static void broadcastState() {
-  PSRAM_STATIC(char, buf, [3072]);
+  // 3328 covered it[12]+iq[12]; INV_SLOTS_MAX is 18 now and appendPackArrays()
+  // also emits "is"/"llCap", which is ~70 B more per player (~420 for six).
+  PSRAM_STATIC(char, buf, [4096]);
   // Runs unconditionally every 100ms tick, so keep the retry tight: 2× 8ms
   // (16ms worst case) instead of one 5ms try — enough to ride out the brief
   // holders elsewhere (drainEvents ~5ms, trade-expiry sweep ~2ms/offer)
@@ -277,32 +338,32 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,"
-      "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-      "\"eq\":[%d,%d,%d,%d,%d],\"enc\":%d}",
+      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.radiation,
       (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
-      (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], (int)computeValidMoves(i),
-      p.invType[0],  p.invType[1],  p.invType[2],  p.invType[3],
-      p.invType[4],  p.invType[5],  p.invType[6],  p.invType[7],
-      p.invType[8],  p.invType[9],  p.invType[10], p.invType[11],
-      p.invQty[0],   p.invQty[1],   p.invQty[2],   p.invQty[3],
-      p.invQty[4],   p.invQty[5],   p.invQty[6],   p.invQty[7],
-      p.invQty[8],   p.invQty[9],   p.invQty[10],  p.invQty[11],
-      p.equip[0], p.equip[1], p.equip[2], p.equip[3], p.equip[4],
-      encounters[i].active ? 1 : 0);
+      (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], (int)computeValidMoves(i));
+    pos = appendPackArrays(buf, sizeof(buf), pos, i);
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+      ",\"enc\":%d,\"dp\":%d,\"tq\":%d,\"tr\":%d}",
+      encounters[i].active ? 1 : 0,
+      // Bunker tunnels: which board this survivor is on, and where on it.
+      // q/r above stay pinned to their entrance hatch while dp is 1, which
+      // is what lets the surface keep drawing them at the hatch they went
+      // down. ~14 B per player worst case.
+      (int)p.depth, (int)p.tq, (int)p.tr);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
     "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
-    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d]},"
-    "\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d],\"stock\":[",
     G.threatClock, G.dayCount, (int)G.weatherPhase,
     (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
-    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4],
+    W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
+  pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);
+  pos += snprintf(buf + pos, sizeof(buf) - pos,
+    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");

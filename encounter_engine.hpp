@@ -3,7 +3,10 @@
 // Included from Esp32HexMapCrawl.ino after actions_game_loop.hpp.
 //
 // The client only ever tells the server *which* choice it picked
-// ({"t":"enc_choice","ci":N}).  Everything that has a gameplay consequence —
+// ({"t":"enc_choice","ci":N}), plus how much of the haul it wants to keep when
+// it banks ({"t":"enc_bank","keep":[5]}, clamped against the server's own
+// pendingLoot in network-msg-encounter.hpp).  Everything that has a gameplay
+// consequence —
 // the choice's cost, skill, risk, the hazard's penalty, the destination node's
 // loot, loot table, can_bank flag and whether it is terminal — is read here
 // from the encounter file on the SD card.  The client keeps its own copy of
@@ -269,8 +272,17 @@ static void endEncounter(int pid, uint8_t reason, bool restorePoi) {
   ActiveEncounter& enc = encounters[pid];
   if (!enc.active) return;
   uint8_t hq = enc.hexQ, hr = enc.hexR;
-  if (restorePoi && hq < MAP_COLS && hr < MAP_ROWS && G.map[hr][hq].poi == 0)
-    G.map[hr][hq].poi = enc.encIdx;
+  // Put the POI back on the board it came from. Without enc.depth a tunnel
+  // encounter ended involuntarily (dawn, disconnect, hazard) would restore
+  // its POI onto a surface hex that happens to share those coordinates.
+  if (restorePoi) {
+    if (enc.depth) {
+      if (hq < TUN_COLS && hr < TUN_ROWS && G.tunnel[hr][hq].poi == 0)
+        G.tunnel[hr][hq].poi = enc.encIdx;
+    } else if (hq < MAP_COLS && hr < MAP_ROWS && G.map[hr][hq].poi == 0) {
+      G.map[hr][hq].poi = enc.encIdx;
+    }
+  }
   enc = {};
   GameEvent ev = {}; ev.type = EVT_ENC_END; ev.pid = (uint8_t)pid;
   ev.q = (int16_t)hq; ev.r = (int16_t)hr; ev.encOut = reason;

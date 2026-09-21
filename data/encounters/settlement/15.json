@@ -21,7 +21,8 @@
       "text": "{{doc_name}} uncorks a jar that smells like a dare. 'Expired Meds, boiled down proper. That's the base for near everything I make here.' They scrawl a ratio on a rib bone and hand it over.",
       "can_bank": true,
       "loot": [
-        { "recipe": 1 }
+        { "recipe": 1 },
+        { "item": 24, "qty": [1, 2] }
       ],
       "choices": [
         {

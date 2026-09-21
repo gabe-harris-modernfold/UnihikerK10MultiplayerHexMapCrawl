@@ -48,7 +48,9 @@ def compute_dn(base_risk: int, threat: int, ll: int, rad: int) -> int:
         if threat >= t:
             risk += 5
     risk = max(0, min(risk, 100))
-    dn = 2 + (risk * 10) // 100
+    # Mirrors computeEncounterDN() -- see boot-assets.hpp for why this is
+    # 5 + risk*7/100 rather than the old 2 + risk*10/100.
+    dn = 5 + (risk * 7) // 100
     if rad > 3:
         dn += (rad - 3) // 2
     bonus = (ll - 4) // 2 if ll > 4 else 0

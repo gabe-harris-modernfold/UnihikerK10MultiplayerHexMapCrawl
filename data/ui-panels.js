@@ -23,7 +23,7 @@ function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, maj
     if (def.id === ACT_FORAGE) return 'Needs Forage terrain (Open Scrub · Rust Forest · Marsh · River Channel)';
     if (def.id === ACT_WATER)  return 'Needs Water terrain (Marsh \u00b7 Flooded District \u00b7 River Channel)';
     if (def.id === ACT_SCAV)   return 'Needs Salvage terrain (Broken Urban · Flooded District · Glass Fields)';
-    if (def.id === ACT_TRADE)  return 'No survivors on this hex';
+    if (def.id === ACT_TRADE)  return 'No survivors or caravan on this hex';
     if (def.id === ACT_TREAT)  return 'Only the Medic can treat outside a Settlement';
     if (def.id === ACT_CRAFT)  return 'Needs a Settlement hex';
     return 'Not available here';
@@ -60,15 +60,19 @@ function initActionPanel() {
   const tradeGive = [0, 0, 0, 0, 0];
   const tradeWant = [0, 0, 0, 0, 0];
 
-  function buildStepperRow(rowId, arr, maxFn) {
+  // opts.skip(i) drops a resource from the row entirely; opts.label(i)
+  // overrides the RES_SHORT caption — both used by the caravan's PAY WITH
+  // row (no water column, "FUL×2").
+  function buildStepperRow(rowId, arr, maxFn, onChange, opts) {
     const el = document.getElementById(rowId);
     el.innerHTML = '';
     RES_SHORT.forEach((label, i) => {
+      if (opts?.skip?.(i)) return;
       const wrap = document.createElement('div');
       wrap.className = 'trade-stepper';
       const lbl = document.createElement('span');
       lbl.className   = 'trade-stepper-label';
-      lbl.textContent = label;
+      lbl.textContent = opts?.label?.(i) ?? label;
       const minus = document.createElement('button');
       minus.textContent = '\u2212';
       const valSpan = document.createElement('span');
@@ -78,12 +82,12 @@ function initActionPanel() {
       plus.textContent = '+';
       minus.addEventListener('click', (e) => {
         e.preventDefault();
-        if (arr[i] > 0) { arr[i]--; valSpan.textContent = arr[i]; }
+        if (arr[i] > 0) { arr[i]--; valSpan.textContent = arr[i]; onChange?.(); }
       });
       plus.addEventListener('click', (e) => {
         e.preventDefault();
         const max = maxFn(i);
-        if (arr[i] < max) { arr[i]++; valSpan.textContent = arr[i]; }
+        if (arr[i] < max) { arr[i]++; valSpan.textContent = arr[i]; onChange?.(); }
       });
       wrap.append(lbl, minus, valSpan, plus);
       el.appendChild(wrap);
@@ -100,12 +104,127 @@ function initActionPanel() {
     // player build an offer that's guaranteed to fail on accept.
     const wantSource = tradeTargetPid === CARAVAN_PID ? worldState.caravan?.inv : players[tradeTargetPid]?.inv;
     buildStepperRow('trade-want-row', tradeWant, i => wantSource?.[i] ?? 0);
+    // Against the caravan the steppers are a straight swap (no accept round-
+    // trip), and its shelf of consumables for sale sits above them.
+    document.getElementById('action-trade-send').textContent =
+      tradeTargetPid === CARAVAN_PID ? '⇄ SWAP' : '⇄ SEND OFFER';
+    buildStockList();
     document.getElementById('action-trade-offer-form').style.display = '';
   }
+
+  // ── Caravan shelf (consumables for resource tokens) ──────────────
+  // worldState.caravan.stock is [[itemId, qty, pricePerUnit], ...] straight
+  // from the server (network-sync.hpp appendCaravanStock). The price is in
+  // token-worth, not token count: the caravan values each token per
+  // CARAVAN_TOKEN_WORTH (game-data.js — water 0 and refused, fuel 2, the
+  // rest 1). The PAY WITH steppers cap at what's still owed, so the total
+  // lands on the price exactly unless the last fuel token overshoots by one
+  // (the caravan doesn't make change). One unit per BUY; the server
+  // re-validates stock, payment and pack room (handleMsg_caravan_buy).
+  let tradeBuyItem  = 0;
+  let tradeBuyPrice = 0;
+  const tradePay = [0, 0, 0, 0, 0];
+
+  const myTokens          = i  => (myId >= 0 ? (players[myId]?.inv?.[i] ?? 0) : 0);
+  const tokenWorth        = i  => CARAVAN_TOKEN_WORTH[i] ?? 0;
+  const myPurchasingPower = () => [0, 1, 2, 3, 4].reduce((a, i) => a + myTokens(i) * tokenWorth(i), 0);
+  const paidValue         = () => tradePay.reduce((a, n, i) => a + n * tokenWorth(i), 0);
+
+  function buildStockList() {
+    const sec  = document.getElementById('trade-stock-sec');
+    const list = document.getElementById('trade-stock-list');
+    list.innerHTML = '';
+    document.getElementById('trade-buy-form').style.display = 'none';
+    tradeBuyItem = 0; tradeBuyPrice = 0; tradePay.fill(0);
+    if (tradeTargetPid !== CARAVAN_PID) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+    const stock = Array.isArray(worldState.caravan?.stock) ? worldState.caravan.stock : [];
+    if (stock.length === 0) {
+      list.innerHTML = '<div class="action-no-cond">The shelves are bare — the caravan restocks on the road</div>';
+      return;
+    }
+    const have = myPurchasingPower();
+    stock.forEach(([id, qty, price]) => {
+      const item = getItemById(id);
+      const affordable = have >= price;
+      const btn = document.createElement('button');
+      btn.className = 'chk-action-btn stock-card' + (affordable ? '' : ' action-disabled');
+      btn.dataset.item = id;
+      // postUse doubles as the shop blurb: it is the one client-side string
+      // that spells out what a Gulpable actually does ("... +2 LL.").
+      btn.innerHTML =
+        `<img class="stock-icon item-icon-img" src="${escHtml(getItemIcon(id))}" alt="" width="26" height="26" onerror="${_iconOnError(id)}">` +
+        `<span class="stock-body">` +
+          `<span class="act-label">${escHtml(item?.name ?? 'Item #' + id)} <span class="stock-qty">×${qty}</span></span>` +
+          `<span class="act-desc">${escHtml(item?.postUse || item?.preUse || '')}</span>` +
+          (affordable ? '' : `<span class="act-unavail-reason">Needs ${price} — your tokens are worth ${have} to the caravan</span>`) +
+        `</span>` +
+        `<span class="stock-price">${price} ${price === 1 ? 'token' : 'tokens'}</span>`;
+      btn.addEventListener('click', () => { if (affordable) selectStockItem(id, price); });
+      list.appendChild(btn);
+    });
+  }
+
+  function selectStockItem(id, price) {
+    tradeBuyItem = id; tradeBuyPrice = price;
+    document.querySelectorAll('#trade-stock-list .stock-card').forEach(b =>
+      b.classList.toggle('selected', Number(b.dataset.item) === id));
+    // Pre-fill the payment from whatever the player holds most of, so the
+    // common case is one tap; still fully adjustable on the steppers. Water
+    // is skipped (worth 0). Whole tokens only, so fuel (worth 2) is spent
+    // while it still fits under what's owed; if only fuel can cover the last
+    // point, one more fuel goes in and the caravan keeps the change.
+    tradePay.fill(0);
+    let owed = price;
+    const payable = [0, 1, 2, 3, 4].filter(i => tokenWorth(i) > 0)
+      .sort((a, b) => myTokens(b) - myTokens(a));
+    for (const i of payable) {
+      if (owed <= 0) break;
+      const take = Math.min(myTokens(i), Math.floor(owed / tokenWorth(i)));
+      tradePay[i] = take; owed -= take * tokenWorth(i);
+    }
+    if (owed > 0) {
+      const spare = payable.find(i => myTokens(i) > tradePay[i]);
+      if (spare !== undefined) { tradePay[spare]++; owed -= tokenWorth(spare); }
+    }
+    // Each stepper caps at what's still owed (in worth), so the total can't
+    // overshoot by more than one fuel token's rounding.
+    buildStepperRow('trade-pay-row', tradePay,
+      i => {
+        const remaining = tradeBuyPrice - (paidValue() - tradePay[i] * tokenWorth(i));
+        return remaining > 0 ? Math.min(myTokens(i), Math.ceil(remaining / tokenWorth(i))) : 0;
+      },
+      updatePayTotal,
+      { skip:  i => tokenWorth(i) === 0,
+        label: i => RES_SHORT[i] + (tokenWorth(i) > 1 ? '×' + tokenWorth(i) : '') });
+    document.getElementById('trade-buy-form').style.display = '';
+    updatePayTotal();
+  }
+
+  function updatePayTotal() {
+    const paid = paidValue();
+    const tot  = document.getElementById('trade-pay-total');
+    tot.textContent = `${paid} / ${tradeBuyPrice}` + (paid > tradeBuyPrice ? ' (no change given)' : '');
+    tot.classList.toggle('paid', paid >= tradeBuyPrice);
+    const buy = document.getElementById('action-trade-buy');
+    buy.disabled = !tradeBuyItem || paid < tradeBuyPrice;
+    buy.textContent = `⇄ BUY ${getItemById(tradeBuyItem)?.name ?? ''}`.trim();
+  }
+
+  document.getElementById('action-trade-buy').addEventListener('click', () => {
+    if (myId < 0 || tradeTargetPid !== CARAVAN_PID || !tradeBuyItem) return;
+    if (paidValue() < tradeBuyPrice) return;
+    console.log('%c[TRADE] Sending car_buy', 'color:#fc0;font-weight:bold', `item=${tradeBuyItem} give=${JSON.stringify(tradePay)}`);
+    send({ t: 'car_buy', item: tradeBuyItem, n: 1, give: [...tradePay] });
+    closeActionPanel();
+  });
 
   function buildTradeTargetList() {
     const el = document.getElementById('action-trade-target-list');
     el.innerHTML = '';
+    // Picking a target (or the caravan auto-open below) hides this list; a
+    // rebuild is a fresh visit, so bring it back or the panel opens blank.
+    el.style.display = '';
     document.getElementById('action-trade-offer-form').style.display = 'none';
     tradeTargetPid = -1;
     if (myId < 0) return;
@@ -113,7 +232,7 @@ function initActionPanel() {
     const colocated = players.filter(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
     const caravanHere = worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r;
     if (colocated.length === 0 && !caravanHere) {
-      el.innerHTML = '<div class="action-no-cond">No survivors on this hex</div>';
+      el.innerHTML = '<div class="action-no-cond">No survivors or caravan on this hex</div>';
       return;
     }
     colocated.forEach(p => {
@@ -140,6 +259,71 @@ function initActionPanel() {
     }
   }
 
+  // ── Caravan auto-open ────────────────────────────────────────────
+  // Stepping onto the caravan's hex (or having it roll onto yours) opens the
+  // shelf straight away — the same panel ACT_TRADE reaches, minus the menu
+  // and a one-button target list. Edge-triggered client-side off the 100 ms
+  // state broadcast rather than the server's EVT_CARAVAN_TRADE, which only
+  // fires on the world tick (up to ~15 s late — resolveCaravanProximity() in
+  // world-system.hpp). Re-arms on leaving, so returning prompts again.
+  let lastAutoTradeHex = null;   // 'q_r' of the caravan hex we last popped
+
+  function caravanOnMyHex() {
+    const me = myId >= 0 ? players[myId] : null;
+    const c  = worldState.caravan;
+    return !!(me && c?.active && c.q === me.q && c.r === me.r);
+  }
+
+  function openCaravanTrade() {
+    if (!caravanOnMyHex()) return;
+    const me = players[myId];
+    // Header/status are normally set by openActionPanel(); this path skips it
+    // (trade is free, so neither the MP-0 nor the resting gate applies).
+    const terr = gameMap[me.r]?.[me.q]?.terrain ?? null;
+    terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    const _terrSub = document.getElementById('act-panel-terrain-sub');
+    if (_terrSub) _terrSub.textContent = 'IN THE ' + terrName.toUpperCase();
+    actionStatusBar.innerHTML =
+      `<span class="act-mp-badge">MP: ${me.mp ?? 0}</span>` +
+      '<span class="act-terrain-ctx">⇄ Caravan · trading is free</span>';
+    tradeTargetPid = CARAVAN_PID;
+    document.getElementById('action-trade-target-list').style.display = 'none';
+    buildTradeOfferForm();
+    document.getElementById('action-water-ctrl').style.display = 'none';
+    document.getElementById('action-craft-ctrl').style.display = 'none';
+    document.getElementById('action-trade-ctrl').style.display = '';
+    actionBtnList.style.display = 'none';
+    actionPanel.classList.add('open');
+    actionPanel.setAttribute('aria-hidden', 'false');
+  }
+
+  function maybeAutoOpenCaravanTrade() {
+    if (!caravanOnMyHex()) { lastAutoTradeHex = null; return; }
+    const key = worldState.caravan.q + '_' + worldState.caravan.r;
+    if (lastAutoTradeHex === key) return;
+    const me = players[myId];
+    // Never pop over something the player is already reading — an encounter,
+    // the char sheet, an incoming trade offer. Those stay un-armed, so the
+    // shelf appears as soon as the screen is free again (next state tick).
+    if (me.ll === 0 || me.enc) return;
+    const BLOCKING = '#enc-overlay.open, #char-overlay.open, #trade-overlay.open, ' +
+                     '#item-action-menu.open, #res-drop-menu.open, #help-overlay.open, ' +
+                     '#menu-overlay.open, #char-select-overlay.open';
+    if (document.querySelector(BLOCKING)) return;
+    // Already in the action panel: don't yank them into the shelf, they can
+    // reach it from TRADE — but the menu behind was built before the caravan
+    // got here, so re-render it (main list only) or TRADE stays greyed out.
+    lastAutoTradeHex = key;
+    if (actionPanel.classList.contains('open')) {
+      if (actionBtnList.style.display !== 'none') openActionPanel();
+      return;
+    }
+    openCaravanTrade();
+  }
+  // network.js calls this off every state/sync message (see _msgState).
+  globalThis.maybeAutoOpenCaravanTrade = maybeAutoOpenCaravanTrade;
+  globalThis.openCaravanTrade          = openCaravanTrade;
+
   // ── Craft sub-control ────────────────────────────────────────────
   // Total qty of itemId held across a player's typed-item slots (it[]/iq[]
   // are index-stable, 0 = empty — mirrors the server's invType[]/invQty[]).
@@ -149,6 +333,36 @@ function initActionPanel() {
     if (!Array.isArray(it)) return 0;
     for (let s = 0; s < it.length; s++) if (it[s] === itemId) n += iq?.[s] ?? 0;
     return n;
+  }
+
+  // Effective pack size. `is` from the server is already effectiveInvSlots()
+  // — base plus equipment — so this just clamps it to the grid width.
+  function packSlots(p) { return packSlotsOf(p); }
+
+  // Would the recipe's output have somewhere to land once its materials are
+  // consumed? Mirrors applyRecipe()'s dry-run on a scratch copy of the pack,
+  // minus stack caps (the client has no per-item stack sizes): an empty slot
+  // after consumption, or an existing stack of the output, counts as room.
+  // The server has the final say and toasts an err if the only candidate
+  // stack turns out to be full.
+  function outputHasRoom(p, r) {
+    const it = [...(p?.it ?? [])], iq = [...(p?.iq ?? [])];
+    for (let m = 0; m < 3; m++) {
+      const matId = r.matItem[m];
+      if (!matId) continue;
+      let need = r.matQty[m];
+      for (let s = 0; s < it.length && need > 0; s++) {
+        if (it[s] !== matId) continue;
+        const take = Math.min(need, iq[s] ?? 0);
+        iq[s] = (iq[s] ?? 0) - take; need -= take;
+        if (!iq[s]) it[s] = 0;
+      }
+    }
+    const slots = packSlots(p);
+    for (let s = 0; s < slots; s++) {
+      if (!it[s] || it[s] === r.outputItem) return true;
+    }
+    return false;
   }
 
   function buildCraftList() {
@@ -176,6 +390,7 @@ function initActionPanel() {
         const have = me.inv?.[i] ?? 0;
         if (have < need) missing.push(`${RES_SHORT[i]} ${have}/${need}`);
       }
+      if (!outputHasRoom(me, r)) missing.push('a free pack slot');
       const affordable = missing.length === 0;
       const reqParts = [];
       for (let m = 0; m < 3; m++) {
@@ -226,14 +441,17 @@ function initActionPanel() {
   }
 
   function showExhaustedPanel(me) {
-    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
+    // Same two-way gate as openActionPanel's tradeAvail: a co-located
+    // survivor OR the caravan (trade is free, so it stays open when exhausted).
+    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r) ||
+      !!(worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r);
     let exhaustedHTML = '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
     if (tradeAvailExhausted) {
       exhaustedHTML +=
-        `<button id="action-btn-6" class="action-item-btn" role="listitem" aria-label="TRADE — Exchange resources with a co-located survivor">` +
+        `<button id="action-btn-6" class="action-item-btn" role="listitem" aria-label="TRADE — Trade with a co-located survivor or the caravan">` +
         `<span class="act-icon">\u21C4</span>` +
         `<span class="act-body"><span class="act-label">TRADE</span>` +
-        `<span class="act-desc">Exchange resources with a co-located survivor \u2014 free</span></span></button>`;
+        `<span class="act-desc">Swap resources with a survivor, or buy from the caravan \u2014 free</span></span></button>`;
     }
     actionBtnList.innerHTML = exhaustedHTML;
     actionStatusBar.innerHTML =
@@ -328,7 +546,7 @@ function initActionPanel() {
       { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
       { id: ACT_SHELTER, icon: '\u2302', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
       { id: ACT_CRAFT,   icon: '⚒', label: 'CRAFT', mpCost: 1, desc: 'Craft a known recipe — Settlement only' },
-      { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Exchange resources with a co-located survivor — free' },
+      { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Swap resources with a survivor, or buy from the caravan — free' },
     ];
     // TREAT is only offered when there is a Major Wound to treat.
     if (majorWounds > 0) {
@@ -443,6 +661,9 @@ function initActionPanel() {
     // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
     btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
   });
+  // Bunker tunnels have no control of their own: stepping onto a Bunker
+  // Entrance / Vent Shaft crosses boards by itself (tunnelStepDown/Up in
+  // tunnels.hpp), so the D-pad is the only thing that moves you.
   document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
   // Expose for engine.js (dawn event re-renders the panel if it's open)
   globalThis.openActionPanel = openActionPanel;
@@ -562,12 +783,69 @@ function initMenuSystem() {
     if (page === 'main') return wrap(
       mh2({ class: 'menu-title' }, '\u2630 COMMAND'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('howto')    }, '\u2B21  HOW TO PLAY'),
+      mb({ class: 'menu-item-btn', onclick: () => openMenu('admired')  }, '\u2620  THE ADMIRED'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('settings') }, '\u25C9  SETTINGS'),
       mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); openCharSheet(); } }, '\u25C8  SURVIVOR'),
       mb({ class: 'menu-item-btn', onclick: () => openMenu('about')    }, '\u25A3  ABOUT'),
       mb({ class: 'menu-item-btn', onclick: () => { closeMenu(); const ov = document.getElementById('help-overlay'); ov.classList.add('open'); ov.removeAttribute('aria-hidden'); } }, '\u2139  AGENT HELP'),
       mb({ class: 'menu-resume-btn', onclick: closeMenu }, '\u25B6 RESUME'),
     );
+
+    // ── The Admired ───────────────────────────────────────────────
+    // The score ladder (ADMIRED in game-data.js) with the live party merged
+    // into it by admiredBoard(), so the party reads as rows among the dead
+    // rather than as a separate table. The living carry no citation — out
+    // here the write-up is what you get instead of a future.
+    if (page === 'admired') {
+      // Snapshot, deliberately NOT a reactive read. uiPlayers/uiScore are
+      // reassigned on every state broadcast, and touching them inside this
+      // van.add derive would re-render the whole menu page — scroll position
+      // and slide-in animation included — every few seconds while someone is
+      // part way down the board. `players`/`myId` are the same numbers,
+      // unwatched; the board is whatever was true when you opened it.
+      const live  = players
+        .map((p, i) => ({ p, i }))
+        .filter(({ p }) => p.on)
+        .map(({ p, i }) => ({ nm: p.nm || `P${i}`, sc: p.sc | 0, color: PLAYER_COLORS[i], isMe: i === myId }));
+      const mine  = live.find(p => p.isMe) ?? null;
+      const mySc  = mine ? mine.sc : 0;
+      const next  = admiredNextAbove(mySc);
+      const rows  = admiredBoard(live);
+      const admRow = (r) => md({ class: `adm-row${r.live ? ' live' : ''}${r.isMe ? ' me' : ''}` },
+        ms({ class: 'adm-rank' }, `#${r.rank}`),
+        ms({ class: 'adm-sc' }, String(r.sc)),
+        r.live ? md({ class: 'adm-dot', style: `--pc:${r.color}` }) : md({ class: 'adm-dot-sp' }),
+        md({ class: 'adm-txt' },
+          ms({ class: 'adm-nm' }, r.nm),
+          ms({ class: 'adm-ln' }, r.live
+            ? (r.isMe ? 'still walking. nothing written up yet.' : 'still walking. no citation.')
+            : r.ln),
+        ),
+      );
+      return wrap(
+        back('main'),
+        mh2({ class: 'menu-sub-title' }, '☠ THE ADMIRED'),
+        mp({ class: 'adm-intro' },
+          `${ADMIRED_WIN} points and you are out of the wasteland. the names below are ` +
+          'what it kept instead. not one of them finished, and every one of them is admired.'
+        ),
+        next
+          ? md({ class: 'adm-next' },
+              ms({ class: 'adm-next-lbl' }, 'NEXT ABOVE YOU'),
+              ms({ class: 'adm-next-nm'  }, next.nm),
+              ms({ class: 'adm-next-gap' }, `${next.sc - mySc} pts`),
+            )
+          : md({ class: 'adm-next' },
+              ms({ class: 'adm-next-lbl' }, 'NOTHING ABOVE YOU'),
+              ms({ class: 'adm-next-nm'  }, 'THE WAY OUT'),
+              ms({ class: 'adm-next-gap' }, 'walk'),
+            ),
+        md({ class: 'adm-board' }, ...rows.map(admRow)),
+        mp({ class: 'adm-foot' },
+          'anyone below the last name is still alive and therefore not admired.'
+        ),
+      );
+    }
 
     if (page === 'howto') return wrap(
       back('main'),
@@ -696,8 +974,14 @@ function initMenuSystem() {
       sec('Rest',
         mp({ class: 'menu-text-body' },
           'The ▼ REST button is always available — it does not use your action slot. ' +
-          'If you are well-fed (Food ≥ 4) and hydrated (Water ≥ 3), you recover 1 Life Level. ' +
+          'If you are fed (Food ≥ 2) and watered (Water ≥ 2), you recover 1 Life Level — 2 if you are ' +
+          'badly hurt (LL ≤ 2). A Settlement always qualifies, however low your supplies are. ' +
           'Once you REST you wait for dawn — if all connected players have rested, dawn triggers immediately.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'You can rest underground, and no weather reaches you there — the exposure loss is off ' +
+          'entirely in the bunker tunnels. The air is the price: one night in three below ground ' +
+          'costs a Life Level, and unlike exposure, bad air can take your last one.'
         )
       ),
 
@@ -743,7 +1027,8 @@ function initMenuSystem() {
           'is −1 on every skill check and −1 MP per day. Three of each tier is the cap.'
         ),
         mp({ class: 'menu-text-body' },
-          'Resting with Food 4+ and Water 3+ knits one Minor Wound closed per night. Major Wounds need ' +
+          'Resting with Food 4+ and Water 3+ knits one Minor Wound closed per night — resting in a ' +
+          'Settlement always qualifies. Major Wounds need ' +
           'the TREAT action: 2 MP, 1 Medicine, and an Endure check at DN 9. The Medic can do this ' +
           'anywhere; everyone else must be standing in a Settlement. A near miss downgrades the Major ' +
           'Wound to a Minor one instead of clearing it.'
@@ -784,6 +1069,10 @@ function initMenuSystem() {
           md({ class: 'ht-track-row' },
             ms({}, 'SURVEY'), ms({}, '+2 pts first per hex, +0 repeats')
           ),
+        ),
+        mp({ class: 'menu-text-hint' },
+          `${ADMIRED_WIN} points is the way out — that is the win. ☠ THE ADMIRED lists who is ` +
+          'above you on the way there, and how far most people actually get.'
         )
       ),
 
@@ -1008,6 +1297,22 @@ function initMenuSystem() {
       ),
 
       sec('WiFi Network',
+        // Standing notice while the player is on the board's own AP. The banner
+        // at connect is easy to miss and gone in six seconds; this is the screen
+        // they are on when they can actually do something about it.
+        () => !uiApLink.val ? md({ style: 'display:none' }) :
+          md({ class: 'wifi-uplink-warn' },
+            mp({ class: 'wifi-uplink-title' }, '⚠ DIRECT UPLINK — DEGRADED'),
+            mp({ class: 'settings-val' },
+              'You are on WASTELAND, the board’s own radio. One antenna is beaconing, '
+              + 'handing out addresses, sweeping for a network to join, and running the game. '
+              + 'It seats ' + (uiApCap.val > 0 ? uiApCap.val + ' survivors' : 'very few') + '.'),
+            mp({ class: 'settings-val' }, uiStaIp.val
+              ? 'The board already answers at ' + uiStaIp.val + ' — rejoin that network yourself '
+                + 'and browse there. The wasteland gets noticeably steadier.'
+              : 'Give the board a network below. Then rejoin that network yourself and browse to the '
+                + 'address it reports — the wasteland gets noticeably steadier.')
+          ),
         md({ class: 'settings-row' },
           mp({ class: 'settings-label' }, 'SSID'),
           minput({
@@ -1034,7 +1339,33 @@ function initMenuSystem() {
             localStorage.setItem('wifi_pass', pass);
             send({ t: 'wifi', ssid, pass });
           }
-        }, '\u25B6 CONNECT TO NETWORK')
+        }, '\u25B6 CONNECT TO NETWORK'),
+        // Every network the board has joined before. It rejoins whichever one
+        // is in range on its own, so a board carried to a friend's place only
+        // ever needs its password typed once.
+        md({ class: 'wifi-known' },
+          mp({ class: 'settings-label' }, 'Remembered networks'),
+          () => {
+            const nets = uiWifiNets.val;
+            if (!nets.length) {
+              return mp({ class: 'settings-val' },
+                'None yet \u2014 connect once and this board will rejoin that network anywhere.');
+            }
+            return md({ class: 'wifi-known-list' },
+              ...nets.map(ssid => md({ class: 'wifi-known-row' },
+                ms({ class: () => 'wifi-known-ssid' + (ssid === uiWifiCur.val ? ' wifi-known-cur' : '') },
+                  () => (ssid === uiWifiCur.val ? '\u25C9 ' : '\u25CB ') + ssid),
+                mb({
+                  class: 'wifi-forget-btn', title: 'Forget this network',
+                  onclick: () => {
+                    if (!confirm(`Forget "${ssid}"?\nThe board will stop rejoining it automatically.`)) return;
+                    send({ t: 'wifi_forget', ssid });
+                  }
+                }, '\u2715')
+              ))
+            );
+          }
+        )
       ),
       md({ class: 'settings-section-divider' }),
       md({ class: 'settings-row settings-danger-row' },

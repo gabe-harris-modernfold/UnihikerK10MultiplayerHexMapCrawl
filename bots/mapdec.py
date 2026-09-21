@@ -52,18 +52,48 @@ def decode_cell(tt: int, dd: int, vv: int) -> Cell | None:
 
 
 class WorldMap:
-    """Player-local map view.  Fogged cells stay None until revealed."""
+    """Player-local map view.  Fogged cells stay None until revealed.
 
-    def __init__(self, rows: int = MAP_ROWS, cols: int = MAP_COLS):
-        self.rows, self.cols = rows, cols
+    Both boards use this.  The surface is a torus (`wraps=True`); the bunker
+    tunnel board is walled, so `wraps=False` makes an off-board coordinate
+    read as None and `in_bounds()` is what tells "off the board" apart from
+    "on the board but still fogged" -- the pathfinder must never step into the
+    first and very much wants to step into the second.
+    """
+
+    def __init__(self, rows: int = MAP_ROWS, cols: int = MAP_COLS,
+                 wraps: bool = True):
+        self.rows, self.cols, self.wraps = rows, cols, wraps
         self.grid: list[list[Cell | None]] = [[None] * cols for _ in range(rows)]
+
+    def in_bounds(self, q: int, r: int) -> bool:
+        return self.wraps or (0 <= q < self.cols and 0 <= r < self.rows)
 
     def __getitem__(self, qr: tuple[int, int]) -> Cell | None:
         q, r = qr
+        if not self.in_bounds(q, r):
+            return None
         return self.grid[r % self.rows][q % self.cols]
 
-    def load_full(self, hex_str: str) -> dict:
-        """Parse a 'sync'.map payload.  Returns counts for logging."""
+    def resize(self, rows: int, cols: int) -> None:
+        """Adopt the dimensions the server just told us about.  tsync names
+        cols/rows on the wire rather than assuming the client's constants, so
+        honour them -- a mismatch would silently misparse the whole board."""
+        if (rows, cols) == (self.rows, self.cols):
+            return
+        self.rows, self.cols = rows, cols
+        self.grid = [[None] * cols for _ in range(rows)]
+
+    def load_full(self, hex_str: str, merge: bool = False) -> dict:
+        """Parse a 'sync'.map / 'tsync'.map payload.  Returns counts.
+
+        `merge` keeps cells we already knew where the new payload says fog.
+        The tunnel board needs it: a tsync arrives on *every* descent, fogged
+        to the vision radius, so a straight overwrite would wipe the corridor
+        map the bot built on its last trip down and send it re-exploring
+        ground it has already walked.  (The browser loses that memory; a bot
+        that has to play for hours cannot afford to.)
+        """
         revealed = fog = pois = shelters = resources = 0
         expect = self.rows * self.cols * 6
         if len(hex_str) < expect:
@@ -77,7 +107,8 @@ class WorldMap:
                 i = base + c * 6
                 tt = int(hex_str[i:i + 2], 16)
                 if tt == 0xFF:
-                    row[c] = None
+                    if not merge:
+                        row[c] = None
                     fog += 1
                     continue
                 dd = int(hex_str[i + 2:i + 4], 16)
@@ -99,7 +130,7 @@ class WorldMap:
             tt = int(cells[i + 4:i + 6], 16)
             dd = int(cells[i + 6:i + 8], 16)
             vv = int(cells[i + 8:i + 10], 16)
-            if r < self.rows and q < self.cols:
+            if 0 <= r < self.rows and 0 <= q < self.cols:
                 self.grid[r][q] = decode_cell(tt, dd, vv)
                 n += 1
         return n

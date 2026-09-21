@@ -30,6 +30,12 @@ const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on 
 const HEX_SZ_MIN             = 36;     // minimum hex size in pixels
 const HEX_SZ_MAX             = 64;     // maximum hex size in pixels
 const HEX_SZ_VIEWPORT_DIVISOR = 11;   // viewport width ÷ this = hex count per row → hex size
+// Zoom is a re-layout (HEX_SZ changes), not a canvas transform — art stays
+// crisp, but zooming out grows the per-frame cell loop quadratically, so the
+// floor here is a frame-cost decision, not a taste one.
+const MAP_ZOOM_MIN_PX        = 24;     // smallest hex size reachable by zooming out
+const MAP_ZOOM_MAX_PX        = 128;    // largest hex size reachable by zooming in
+const MAP_ZOOM_STORAGE_KEY   = 'map_zoom';
 const ICON_SIZE_SCALE        = 0.44;  // icon size as fraction of hex size
 const ARROW_SIZE_SCALE       = 0.62;  // arrow size as fraction of icon size
 const SHADOW_HORIZONTAL_SCALE = 0.36; // shadow ellipse horizontal scale
@@ -47,8 +53,101 @@ const RIVER_RIPPLE_H_SCALE   = 0.38;  // ellipse vertical radius as fraction of 
 const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint icon layout
 
 // Fog of war & visibility
-const FOG_INNER_ALPHA        = 0.78;  // alpha for inner fog ring (more visible)
+// Outside your sight radius the map fades to black across FOG_FADE_RINGS rings
+// instead of dropping to the void in one step.
+//
+// The gradient is in the fill *colour*, at alpha 1 — deliberately not
+// globalAlpha. The fog fill is the first thing drawn on a cleared canvas, so
+// alpha only blends it toward the page backdrop (rgb(8,6,4)), which is itself
+// slightly *darker* than the fog colour: lowering alpha made a ring darker
+// rather than more see-through, and the whole knob spanned about 12/255
+// end to end. There is also nothing underneath to reveal — the server sends
+// tt = 0xFF for every hex past visR (encodeMapFog in hex-map.hpp), so the
+// client has no terrain for them. Colour gives the full range and runs in the
+// direction the name implies.
+const FOG_FADE_RINGS         = 3;             // rings from sight edge to full dark
+const FOG_NEAR_RGB           = [42, 35, 20];  // first hidden ring: "something is there"
+const FOG_VOID_RGB           = [8, 4, 2];     // past the fade: unknown map
+// Precomputed per-ring fill, indexed by min(dist - visR - 1, FOG_FADE_RINGS).
+// Built once rather than per hex: at minimum zoom the terrain pass touches
+// ~2000 cells a frame and most of them are fogged.
+const FOG_RING_FILL = Array.from({ length: FOG_FADE_RINGS + 1 }, (_, i) => {
+  const t = i / FOG_FADE_RINGS;
+  const ch = (n) => Math.round(FOG_NEAR_RGB[n] + (FOG_VOID_RGB[n] - FOG_NEAR_RGB[n]) * t);
+  return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
+});
 const SHADOW_ALPHA           = 0.72;  // shadow under character icons
+
+// ── Sight-edge fade ───────────────────────────────────────────────
+// The FOG_* ramp above fades fog into fog on cells the client has no terrain
+// for, so the only hard edge left was the one that actually mattered: terrain
+// art stopped dead at dist == visR. This pushes the transition *inside* the
+// disk — the outermost rings you can still see are drawn normally, then
+// veiled toward FOG_NEAR_RGB, so the last visible ring meets the first fogged
+// ring at roughly the same colour and there is no cliff anywhere.
+//
+// Unlike the fog fill, this veil IS a globalAlpha blend, and the warning
+// above does not apply to it: it composites over terrain art already on the
+// canvas, so alpha reveals what is underneath exactly as the name implies.
+// The fog fill had nothing beneath it, which is what made alpha useless there.
+const SIGHT_FADE_RINGS = 3;
+// Veil opacity per fade level (0 = crisp, SIGHT_FADE_RINGS = the sight edge).
+const SIGHT_FADE_ALPHA = [0, 0.22, 0.45, 0.78];
+const SIGHT_FADE_FILL  = `rgb(${FOG_NEAR_RGB[0]},${FOG_NEAR_RGB[1]},${FOG_NEAR_RGB[2]})`;
+
+// Fade level for a hex inside the vision disk: 0 crisp, SIGHT_FADE_RINGS at
+// the edge. The band compresses when visR is smaller than SIGHT_FADE_RINGS so
+// it always spans the whole disk instead of running off the inside — at
+// visR 1 (Broken Urban, or a CHEM phase) your own hex stays crisp and the one
+// ring around it is fully hazed. That is deliberate: low-vision terrain
+// should look different, not merely smaller.
+// ── Explored-terrain veil ────────────────────────────────
+// Ground you have walked and left behind (see memoryCells in map-decoder.js).
+// Deliberately a COLD wash, where the sight fade above is a warm one: the two
+// tiers sit next to each other constantly, and hue separates them at a glance
+// where another step of brightness would just read as more distance. Warm and
+// dim = the edge of what you can see; cold and flat = what you are recalling.
+// Mutable so it can be dialled from the console while looking at the board:
+// setExploredVeil(0.9). `fill` is the pre-composed string the hot loop reads
+// — at minimum zoom the terrain pass touches ~2000 cells a frame and most of
+// them are remembered, so it must not rebuild an rgba() string per hex.
+//
+// The first pass at this was 0.62 and it was far too generous: remembered
+// hexes read nearly as clearly as live ones, which quietly cancels the whole
+// point of a small vision radius — the board looked fully explored during a
+// chem storm. Memory should tell you the shape of the ground, not let you
+// read it.
+const EXPLORED_VEIL = { rgb: '24, 28, 38', alpha: 0.90, fill: 'rgba(24, 28, 38, 0.90)' };
+
+// Per-phase override of the veil's hue, indexed by weatherPhase. Chem lights
+// the whole sky green; a cold blue memory tier underneath read as two
+// unrelated effects stacked on one board rather than one poisoned landscape.
+// Only the hue moves — the alpha stays wherever setExploredVeil() put it, so
+// remembered ground is no more legible under chem than under clear sky.
+const EXPLORED_VEIL_PHASE_RGB = { 3: '14, 36, 22' };   // 3 = CHEM
+
+// Precomputed per phase: the terrain pass touches ~2000 cells a frame and
+// must not rebuild an rgba() string per hex.
+let EXPLORED_VEIL_FILL = [];
+function _rebuildExploredVeilFills() {
+  EXPLORED_VEIL_FILL = Array.from({ length: 6 }, (_, ph) =>
+    `rgba(${EXPLORED_VEIL_PHASE_RGB[ph] || EXPLORED_VEIL.rgb},${EXPLORED_VEIL.alpha})`);
+  EXPLORED_VEIL.fill = EXPLORED_VEIL_FILL[0];
+}
+function setExploredVeil(alpha) {
+  EXPLORED_VEIL.alpha = alpha;
+  _rebuildExploredVeilFills();
+}
+_rebuildExploredVeilFills();
+
+function sightFadeLevel(dist, vr) {
+  if (vr <= 0 || dist <= 0) return 0;
+  const span  = Math.min(vr, SIGHT_FADE_RINGS);
+  const inner = vr - span;
+  if (dist <= inner) return 0;
+  return Math.min(SIGHT_FADE_RINGS,
+                  Math.round(SIGHT_FADE_RINGS * (dist - inner) / span));
+}
 
 // WebSocket connection
 const WIFI_CREDS_SEND_DELAY_MS = 300; // delay before auto-sending WiFi creds
@@ -104,7 +203,8 @@ const glyphImg = createImageWithLoadTracking('/' + GLYPH_SHEET);
 const TERRAIN_IMG_NAMES = [
   'OpenScrub', 'AshDunes', 'RustForest', 'Marsh',
   'BrokenUrban', 'FloodedDistrict', 'GlassFields',
-  'Ridge', 'Mountain', 'Settlement', 'NukeCrater', 'RiverChannel'
+  'Ridge', 'Mountain', 'Settlement', 'NukeCrater', 'RiverChannel',
+  'BunkerEntrance', 'VentShaft', 'TunnelFloor', 'TunnelCollapsed',
 ];
 const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
 

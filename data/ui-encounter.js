@@ -18,6 +18,13 @@
 // the firmware reads costs, hazards, loot and can_bank from the same JSON file
 // (encounter_engine.hpp). The copy fetched here is for display only — the odds,
 // cost chips and haul tray are previews, and the `enc_res` event is the truth.
+//
+// The one exception is `enc_bank`, which carries `keep:[5]` — how much of each
+// resource the player chose to take on the haul tray's steppers. It is a
+// request, not an instruction: the server clamps every entry against its own
+// pendingLoot[] and banks the smaller of the two, so a drifted (or hostile)
+// client can never bank more than it actually won. Omitting `keep` means "bank
+// everything", which is exactly what an older client sends.
 
 // Resolve {{placeholders}} deterministically: pick one option per key up front
 // so the same name is used in title, text, and hazard copy for the whole visit.
@@ -55,7 +62,7 @@ function encComputeDN(me, baseRisk) {
   if (tc >= 13) risk += 5;
   if (tc >= 17) risk += 5;
   risk = Math.max(0, Math.min(100, risk));
-  let dn = 2 + Math.floor((risk * 10) / 100);
+  let dn = 5 + Math.floor((risk * 7) / 100);   // mirrors computeEncounterDN()
   let bonus = 0;
   const ll  = me?.ll  ?? 7;
   const rad = me?.rad ?? 0;
@@ -84,12 +91,17 @@ function initEncounterOverlay() {
   const choiceEl  = document.getElementById('enc-choices');
   const haulItems = document.getElementById('enc-haul-items');
   const haulEmpty = document.getElementById('enc-haul-empty');
+  const haulCarry = document.getElementById('enc-haul-carry');
   const leaveBtn  = document.getElementById('enc-leave-btn');
   const leaveHint = document.getElementById('enc-leave-hint');
 
   const RES_NAMES_ENC = ['Water', 'Food', 'Fuel', 'Meds', 'Scrap'];
   const RES_DOT_CLASS = ['dot-water', 'dot-food', 'dot-fuel', 'dot-med', 'dot-scrap'];
   const ROLL_TIMEOUT_MS = 8000;
+  // Mirrors ENC_MAX_ITEMS in Esp32HexMapCrawl.ino — the firmware holds at most
+  // this many typed items for a whole scene, counting loot-table rolls the
+  // enc_res event never carries.
+  const ENC_MAX_ITEMS = 3;
 
   // ── State ───────────────────────────────────────────────────────
   let enc          = null;    // loaded encounter JSON
@@ -98,6 +110,10 @@ function initEncounterOverlay() {
   let nodeKey      = '';
   let phase        = 'idle';  // idle | reading | rolling | ejected
   let pendingLoot  = [0, 0, 0, 0, 0];
+  let keepLoot     = [0, 0, 0, 0, 0];  // how much of pendingLoot the player will actually take.
+                               // Rises with pendingLoot as loot is won, then the tray's steppers
+                               // trim it down; sent as `keep` on enc_bank. The difference is
+                               // left behind on the way out — not dropped on the hex, just gone.
   let pendingItems = [];      // [{id, qty}] rolled from loot tables, banked on leave
   let pendingRecipes = 0;     // bitmask (bit id-1) of recipes learned this scene, banked on leave —
                                // a scene can walk through several nodes before ever banking, each
@@ -120,9 +136,26 @@ function initEncounterOverlay() {
     return out;
   }
 
+  // What leaving right now would actually bank. This reads keepLoot, not
+  // pendingLoot, so trimming the tray down to nothing correctly turns
+  // "TAKE HAUL & LEAVE" back into a walk-out and stops the drop-haul confirm
+  // from firing over loot the player already decided not to take.
   function haulCount() {
-    return pendingLoot.reduce((a, b) => a + b, 0) + pendingItems.reduce((a, it) => a + it.qty, 0)
+    return keepLoot.reduce((a, b) => a + b, 0) + pendingItems.reduce((a, it) => a + it.qty, 0)
       + recipeIdsInMask(pendingRecipes).length;
+  }
+
+  const keptTokens  = () => keepLoot.reduce((a, b) => a + b, 0);
+  const heldTokens  = () => { const p = me(); return p ? (p.inv ?? []).reduce((a, b) => a + b, 0) : 0; };
+  const haulTrimmed = () => pendingLoot.some((v, i) => keepLoot[i] < v);
+
+  // Pack size = archetype base (server `is`) + equipment slot bonuses, capped at
+  // the 12-slot grid — the same mirror of effectiveInvSlots() that
+  // renderInventory() uses in ui-items.js.
+  function packSlots() {
+    const p = me();
+    if (!p) return 8;
+    return packSlotsOf(p);   // server `is` is already base + equipment
   }
 
   function canBankHere() { return terminal || !!(node?.can_bank); }
@@ -193,10 +226,34 @@ function initEncounterOverlay() {
     pendingLoot.forEach((v, i) => {
       if (v <= 0) return;
       any = true;
-      const chip = el('span', 'enc-haul-chip');
+      const keep = keepLoot[i];
+      const chip = el('span', 'enc-haul-chip trim'
+        + (keep < v ? ' trimmed' : '') + (keep === 0 ? ' zeroed' : ''));
       chip.appendChild(el('span', `res-dot ${RES_DOT_CLASS[i]}`));
-      chip.appendChild(el('span', 'enc-haul-qty', `${v}`));
-      chip.appendChild(el('span', 'enc-haul-name', RES_NAMES_ENC[i]));
+
+      const minus = el('button', null, '−');
+      minus.type = 'button';
+      minus.disabled = keep <= 0;
+      minus.setAttribute('aria-label', `take one less ${RES_NAMES_ENC[i]}`);
+      minus.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (keepLoot[i] > 0) { keepLoot[i]--; renderHaul(); renderLeave(); }
+      });
+
+      const plus = el('button', null, '+');
+      plus.type = 'button';
+      plus.disabled = keep >= v;
+      plus.setAttribute('aria-label', `take one more ${RES_NAMES_ENC[i]}`);
+      plus.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (keepLoot[i] < v) { keepLoot[i]++; renderHaul(); renderLeave(); }
+      });
+
+      chip.append(minus, el('span', 'enc-haul-qty', `${keep}`));
+      // The "/total" shows up only once this resource has been trimmed, so an
+      // untouched tray reads exactly as it did before the steppers existed.
+      if (keep < v) chip.appendChild(el('span', 'enc-haul-of', `/${v}`));
+      chip.append(plus, el('span', 'enc-haul-name', RES_NAMES_ENC[i]));
       haulItems.appendChild(chip);
     });
     pendingItems.forEach(it => {
@@ -220,6 +277,32 @@ function initEncounterOverlay() {
       haulItems.appendChild(chip);
     });
     haulEmpty.hidden = any;
+    renderCarry();
+  }
+
+  // The reason the steppers exist, made visible. Banking is the one path that
+  // can push a survivor past their pack size — handleMsg_enc_bank clamps each
+  // resource to 99, not to effectiveInvSlots() — and every token over the cap
+  // costs 1 MP at dawn and refuses every later collect until it's dropped at
+  // -10 pts each. A token left here costs only the 3 pts the bank would pay.
+  function renderCarry() {
+    if (!haulCarry) return;
+    const kept = keptTokens();
+    haulCarry.innerHTML = '';
+    if (!kept && !haulTrimmed()) { haulCarry.hidden = true; return; }
+    haulCarry.hidden = false;
+    const after = heldTokens() + kept;
+    const cap   = packSlots();
+    const over  = after > cap;
+    haulCarry.appendChild(el('span', null, 'TOKENS '));
+    haulCarry.appendChild(el('span', over ? 'cap-over' : 'cap-ok', `${after} / ${cap}`));
+    if (over) haulCarry.appendChild(el('span', 'cap-over', ' · −1 MP at dawn'));
+    haulCarry.appendChild(el('span', null, ' · '));
+    haulCarry.appendChild(el('span', 'pts', `+${kept * 3} pts`));
+    if (haulTrimmed()) {
+      const left = pendingLoot.reduce((a, v, i) => a + (v - keepLoot[i]), 0);
+      haulCarry.appendChild(el('span', null, ` · ${left} left behind`));
+    }
   }
 
   function renderLeave() {
@@ -238,22 +321,29 @@ function initEncounterOverlay() {
       leaveBtn.textContent = n ? 'TAKE HAUL & LEAVE' : 'FINISH & LEAVE';
       leaveBtn.classList.add('primary');
       leaveHint.textContent = 'Nothing more here. Leaving now scores a full-clear bonus.';
-      return;
-    }
-    if (n && canBankHere()) {
+    } else if (n && canBankHere()) {
       leaveBtn.textContent = 'TAKE HAUL & LEAVE';
       leaveBtn.classList.add('primary');
       leaveHint.textContent = 'Pocket what you have, or push on for more.';
-      return;
-    }
-    if (n) {
+    } else if (n) {
       leaveBtn.textContent = 'LEAVE · DROPS HAUL';
       leaveBtn.classList.add('danger');
       leaveHint.textContent = 'You can’t carry loot out from here. Push on to secure it.';
+      return;   // nothing banks here anyway — the trim note below would only confuse
+    } else if (haulTrimmed()) {
+      // Trimmed the whole tray away. There is nothing left to bank, but this is
+      // a deliberate choice rather than an empty-handed walk-out.
+      leaveBtn.textContent = 'LEAVE IT ALL';
+      leaveHint.textContent = 'You take nothing. What you leave behind stays behind.';
+      return;
+    } else {
+      leaveBtn.textContent = 'WALK AWAY';
+      leaveHint.textContent = 'Leave empty-handed. The place stays closed to you.';
       return;
     }
-    leaveBtn.textContent = 'WALK AWAY';
-    leaveHint.textContent = 'Leave empty-handed. The place stays closed to you.';
+    // Trimmed tokens are not dropped on the hex and there is no refund — say so
+    // plainly, on the one screen where the player can still change their mind.
+    if (haulTrimmed()) leaveHint.textContent = 'What you leave behind stays behind.';
   }
 
   function disarmLeave() {
@@ -388,13 +478,24 @@ function initEncounterOverlay() {
       const deltas = [];
       if (Array.isArray(ev.loot)) {
         ev.loot.forEach((v, i) => {
-          if (v > 0) { pendingLoot[i] += v; deltas.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true }); }
+          if (v > 0) {
+            // Newly won loot defaults to kept. The firmware clamps its own
+            // pendingLoot to 99 per resource, so clamp here too or the steppers
+            // would offer more than the server is actually holding.
+            const was = pendingLoot[i];
+            pendingLoot[i] = Math.min(99, was + v);
+            keepLoot[i]    = Math.min(99, keepLoot[i] + (pendingLoot[i] - was));
+            deltas.push({ txt: `+${v} ${RES_NAMES_ENC[i]}`, pos: true });
+          }
         });
       }
       // Typed items the server granted: an explicit node "item" entry and/or a
-      // loot-table roll (two at most per scene).
+      // loot-table roll (two at most per scene). The firmware caps the whole
+      // scene at ENC_MAX_ITEMS — including loot-table rolls this event never
+      // carries — so stop at the same ceiling rather than advertising items
+      // enc_bank will never grant.
       [[ev.it, ev.iq], [ev.it2, ev.iq2]].forEach(([id, qty]) => {
-        if (!id || !qty) return;
+        if (!id || !qty || pendingItems.length >= ENC_MAX_ITEMS) return;
         pendingItems.push({ id, qty });
         const def = typeof getItemById === 'function' ? getItemById(id) : null;
         deltas.push({ txt: `+${qty > 1 ? qty + '× ' : ''}${def?.name ?? 'Item'}`, pos: true });
@@ -432,7 +533,7 @@ function initEncounterOverlay() {
       phase = 'ejected';
       choiceEl.innerHTML = '';
       choiceEl.appendChild(el('div', 'enc-terminal bad', 'You’re driven out. Whatever you hadn’t pocketed is lost.'));
-      pendingLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
+      pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
       renderHaul(); haulEmpty.textContent = 'lost'; renderLeave();
       showResult({ ok: false, verdict: 'DRIVEN OUT', roll: rollTxt, text: hazText, deltas });
       return;
@@ -471,6 +572,7 @@ function initEncounterOverlay() {
     enc          = json;
     picked       = pickPlaceholders(json.placeholders);
     pendingLoot  = [0, 0, 0, 0, 0];
+    keepLoot     = [0, 0, 0, 0, 0];
     pendingItems = [];
     pendingRecipes = 0;
     terminal     = false;
@@ -500,7 +602,7 @@ function initEncounterOverlay() {
     overlay.style.display = 'none';
     enc = null; node = null; nodeKey = '';
     phase = 'idle';
-    pendingLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
+    pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
     terminal = false; pendingNext = ''; pendingHaz = '';
     hideResult();
     choiceEl.innerHTML = ''; haulItems.innerHTML = '';
@@ -525,7 +627,13 @@ function initEncounterOverlay() {
     if (phase === 'ejected') { closeEncounter(); return; }
 
     const n = haulCount();
-    if (terminal || (n && canBankHere())) { send({ t: 'enc_bank' }); closeEncounter(); return; }
+    // `keep` is what we're asking to bank; the server clamps it to its own
+    // pendingLoot[] and leaves the remainder behind.
+    if (terminal || (n && canBankHere())) {
+      send({ t: 'enc_bank', keep: [...keepLoot] });
+      closeEncounter();
+      return;
+    }
 
     if (n && !leaveArmed) {
       // Two-tap confirm: leaving here forfeits the haul.

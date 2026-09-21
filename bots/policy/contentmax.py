@@ -14,6 +14,8 @@ POIs are permanently consumed: enc_start sets cell.poi = 0 and only an
 keeps it consumed. So there are only 108 on the map and every one this bot
 opens is one a rival can never have.
 """
+from config import (NAR_COLD_IMMUNE, NAR_FIRE_STARTER, NAR_LAND_FORAGE,
+                    NAR_RIVER_FORAGE, NAR_SCAV_DOUBLE)
 from navigate import best_target, frontier_bonus
 from .base import Action
 from .survivor import SurvivorPolicy
@@ -26,6 +28,17 @@ PILE_VALUE = 4         # still worth stepping on, just not worth a detour
 
 class ContentMaxPolicy(SurvivorPolicy):
     name = "contentmax"
+    # POIs have to be *seen* before they can be opened, so vision is this
+    # bot's scarcest resource and mobility is second. Threat is weighted
+    # because computeEncounterDN() reads the Threat Clock: every point of it
+    # makes the content this bot exists to reach harder to survive.
+    gear_weights = {
+        "vision": 4.0, "mp": 3.0, "threat": 2.5, "ll": 2.0,
+        "slots": 1.0, "rad": 1.0, "terrain": 1.5,
+        "nar": {NAR_COLD_IMMUNE: 3.0, NAR_FIRE_STARTER: 1.0,
+                NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
+                NAR_SCAV_DOUBLE: 0.5},
+    }
     engage_encounters = True
     # Willing to take worse odds and push deeper than a cautious bot, because
     # unseen nodes are the objective -- but not suicidally: a downed bot stops

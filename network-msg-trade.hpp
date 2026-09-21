@@ -205,3 +205,91 @@ static void handleMsg_caravan_trade(AsyncWebSocketClient* client, char* data, si
     client->text(fb, (size_t)fl);
   }
 }
+
+// ── Caravan purchase: resource tokens → a consumable off the shelf ────────
+// {"t":"car_buy","item":ID,"n":QTY,"give":[5]}. give[] is the payment; its
+// worth (caravanPaymentValue: food/med/scrap 1 each, fuel 2, water refused)
+// must cover caravanPrice(item) × n. Overpaying is accepted — the caravan
+// doesn't make change; the client keeps it to at most one fuel token's
+// rounding. One-shot like car_trade. Everything is checked before
+// anything is spent — co-location, shelf has ≥ n, the player holds give[],
+// invRoomFor() has room for all n (same all-or-nothing rule as applyRecipe()).
+// Success: EVT_TRADE_RESULT with tradeTo=CARAVAN_PID + tradeItem for every
+// client's log, plus a targeted item_result (act:"buy") so the buyer's pack
+// and token counts update at once — invType[]/invQty[] never ride the state
+// broadcast, same reason the craft ack exists (network-msg-player.hpp).
+// Failure: {"t":"trade_fail","why":N} — 1 not co-located / not in stock,
+// 2 can't pay, 3 pack full, 4 tried to pay with water.
+static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
+  const char* ip = strstr(data, "\"item\""); if (!ip) return;
+  const char* iv = strchr(ip + 6, ':');      if (!iv) return;
+  int itemId = atoi(iv + 1);
+  if (itemId <= 0 || itemId > 254) return;
+  int n = 1;
+  const char* np = strstr(data, "\"n\"");
+  if (np) { const char* nv = strchr(np + 3, ':'); if (nv) n = atoi(nv + 1); }
+  if (n < 1 || n > (int)CARAVAN_STOCK_MAX) return;
+  uint8_t give[5] = {0};
+  const char* gp = strstr(data, "\"give\"");
+  if (gp) { const char* gb = strchr(gp + 6, '['); if (gb) { gb++;
+    for (int i = 0; i < 5; i++) {
+      while (*gb == ' ') gb++;
+      give[i] = (uint8_t)constrain(atoi(gb), 0, 99);
+      const char* nx = strchr(gb, i < 4 ? ',' : ']'); if (!nx) break; gb = nx + 1;
+    }
+  }}
+  int paid = caravanPaymentValue(give);
+
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
+  int why = 1;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    int slot = findSlot(client->id());
+    const ItemDef* def = getItemDef((uint8_t)itemId);
+    int ss = caravanStockSlot((uint8_t)itemId);
+    if (slot >= 0 && !encounters[slot].active && W.caravan.active &&
+        G.players[slot].q == W.caravan.q && G.players[slot].r == W.caravan.r &&
+        def && ss >= 0 && (int)W.caravan.stockQty[ss] >= n) {
+      Player& p = G.players[slot];
+      int price = (int)caravanPrice(def) * n;
+      if (give[0])                                                                          why = 4;  // water: worthless to the caravan — refused, not silently ignored
+      else if (paid < price || !hasResources(slot, give))                                  why = 2;
+      else if (invRoomFor(p.invType, p.invQty, effectiveInvSlots(p), (uint8_t)itemId) < n) why = 3;
+      else {
+        for (int i = 0; i < 5; i++) {
+          p.inv[i]         = (uint8_t)(p.inv[i] - give[i]);
+          W.caravan.inv[i] = (uint8_t)min((int)W.caravan.inv[i] + give[i], 99);
+        }
+        W.caravan.stockQty[ss] = (uint8_t)(W.caravan.stockQty[ss] - n);
+        if (!W.caravan.stockQty[ss]) W.caravan.stockItem[ss] = 0;  // free the slot for the next restock roll
+        addItemToInv(p, (uint8_t)itemId, (uint8_t)n);
+        GameEvent tev = {};
+        tev.type         = EVT_TRADE_RESULT;
+        tev.pid          = (uint8_t)slot;
+        tev.tradeTo      = CARAVAN_PID;
+        tev.tradeResult  = 1;
+        tev.tradeItem    = (uint8_t)itemId;
+        tev.tradeItemQty = (uint8_t)n;
+        memcpy(tev.tradeGive, give, 5);
+        enqEvt(tev);
+        int ap = appendFmt(ack, sizeof(ack), 0,
+          "{\"t\":\"item_result\",\"ok\":true,\"act\":\"buy\",\"pid\":%d,\"item\":%d,\"n\":%d,",
+          slot, itemId, n);
+        ap = appendPackArrays(ack, sizeof(ack), ap, slot);
+        appendFmt(ack, sizeof(ack), ap, ",\"inv\":[%d,%d,%d,%d,%d]}",
+          p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4]);
+        why = 0;
+      }
+    }
+    xSemaphoreGive(G.mutex);
+  }
+  if (why == 0) {
+    saveGame();  // outside the mutex — it takes G.mutex itself (same as craft/use_item)
+    if (ack[0]) client->text(ack);
+  } else {
+    char fb[48];
+    int fl = snprintf(fb, sizeof(fb), "{\"t\":\"trade_fail\",\"why\":%d}", why);
+    client->text(fb, (size_t)fl);
+  }
+}

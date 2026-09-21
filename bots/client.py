@@ -396,7 +396,12 @@ class BotClient:
         return {"tk": self.obs.tick, "day": self.obs.day, "wp": self.obs.weather,
                 "sc": me.score, "sp": me.steps, "ll": me.ll, "mp": me.mp,
                 "food": me.food, "water": me.water, "rad": me.rad,
-                "q": me.q, "r": me.r, "inv": me.inv, "vm": me.valid_moves}
+                "q": me.q, "r": me.r, "inv": me.inv, "vm": me.valid_moves,
+                # Gear state per tick. Without these a run records that a bot
+                # *sent* equip_item but not what it was actually wearing at
+                # any moment, so "did the bonus apply" had to be inferred from
+                # item_result acks scattered through the rx channel.
+                "eq": list(me.equip), "is": me.inv_slots, "llcap": me.ll_cap}
 
     async def _decide_loop(self) -> None:
         while not self.stop.is_set():

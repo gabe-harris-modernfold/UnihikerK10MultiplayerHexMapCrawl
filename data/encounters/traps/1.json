@@ -1,0 +1,101 @@
+{
+  "id": "trap_welcome_mat",
+  "tier": 1,
+  "title": "The {{adjective}} Welcome Mat",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "Someone has laid a doormat across the threshold. It is spotless. In this entire dead city, this one rectangle of coir has been kept swept, and the word WELCOME is still legible in cheerful red letters. Nothing out here is swept. Following the sightline up, there is a paint bucket lashed to the lintel on a length of picture wire, and the wire runs down into the mat's bristles like a root.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step over the mat and back out the way you came",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "brush_out"
+        },
+        {
+          "label": "Cut the wire and take the bucket down",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_bucket"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You put one long step over the mat, then another, and you are back out in the street with your heart going like a trapped bird. The bucket sways gently on its wire behind you, still patient. Whoever hung it is probably dead. It is not.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "The wire parts. You catch the bucket on the way down — eleven kilos of it, and the smell arrives before the weight does. Rendered fat, mostly. Candle-grade. Somebody spent a long week boiling this down and an even longer week getting it up there, and it is, by every measure that matters out here, {{value}}. The trap was the treasure. You are not sure whether to laugh.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] }
+      ],
+      "choices": [
+        {
+          "label": "Go through the door the mat was guarding",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_second_bucket"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "Behind the door is a hallway closet, and in the closet is everything the bucket was actually protecting: four sealed jugs, a coil of good wire, and a laminated card reading IF THE BUCKET WORKED, PLEASE TAKE ONLY WHAT YOU NEED. THANK YOU. — T. You take considerably more than you need. You leave the card. It feels like the least you can do.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 3] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "brush_out": {
+      "text": "Your pack strap catches the wire on the way past. The bucket comes down at the back of your skull and splits, and what comes out of it is six years of rendered fat gone soft and yellow and alive. It gets in your collar. It gets in your ears. You will be smelling this at dawn.",
+      "penalty": { "ll": -1, "water": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_bucket": {
+      "text": "The wire was the decoy. The mat was the trigger. The bucket comes down square and you take most of it in the open mouth of a gasp, and you are on your knees in the doorway bringing up everything you own while something that was recently a pigeon slides down your chest. The stuff burns. That is the part nobody warns you about.",
+      "penalty": { "ll": [-1, -2], "water": [-1, -2], "food": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_second_bucket": {
+      "text": "There was a second bucket. Of course there was a second bucket. This one is not fat. This one has been curing in the dark since before you could read, and when it lets go it does so with the enthusiasm of something that has waited a very long time for exactly you.",
+      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Immaculate",
+      "Well-Kept",
+      "Houseproud",
+      "Recently Swept",
+      "Very Clean"
+    ],
+    "value": [
+      "a fortune",
+      "worth more than your boots",
+      "three nights of light",
+      "the best thing you have smelled all week, technically"
+    ]
+  }
+}

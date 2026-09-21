@@ -14,11 +14,15 @@ static void toneTaskFn(void* arg) {
   size_t written;
   uint32_t savedRate = i2s_get_clk(I2S_NUM_0);
   i2s_set_sample_rates(I2S_NUM_0, 8000);
+  uint32_t liveRate  = i2s_get_clk(I2S_NUM_0);  // what the peripheral actually took
+  uint32_t toneT0    = millis();
+  int      nominalMs = 0;
 
   for (const ToneStep* s = (const ToneStep*)arg; s->freq != 0; s++) {
     int ms   = (s->freq < 0) ? -(s->freq) : s->beat;
     int freq = (s->freq < 0) ? 0          : s->freq;
     int n    = ms * 8;
+    nominalMs += ms;
     for (int i = 0; i < n; i++) {
       float   amp = 32767.0f * (s_audioVol / 5.0f);
       int16_t v = freq ? (int16_t)(amp * sinf(i * (float)TWO_PI * freq / 8000.0f)) : 0;
@@ -26,6 +30,12 @@ static void toneTaskFn(void* arg) {
       i2s_write(I2S_NUM_0, buf, sizeof(buf), &written, portMAX_DELAY);
     }
   }
+  // Nominal vs measured is the decisive read on whether i2s_set_sample_rates()
+  // actually took: if 'live' is not 8000, every duration in tone-motifs.hpp is
+  // scaled by 8000/live and every pitch is shifted by the same factor.
+  Log.notice("TONE %s rate saved=%u live=%u nominal=%dms actual=%dms",
+             s_toneName ? s_toneName : "?", (unsigned)savedRate, (unsigned)liveRate,
+             nominalMs, (int)(millis() - toneT0));
   // DMA buffer = 3*300 samples @ 8kHz = 112.5 ms max latency; drain before zeroing.
   vTaskDelay(pdMS_TO_TICKS(115));
   i2s_zero_dma_buffer(I2S_NUM_0);
@@ -63,12 +73,12 @@ static void checkScoreAudio() {
   if (teamScore / 100 != k10TeamScore / 100) {
     if (teamScore > k10TeamScore) {
       k10Play(SEQ_SCORE_UP);
-      k10LedPulse = millis() + 600;
-      k10PulseR = 0x00; k10PulseG = 0xC8; k10PulseB = 0x30;
+      // Good news opens outward from the middle lamp.
+      ledCue(0x28, 0xE0, 0x58, CUE_BLOOM, SPAN_ALL, 700, CUEP_INFO, 1);
     } else {
       k10Play(MOTIF_ROTTEN_CHORD);
-      k10LedPulse = millis() + 600;
-      k10PulseR = 0xC8; k10PulseG = 0x10; k10PulseB = 0x10;
+      // Bad news is a double throb, not a bloom.
+      ledCue(0xC8, 0x18, 0x18, CUE_PULSE, SPAN_ALL, 800, CUEP_INFO, 2);
     }
   }
   k10TeamScore = teamScore;
@@ -79,6 +89,14 @@ static void checkScoreAudio() {
                   (snapTC >= TC_THRESHOLD_A) ? 1 : 0;
   if (tcLvl > k10PrevTCLevel) {
     if (tcLvl == 4) k10Play(MOTIF_BUNKER_ALARM); else k10Play(MOTIF_WARNING_GRUNT);
+    // The clock crossing a threshold is a hard, countable signal, so it blinks
+    // once per band reached rather than fading in like a hazard. applyDread()
+    // then carries the new band continuously; this is just the announcement.
+    // Level 4 gets the full alarm treatment across the whole strip.
+    if (tcLvl == 4)
+      ledCue(255, 40, 30, CUE_BLINK, SPAN_ALL, 1400, CUEP_ALARM, 5);
+    else
+      ledCue(210, 70, 40, CUE_BLINK, SPAN_INWARD, 900, CUEP_INFO, tcLvl);
   }
   k10PrevTCLevel = tcLvl;
 }

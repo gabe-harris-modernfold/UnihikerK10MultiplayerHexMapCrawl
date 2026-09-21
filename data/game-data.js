@@ -3,9 +3,185 @@ const MAP_COLS    = 75;
 const MAP_ROWS    = 57;
 const MAX_PLAYERS = 6;
 const CARAVAN_PID = 254;  // sentinel trade partner id — matches world-system.hpp
+const DOOM_BASE_RADIUS = 6;  // Creeping Doom scent radius at awareness 0 — matches world-system.hpp
+// Creeping Doom's voice, indexed by the tier on the doom_taunt event
+// (tickDoomTaunts(), world-system.hpp). Tier 0 is the release beat — it only
+// ever arrives after a higher tier. The server sends a raw byte index which
+// is reduced modulo the row length here, so rows can be added or reworded
+// without touching the firmware.
+const DOOM_TAUNTS = [
+  [ // 0 — lost you
+    'the weight behind you lifts. it has lost the thread.',
+    'whatever was following has turned away.',
+    'the air goes quiet. for now.',
+  ],
+  [ // 1 — has your scent (awareness 51-75)
+    'something out there has your scent.',
+    'the wind changed. it knows which way you went.',
+    'you left too much of yourself on that ground.',
+  ],
+  [ // 2 — unmaking your work (76-99)
+    'everything you gather, it unmakes.',
+    'it is eating the ground behind you.',
+    'your work rots as fast as you can do it.',
+  ],
+  [ // 3 — hunting (100)
+    'it has stopped looking. it is coming.',
+    'there is no track to follow now. only you.',
+    'it knows the shape of you.',
+  ],
+];
+function doomTauntLine(tier, idx) {
+  const row = DOOM_TAUNTS[tier] ?? DOOM_TAUNTS[0];
+  return row[((idx | 0) % row.length + row.length) % row.length];
+}
+// The voice in the corridor, for anyone camped underground on a hex they did
+// not build anything on (tickTunnelTaunts(), tunnels.hpp -- which today means
+// any underground hex, since SHELTER is refused at depth 1). Same wire
+// contract as DOOM_TAUNTS: the server sends a raw byte index, reduced modulo
+// this table's length here, so lines can be added or reworded without
+// touching the firmware.
+//
+// The joke is that it is wrong. A bunker is good shelter -- no weather
+// reaches it, and the only price is a 30% bad-air roll on a rest -- and the
+// game needles you about it anyway. Nothing here is a warning and nothing
+// here is actionable; if these ever start reading as advice, they have
+// drifted. Keep them dry, keep them short, and keep them on the survivor's
+// own bad judgement rather than on any threat that is actually down there.
+const TUNNEL_TAUNTS = [
+  'no weather down here. no sky either.',
+  'you solved the rain by burying yourself.',
+  'the last people who slept here are still here.',
+  'a roof, technically.',
+  'the air has been waiting forty years for company.',
+  'you could have built something. you came down a hole instead.',
+  'the scrap in your pack would have made a roof.',
+  'safe as a tomb. exactly that safe.',
+  'everyone else is under the sky. think about that.',
+  'you breathe it in. it does not breathe back.',
+  'no wind, no rain, and still this bad a night.',
+  'the bunker outlived everyone it was built for.',
+  'clever. the pre-war ones were clever too.',
+  'the ceiling holds. that is the whole of the good news.',
+  'you are dry, you are warm, and something is still wrong.',
+  'down here nothing can find you. nothing is looking.',
+  'you sleep in a pipe and call it strategy.',
+  'the dark does not care how well you planned.',
+  'a shelter you did not build, for people it did not save.',
+  'the cistern drips. it has all night.',
+  'nobody up there is wondering where you went.',
+  'your light is shorter than the corridor.',
+  'this is not shelter. it is just indoors.',
+  'the weather would have been over by morning.',
+  'you outsmarted the sky and lost the air.',
+  'concrete does not keep you. it only holds still.',
+  'somewhere a survivor is building a camp. good for them.',
+  'the rats moved out. ask yourself why.',
+  'you wanted cover. you got depth.',
+  'there is a right way to do this. hard to say this is it.',
+];
+function tunnelTauntLine(idx) {
+  const n = TUNNEL_TAUNTS.length;
+  return TUNNEL_TAUNTS[((idx | 0) % n + n) % n];
+}
+// ── The board of the admired ──────────────────────────────────────
+// The ladder a survivor is actually climbing. ADMIRED_WIN (10000) is the way
+// out; nothing in the game grants it in one piece, it is a few thousand
+// two-point surveys and five-point scavenges stacked end to end.
+//
+// The shape of this table is the design: names are SPARSE above 4000 because
+// nearly nobody gets there, and CROWDED between 2000 and 3600 because that is
+// where a real run ends. Passing someone should feel routine in the middle of
+// the board and impossible at the top. If rows get added, add them in the
+// middle — the thin air up top is load-bearing.
+//
+// MIRRORED IN FIRMWARE: ui-screens.hpp has the same table for the K10's own
+// board (screen 6). The LCD cannot run this file and the browser cannot read
+// flash, so these rows genuinely live twice — edit one, edit the other, or
+// the two boards disagree about who you just passed.
+//
+// Voice is the TUNNEL_TAUNTS voice: dry, lowercase, one line, past tense.
+// Every one of these people is dead, and none of them are admired for
+// surviving — they are admired for the manner of not surviving, as written up
+// afterwards by people who were not there and are not checking. Nothing here
+// is advice. If a row starts reading as a tip ("build a roof"), it has
+// drifted. Keep the joke on the survivor and keep the number unexplained.
+const ADMIRED_WIN = 10000;
+const ADMIRED = [
+  { sc: 10000, nm: 'SAINT ABEL',      ln: 'walked out at ten thousand. nobody has come back to say what out looks like.' },
+  { sc:  9100, nm: 'THE CARTOGRAPHER', ln: 'mapped every hex on the ring. died on the one he started from.' },
+  { sc:  8300, nm: 'MOTHER GRILLE',   ln: 'fed nine hundred strangers. ate last, the one time it mattered.' },
+  { sc:  7400, nm: 'QUIET KORO',      ln: 'built two rafts and gave away the one that floated.' },
+  { sc:  6600, nm: 'TEETH',           ln: 'won every fight out here. lost the argument about the water.' },
+  { sc:  5900, nm: 'DELPH',           ln: 'surveyed the whole north ridge and never once went down into it.' },
+  { sc:  5200, nm: 'OLD PELL',        ln: 'ninety-one days. spent the last four looking for his glasses.' },
+  { sc:  4700, nm: 'HANNA VOSS',      ln: 'carried the medicine four days to a town that had already finished.' },
+  { sc:  4300, nm: 'THE COURIER',     ln: 'delivered every package. the last one was addressed to her.' },
+  { sc:  4000, nm: 'BRACE MULDOON',   ln: 'traded his rifle for a roof and was proved right for six weeks.' },
+  { sc:  3800, nm: 'SISTER ANNEX',    ln: 'preached that the wasteland provides. it provided.' },
+  { sc:  3650, nm: 'LOW TOM',         ln: 'died rich in scrap. scrap is not water.' },
+  { sc:  3500, nm: 'VERA ASH',        ln: 'found three settlements. none of them were looking for her.' },
+  { sc:  3400, nm: 'THE ACCOUNTANT',  ln: 'kept a ledger of everything he was owed. we buried it with him.' },
+  { sc:  3300, nm: 'GIL MARROW',      ln: 'reached the caravan carrying nothing the caravan would take.' },
+  { sc:  3200, nm: 'PIP ENSLEY',      ln: 'starved two hexes from a forage ground she had already found.' },
+  { sc:  3100, nm: 'DOC HALVERS',     ln: 'treated everyone. kept his own wounds for later.' },
+  { sc:  3000, nm: 'THE AVERAGE MAN', ln: 'got exactly this far, like almost all of you. admired for the punctuality.' },
+  { sc:  2900, nm: 'RUTH KANE',       ln: 'famous for surviving a storm she chose to walk into.' },
+  { sc:  2800, nm: 'HOLLIS PEMM',     ln: 'slept forty nights underground and died of the one night out.' },
+  { sc:  2700, nm: 'THE TWINS',       ln: 'shared everything. the ration, the shelter, the fever.' },
+  { sc:  2600, nm: 'MAGGS',           ln: 'lost the map on day six and kept walking with great confidence.' },
+  { sc:  2500, nm: 'CUT-RATE ELIAS',  ln: 'sold his shelter for three days of food and ate it in one night.' },
+  { sc:  2400, nm: 'NELLA BRUNE',     ln: 'survived the rads, the flood and the dogs. the dawn got her.' },
+  { sc:  2300, nm: 'BOSS RIKE',       ln: 'ran a settlement for a season. the settlement ran out.' },
+  { sc:  2200, nm: 'WENDEL FRAY',     ln: 'crossed the glass for a rumour and brought the rumour back intact.' },
+  { sc:  2100, nm: 'THE GLEANER',     ln: 'picked over eleven hundred hexes and never put up a roof.' },
+  { sc:  2000, nm: 'ODESSA PIKE',     ln: 'went down the hatch to get out of the rain.' },
+  { sc:  1800, nm: 'CARTER ILL',      ln: 'knew the water was bad. was very thirsty.' },
+  { sc:  1600, nm: 'SMALL AGNES',     ln: 'traded away the coat. it was warm out, and then it was not.' },
+  { sc:  1400, nm: 'THE OPTIMIST',    ln: 'was right about the weather and wrong about everything else.' },
+  { sc:  1200, nm: 'JODIE SAWN',      ln: 'reached the settlement, then kept going to see what else there was.' },
+  { sc:   900, nm: 'FENN',            ln: 'admired for the speed. not for the direction.' },
+  { sc:   600, nm: 'THE VOLUNTEER',   ln: 'went into the crater first so nobody else had to. nobody else was going to.' },
+  { sc:   350, nm: 'TILLY MOSS',      ln: 'died on day two. every story about her is from day one.' },
+  { sc:   120, nm: 'KEV',             ln: 'stepped off the ridge on the first morning. still on the board, somehow.' },
+];
+// The next name above a given score — the one thing on the board that is
+// actually a goal. null once nothing is left above you, which means the score
+// is past SAINT ABEL and the game is over anyway.
+function admiredNextAbove(sc) {
+  let best = null;
+  for (const a of ADMIRED) if (a.sc > sc && (best === null || a.sc < best.sc)) best = a;
+  return best;
+}
+// Every name crossed going from `prev` to `now`, lowest first. Used for the
+// "you passed someone" beat — a score jump of +20 can clear two of the
+// crowded middle rows at once, and both deserve their line.
+function admiredPassed(prev, now) {
+  return ADMIRED.filter(a => a.sc > prev && a.sc <= now).sort((x, y) => x.sc - y.sc);
+}
+// The board as rendered: the dead merged with the living, ranked together.
+// `live` is uiPlayers.val ({nm, sc, color, isMe}) — the party is ON the board,
+// not beside it, because the whole point is which corpses you are between.
+// Ties put the living above the dead: you are not admired yet, but you are
+// here. Returns rows tagged {live:true} for the party and {live:false} for
+// ADMIRED, each with a 1-based rank.
+function admiredBoard(live = []) {
+  const rows = [
+    ...ADMIRED.map(a => ({ ...a, live: false })),
+    ...live.map(p => ({ sc: p.sc | 0, nm: p.nm || '—', ln: '', live: true, color: p.color, isMe: !!p.isMe })),
+  ];
+  rows.sort((a, b) => (b.sc - a.sc) || ((a.live ? 0 : 1) - (b.live ? 0 : 1)));
+  return rows.map((r, i) => ({ ...r, rank: i + 1 }));
+}
+// What one token of each resource is worth when paying the caravan for shelf
+// goods (water/food/fuel/med/scrap) — mirrors CARAVAN_TOKEN_WORTH in
+// world-system.hpp. 0 = the caravan refuses it outright (water).
+const CARAVAN_TOKEN_WORTH = [0, 1, 2, 1, 1];
 const VISION_R    = 1;   // base vision radius (server may send higher/lower via vr field)
 const SQRT3       = Math.sqrt(3);
-// ── 11 Terrain types ─────────────────────────────────────────────
+// ── 16 Terrain types ─────────────────────────────────────────────
+// 0-11 surface, 12-15 the bunker tunnel system (see tunnels.hpp). 12/13 are
+// the surface hatches AND the shaft cells beneath them; 14/15 are tunnel-only.
 // vis: +1=HIGH(+2 range), 0=STANDARD, -1=PENALTY(resources masked)
 // mc : movement cost (255 = impassable)
 // sv : shelter value
@@ -57,7 +233,23 @@ const TERRAIN = [
   { name:'River Channel',   mc:255, sv:0, vis:-3, icon:'〰',
     fill:'#0B1E0F', stroke:'#162B18',   /* brackish murky green — wasteland water */
     tags:['Impassable'],
-    desc:'A fast-moving river cutting through the wasteland. The current is too dangerous to cross. Navigate around it or find a ford. Water is visible but unreachable from the banks.' }
+    desc:'A fast-moving river cutting through the wasteland. The current is too dangerous to cross. Navigate around it or find a ford. Water is visible but unreachable from the banks.' },
+  { name:'Bunker Entrance', mc:1,   sv:2, vis: 0, icon:'🚪',
+    fill:'#1C1A22', stroke:'#4A4458',   /* cold concrete, faint blue cast */
+    tags:['Bunker','Waypoint'],
+    desc:'A pre-war blast door set into a concrete apron, hinges still sound. Step onto it and you go down — the stairwell beyond drops straight into the bunker tunnel network, for 1 MP on top of the step. Climbing back out costs the same. The doorway itself blocks weather.' },
+  { name:'Vent Shaft',      mc:1,   sv:0, vis: 0, icon:'🕳',
+    fill:'#16140E', stroke:'#38321F',   /* rusted grating over dark earth */
+    tags:['Bunker','Treacherous'],
+    desc:'A collapsed air intake — a rusted grate over a drop into the tunnels. Step onto it and you slide down for 1 MP; climbing back out of one costs 2. Connects to the same network as every other entrance.' },
+  { name:'Tunnel Floor',    mc:2,   sv:1, vis: 0, icon:'⬛',
+    fill:'#141210', stroke:'#2A2622',   /* near-black service corridor */
+    tags:['Bunker','Water','Salvage','Blind Ground'],
+    desc:'A service corridor under the wasteland. Cisterns still seep drinkable water and the fittings can be stripped for scrap, but you move at half pace and see only as far as your light reaches. No weather reaches this deep, so sleeping here costs you nothing to exposure — but the air is dead still, and one night in three underground takes a Life Level.' },
+  { name:'Collapsed Tunnel',mc:255, sv:0, vis: 0, icon:'⛔',
+    fill:'#0A0908', stroke:'#1A1614',   /* solid rock */
+    tags:['Impassable','Bunker'],
+    desc:'Fallen rock and buckled ceiling plate. There is no way through and no way to clear it — find another route.' }
 ];
 const NUM_TERRAIN = TERRAIN.length;
 
@@ -77,6 +269,8 @@ const TAG_CLASS = {
   'Haven':         'hi-badge tag-Safe',
   'Barter':        'hi-badge tag-Trade',
   'Dead Zone':     'hi-badge tag-Impassable',
+  'Impassable':    'hi-badge tag-Impassable',
+  'Bunker':        'hi-badge tag-Landmark',
 };
 
 const RES_COLOR = ['','#2A5C8A','#4A7828','#8C4418','#7A1E1E','#5C5448'];
@@ -87,7 +281,7 @@ const RES_NAMES = ['','Water','Food','Fuel','Medicine','Scrap'];
 // Indices 0..11 match TERRAIN order; the rest are named here.
 const GLYPH_SHEET = 'img/ui_glyphs.png';
 const GLYPH_CELL  = 16;
-const GLYPH = { WATER:12, FUEL:13, MED:14, SCRAP:15, FOOTPRINT:16, TENT:17, HUT:18, RAIN:19 };
+const GLYPH = { WATER:12, FUEL:13, MED:14, SCRAP:15, FOOTPRINT:16, TENT:17, HUT:18, RAIN:19, TIRE_TRACK:20 };
 // Canvas glyph per resource type (-1 = none; food uses the forage-animal PNG instead)
 const RES_GLYPH = [-1, GLYPH.WATER, -1, GLYPH.FUEL, GLYPH.MED, GLYPH.SCRAP];
 // Resource badge class names (matches .hi-badge.res-X in style.css)
@@ -117,6 +311,9 @@ const ACT_SHELTER = 4, ACT_CRAFT = 5, ACT_SURVEY = 6, ACT_REST = 7;
 const ACT_TRADE = 8;
 const RES_SHORT = ['WAT', 'FOD', 'FUL', 'MED', 'SCP'];  // short labels for trade resource steppers
 const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
+// Why an AO_BLOCKED action was refused — ABW_* in Esp32HexMapCrawl.ino,
+// carried on the act event as "bw".
+const ABW_NONE = 0, ABW_PACK_FULL = 1;
 const ACT_NAMES = ['FORAGE','COLLECT WATER','TREAT WOUND','SCAVENGE',
                    'BUILD SHELTER','CRAFT','SURVEY','REST'];
 
@@ -156,8 +353,14 @@ const RECIPES = [
     matItem: [48, 0, 0], matQty: [2, 0, 0], resCost: [0, 0, 0, 0, 1] },
   { id: 15, name: 'Screaming Spike', outputItem: 8,  outputQty: 1,
     matItem: [46, 0, 0], matQty: [3, 0, 0], resCost: [0, 0, 0, 0, 0] },
-  { id: 16, name: 'Panic Dart', outputItem: 5,  outputQty: 1,
+  { id: 16, name: 'Panic Dart', outputItem: 62, outputQty: 1,
     matItem: [35, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 0, 0, 0] },
+  { id: 17, name: 'Raft', outputItem: 63, outputQty: 1,
+    matItem: [21, 0, 0], matQty: [3, 0, 0], resCost: [0, 0, 0, 0, 1] },
+  // starter: known from spawn (recipes.cfg `starter = yes`). Display-only
+  // here — the server still decides via the kr bitmask it sends.
+  { id: 18, name: 'Backpack', outputItem: 64, outputQty: 1,
+    matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 5, 0, 0, 0], starter: true },
 ];
 function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
 function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
@@ -169,16 +372,33 @@ function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
 // Treat:  anywhere for the Medic, Settlement(9) for everyone else
 // Others: any terrain
 // River Channel (11) is reachable with the right equipment: it forages and waters.
-const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 6];
-const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0];
-const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1];
+// Tunnel Floor (14) waters (cistern seeps) and salvages (bunker fittings) at DN 7.
+const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 6, 0,0,0,0];
+const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0, 0,0,7,0];
+const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1, 0,0,1,0];
+// Tunnel Floor(14): water from cistern seeps, scrap from bunker fittings, and
+// a Medic can still treat. Camping, crafting, resting and surveying are refused
+// underground -- handleAction() blocks all four server-side, so mirror it here
+// rather than offering buttons the server will silently reject. SURVEY is the
+// one that actually matters: doSurvey() writes p.surveyedMap[], which is sized
+// for the 75x57 surface map.
+// Hatches (12/13) are surface tiles and behave like any other surface hex.
 function actAvailable(actId, terrainIdx) {
-  if (terrainIdx == null || terrainIdx > 11) return false;
+  if (terrainIdx == null || terrainIdx >= NUM_TERRAIN) return false;
+  const underground = terrainIdx >= 14;
   switch (actId) {
     case ACT_FORAGE:  return TERRAIN_FORAGE_DN[terrainIdx]  > 0;
     case ACT_WATER:   return TERRAIN_HAS_WATER[terrainIdx]  > 0;
     case ACT_SCAV:    return TERRAIN_SALVAGE_DN[terrainIdx] > 0;
-    default:          return true;   // REST, SHELTER, SURVEY available everywhere
+    case ACT_SHELTER:
+    case ACT_CRAFT:
+    case ACT_SURVEY:  return !underground;
+    // REST is the one that works down there: a bunker is the only cover on
+    // the map no weather reaches, so dawnUpkeep() switches exposure off at
+    // depth and rolls TUNNEL_REST_LL_PCT (30%) for bad air instead.
+    // Mirrors handleAction() in actions_game_loop.hpp.
+    case ACT_REST:    return true;
+    default:          return true;   // TREAT (Medic / Settlement, server-gated)
   }
 }
 
@@ -333,6 +553,10 @@ const ITEMS = [
     img:'img/items/item_15.png', icon:'img/items/icon_15.png',
     preUse:  null, postUse: null,
     story:   'Steel-toed, broken-in to someone else\'s feet. +1 MP while equipped.' },
+  { id:64, name:'Backpack',         category:1, slot:2,
+    img:'img/items/item_64.png', icon:'img/items/icon_64.png',
+    preUse:  null, postUse: null,
+    story:   'Canvas, webbing, and four sets of initials inked over each other. Whatever will not fit in your hands rides on your back. +4 inventory slots while equipped.' },
   { id:16, name:'Hoarder\'s Rig',   category:1, slot:2,
     img:'img/items/item_16.png', icon:'img/items/icon_16.png',
     preUse:  null, postUse: null,
@@ -345,6 +569,10 @@ const ITEMS = [
     img:'img/items/item_18.png', icon:'img/items/icon_18.png',
     preUse:  null, postUse: null,
     story:   'Lashed together from oil drums and wishful thinking. Slow on land, essential on the river. Unlocks River Channel traversal.' },
+  { id:63, name:'Raft', category:1, slot:5,
+    img:'img/items/item_63.png', icon:'img/items/icon_63.png',
+    preUse:  null, postUse: null,
+    story:   'Scrap wood lashed tight with salvaged cord. Slow, ugly, and it floats. Crosses Marsh, Flooded District and River Channel at the standard 1 MP.' },
   { id:19, name:'Vertical Regret',  category:1, slot:3,
     img:'img/items/item_19.png', icon:'img/items/icon_19.png',
     preUse:  null, postUse: null,
@@ -522,6 +750,11 @@ const ITEMS = [
     preUse:  'A paste the color of a bruise, and it smells like one too.',
     postUse: 'It draws the glow out through weeping blisters. Unpleasant. Effective. −2 Rad.',
     story:   null },
+  { id:62, name:'Panic Dart',         category:0, slot:0,
+    img:'img/items/item_62.png', icon:'img/items/icon_62.png',
+    preUse:  'A whittled length of tentacle, still twitching. It wants to be thrown at something.',
+    postUse: 'It flies true and sticks. Whatever it hit shrieks, bolts, and forgets about you for a while. Threat Clock −1.',
+    story:   null },
 ];
 
 // Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist.
@@ -571,7 +804,49 @@ const ITEM_MODS = {
   42: { slots: +1 },                                               // Knife-Wrench
   45: { vision: +1 },                                              // Glow Dentures
   47: { mp: -1, rad: -5 },                                         // Lead Snuggie
+  63: { note: 'Crosses any water terrain at 1 MP' },               // Raft
+  64: { slots: +4 },                                               // Backpack
 };
+
+// ── Equipment terrain perks (mirrors items.cfg "terrain" / TERR_PASS_* ) ─────
+// ITEM_MODS above carries the human-readable note; this carries the actual
+// bits, because the client has to price a step the same way the server's
+// canEnterTerrain() does. Without it the move cooldown charged a Vertical
+// Regret wearer the full Mountain MC 4 for a step billed at 2, and ignored
+// the Raft on water completely.
+// Width of it[]/iq[] and the ceiling effectiveInvSlots() clamps to. Mirrors
+// INV_SLOTS_MAX in the .ino — was 12, which was also the Mule's base, so a
+// Mule's slot gear did nothing.
+const INV_SLOTS_MAX = 18;
+const TERR_PASS_RIVER = 1, TERR_PASS_CLIFF = 2, TERR_PASS_RAD = 4, TERR_PASS_WATER = 8;
+const RIVER_MC = 2, CLIFF_MC = 2, RAFT_MC = 1;
+// item id -> terrain bitmask. Keep in step with items.cfg's "terrain" key.
+const ITEM_TERRAIN_BITS = { 12: 4, 13: 4, 18: 1, 19: 2, 28: 1, 63: 8 };
+// TERRAIN_HAS_WATER (Marsh, Flooded District, River Channel, flooded tunnel
+// floor) is already declared above, next to the action-legality helpers.
+
+// True if any of player.eq unlocks the given TERR_PASS_* bit.
+function hasPassTerrainBit(player, bit) {
+  if (!player?.eq) return false;
+  for (const id of player.eq) if (id && ((ITEM_TERRAIN_BITS[id] | 0) & bit)) return true;
+  return false;
+}
+
+// Base movement cost of stepping onto `terr` for this player, equipment
+// included. Returns 0 when the step is impossible. Mirrors canEnterTerrain()
+// in inventory_items.hpp — keep the two in step.
+function terrainMCFor(terr, player) {
+  let mc = TERRAIN[terr]?.mc;
+  if (mc === undefined) return 0;
+  if (TERRAIN_HAS_WATER[terr] && hasPassTerrainBit(player, TERR_PASS_WATER)) {
+    mc = RAFT_MC;                       // raft: any water terrain at the standard 1 MP
+  } else if (mc === 255) {
+    if (terr === 11 && hasPassTerrainBit(player, TERR_PASS_RIVER)) mc = RIVER_MC;
+    else return 0;                      // genuinely impassable
+  }
+  if (terr === 8 && hasPassTerrainBit(player, TERR_PASS_CLIFF)) mc = CLIFF_MC;
+  return mc;
+}
 
 function getItemMods(id) { return ITEM_MODS[id] || null; }
 
@@ -606,22 +881,24 @@ const SK_NAMES  = ['NAVIGATE','FORAGE','SCAVENGE','SHELTER','ENDURE'];
 // distinct from FOG/"Strangle Fog" so the two are never confused in code)
 const WEATHER_PHASE_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM', 'STRANGLE FOG', 'FOG'];
 // Visibility subtracted from server visR per phase (floored at 0)
-const WEATHER_VIS_PENALTY = [0, 1, 3, 5, 4, 2];
+const WEATHER_VIS_PENALTY = [0, 1, 2, 3, 0, 2];
 // Extra movement cost per hex in each phase — added to terrain MC by movePlayer()
 const WEATHER_MOVE_PENALTY = [0, 1, 2, 3, 1, 1];
-// Terrain intensity [phase][terrain idx 0-11] — matches C++ WEATHER_INTENSITY exactly
+// Terrain intensity [phase][terrain idx 0-15] — matches C++ WEATHER_INTENSITY exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
 //           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+//           12=BunkerEntrance 13=VentShaft 14=TunnelFloor 15=TunnelCollapsed
+// Columns 12-15 are all-zero: weather does not reach underground.
 // Fog is worst in dense/wet terrain (Rust Forest, Marsh, Flooded Ruins) and
 // weakest on high dry ground (Rolling Hills, Mountain) — drives its own
 // per-tick MP/LL hazard on the firmware, same shape as chem's row. Mist's
 // row is all-zero: purely cosmetic, no per-tick hazard.
 const WEATHER_INTENSITY = [
-  [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0   ],
-  [0.5,  0.4,  0.6,  0.8,  0.4,  0.9,  0.5,  0.6,  0.7,  0.1,  0,    0   ],
-  [0.7,  0.6,  0.7,  0.9,  0.5,  1.0,  0.8,  0.9,  1.0,  0.2,  0,    0   ],
-  [0.95, 0.85, 0.75, 0.90, 0.6,  0.95, 0.90, 0.90, 0.85, 0.1,  0,    0   ],
-  [0.45, 0.35, 0.7,  0.75, 0.25, 0.65, 0.5,  0.3,  0.2,  0.1,  0,    0   ],
-  [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0   ],
+  [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0],
+  [0.5,  0.4,  0.6,  0.8,  0.4,  0.9,  0.5,  0.6,  0.7,  0.1,  0,    0,    0, 0, 0, 0],
+  [0.7,  0.6,  0.7,  0.9,  0.5,  1.0,  0.8,  0.9,  1.0,  0.2,  0,    0,    0, 0, 0, 0],
+  [0.95, 0.85, 0.75, 0.90, 0.6,  0.95, 0.90, 0.90, 0.85, 0.1,  0,    0,    0, 0, 0, 0],
+  [0.45, 0.35, 0.7,  0.75, 0.25, 0.65, 0.5,  0.3,  0.2,  0.1,  0,    0,    0, 0, 0, 0],
+  [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0],
 ];

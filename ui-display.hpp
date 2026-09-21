@@ -8,3 +8,4 @@
 #include "ui-audio.hpp"
 #include "ui-screens.hpp"
 #include "ui-upload.hpp"
+#include "ui-death.hpp"

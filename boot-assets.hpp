@@ -194,7 +194,12 @@ static void loadItemRegistry() {
 
   ItemDef cur = {};
   bool hasItem = false;
-  char line[128];
+  // 256, not 128: items.cfg's section banners run to 211 characters and a
+  // truncated read hands the *remainder* back on the next iteration as if it
+  // were its own line.  Today every over-long line is a '#' comment, so the
+  // fragment strips to nothing and is skipped -- but the first long inline
+  // comment on a value line would have the tail parsed as a key.
+  char line[256];
 
   while (f.available()) {
     int n = 0;
@@ -245,8 +250,11 @@ static void loadItemRegistry() {
       else                                       cur.equipSlot = EQUIP_NONE;
     }
     else if (strcmp(key, "stack")    == 0) cur.maxStack     = (uint8_t)max(1, atoi(val));
-    // "trade" / "value" are flavour keys for the item catalogue; trading moves
-    // resource tokens only, so the firmware has no use for them.
+    // "trade" / "value" drive the caravan's shelf (world-system.hpp): a
+    // consumable with trade=yes may be stocked and value is its asking price
+    // in resource tokens. Player-to-player trades still move tokens only.
+    else if (strcmp(key, "trade")    == 0) cur.tradeable    = (val[0] == 'y' || val[0] == 'Y' || val[0] == '1') ? 1 : 0;
+    else if (strcmp(key, "value")    == 0) cur.value        = (uint8_t)constrain(atoi(val), 0, 99);
     else if (strcmp(key, "ll")       == 0) cur.statMods[STAT_LL]      = (int8_t)atoi(val);
     else if (strcmp(key, "food")     == 0) cur.statMods[STAT_FOOD]    = (int8_t)atoi(val);
     else if (strcmp(key, "water")    == 0) cur.statMods[STAT_WATER]   = (int8_t)atoi(val);
@@ -259,6 +267,7 @@ static void loadItemRegistry() {
     else if (strcmp(key, "med_cost")   == 0) cur.opCost[3] = (uint8_t)atoi(val);
     else if (strcmp(key, "scrap_cost") == 0) cur.opCost[4] = (uint8_t)atoi(val);
     else if (strcmp(key, "terrain")  == 0) cur.passTerrainBits = (uint8_t)atoi(val);
+    else if (strcmp(key, "tracks")   == 0) cur.leavesTracks    = (val[0] == 'y' || val[0] == 'Y' || val[0] == '1') ? 1 : 0;
     else if (strcmp(key, "effect")   == 0) cur.effectId       = parseEffectId(val);
     else if (strcmp(key, "param")    == 0) cur.effectParam     = (uint8_t)atoi(val);
     else if (strcmp(key, "effect2")  == 0) cur.effectId2      = parseEffectId(val);
@@ -338,7 +347,7 @@ static void loadRecipeRegistry() {
     const char* val = trimLeft(eq + 1);
 
     if      (strcmp(key, "id")          == 0) cur.id         = (uint8_t)atoi(val);
-    else if (strcmp(key, "name")        == 0) { strncpy(cur.name, val, 15); cur.name[15] = 0; }
+    else if (strcmp(key, "name")        == 0) { strncpy(cur.name, val, sizeof(cur.name) - 1); cur.name[sizeof(cur.name) - 1] = 0; }
     else if (strcmp(key, "output_item") == 0) cur.outputItem = (uint8_t)atoi(val);
     else if (strcmp(key, "output_qty")  == 0) cur.outputQty  = (uint8_t)max(1, atoi(val));
     else if (strcmp(key, "mat1")        == 0) cur.matItem[0] = (uint8_t)atoi(val);
@@ -352,6 +361,7 @@ static void loadRecipeRegistry() {
     else if (strcmp(key, "fuel_cost")   == 0) cur.resCost[2] = (uint8_t)atoi(val);
     else if (strcmp(key, "med_cost")    == 0) cur.resCost[3] = (uint8_t)atoi(val);
     else if (strcmp(key, "scrap_cost")  == 0) cur.resCost[4] = (uint8_t)atoi(val);
+    else if (strcmp(key, "starter")     == 0) cur.starter    = (uint8_t)(val[0]=='y'||val[0]=='Y'||val[0]=='1');
   }
   commitRecipe(cur, hasRecipe);
   f.close();
@@ -362,6 +372,23 @@ static const RecipeDef* getRecipeDef(uint8_t id) {
   for (int i = 0; i < (int)recipeCount; i++)
     if (recipeRegistry[i].id == id) return &recipeRegistry[i];
   return nullptr;
+}
+
+// knownRecipes bits for every `starter = yes` recipe — the common know-how a
+// survivor spawns with, no encounter required. Computed off the registry each
+// call (it is a 32-entry scan) so flipping the flag in data/recipes.cfg and
+// rebooting is enough; no firmware flash, and no SAVE_VERSION bump, because
+// tryLoadSave() ORs this into whatever the save recorded.
+// Returns 0 before loadRecipeRegistry() has run — which is the case for the
+// boot-time resetSurvivor() pass over the empty player slots in setup(). Those
+// slots are re-reset on 'pick', long after the registry is up.
+static uint32_t starterRecipeMask() {
+  uint32_t mask = 0;
+  for (int i = 0; i < (int)recipeCount; i++) {
+    const RecipeDef& r = recipeRegistry[i];
+    if (r.starter && r.id >= 1 && r.id <= MAX_RECIPES) mask |= (1u << (r.id - 1));
+  }
+  return mask;
 }
 
 // ── Encounter engine: boot loading ────────────────────────────────────────────
@@ -388,19 +415,22 @@ static bool  jsonStr(const char* p, char* buf, int bufLen) {
   return true;
 }
 
-// Load /data/encounters/index.json → encPools[0..9]
+// Load /data/encounters/index.json → encPools[0..NUM_TERRAIN-1].
+// index.json defines only the terrains that actually have an encounter pool
+// (0-9 on the surface, 14 for the bunker tunnels); every other slot stays
+// count=0, which handleMsg_enc_start treats as "no encounters here".
 static void loadEncounterIndex() {
   File f = SD.open("/data/encounters/index.json");
   if (!f) { Log.warning("SD MISSING: /data/encounters/index.json"); return; }
   Log.notice("Encounter index load: size=%u", (unsigned)f.size());
-  size_t sz = min((size_t)f.size(), (size_t)512);
+  size_t sz = min((size_t)f.size(), (size_t)1024);  // grew with the tunnel pool
   char* buf = (char*)malloc(sz + 1);
   if (!buf) { Log.error("encounter index malloc FAIL size=%u", (unsigned)(sz+1)); f.close(); return; }
   f.read((uint8_t*)buf, sz);
   buf[sz] = 0;
   f.close();
   memset(encPools, 0, sizeof(encPools));
-  for (int t = 0; t <= 9; t++) {
+  for (int t = 0; t < NUM_TERRAIN; t++) {
     char tKey[5]; snprintf(tKey, sizeof(tKey), "\"%d\"", t);
     const char* entry = strstr(buf, tKey);
     if (!entry) continue;
@@ -449,13 +479,21 @@ static void loadLootTables() {
     tbl.count = 0;
     // Parse entries in the array
     const char* arr = after + 1;
-    while (tbl.count < 8) {
+    while (tbl.count < LOOT_ENTRIES_MAX) {
       const char* entry = strchr(arr, '{');
       if (!entry) break;
       const char* entryEnd = strchr(entry, '}');
       if (!entryEnd) break;
-      int elen = min((int)(entryEnd - entry), 80);
-      char eb[80]; strncpy(eb, entry, elen); eb[elen] = 0;
+      // The file is pretty-printed, so one entry ({item, qty:[a,b], weight})
+      // runs ~90-115 chars.  This buffer must hold the whole entry: truncating
+      // it drops the trailing "weight" key, every weight falls back to 0, and
+      // rollLootTable() bails on totalW == 0 - silently killing every drop.
+      char eb[192];
+      int full = (int)(entryEnd - entry);
+      int elen = min(full, (int)sizeof(eb) - 1);
+      if (full > (int)sizeof(eb) - 1)
+        Log.warning("loot table %s entry %d truncated (%d chars)", tbl.name, (int)tbl.count, full);
+      strncpy(eb, entry, elen); eb[elen] = 0;
       LootEntry& le = tbl.entries[tbl.count];
       le.item = 0; le.qtyMin = 1; le.qtyMax = 1; le.weight = 10;
       const char* iv = jsonFindKey(eb, "item");   if (iv) le.item   = (uint8_t)jsonInt(iv);
@@ -490,10 +528,11 @@ static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQ
   for (int i = 0; i < lootTableCount; i++) {
     if (strncmp(lootTables[i].name, tableName, 19) != 0) continue;
     LootTable& tbl = lootTables[i];
-    if (tbl.count == 0) return;
+    if (tbl.count == 0) { Log.warning("loot table %s is empty", tableName); return; }
     int totalW = 0;
     for (int j = 0; j < tbl.count; j++) totalW += tbl.entries[j].weight;
-    if (totalW == 0) return;
+    // Never silent: a table that parsed with no weight drops nothing, forever.
+    if (totalW == 0) { Log.warning("loot table %s has zero total weight", tableName); return; }
     int roll = (int)((uint32_t)esp_random() % (uint32_t)totalW);
     int cum = 0;
     for (int j = 0; j < tbl.count; j++) {
@@ -507,6 +546,7 @@ static void rollLootTable(const char* tableName, uint8_t* outItem, uint8_t* outQ
     }
     return;
   }
+  Log.warning("loot table %s not found (%d loaded)", tableName, (int)lootTableCount);
 }
 
 // ── Encounter DN computation (spec §3) ────────────────────────────────────────
@@ -517,7 +557,18 @@ static uint8_t computeEncounterDN(int pid, uint8_t baseRisk, uint8_t /*skill*/) 
   if (G.threatClock >= TC_THRESHOLD_C) effectiveRisk += 5;
   if (G.threatClock >= TC_THRESHOLD_D) effectiveRisk += 5;
   effectiveRisk = constrain(effectiveRisk, 0, 100);
-  int rawDN = 2 + (effectiveRisk * 10) / 100;
+  // DN curve. The old `2 + risk*10/100` compressed the authored 0-100 risk
+  // range into DN 2-12, but only DN 5-10 is actually contestable against
+  // 2d6 + skill -- so every choice below risk 30 was a free pass. Authored
+  // base_risk has a median of 30, which meant DN 5: a 92% success at skill 1.
+  // Measured over 334 authored choices the whole library failed 9% of the
+  // time and cost 0.28 LL per choice, which is why encounter hazards killed
+  // nobody across 9 bot runs despite 277 of 320 hazards costing LL (mean -3).
+  // `5 + risk*7/100` keeps the authors' relative ordering and moves the band
+  // onto the dice: risk 30 -> DN 7 (72%), risk 50 -> DN 8 (58%),
+  // risk 70 -> DN 9 (42%). Library-wide that is 26% failure, 0.74 LL/choice.
+  // Mirrored in data/ui-encounter.js, mock-server/server.js, bots/encounters.py.
+  int rawDN = 5 + (effectiveRisk * 7) / 100;
   Player& p = G.players[pid];
   int bonus = 0;
   if (p.ll > 4)        bonus += (p.ll - 4) / 2;

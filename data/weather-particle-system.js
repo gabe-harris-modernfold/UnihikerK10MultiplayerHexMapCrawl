@@ -595,9 +595,16 @@ class WeatherParticleSystem {
       x: gx0, y: gy0,
       dx: (Math.random() - 0.5) * 0.5,
       dy: (Math.random() - 0.5) * 0.5,
-      color: `rgba(${60 + Math.trunc(Math.random() * 50)},${215 + Math.trunc(Math.random() * 40)},${70 + Math.trunc(Math.random() * 60)},0.85)`,
+      // Effective alpha is p.opacity * this colour's own alpha (the render
+      // loop sets globalAlpha = p.opacity, see _render), so both have to move
+      // together — dropping one alone barely shifts the brightest blips.
+      // Peak has come down 0.85*0.85 = 0.72 -> 0.55*0.48 = 0.26: airborne
+      // contamination you look *through*, not specks on the glass. The spawn
+      // count came down with it (renderWeatherOverlay), since thinning the
+      // alpha alone just makes a wall of green dots a paler wall.
+      color: `rgba(${60 + Math.trunc(Math.random() * 50)},${215 + Math.trunc(Math.random() * 40)},${70 + Math.trunc(Math.random() * 60)},0.55)`,
       size: 1.2 + Math.random() * 1.6,
-      maxOpacity: 0.5 + Math.random() * 0.35,
+      maxOpacity: 0.26 + Math.random() * 0.22,
       opacity: 0, age: 0, dead: false,
       maxY: null,
       ttl: anchor ? 35 + Math.random() * 30 : 120, fade: anchor ? 6 : 10,

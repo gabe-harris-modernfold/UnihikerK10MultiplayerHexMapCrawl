@@ -27,6 +27,11 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
       p.connected  = true;
       p.wsClientId = client->id();
       p.connectMs  = millis();
+      // Seed the liveness clock now: a slot with lastWsAliveMs == 0 is treated
+      // as never-seen and so is immediately reapable, which would leave a
+      // freshly-picked player one unlucky ws.client() look from being unseated
+      // before gameLoop's first refreshWsLiveness() ever ran.
+      lastWsAliveMs[arch] = p.connectMs;
 
       // Three ways into a slot:
       //   downed    — LL 0: a fresh survivor, but lifetime score/steps carry over
@@ -38,7 +43,7 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         uint16_t savedScore = isDowned ? p.score : 0;
         uint16_t savedSteps = isDowned ? p.steps : 0;
         resetSurvivor(p, (uint8_t)arch);
-        pickSpawnHex(p);
+        pickSpawnNearPlayer(p, (uint8_t)arch);
         snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
         int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1;
         for (int i = 0; i < n; i++) grantRandomStartItem(p);
@@ -90,6 +95,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   int visLen = 0, visCells = 0;
   int vr = VISION_R; bool mr = false;
   int slot = -1;
+  uint8_t depBefore = 0, depAfter = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -99,16 +105,33 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
         client->text("{\"t\":\"err\",\"msg\":\"Cannot move during encounter\"}");
         return;
       }
-      movePlayer(slot, dir);
+      depBefore = G.players[slot].depth;
+      movePlayer(slot, dir);          // may cross boards -- see tunnelStepDown/Up
+      depAfter  = G.players[slot].depth;
       playerVisParams(slot, &vr, &mr);
+      // Underground the disk must be built from tq/tr against G.tunnel. p.q/p.r
+      // stay pinned to the hatch the player descended through -- the invariant
+      // at the top of tunnels.hpp -- so building from them here shipped a
+      // *surface* disk around that hatch and revealed nothing below. The tunnel
+      // board therefore stayed fogged past the one ring tsync sent on descend,
+      // and every step after that landed on a cell the client had never seen,
+      // which applyHexFill() paints flat black: a move onto "no hex".
       visLen = buildVisDisk(visBuf, sizeof(visBuf),
-                            G.players[slot].q, G.players[slot].r, vr, mr, &visCells);
+                            depAfter ? G.players[slot].tq : G.players[slot].q,
+                            depAfter ? G.players[slot].tr : G.players[slot].r,
+                            vr, mr, &visCells, depAfter);
     }
     xSemaphoreGive(G.mutex);
   }
+  // That step went through a hatch and we are now below. The client has never
+  // seen the tunnel board, so hand over the whole fogged thing before the vis
+  // disk that indexes into it -- sendTunnelSync() takes G.mutex itself, hence
+  // out here. Surfacing needs no equivalent: the client already has G.map.
+  if (slot >= 0 && depAfter == 1 && depBefore == 0) sendTunnelSync(client);
   if (visLen > 0) {
     client->text(visBuf, (size_t)visLen);
   }
+  if (slot >= 0 && depAfter != depBefore) k10Play(MOTIF_SEWER_ECHO);
 }
 
 static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -173,6 +196,31 @@ static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len)
 
   wifiConnecting = true;
   xTaskCreatePinnedToCore(wifiConnectTask, "wifiConn", 4096, ctx, 1, NULL, 0);
+}
+
+// {"t":"wifi_forget","ssid":"..."} — drop a network from the roaming list.
+// An active connection to that network is left alone; forgetting is about
+// which networks the board goes looking for next time.
+static void handleMsg_wifi_forget(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
+  const char* sp = strstr(data, "\"ssid\""); if (!sp) return;
+  const char* sv = strchr(sp + 6, '"');      if (!sv) return; sv++;
+  const char* se = strchr(sv, '"');          if (!se) return;
+
+  char ssid[33];
+  int sl = (int)(se - sv); if (sl > 32) sl = 32;
+  strncpy(ssid, sv, sl); ssid[sl] = 0;
+
+  if (!wifiStoreForget(ssid)) {
+    Log.verbose("wifi_forget: ssid=%s not in store", ssid);
+    return;
+  }
+  // Tell clients to drop their cached copy too, otherwise the next reconnect
+  // would auto-send those credentials and re-add the network we just dropped.
+  char fb[96];
+  int fl = snprintf(fb, sizeof(fb), "{\"t\":\"wifi\",\"status\":\"forgot\",\"ssid\":\"%s\"}", ssid);
+  ws.textAll(fb, (size_t)fl);
+  broadcastWifiNets();
 }
 
 static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -322,8 +370,9 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   // tick or the 'ev'/'act' broadcast below, so a successful craft needs its
   // own targeted snapshot back to the crafting client (and a saveGame(),
   // same as use_item/equip_item/drop_item do for the same kind of mutation).
-  static char craftAck[320];
+  static char craftAck[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   craftAck[0] = '\0';
+  const char* craftWhy = nullptr;  // why ACT_CRAFT was refused (static string), toasted back below
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -334,21 +383,15 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         return;
       }
       actOk = handleAction(slot, (uint8_t)actType, mpParam, (uint8_t)recipeId,
-                            survBuf, sizeof(survBuf), &survLen, settleResult);
+                            survBuf, sizeof(survBuf), &survLen, settleResult, &craftWhy);
       if (actType == ACT_CRAFT && actOk) {
         Player& pl = G.players[slot];
-        snprintf(craftAck, sizeof(craftAck),
-          "{\"t\":\"item_result\",\"ok\":true,\"act\":\"craft\",\"pid\":%d,\"recipe\":%d,"
-          "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-          "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-          "\"inv\":[%d,%d,%d,%d,%d],\"kr\":%lu}",
-          slot, recipeId,
-          pl.invType[0],  pl.invType[1],  pl.invType[2],  pl.invType[3],
-          pl.invType[4],  pl.invType[5],  pl.invType[6],  pl.invType[7],
-          pl.invType[8],  pl.invType[9],  pl.invType[10], pl.invType[11],
-          pl.invQty[0],   pl.invQty[1],   pl.invQty[2],   pl.invQty[3],
-          pl.invQty[4],   pl.invQty[5],   pl.invQty[6],   pl.invQty[7],
-          pl.invQty[8],   pl.invQty[9],   pl.invQty[10],  pl.invQty[11],
+        int ap = appendFmt(craftAck, sizeof(craftAck), 0,
+          "{\"t\":\"item_result\",\"ok\":true,\"act\":\"craft\",\"pid\":%d,\"recipe\":%d,",
+          slot, recipeId);
+        ap = appendPackArrays(craftAck, sizeof(craftAck), ap, slot);
+        appendFmt(craftAck, sizeof(craftAck), ap,
+          ",\"inv\":[%d,%d,%d,%d,%d],\"kr\":%lu}",
           pl.inv[0], pl.inv[1], pl.inv[2], pl.inv[3], pl.inv[4],
           (unsigned long)pl.knownRecipes);
       }
@@ -363,6 +406,14 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
     client->text(survBuf, (size_t)survLen);
   if (craftAck[0])
     client->text(craftAck);
+  // A refused craft still broadcasts its AO_BLOCKED 'act' event like every
+  // other action, but that only says "blocked" — tell the crafting client
+  // why (same strings the mock sends) so the tap doesn't just vanish.
+  if (actType == ACT_CRAFT && !actOk && craftWhy) {
+    static char errBuf[96];
+    snprintf(errBuf, sizeof(errBuf), "{\"t\":\"err\",\"msg\":\"%s\"}", craftWhy);
+    client->text(errBuf);
+  }
   if (settleResult.fired)
     broadcastSettle(settleResult);
 }

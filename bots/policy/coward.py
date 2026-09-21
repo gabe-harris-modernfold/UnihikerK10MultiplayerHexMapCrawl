@@ -12,7 +12,9 @@ the whole threat model and still do fine.
 If it dies, the pressure is real and the question becomes whether it dies for
 interesting reasons.
 """
-from config import RES_FOOD, RES_WATER, ACT_REST, TERRAIN_IS_RUINS, NUM_TERRAIN
+from config import (RES_FOOD, RES_WATER, ACT_REST, TERRAIN_IS_RUINS,
+                    NUM_TERRAIN, NAR_COLD_IMMUNE, NAR_FIRE_STARTER,
+                    NAR_LAND_FORAGE, NAR_RIVER_FORAGE, NAR_SCAV_DOUBLE)
 from navigate import best_target, hex_distance
 from .base import Action
 from .survivor import SurvivorPolicy
@@ -26,6 +28,18 @@ NUKE_CRATER = 10
 
 class CowardPolicy(SurvivorPolicy):
     name = "coward"
+    # Gear the way it plays: nothing but not dying. Exposure is the largest
+    # single LL drain measured, so the Bear Skin Cape's immunity outranks any
+    # raw stat; sealed suits matter because this bot refuses radioactive
+    # ground and a suit lets it stop refusing. Mobility and carry space are
+    # worth almost nothing to a survivor whose plan is to sit still.
+    gear_weights = {
+        "ll": 4.0, "rad": 3.0, "threat": 2.0, "terrain": 2.0,
+        "mp": 0.5, "slots": 0.5, "vision": 0.5,
+        "nar": {NAR_COLD_IMMUNE: 8.0, NAR_FIRE_STARTER: 3.0,
+                NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
+                NAR_SCAV_DOUBLE: 0.5},
+    }
     engage_encounters = True
     rest_below_ll = 4          # rests much earlier than the others
     pack_headroom = 2

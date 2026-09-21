@@ -1,7 +1,9 @@
 #pragma once
 // ── Encounter message handlers: enc_start, enc_choice, enc_bank, enc_abort ───
-// The server is authoritative: the client sends only which hex it is on and
-// which choice index it picked.  See encounter_engine.hpp.
+// The server is authoritative: the client sends only which hex it is on, which
+// choice index it picked, and — on enc_bank — how much of the haul it wants to
+// keep.  That last one is a request, clamped against pendingLoot[] here; the
+// loot itself is still rolled server-side.  See encounter_engine.hpp.
 
 static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
@@ -10,7 +12,9 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
   const char* rp = strstr(data, "\"r\""); if (!rp) return;
   const char* rv = strchr(rp + 3, ':');  if (!rv) return;
   int hq = atoi(qv + 1), hr = atoi(rv + 1);
-  if (hq < 0 || hq >= MAP_COLS || hr < 0 || hr >= MAP_ROWS) return;
+  // Bounds are checked against whichever board the player is on, below --
+  // the tunnel board is 16x10, not 75x57. Reject obvious garbage here.
+  if (hq < 0 || hr < 0) return;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"mutex_timeout\"}");
@@ -25,20 +29,32 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
     client->text("{\"t\":\"err\",\"msg\":\"Cannot enter — you are downed\"}");
   } else {
     Player&  p    = G.players[pid];
-    HexCell& cell = G.map[hr][hq];
+    bool     below = (p.depth != 0);
+    bool     inBounds = below ? tunIn(hq, hr)
+                              : (hq < MAP_COLS && hr < MAP_ROWS);
+    if (!inBounds) {
+      client->text("{\"t\":\"err\",\"msg\":\"No such hex\"}");
+      xSemaphoreGive(G.mutex);
+      return;
+    }
+    HexCell& cell = below ? G.tunnel[hr][hq] : G.map[hr][hq];
     bool claimed = false;
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (i == pid || !encounters[i].active) continue;
+      // Depth too: a tunnel hex and a surface hex can share coordinates.
+      if (G.players[i].depth != p.depth) continue;
       if (encounters[i].hexQ == (uint8_t)hq && encounters[i].hexR == (uint8_t)hr) { claimed = true; break; }
     }
     uint8_t terrain = cell.terrain;
-    if ((int)p.q != hq || (int)p.r != hr) {
+    int myQ = below ? (int)p.tq : (int)p.q;
+    int myR = below ? (int)p.tr : (int)p.r;
+    if (myQ != hq || myR != hr) {
       client->text("{\"t\":\"err\",\"msg\":\"Not at that hex\"}");
     } else if (cell.poi == 0) {
       client->text("{\"t\":\"err\",\"msg\":\"Already looted\"}");
     } else if (claimed) {
       client->text("{\"t\":\"err\",\"msg\":\"Another survivor is already inside\"}");
-    } else if (terrain >= 10 || encPools[terrain].count == 0) {
+    } else if (terrain >= NUM_TERRAIN || encPools[terrain].count == 0) {
       client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
     } else {
       uint8_t idx = cell.poi;
@@ -54,6 +70,7 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
         enc.encIdx  = idx;
         enc.hexQ    = (uint8_t)hq;
         enc.hexR    = (uint8_t)hr;
+        enc.depth   = below ? 1 : 0;   // which board hexQ/hexR index
         enc.terrain = terrain;
         encEnterStartNode(json, enc);
         char pathBuf[72];
@@ -70,23 +87,12 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
   xSemaphoreGive(G.mutex);
 }
 
-// Place a typed item into the player's pack (stack first, then a free slot);
-// overflow goes to the ground at the player's hex.  Caller holds G.mutex.
+// Place a typed item into the player's pack via addItemToInv() (stacks first,
+// then empty slots — the same rule pickups and crafting use); overflow goes
+// to the ground at the player's hex.  Caller holds G.mutex.
 static void grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
   if (!itemId || !qty) return;
-  const ItemDef* def = getItemDef(itemId);
-  uint8_t cap   = def ? def->maxStack : 1;
-  uint8_t slots = effectiveInvSlots(p);
-  for (int s = 0; s < slots && qty; s++) {
-    if (p.invType[s] != itemId || p.invQty[s] >= cap) continue;
-    uint8_t add = min(qty, (uint8_t)(cap - p.invQty[s]));
-    p.invQty[s] += add; qty -= add;
-  }
-  for (int s = 0; s < slots && qty; s++) {
-    if (p.invType[s]) continue;
-    uint8_t add = min(qty, cap);
-    p.invType[s] = itemId; p.invQty[s] = add; qty -= add;
-  }
+  qty = (uint8_t)(qty - addItemToInv(p, itemId, qty));
   if (!qty) return;
   // Pack full — drop the remainder where the player stands
   int gslot = -1;
@@ -229,7 +235,33 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
 
 static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
+  // Built inside the mutex below (if any items were pending) and sent after
+  // it's released — same static-ack pattern as handleMsg_act's craft path.
+  static char itemAck[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  itemAck[0] = '\0';
+  // Optional trim: {"t":"enc_bank","keep":[w,f,fu,m,s]} — how much of each
+  // resource the player chose to take on the haul tray's steppers.  An absent
+  // or malformed "keep" means "bank everything", which is what an older client
+  // sends, so the default is wide open; every entry is clamped against
+  // pendingLoot[] below, so this can only ever take less than was won.
+  // Same array idiom as car_buy's "give" (network-msg-trade.hpp).
+  uint8_t keep[5] = { 99, 99, 99, 99, 99 };
+  const char* kp = strstr(data, "\"keep\"");
+  if (kp) {
+    const char* kb = strchr(kp + 6, '[');
+    if (kb) {
+      kb++;
+      for (int i = 0; i < 5; i++) {
+        while (*kb == ' ') kb++;
+        keep[i] = (uint8_t)constrain(atoi(kb), 0, 99);
+        const char* nx = strchr(kb, i < 4 ? ',' : ']');
+        if (!nx) break;
+        kb = nx + 1;
+      }
+    }
+  }
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  bool banked = false;
   int pid = findSlot(client->id());
   if (pid >= 0 && encounters[pid].active) {
     Player& p = G.players[pid];
@@ -240,12 +272,30 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
     } else {
       int totalRes = 0;
       for (int i = 0; i < 5; i++) {
-        p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + (int)enc.pendingLoot[i]);
-        totalRes += enc.pendingLoot[i];
+        // Take the smaller of what was rolled and what was asked for.  Writing
+        // the result back into pendingLoot keeps the EVT_ENC_BANK memcpy below
+        // honest: the event must report what was actually banked, or the
+        // client's _evEncBank would add the untrimmed amount to its inv[].
+        // What's left over is simply left behind — no ground drop, no refund.
+        int take = min((int)enc.pendingLoot[i], (int)keep[i]);
+        p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + take);
+        enc.pendingLoot[i] = (uint8_t)take;
+        totalRes += take;
       }
       for (int j = 0; j < enc.pendingItemCount; j++)
         grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
       p.knownRecipes |= enc.pendingRecipes;
+      // grantItemOrDrop() just mutated invType[]/invQty[], which — like
+      // use_item/equip_item/craft — is private state never carried by the
+      // broadcastState() tick or the 'ev' broadcast below. Without this
+      // targeted snapshot the banked item sits in the player's save-state
+      // but never reaches their on-screen pack until the next full sync.
+      if (enc.pendingItemCount) {
+        int ap = appendFmt(itemAck, sizeof(itemAck), 0,
+          "{\"t\":\"item_result\",\"ok\":true,\"act\":\"enc_bank\",\"pid\":%d,", pid);
+        ap = appendPackArrays(itemAck, sizeof(itemAck), ap, pid);
+        appendFmt(itemAck, sizeof(itemAck), ap, "}");
+      }
       int scoreGain = totalRes * 3 + (fullClear ? 10 : 0);
       GameEvent ev = {};
       ev.type = EVT_ENC_BANK; ev.pid = (uint8_t)pid;
@@ -256,9 +306,18 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       p.encCount++;
       enqEvt(ev);
       enc = {};
+      banked = true;
     }
   }
   xSemaphoreGive(G.mutex);
+  // Persist outside the mutex (saveGame takes it itself) — same pattern as
+  // handleMsg_act's craft path. The POI was consumed when the scene opened,
+  // so any save between then and now (another survivor's craft/use_item, a
+  // disconnect) already holds the emptied hex; without a save here a reboot
+  // would keep that empty hex yet forget the loot, items and — worst of all —
+  // the one-time recipes that were just banked from it.
+  if (banked) saveGame();
+  if (itemAck[0]) client->text(itemAck);
 }
 
 static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t len) {

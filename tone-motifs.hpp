@@ -1,5 +1,5 @@
 #pragma once
-// 19 post-apocalyptic tone motifs.
+// 23 post-apocalyptic tone motifs.
 // ToneStep format: {freq, beat} | {neg, 0} = silence | {0, 0} = terminator
 // toneTaskFn calls vTaskDelay(beat) after every playTone so each note
 // plays its full duration before the next fires.
@@ -11,9 +11,13 @@
 //   diminished-7 arpeggio — fast unstable spin, used for malfunction/spark
 //   whole-tone run        — ungrounded/alien, used for the one uncanny bonus cue
 //   chromatic descent     — slowing half-steps, used for "dying" cues
+//   minor-2nd ostinato    — the pair, repeating and tightening as it closes;
+//                           Creeping Doom only (motifs 20-23), the one motif
+//                           family where tempo, not pitch, carries the meaning
 // Register mostly sits in octaves 2-4 (low/mid) so it reads as heavy old
 // machinery rather than a toy; octave 5+ is reserved for alarms and the
-// geiger clicks. SEQ_SCORE_UP (Esp32HexMapCrawl.ino) and SCREEN_CLICK below
+// geiger clicks, and the Doom family sits below all of it (<=104 Hz).
+// SEQ_SCORE_UP (Esp32HexMapCrawl.ino) and SCREEN_CLICK below
 // are deliberately left out of this palette — one's the only upbeat cue,
 // the other's a neutral UI blip.
 
@@ -110,4 +114,64 @@ static const ToneStep MOTIF_GEIGER[] = {
 // 19. Screen Click — screen switch: neutral UI blip, kept clean (not part of the dark palette)
 static const ToneStep MOTIF_SCREEN_CLICK[] = {
   {880, 25}, {660, 20}, {0, 0}
+};
+
+// ── Creeping Doom: the pair ──────────────────────────────────────────────────
+// Motifs 20-23 are one family and the only ostinato in the palette: two notes
+// a minor 2nd apart, alternating, with the *tempo* carrying the information.
+// Pitch never moves — what changes as the Doom closes is how fast the pair
+// repeats and how little silence sits between reps, which is why these are
+// selected by distance rather than by awareness (see doomAudioBand(),
+// world-system.hpp). Still the lowest recurring voice in the palette — the
+// pair sits below every motif except HEAVY_DOOR_DRAG's tail — so the Doom
+// reads as underneath everything else the box says.
+//
+// Register history: the family first sat at 98/104 Hz (G2/G#2). That is the
+// bottom of what this speaker can move, and at a low audioVol setting almost
+// nothing of the fundamental survived — what reached the ear was mostly the
+// onset transient, i.e. a click. Moved up a fourth to C3/C#3 for roughly
+// double the acoustic output while staying firmly in the cellar. The tritone
+// drop lands on the old DOOM_LO, which is also HEAVY_DOOR_DRAG's opening note
+// and therefore known-good on this hardware.
+static constexpr int DOOM_LO   = 131;  // C3
+static constexpr int DOOM_HI   = 139;  // C#3 — the minor 2nd above
+static constexpr int DOOM_DROP =  98;  // G2  — a tritone below DOOM_HI
+
+// Note-length floor. At DOOM_LO one cycle is ~7.6 ms, and a tone needs roughly
+// 10 cycles before the ear hears it as a pitch rather than a click — so no
+// note in this family goes below 150 ms (~20 cycles at C3). The first cut of
+// these motifs accelerated by shortening notes to 50-90 ms, which at the
+// then-98 Hz DOOM_LO is 5-9 cycles: it came out of the speaker as a burst of
+// clicks, not a figure. Raising the register raised the ceiling on how fast
+// this family *could* go, but the pacing was deliberately not taken back —
+// the first cut was also simply too fast to read as an ostinato.
+// Tempo therefore comes from shrinking the GAPS and dropping them entirely,
+// never from shortening the notes. MOTIF_HEAVY_DOOR_DRAG is the reference
+// point for what this register needs — it never goes under ~20 cycles.
+
+// 20. Doom Far — it has your scent. The pair twice, wide gap, unhurried.
+static const ToneStep MOTIF_DOOM_FAR[] = {
+  {DOOM_LO, 200}, {DOOM_HI, 200}, {-450, 0},
+  {DOOM_LO, 200}, {DOOM_HI, 260}, {0, 0}
+};
+
+// 21. Doom Near — same notes and lengths, gap less than half, one more rep.
+static const ToneStep MOTIF_DOOM_NEAR[] = {
+  {DOOM_LO, 170}, {DOOM_HI, 170}, {-200, 0},
+  {DOOM_LO, 170}, {DOOM_HI, 170}, {-200, 0},
+  {DOOM_LO, 170}, {DOOM_HI, 220}, {0, 0}
+};
+
+// 22. Doom Hunt — the gaps are gone entirely and the pair tightens 180->150
+// (still ~15 cycles at the floor), then the tritone drops out underneath.
+static const ToneStep MOTIF_DOOM_HUNT[] = {
+  {DOOM_LO, 180}, {DOOM_HI, 180}, {DOOM_LO, 170}, {DOOM_HI, 170},
+  {DOOM_LO, 160}, {DOOM_HI, 160}, {DOOM_LO, 150}, {DOOM_HI, 150},
+  {DOOM_DROP, 400}, {0, 0}
+};
+
+// 23. Doom Lost — the pair breaks. The answering note never comes; that
+// absence is the release cue, so this one ends on the LOW note alone.
+static const ToneStep MOTIF_DOOM_LOST[] = {
+  {DOOM_LO, 180}, {DOOM_HI, 180}, {-300, 0}, {DOOM_LO, 400}, {0, 0}
 };

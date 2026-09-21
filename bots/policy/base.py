@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 class Action:
     """One outbound message.  kind maps to the wire t value."""
     kind: str                       # move|act|enc_start|enc_choice|enc_bank|
-                                    # enc_abort|use_item|trade_offer|noop
+                                    # enc_abort|use_item|equip_item|
+                                    # unequip_item|pickup_item|trade_offer|noop
     d: int = 0                      # move: direction 0-5
     a: int = 0                      # act: ACT_* id
     mp: int = 1                     # act: MP to spend (ACT_WATER reads this)
@@ -24,7 +25,9 @@ class Action:
     q: int = -1                     # enc_start: hex being opened (REQUIRED)
     r: int = -1
     keep: list = field(default_factory=list)   # enc_bank: per-resource keep
-    slot: int = 0                   # use_item: inventory slot
+    slot: int = 0                   # use_item / equip_item: inventory slot
+    eslot: int = 0                  # unequip_item: equipment slot 0-4
+    gslot: int = 0                  # pickup_item: ground-pile slot
     to: int = 0                     # trade_offer: target pid
     give: list = field(default_factory=list)
     want: list = field(default_factory=list)
@@ -58,6 +61,9 @@ class Action:
             return m
         if k == "enc_abort":   return {"t": "enc_abort"}
         if k == "use_item":    return {"t": "use_item", "slot": self.slot}
+        if k == "equip_item":  return {"t": "equip_item", "slot": self.slot}
+        if k == "pickup_item": return {"t": "pickup_item", "gslot": self.gslot}
+        if k == "unequip_item": return {"t": "unequip_item", "eslot": self.eslot}
         if k == "trade_offer":
             return {"t": "trade_offer", "to": self.to,
                     "give": self.give, "want": self.want}

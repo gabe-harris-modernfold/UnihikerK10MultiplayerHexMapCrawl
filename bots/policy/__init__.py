@@ -5,6 +5,8 @@ from .scoremax import ScoreMaxPolicy
 from .contentmax import ContentMaxPolicy
 from .coward import CowardPolicy
 from .rival import RivalPolicy
+from .subterranean import SubterraneanPolicy, TunnelPolicy
+from .tunnelrunner import TunnelRunnerPolicy
 
 REGISTRY = {
     "drunk": DrunkPolicy,
@@ -12,6 +14,10 @@ REGISTRY = {
     "contentmax": ContentMaxPolicy,
     "coward": CowardPolicy,
     "rival": RivalPolicy,
+    # The Subterranean Explorers. Both play the bunker tunnel board on
+    # purpose; every other policy treats a hatch as a hole to fall into.
+    "subterranean": SubterraneanPolicy,
+    "tunnelrunner": TunnelRunnerPolicy,
 }
 
 # The encounter library is ~100 JSON files; parse it once and share the
@@ -41,4 +47,5 @@ def make(name: str, rng, **kw) -> Policy:
 
 __all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
            "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
+           "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy",
            "REGISTRY", "make", "shared_library"]

@@ -88,6 +88,7 @@
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
 #include "logging.hpp"
+#include "wifi-store.hpp"   // known-network roaming list (NVS "wifinets")
 
 // ── PSRAM placement helpers ─────────────────────────────────────────────────
 // Internal DRAM is the scarce resource on this board. ~210 KB of static .bss
@@ -121,6 +122,11 @@ static void* psramStaticAlloc(size_t bytes) {
 #include "lgfx_config.h"
 
 static const char* AP_SSID = "WASTELAND";
+// How many survivors the board's own softAP will admit. This is exactly the
+// ESP32 core's softAP() default, named here so the "direct uplink" warning the
+// client shows (UPLINK_WARNINGS in data/ui-utils.js) quotes a number that is
+// actually true, and so raising it later is a one-line change in one place.
+static constexpr int AP_MAX_CLIENTS = 4;
 
 // ── WiFi STA connection (background task) ──────────────────────
 struct WifiTaskCtx { char ssid[33]; char pass[65]; };
@@ -130,6 +136,18 @@ static char savedPass[65] = {0};
 static bool     bootWifiPending = false;
 static uint32_t bootWifiStartMs = 0;
 static constexpr uint32_t BOOT_WIFI_TIMEOUT = 12000;
+
+// ── Known-network roaming sweep ────────────────────────────────────────────
+// While the board is off every known network, loop() periodically kicks the
+// auto-join sweep in network-session.hpp: scan the air, join the strongest
+// network in wifi-store.hpp. A scan stalls the softAP for a second or two, so
+// repeated misses back off 30s → 60 → 120 → 240 → 300 rather than hammering a
+// location where nothing is known. First sweep waits 20s so it can't collide
+// with the page load that usually follows boot.
+static uint32_t wifiNextSweepMs  = 20000;
+static uint32_t wifiSweepBackoff = 30000;
+static constexpr uint32_t WIFI_SWEEP_MIN = 30000;
+static constexpr uint32_t WIFI_SWEEP_MAX = 300000;
 static bool rtcSynced = false;
 
 static bool checkRtcReady() {
@@ -139,13 +157,47 @@ static bool checkRtcReady() {
   return rtcSynced;
 }
 
+// ── Bunker tunnel system (tunnels.hpp) ──────────────────────────
+// A second, much smaller hex board shared by every player, reached through
+// hatch hexes scattered on the surface map (terrain 12/13).  Declared here
+// rather than in tunnels.hpp because GameState and SaveHeader below both
+// need these sizes before that file is included.
+//
+// The tunnel board does NOT wrap: wrapQ/wrapR are hardcoded to MAP_COLS/
+// MAP_ROWS, so tunnel neighbour math uses tunIn() and an out-of-bounds
+// neighbour is simply not a legal move.
+static constexpr int      TUN_COLS       = 16;
+static constexpr int      TUN_ROWS       = 10;
+static constexpr uint8_t  MAX_HATCHES    = 8;
+static constexpr uint8_t  TUNNEL_MC      = 2;   // MC of Tunnel Floor (14); mirrors TERRAIN_MC
+static constexpr uint8_t  VENT_ASCEND_MP = 2;   // climbing out of a Vent Shaft (13) costs double
+// Underground sight. Base is your own hex plus one ring -- no terrain, weather
+// or smoke modifiers apply down there. A carried Bile Flare adds 1; a Scout
+// adds TUNNEL_VIS_SCOUT on top (less than their +2 on the surface, so the
+// light still matters). See playerVisParams() in hex-map.hpp.
+static constexpr int      TUNNEL_VIS_BASE  = 1;
+static constexpr int      TUNNEL_VIS_SCOUT = 1;
+static constexpr uint8_t  ITEM_BILE_FLARE  = 54;  // data/items.cfg — the tunnel light source
+
+// One surface hatch and the shaft cell beneath it.  sq/sr index G.map,
+// tq/tr index G.tunnel.  Persisted in SaveHeader, so keep it packed.
+struct __attribute__((packed)) BunkerHatch { int16_t sq, sr; uint8_t tq, tr; };
+
+// Filled by generateTunnels() (tunnels.hpp) or restored by tryLoadSave().
+// Declared here rather than in tunnels.hpp because ui-display.hpp draws the
+// hatches on the LCD minimap and is included well before tunnels.hpp.
+// hatchCount may be < MAX_HATCHES when the surface map had nowhere legal to
+// put them all.
+static BunkerHatch bunkerHatches[MAX_HATCHES];
+static uint8_t     hatchCount = 0;
+
 // ── Constants ──────────────────────────────────────────────────
 static constexpr int      MAP_COLS      = 75;
 static constexpr int      MAP_ROWS      = 57;
 static constexpr int      SURVEYED_BYTES = (MAP_ROWS * MAP_COLS + 7) / 8;
 static constexpr int      MAX_PLAYERS   = 6;
 static constexpr int      VISION_R      = 3;
-static constexpr int      NUM_TERRAIN   = 12;
+static constexpr int      NUM_TERRAIN   = 16;
 static constexpr uint32_t TICK_MS       = 100;
 static constexpr uint8_t  RESPAWN_TICKS = 200;
 static constexpr uint32_t MOVE_CD_MS    = 220;
@@ -156,7 +208,15 @@ static constexpr int      NUM_ARCHETYPES  = 6;
 static constexpr int      NUM_SKILLS      = 5;
 static constexpr int      INV_SLOTS_STD   = 8;
 static constexpr int      INV_SLOTS_MULE  = 12;
-static constexpr int      INV_SLOTS_MAX   = 12;
+// The hard width of invType[]/invQty[], and therefore the ceiling
+// effectiveInvSlots() clamps to.  It must stay above the largest reachable
+// base + bonus or slot-granting gear silently does nothing: this was 12, the
+// same as INV_SLOTS_MULE, so a Mule wearing a Backpack (+4) or a Hoarder's
+// Rig (+4) gained exactly zero slots and no message said why.  Worst case is
+// INV_SLOTS_MULE + body(+4) + hand(+1) = 17; 18 leaves a slot of headroom.
+// Nothing hardcodes the width any more -- appendPackArrays() in
+// inventory_items.hpp emits the JSON arrays -- so this is a single knob.
+static constexpr int      INV_SLOTS_MAX   = 18;
 static constexpr uint32_t DAY_TICKS       = 3000;
 static constexpr uint8_t  TC_THRESHOLD_A  = 5;
 static constexpr uint8_t  TC_THRESHOLD_B  = 9;
@@ -193,20 +253,31 @@ static constexpr uint8_t ACT_SURVEY  = 6;
 static constexpr uint8_t ACT_REST    = 7;
 
 static constexpr uint8_t AO_BLOCKED = 0;
+// Why an action came back AO_BLOCKED.  AO_BLOCKED on its own says "refused,
+// no MP spent", which was fine while every reason was something the player
+// could already see on their own screen (wrong terrain, no MP).  "Your pack
+// is full of scrap" is not one of those, and a silent refusal there reads
+// exactly like a dead button -- it livelocked the bot harness for a whole run.
+static constexpr uint8_t ABW_NONE      = 0;
+static constexpr uint8_t ABW_PACK_FULL = 1;  // no token capacity left
 static constexpr uint8_t AO_SUCCESS = 1;
 static constexpr uint8_t AO_PARTIAL = 2;
 static constexpr uint8_t AO_FAIL    = 3;
 
 // River Channel (11) is reachable with the right equipment, so it needs a
 // forage DN (this is what the Fishing Pole doubles) and drinkable water.
-static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 6 };
-static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,7,8,0,0,0,0, 0 };
-static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 1 };
+static const uint8_t TERRAIN_FORAGE_DN[NUM_TERRAIN]  = { 7,0,6,8,0,0,0,0,0,0,0, 6, 0,0,0,0 };
+// Tunnel Floor (14) salvages pre-war bunker fittings at DN 7 (tunnels.hpp).
+static const uint8_t TERRAIN_SALVAGE_DN[NUM_TERRAIN] = { 0,0,0,0,6,7,8,0,0,0,0, 0, 0,0,7,0 };
+// Tunnel Floor (14) has water: seeps and pre-war cisterns.
+static const bool    TERRAIN_HAS_WATER[NUM_TERRAIN]  = { 0,0,0,1,0,1,0,0,0,0,0, 1, 0,0,1,0 };
 // "Ruins" here means Broken Urban (4) — dense standing structure that blocks
 // weather and draws scavengers.  Flooded District (5) is open water-logged
 // rubble and is deliberately NOT ruins: it carries the highest chem intensity.
-static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0 };
-static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,1, 0 };
+// Tunnels are deliberately NOT ruins: salvaging underground must not raise
+// the Threat Clock -- nothing on the surface hears you.
+static const bool    TERRAIN_IS_RUINS[NUM_TERRAIN]   = { 0,0,0,0,1,0,0,0,0,0,0, 0, 0,0,0,0 };
+static const bool    TERRAIN_IS_RAD[NUM_TERRAIN]     = { 0,1,0,0,0,0,1,0,0,0,1, 0, 0,0,0,0 };
 
 // ── Weather system constants ──────────────────────────────────────────────────
 static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1, WEATHER_STORM = 2,
@@ -222,43 +293,58 @@ static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1, WEATHER_STORM = 2
 // purely cosmetic — a plain, opaque whiteout with a mild vis penalty and no
 // per-tick hazard at all, the "everyday" fog as opposed to Strangle Fog's
 // dangerous variant.
-static const int8_t  WEATHER_VIS_PENALTY[6]  = { 0, 1, 3, 5, 4, 2 };
+static const int8_t  WEATHER_VIS_PENALTY[6]  = { 0, 1, 2, 3, 0, 2 };
 static const uint8_t WEATHER_MOVE_PENALTY[6] = { 0, 1, 2, 3, 1, 1 };
+// Hexes a survivor may cross in the open during one chem storm before the
+// air starts taking LL per step. Enough to reach cover you can see; not
+// enough to cross a storm. Reset on every weather change — see movePlayer().
+static constexpr uint8_t CHEM_FREE_MOVES = 2;
 // Index 0 (Clear) trimmed from {3,7} to {2,5} days — the dominant knob for
 // how often weather becomes an incident at all, since every other phase is
 // already short-lived (1-3 days) and Clear was the long stretch between them.
-static const uint16_t WEATHER_DUR_MIN[6]     = { 2, 1, 1, 1, 1, 1 };
-static const uint16_t WEATHER_DUR_MAX[6]     = { 5, 3, 2, 1, 2, 3 };
-// Terrain intensity [phase][terrain idx 0-11] — MUST match JS copy exactly
+static const uint16_t WEATHER_DUR_MIN[6]     = { 2, 1, 1, 1, 3, 1 };
+static const uint16_t WEATHER_DUR_MAX[6]     = { 5, 3, 2, 1, 5, 3 };
+// Terrain intensity [phase][terrain idx 0-15] — MUST match JS copy exactly
 // Terrains: 0=OpenScrub 1=AshDunes 2=RustForest 3=Marsh 4=BrokenUrban
 //           5=FloodRuins 6=GlassFields 7=RollingHills 8=Mountain
 //           9=Settlement 10=NukeCrater(impassable) 11=RiverChannel(impassable)
+//           12=BunkerEntrance 13=VentShaft 14=TunnelFloor 15=TunnelCollapsed
 // Fog ("Strangle Fog") is worst in dense/wet terrain that tangles and
 // disorients you (Rust Forest, Marsh, Flooded Ruins) and weakest on high dry
 // ground where it thins out (Rolling Hills, Mountain) — drives its own
 // per-tick MP/LL hazard below, same shape as chem's row but a different feel.
 // Mist's row is all-zero: purely cosmetic, no per-tick hazard.
-static const float WEATHER_INTENSITY[6][12] = {
-  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-  { 0.5f, 0.4f, 0.6f, 0.8f, 0.4f, 0.9f, 0.5f, 0.6f, 0.7f, 0.1f, 0.0f, 0.0f },
-  { 0.7f, 0.6f, 0.7f, 0.9f, 0.5f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.0f, 0.0f },
-  { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f },
-  { 0.45f,0.35f,0.7f, 0.75f,0.25f,0.65f,0.5f, 0.3f, 0.2f, 0.1f, 0.0f, 0.0f },
-  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+// Columns 12-15 (bunker hatches + tunnel interior) are all-zero: weather does
+// not reach underground, and the per-tick hazard loops skip depth>0 players
+// outright.  The hatch tiles (12/13) sit on the surface but are sheltered
+// mouths, so they take no weather damage either.
+static const float WEATHER_INTENSITY[6][NUM_TERRAIN] = {
+  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.5f, 0.4f, 0.6f, 0.8f, 0.4f, 0.9f, 0.5f, 0.6f, 0.7f, 0.1f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.7f, 0.6f, 0.7f, 0.9f, 0.5f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.95f,0.85f,0.75f,0.90f,0.6f,0.95f,0.90f,0.90f,0.85f, 0.1f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.45f,0.35f,0.7f, 0.75f,0.25f,0.65f,0.5f, 0.3f, 0.2f, 0.1f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
 };
 
 
 // ── Item system ─────────────────────────────────────────────────
 static constexpr uint8_t  MAX_ITEMS  = 128;
 static constexpr uint8_t  MAX_GROUND = 32;
+// Caravan shelf (world-system.hpp): consumables the trader sells for resource
+// tokens. Lives here rather than with the other CARAVAN_* tuning because
+// SaveHeader below needs the slot count before world-system.hpp is included.
+static constexpr uint8_t  CARAVAN_STOCK_SLOTS = 4;
 
 // ItemDef.passTerrainBits — what an equipped item lets the wearer do.
 // Mirrors the `terrain` key documentation in data/items.cfg.
 static constexpr uint8_t TERR_PASS_RIVER    = (1 << 0);  // may enter River Channel (11) at MC 2
 static constexpr uint8_t TERR_PASS_CLIFF    = (1 << 1);  // Mountain (8) costs CLIFF_MC instead of 4
 static constexpr uint8_t TERR_PASS_RAD      = (1 << 2);  // no Endure check on entering Rad terrain
+static constexpr uint8_t TERR_PASS_WATER    = (1 << 3);  // any water terrain (Marsh/Flooded District/River) at RAFT_MC
 static constexpr uint8_t RIVER_MC           = 2;
 static constexpr uint8_t CLIFF_MC           = 2;
+static constexpr uint8_t RAFT_MC            = 1;
 
 // EFX_NARRATIVE params the server acts on.  Params not listed here are
 // client-side only (11 = UI scramble, 12 = reversed keys) — see items.cfg.
@@ -319,6 +405,9 @@ struct ItemDef {
   uint8_t      effectParam2;
   uint8_t      opCost[5];
   uint8_t      passTerrainBits;
+  uint8_t      value;      // items.cfg "value": caravan asking price, in resource tokens of any mix
+  uint8_t      tradeable;  // items.cfg "trade": 1 = the caravan may put this on its shelf (consumables only today)
+  uint8_t      leavesTracks;  // items.cfg "tracks": 1 = moving with this equipped marks HexCell.tireTrack (the Motorbike today)
 };
 
 struct GroundItem {
@@ -328,8 +417,12 @@ struct GroundItem {
 };
 
 // ── Crafting ──────────────────────────────────────────────────────────────
-// Recipes are secret — a survivor must discover one via an encounter
+// Most recipes are secret — a survivor must discover one via an encounter
 // ("recipe" loot entry, see encounter_engine.hpp) before CRAFT will offer it.
+// The exception is a recipe flagged `starter = yes` in data/recipes.cfg: that
+// is basic wasteland know-how everybody walks in with, so its bit is set at
+// spawn (resetSurvivor) and OR'd into every loaded save (tryLoadSave), which
+// is what lets a starter recipe be added later without a save migration.
 // Crafting itself is an MP-costing, Settlement-only action (see ACT_CRAFT).
 static constexpr uint8_t MAX_RECIPES     = 32;
 static constexpr uint8_t RECIPE_MAX_MATS = 3;
@@ -337,31 +430,40 @@ static constexpr uint8_t TERRAIN_SETTLEMENT = 9;
 
 struct RecipeDef {
   uint8_t id;
-  char    name[16];
+  char    name[24];                  // display name, max 23 chars (see data/recipes.cfg header)
   uint8_t outputItem;
   uint8_t outputQty;
   uint8_t matItem[RECIPE_MAX_MATS];  // material ItemDef ids required (0 = unused slot)
   uint8_t matQty[RECIPE_MAX_MATS];
   uint8_t resCost[5];                // water/food/fuel/med/scrap tokens consumed
+  uint8_t starter;                   // 1 = known from spawn, no encounter needed
 };
 
-static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255 };
-static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0, -3 };
-static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0 };
+// 12-15 are the bunker tunnel system (tunnels.hpp).  12/13 sit on BOTH boards:
+// the surface hatch, and the shaft cell directly beneath it on the tunnel
+// board.  14/15 are tunnel-board only.  TERRAIN_VIS is unused underground --
+// playerVisParams() takes a separate branch at depth 1 (base radius 1, +1 per
+// Bile Flare carried, +1 Scout).
+static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255, 1, 1, 2, 255 };
+static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0, -3, 0, 0, 0, 0 };
+static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0, 2, 0, 1, 0 };
 
 // ── Debug label tables ─────────────────────────────────────────
 [[maybe_unused]] static const char* T_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes ", "RustForst", "Marsh    ",
   "BrknUrban", "FloodRuin", "GlassFlds", "RolngHill",
-  "Mountain ", "Settlment", "NukeCratr", "RiverChnl"
+  "Mountain ", "Settlment", "NukeCratr", "RiverChnl",
+  "BunkerEnt", "VentShaft", "TunnlFlor", "TunnlClpd"
 };
 static const char* T_SHORT[NUM_TERRAIN] = {
-  "Scrub","Dunes","Forst","Marsh","Urban","Flood","Glass","Hills","Mtn  ","Settl","Nukr ","River"
+  "Scrub","Dunes","Forst","Marsh","Urban","Flood","Glass","Hills","Mtn  ","Settl","Nukr ","River",
+  "Bunkr","Vent ","Tunnl","Clpsd"
 };
 static const char* TERRAIN_IMG_NAME[NUM_TERRAIN] = {
   "OpenScrub", "AshDunes", "RustForest", "Marsh",
   "BrokenUrban", "FloodedDistrict", "GlassFields",
-  "Ridge", "Mountain", "Settlement", "NukeCrater", "RiverChannel"
+  "Ridge", "Mountain", "Settlement", "NukeCrater", "RiverChannel",
+  "BunkerEntrance", "VentShaft", "TunnelFloor", "TunnelCollapsed"
 };
 [[maybe_unused]] static const char* VIS_LABEL[6] = { "BLIND", "PENLT", "LOW  ", "STD  ", "HIGH ", "VHIGH" };
 [[maybe_unused]] static const char* RES_NAME[6]  = { "None","Water","Food ","Fuel ","Med  ","Scrap" };
@@ -400,7 +502,8 @@ struct HexCell {
   uint8_t shelter;
   uint8_t footprints;
   uint8_t variant;
-  uint8_t poi;  // 0 = none/looted, non-zero = has encounter
+  uint8_t poi;        // 0 = none/looted, non-zero = has encounter
+  uint8_t tireTrack;  // 0/1 — caravan has driven through this hex (wire-packed into TT bit 7)
 };
 
 struct Player {
@@ -439,10 +542,25 @@ struct Player {
   bool     resting;
   bool     radClean;
   uint8_t  llCapPenalty;  // permanent LL-ceiling reduction (Uranium Candy)
+  // Hexes crossed in the open during the CURRENT chem storm. Runtime only —
+  // same as the caravan's holdTicks/stuckTicks — and reset by
+  // updateWeatherPhase() on every phase change, so a reboot mid-storm just
+  // gives the survivor their dash back. See movePlayer()'s chem clause.
+  uint8_t  chemMoves;
 
   uint8_t  surveyedMap[SURVEYED_BYTES];
 
-  uint32_t knownRecipes;  // bit (id-1) per discovered RecipeDef, learned via encounters
+  // ── Bunker tunnels (tunnels.hpp) ──
+  // q/r above ALWAYS stay on the surface, pinned to the hatch this player
+  // descended through.  That is what lets every surface subsystem (weather,
+  // doom, fire, flood, caravan, the LCD minimap) keep indexing G.map[r][q]
+  // unchanged -- they just skip players with depth != 0.
+  uint8_t  depth;      // 0 = surface, 1 = in the tunnels
+  int16_t  tq, tr;     // position on G.tunnel, meaningful only while depth == 1
+  uint8_t  hatchIdx;   // index into bunkerHatches[] of the hatch we came down
+
+  uint32_t knownRecipes;  // bit (id-1) per known RecipeDef: starter recipes from
+                          // spawn, the rest learned via encounters
 };
 
 // ── Tone sequences and motifs ────────────────────────────────────────────────
@@ -451,7 +569,7 @@ struct ToneStep { int freq; int beat; };
 // Score-up is the only upbeat/positive sound — kept distinct from the dark motifs
 static const ToneStep SEQ_SCORE_UP[] = {{220, 400}, {277, 400}, {330, 600}, {0,0}};
 
-#include "tone-motifs.hpp"  // 19 post-apocalyptic motifs (MOTIF_*)
+#include "tone-motifs.hpp"  // 23 post-apocalyptic motifs (MOTIF_*)
 
 enum EvtType : uint8_t {
   EVT_COLLECT      = 1,
@@ -478,7 +596,16 @@ enum EvtType : uint8_t {
   EVT_DOOM_WARNING = 23,   // creeping doom adjacent, low threshold: pid — Phase 3
   EVT_DOOM_ACT     = 24,   // creeping doom destroyed resource / drained LL: pid, q, r — Phase 3
   EVT_FLOOD_WASHOUT = 25,  // hex terrain just changed: q, r, amt=resulting terrain (3=Marsh edge, 5=Flooded District core) (vision-culled)
-  EVT_FLOOD_DAMAGE  = 26   // player swept off their feet by a flash flood: pid, q, r, amt (sentinel)
+  EVT_FLOOD_DAMAGE  = 26,  // player swept off their feet by a flash flood: pid, q, r, amt (sentinel)
+  // ── Bunker tunnels (tunnels.hpp) ──
+  EVT_TUNNEL_ENTER  = 27,  // player descended: pid, q/r = surface hatch, amt = hatch index
+  EVT_TUNNEL_EXIT   = 28,  // player surfaced:  pid, q/r = surface hatch, amt = hatch index
+  // ── Creeping Doom taunts (world-system.hpp) ──
+  EVT_DOOM_TAUNT    = 29,  // the Doom speaks: pid = who it addresses, amt = tier (0-3), res = line index
+  // ── Bunker tunnel taunts (tunnels.hpp) ──
+  EVT_TUNNEL_TAUNT  = 30   // second thoughts about sleeping rough underground:
+                           // pid = whose, res = line index. Unicast, unlike the
+                           // Doom's — this one is nobody else's business.
 };
 
 struct GameEvent {
@@ -491,7 +618,14 @@ struct GameEvent {
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;
   int8_t   dawnExpD;
+  int8_t   dawnAirD;    // bad air: -1 when a rest underground rolled the LL hit
   uint8_t  dawnWndMin, dawnWndMaj;
+  // Bitmask of equipment slots whose daily *_cost could not be paid this dawn
+  // (bit 0 = head .. bit 4 = vehicle). Their STAT_MP is dormant for the day.
+  // Without this the Motorbike's "+5 MP" simply failed to appear and nothing
+  // -- no event, no log, no UI state -- said the fuel had run out.
+  uint8_t  dawnUnfuelled;
+  uint8_t  actWhy;        // ABW_* — why an AO_BLOCKED action was refused
   uint8_t  actType;
   uint8_t  actOut;
   uint8_t  actNewLL;
@@ -516,6 +650,8 @@ struct GameEvent {
   uint8_t  tradeGive[5];
   uint8_t  tradeWant[5];
   uint8_t  tradeResult;
+  uint8_t  tradeItem;     // caravan purchase (tradeTo == CARAVAN_PID): item bought; 0 = plain resource swap
+  uint8_t  tradeItemQty;
   // ── Encounter fields (active when type is EVT_ENC_*) ───────────
   uint8_t  encOut;       // 0=fail/reason-code, 1=success
   uint8_t  encSkill;
@@ -533,11 +669,17 @@ struct GameEvent {
   uint8_t  encRecipe;     // recipe id granted THIS choice (node "recipe" loot entry), for the in-scene toast
   uint32_t bankedRecipes; // enc_bank only: full bitmask of every recipe committed to knownRecipes just now
   uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
+  // Which board q/r refer to: 0 = G.map, 1 = G.tunnel. Every event that names
+  // a hex needs this now that there are two boards -- without it the client
+  // would patch a surface cell with a tunnel coordinate. Serialised as "dp"
+  // and omitted when 0, so surface traffic is unchanged on the wire.
+  uint8_t  depth;
 };
 
 static constexpr uint32_t TRADE_EXPIRE_MS = 30000;
 
-// Trades move legacy resource tokens only; typed items are not tradeable.
+// Player-to-player trades move resource tokens only; typed items only change
+// hands at the caravan's shelf (car_buy — see network-msg-trade.hpp).
 struct TradeOffer {
   bool     active;
   uint8_t  fromPid;
@@ -554,6 +696,7 @@ struct ActiveEncounter {
   uint8_t  active;          // bit 0 = in encounter, bit 7 = reachedTerminal
   uint8_t  encIdx;          // encounter file index selected at enc_start
   uint8_t  hexQ, hexR;
+  uint8_t  depth;           // which board hexQ/hexR index: 0 = G.map, 1 = G.tunnel
   uint8_t  terrain;         // pool the file was drawn from (index into encPools)
   uint8_t  canBank;         // current node's can_bank flag (server-authoritative)
   char     nodeKey[ENC_KEY_LEN];  // current node in the encounter JSON
@@ -582,7 +725,9 @@ struct EncPoolInfo {
   uint8_t count;
   char    path[12];  // e.g. "urban", "marsh"
 };
-static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
+// Indexed by terrain type.  Sized NUM_TERRAIN so the tunnel pool (14) fits --
+// index.json only defines a subset; the rest stay count=0 and never fire.
+static EncPoolInfo encPools[NUM_TERRAIN];
 
 // POI encounter probability removed — encounters are now pre-placed
 // at map generation time (one hex per encounter ID, guaranteed).
@@ -591,10 +736,16 @@ static EncPoolInfo encPools[10];  // indexed by terrain type 0-9
 // ── Loot table cache (parsed from /encounters/loot_tables.json at boot) ───────
 // MAX_LOOT_TABLES must be >= the number of top-level tables in loot_tables.json
 // (currently 34) — loadLootTables() in boot-assets.hpp silently stops parsing
-// once it's full, so a table added past this cap just never loads.
-static constexpr int MAX_LOOT_TABLES = 34;
+// once it's full, so a table added past this cap just never loads.  Kept a few
+// clear of the real count so adding one is a data edit, not a reflash.
+static constexpr int MAX_LOOT_TABLES = 40;
+// Likewise the per-table entry cap.  Overflowing THIS one is worse than a
+// dropped table: loadLootTables() stops mid-array with `arr` parked on entries
+// it never read, and the outer scan then hits `"qty": [` in one of them and
+// registers a junk table called "qty".  urban_rare sits at 10.
+static constexpr int LOOT_ENTRIES_MAX = 12;
 struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
-struct LootTable  { char name[20]; LootEntry entries[8]; uint8_t count; };
+struct LootTable  { char name[20]; LootEntry entries[LOOT_ENTRIES_MAX]; uint8_t count; };
 static LootTable  lootTables[MAX_LOOT_TABLES];
 static uint8_t    lootTableCount = 0;
 
@@ -602,6 +753,7 @@ struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 
 struct GameState {
   HexCell  (*map)[MAP_COLS];   // PSRAM: MAP_ROWS rows, allocated by allocPsramGlobals(); G.map[r][q] unchanged
+  HexCell  (*tunnel)[TUN_COLS];  // PSRAM: the bunker tunnel board, G.tunnel[r][q] (tunnels.hpp)
   Player   players[MAX_PLAYERS];
   uint32_t tickId;
   int      connectedCount;
@@ -619,13 +771,27 @@ struct GameState {
 
 static constexpr int  EVT_QUEUE_SIZE = 64;
 // Whole-map byte count — use instead of sizeof(G.map) (which is now a pointer).
-static constexpr size_t MAP_BYTES = sizeof(HexCell) * MAP_ROWS * MAP_COLS;
+static constexpr size_t MAP_BYTES    = sizeof(HexCell) * MAP_ROWS * MAP_COLS;
+static constexpr size_t TUNNEL_BYTES = sizeof(HexCell) * TUN_ROWS * TUN_COLS;
 
 static GameState      G;
 
 // ── SD Save / Load constants + structs ────────────────────────────────────────
 static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
-static constexpr uint8_t  SAVE_VERSION = 14;
+// v16: HexCell grew a tireTrack byte (see struct above), which changes
+// MAP_BYTES — the raw G.map block saveGame()/tryLoadSave() read/write would
+// misalign against an older save written with the smaller struct. No
+// migration path; a v15 save is ignored and falls through to generateMap(),
+// same one-shot-reset precedent as the v9→v10 and v14→v15 bumps.
+// v17: the bunker tunnel system (tunnels.hpp). map.bin now carries the whole
+// G.tunnel block between the map and the ground-items block, SaveHeader holds
+// the hatch pairings, and SavePlayer holds depth/tq/tr. Same one-shot reset —
+// a v16 save is ignored and the world (surface AND tunnels) regenerates.
+// v18: INV_SLOTS_MAX went 12 -> 18 so slot-granting gear actually grants
+// slots on a Mule (see the constant). SavePlayer's invType[]/invQty[] are
+// that width, so the players.bin record size changed. Same one-shot reset —
+// a v17 save is ignored and survivors respawn.
+static constexpr uint8_t  SAVE_VERSION = 18;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -648,6 +814,16 @@ struct __attribute__((packed)) SaveHeader {
   uint8_t  caravanActive;
   int16_t  doomQ, doomR;
   uint8_t  doomAwareness;
+  // v15: the caravan's consumable shelf (world-system.hpp). Asking prices are
+  // not persisted — they come from items.cfg's "value" when serialised, so a
+  // cfg edit re-prices the shelf on reboot.
+  uint8_t  caravanStockItem[CARAVAN_STOCK_SLOTS];
+  uint8_t  caravanStockQty[CARAVAN_STOCK_SLOTS];
+  // v17: bunker tunnel hatch pairings (tunnels.hpp). The tunnel board itself
+  // is a raw block in map.bin, but the surface<->shaft pairing is derived at
+  // generation time and cannot be recovered from the two boards alone.
+  BunkerHatch bunkerHatches[MAX_HATCHES];
+  uint8_t     hatchCount;
 };
 
 struct __attribute__((packed)) SavePlayer {
@@ -657,8 +833,8 @@ struct __attribute__((packed)) SavePlayer {
   int16_t  q, r;
   uint8_t  ll, food, water, radiation;
   uint8_t  inv[5];
-  uint8_t  invType[12];
-  uint8_t  invQty[12];
+  uint8_t  invType[INV_SLOTS_MAX];
+  uint8_t  invQty[INV_SLOTS_MAX];
   uint8_t  equip[EQUIP_SLOTS];
   uint8_t  invSlots;
   uint16_t score;
@@ -673,6 +849,9 @@ struct __attribute__((packed)) SavePlayer {
   uint8_t  llCapPenalty;  // v12
   uint8_t  surveyedMap[SURVEYED_BYTES];
   uint32_t knownRecipes;  // v14
+  uint8_t  depth;         // v17 — 0 surface, 1 tunnels
+  int16_t  tq, tr;        // v17 — position on the tunnel board
+  uint8_t  hatchIdx;      // v17
 };
 
 struct __attribute__((packed)) SaveGroundItem {
@@ -714,6 +893,42 @@ static LGFX_Sprite    canvas(&tft);
 // sentences about two people.
 #define K10_LOG_SIZE 16
 enum K10Tone : uint8_t { TONE_PLAIN = 0, TONE_GOOD, TONE_ILL, TONE_OMEN, TONE_COUNT };
+// Every entry is also stamped with a mark in the chronicle's margin — a small
+// 3x2-character pictogram of the thing that happened, set beside the words it
+// belongs to. This enum is only the index; the art itself is BOOK_GLYPH in
+// ui-screens.hpp. GLY_NONE leaves the gutter empty, which is what a new log
+// line gets until someone picks it a mark.
+enum K10Glyph : uint8_t {
+  GLY_NONE = 0,
+  GLY_DAWN, GLY_FORAGE, GLY_WATER, GLY_MEDIC, GLY_SALVAGE, GLY_SHELTER,
+  GLY_CRAFT, GLY_SCOUT, GLY_REST, GLY_TRADE, GLY_CARAVAN, GLY_ARRIVE,
+  GLY_DEPART, GLY_THRESHOLD, GLY_CLASH, GLY_LIGHT, GLY_HAUL, GLY_WOUND,
+  GLY_DEATH, GLY_DOOM, GLY_FIRE, GLY_FLOOD, GLY_QUAKE, GLY_SETTLE,
+  GLY_RAIN, GLY_STORM, GLY_CHEM, GLY_FOG,
+  GLY_RAD, GLY_MEDAL,
+  GLY_COUNT
+};
+// A few moments are too big for one line of handwriting, so the chronicle
+// gives them a plate instead: a framed ASCII block, four rows deep, with the
+// mark blown up beside two lines of figures. PLATE_NONE is an ordinary entry.
+// The frames and the layout live in ui-screens.hpp (BOOK_PLATE).
+enum K10Plate : uint8_t {
+  PLATE_NONE = 0, PLATE_WOUND, PLATE_RAD, PLATE_HAUL, PLATE_AWARD, PLATE_COUNT
+};
+// Commendations. These are not milestones the firmware tracks — each one is
+// pinned to a thing the game already announces, so nothing has to be counted
+// or saved between reboots. Citation wording comes from the call site.
+// Thresholds the plates read against. RAD_CRITICAL matches the auto-fail rung
+// in survival_state.hpp, so the dose meter fills exactly as the check bites.
+static constexpr uint8_t RAD_CRITICAL = 10;
+static constexpr uint8_t HAUL_HEAVY   = 12;   // a haul worth a commendation
+enum K10Award : uint8_t {
+  AWD_SWEPT = 0,   // cleared an encounter out entire
+  AWD_HEAVY,       // carried out a haul worth the walk
+  AWD_OFF_SCENT,   // shook the Creeping Doom off the trail
+  AWD_LONG_ODDS,   // won a check the numbers said was lost
+  AWD_COUNT
+};
 struct K10LogEntry {
   char     text[48];
   uint32_t ms;
@@ -721,6 +936,9 @@ struct K10LogEntry {
   int8_t   who;
   int8_t   who2;
   uint8_t  tone;
+  uint8_t  glyph;   // K10Glyph — the mark drawn in the margin
+  uint8_t  plate;   // K10Plate — PLATE_NONE for an ordinary written line
+  uint8_t  pv[5];   // plate figures; what they mean is per-kind (BOOK_PLATE)
 };
 static K10LogEntry  k10Log[K10_LOG_SIZE];
 static uint8_t      k10LogHead  = 0;
@@ -731,11 +949,14 @@ static portMUX_TYPE k10LogMux   = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t  k10Screen     = 1;
 static uint8_t  k10ScreenLast = 255;
 static bool     k10BtnBLast   = false;
+// Set by checkGestureSwitch() when button B lands on a new screen, consumed
+// by the display block below: an ordinary repaint pushes one frame, a switch
+// runs the fade/jitter transition instead. Only a button press sets it, so a
+// repaint forced by an upload or death takeover ending stays instant.
+static bool     k10ScreenXition = false;
 static volatile bool k10Dirty = true;  // set whenever game state changes
 
 static uint32_t k10TeamScore   = 0;
-static uint32_t k10LedPulse    = 0;
-static uint8_t  k10PulseR = 0, k10PulseG = 0, k10PulseB = 0;
 static uint8_t  k10PrevTCLevel = 0;
 
 static uint8_t  s_audioVol   = 5;
@@ -757,12 +978,55 @@ static void saveK10Prefs() {
   p.end();
 }
 
-// ── LED flash state ─────────────────────────────────────────────────────────
-static volatile uint8_t  g_ledR = 0, g_ledG = 0, g_ledB = 0;
-static volatile uint32_t g_ledEndMs = 0;
+// ── LED cue state (ui-leds.hpp) ─────────────────────────────────────────────
+// One event cue at a time. Set from Core 1 (the game loop) by ledCue() and the
+// ledFlash() compatibility shim; rendered and expired by updateLEDs() on the
+// display loop. A cue is a colour plus a SHAPE (how it moves over time) and a
+// SPAN (which lamps it touches) - see the cue catalogue in ui-leds.hpp.
+// Byte-level tearing between the two cores is cosmetically irrelevant on a
+// 3-lamp strip, so no lock is taken; g_cueStartMs is written LAST so a
+// half-built cue can never render.
+static volatile uint8_t  g_cueR = 0, g_cueG = 0, g_cueB = 0;
+static volatile uint8_t  g_cueShape = 0, g_cueSpan = 0, g_cueReps = 1, g_cuePrio = 0;
+static volatile uint16_t g_cueMs      = 0;   // total cue duration, ms
+static volatile uint32_t g_cueStartMs = 0;   // 0 = no cue live
 // Perish alarm (ui-leds.hpp): set by ledPerish() from the EVT_DOWNED handler,
-// outranks both the event flash and the weather/time-of-day sky.
+// outranks both the event cue and the weather/time-of-day sky.
 static volatile uint32_t g_ledPerishEndMs = 0;
+
+// ── Dread snapshot ──────────────────────────────────────────────────────────
+// The slow half of the LED story: everything the lamps say about the party's
+// condition and about what is hunting it, as against the sky (time of day plus
+// weather) they already told. Published once per game tick by publishDread()
+// in world-system.hpp - which runs inside the G.mutex tickGame() already holds
+// - and consumed lock-free by updateLEDs() at the ~10 Hz display rate.
+//
+// The indirection exists because ui-display.hpp (and so ui-leds.hpp) is
+// included BEFORE world-system.hpp, so the LED code cannot name W.creepingDoom
+// or W_hex at all. Publishing a flat byte struct also keeps the 10 Hz lamp
+// path off G.mutex entirely: slow data, fast animation.
+//
+// Every field is pre-normalised to 0-255 "how bad is it" so that ui-leds.hpp
+// holds presentation only, and none of the game's own scales (LL 7, food and
+// water 6, radiation 10, awareness 100) leak into the lamp code.
+struct DreadSnapshot {
+  uint8_t tcLevel;      // threat-clock band, 0-4 (TC_THRESHOLD_A..D)
+  uint8_t tcWeight;     // 0-255 smooth ramp across the whole clock
+  uint8_t doomClose;    // 0 = far or unaware, 255 = standing on someone
+  uint8_t doomAware;    // raw Creeping Doom awareness, 0-100
+  uint8_t attrition;    // 0-255 party-wide LL shortfall
+  uint8_t downed;       // survivors currently at LL 0
+  uint8_t hunger;       // 0-255 worst food shortfall in the party
+  uint8_t thirst;       // 0-255 worst water shortfall
+  uint8_t radLoad;      // 0-255 worst radiation load
+  uint8_t woundLoad;    // 0-255 weighted wounds (a major counts double)
+  uint8_t fireClose;    // 0-255 nearest fire to anyone standing on the surface
+  uint8_t connected;    // connected survivors
+  uint8_t under;        // how many of them are down in the tunnels
+  bool    allUnder;     // every connected survivor is below ground
+  bool    encActive;    // someone is mid-encounter - the sky holds its breath
+};
+static volatile DreadSnapshot g_dread = {};
 
 AsyncWebServer server(80);
 AsyncWebSocket  ws("/ws");
@@ -785,7 +1049,12 @@ static int       webFileCount = 0;
 
 // ── PSRAM image cache ──────────────────────────────────────────────────────
 struct ImgFile { char name[40]; uint8_t* buf; size_t len; char etag[26]; };
-static const int MAX_IMG_CACHE = 100;
+// 100 -> 160: the four bunker-tunnel placeholder tiles took data/ to 99/100,
+// one slot off the cliff.  Past the cap boot-assets.hpp stops caching and the
+// route silently serves 204, so art just vanishes with no error -- leave real
+// headroom rather than discovering it as a missing tile.  The table is PSRAM
+// (allocPsramGlobals), so 60 more slots costs ~4.7 KB of the 8 MB.
+static const int MAX_IMG_CACHE = 160;
 static ImgFile*  imgCache = nullptr;             // [MAX_IMG_CACHE], PSRAM (allocPsramGlobals)
 static int       imgCacheCount = 0;
 
@@ -809,6 +1078,11 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 // World system: Caravan/Fire/Creeping Doom (see docs/world-system-spec.md).
 // Depends only on hex-map.hpp; ticked from tickGame() in actions_game_loop.hpp.
 #include "world-system.hpp"
+
+// Bunker tunnel system: the second hex board and everything that happens on
+// it. Needs hex-map.hpp (pickVariant, DQ/DR, encPools) and is called back
+// into by generateMap() through the forward declaration in hex-map.hpp.
+#include "tunnels.hpp"
 
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
@@ -838,14 +1112,15 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 static void allocPsramGlobals() {
   uint32_t heapBefore = ESP.getFreeHeap();
   G.map         = (HexCell(*)[MAP_COLS])    psramStaticAlloc(MAP_BYTES);
+  G.tunnel      = (HexCell(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_BYTES);
   W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
   pendingEvents = (GameEvent*)              psramStaticAlloc(sizeof(GameEvent) * EVT_QUEUE_SIZE);
   itemRegistry  = (ItemDef*)                psramStaticAlloc(sizeof(ItemDef)   * MAX_ITEMS);
   recipeRegistry= (RecipeDef*)              psramStaticAlloc(sizeof(RecipeDef) * MAX_RECIPES);
   imgCache      = (ImgFile*)                psramStaticAlloc(sizeof(ImgFile)   * MAX_IMG_CACHE);
   webFiles      = (WebFile*)                psramStaticAlloc(sizeof(WebFile)   * MAX_WEB_FILES);
-  Log.notice("PSRAM globals: map=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
-             (unsigned)MAP_BYTES, (unsigned)W_HEX_BYTES,
+  Log.notice("PSRAM globals: map=%u tunnel=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
+             (unsigned)MAP_BYTES, (unsigned)TUNNEL_BYTES, (unsigned)W_HEX_BYTES,
              (unsigned)(sizeof(GameEvent) * EVT_QUEUE_SIZE), (unsigned)(sizeof(ItemDef) * MAX_ITEMS),
              (unsigned)(sizeof(RecipeDef) * MAX_RECIPES),
              (unsigned)(sizeof(ImgFile) * MAX_IMG_CACHE), (unsigned)(sizeof(WebFile) * MAX_WEB_FILES),
@@ -890,6 +1165,8 @@ void setup() {
   Log.notice("K10 hw init ok");
   loadK10Prefs();
   Log.notice("K10 prefs loaded: audioVol=%d ledBright=%d", (int)s_audioVol, (int)s_ledBright);
+  // TEMP DIAGNOSTIC - remove. Measures the tone sequencer at boot.
+  k10Play(MOTIF_DOOM_HUNT);
 
   // ── LovyanGFX display init ────────────────────────────────────
   // k10.begin() turns backlight off (XL9535 P0.0=LOW). Enable it via Wire.
@@ -1036,7 +1313,14 @@ void setup() {
 }
 
 void loop() {
-  ws.cleanupClients(MAX_PLAYERS);
+  // Headroom matters here: cleanupClients(n) closes _clients.front() -- the
+  // OLDEST socket -- whenever count() > n, and count() includes clients that
+  // handleConnect has already rejected with {"t":"full"} but which have not
+  // finished closing yet. At exactly MAX_PLAYERS, one transient extra
+  // connection would evict the longest-seated player rather than the
+  // newcomer. The +2 covers that overlap; handleConnect still enforces the
+  // real cap of MAX_PLAYERS for anyone trying to join.
+  ws.cleanupClients(MAX_PLAYERS + 2);
   unsigned long now = millis();
 
   // Monitor async boot-time STA connect
@@ -1049,11 +1333,16 @@ void loop() {
       Log.notice("Boot STA connected ssid=%s ip=%s rssi=%d elapsed=%ums",
                  savedSsid, WiFi.localIP().toString().c_str(),
                  (int)WiFi.RSSI(), (unsigned)(now - bootWifiStartMs));
+      // First boot after this feature landed: whatever single credential the
+      // ESP32 already had in its own NVS becomes entry 0 of the known list.
+      wifiStoreRemember(savedSsid, savedPass);
+      wifiSweepBackoff = WIFI_SWEEP_MIN;
       k10ScreenLast = 255;  // force title redraw after WiFi splash would have disrupted it
       char buf[88];
       int blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"ok\",\"ip\":\"%s\"}",
         WiFi.localIP().toString().c_str());
       ws.textAll(buf, (size_t)blen);
+      broadcastWifiNets();
       Log.notice("NTP configTime(pool.ntp.org, time.nist.gov) called");
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
@@ -1062,7 +1351,19 @@ void loop() {
       Log.warning("Boot STA FAIL ssid=%s status=%d elapsed=%ums",
                   savedSsid, (int)wst, (unsigned)(now - bootWifiStartMs));
       savedSsid[0] = '\0';
+      // The last network didn't answer — we may simply be somewhere else.
+      // Let the roaming sweep look for any other known network shortly.
+      wifiNextSweepMs = now + 2000;
     }
+  }
+
+  // Roaming sweep: off-network but we know some. Skipped while an upload is
+  // streaming (a scan would stall the very socket delivering it).
+  if (g_knownCount > 0 && !wifiConnecting && !bootWifiPending &&
+      (int32_t)(now - wifiNextSweepMs) >= 0 &&
+      WiFi.status() != WL_CONNECTED && !UploadUI::isActive()) {
+    wifiNextSweepMs = now + wifiSweepBackoff;  // the task refines this on exit
+    wifiStartAutoJoin();
   }
 
   checkGestureSwitch();
@@ -1071,38 +1372,42 @@ void loop() {
   bool screenChanged = (k10Screen != k10ScreenLast);
   k10ScreenLast = k10Screen;
   bool uploadActive = UploadUI::isActive();
-  // Repaint faster while an upload is streaming so the bar/byte counter animate.
-  unsigned long screenInterval = uploadActive ? 100UL : (unsigned long)SCREEN_MS;
-  if (screenChanged || k10Dirty || uploadActive || (now - lastScreenMs >= screenInterval)) {
+  // A death outranks everything, including an upload in flight: the screen is
+  // given over to the skull for DEATH_HOLD_MS and nothing else paints.
+  bool deathActive = DeathUI::isActive();
+  // Repaint faster while an upload streams or a death burns, so the byte
+  // counter and the flames both animate.
+  unsigned long screenInterval = (uploadActive || deathActive) ? 100UL
+                                                               : (unsigned long)SCREEN_MS;
+  if (screenChanged || k10Dirty || uploadActive || deathActive ||
+      (now - lastScreenMs >= screenInterval)) {
     lastScreenMs = now;
     k10Dirty = false;
-    if (uploadActive) {
+    if (deathActive) {
+      drawDeathScreen();
+      canvas.pushSprite(0, 0);
+      k10ScreenXition = false;   // a takeover swallows the switch's animation
+    } else if (uploadActive) {
       drawUploadScreen();
+      canvas.pushSprite(0, 0);
+      k10ScreenXition = false;
+    } else if (k10ScreenXition) {
+      // Renders and pushes every frame of the switch itself (ui-screens.hpp).
+      k10ScreenXition = false;
+      screenSwitchTransition();
     } else {
-      switch (k10Screen) {
-        case 2:  drawEventLogScreen();   break;
-        case 3:  drawResourceScreen();   break;
-        case 4:  drawEncounterScreen();  break;
-        case 5:  drawMapScreen();        break;
-        default: drawPlayerScreen();     break;  // case 1
-      }
+      drawActiveScreen();
+      canvas.pushSprite(0, 0);
     }
-    canvas.pushSprite(0, 0);
-    if (!uploadActive) k10ScreenLast = k10Screen; else k10ScreenLast = 255;  // force repaint when leaving upload
+    if (!uploadActive && !deathActive) k10ScreenLast = k10Screen;
+    else k10ScreenLast = 255;   // force a repaint when the takeover ends
   }
 
-  // Perish alarm drives the lamps every tick until it expires (updateLEDs
-  // clears g_ledPerishEndMs itself); otherwise hold an event flash for its
-  // 300 ms, and fall through to the weather/time-of-day sky the rest of time.
-  if (g_ledPerishEndMs) {
-    g_ledEndMs = 0;
-    updateLEDs();
-  } else if (g_ledEndMs && now >= g_ledEndMs) {
-    g_ledEndMs = 0;
-    updateLEDs();
-  } else if (!g_ledEndMs) {
-    updateLEDs();
-  }
+  // One call owns the whole strip: updateLEDs() runs the perish alarm, the
+  // lightning, the event cue, the dread layer and the time-of-day/weather sky
+  // in a single pass and expires its own timers, so there is nothing left for
+  // the display loop to arbitrate.
+  updateLEDs();
 
   if (now - lastStatusMs >= STATUS_MS) {
     lastStatusMs = now;

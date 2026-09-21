@@ -14,7 +14,8 @@ Event kinds (ev.k):
   join left mv regen rsp trd_off trd_res weather
 """
 from dataclasses import dataclass, field
-from config import MAX_PLAYERS
+from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
+                    TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain)
 from mapdec import WorldMap
 
 
@@ -39,9 +40,14 @@ class PlayerState:
     wounds: list = field(default_factory=lambda: [0, 0])  # [minor, major]
     f_thresh: int = 0
     w_thresh: int = 0
-    inv_type: list = field(default_factory=lambda: [0] * 12)
-    inv_qty: list = field(default_factory=lambda: [0] * 12)
-    equip: list = field(default_factory=lambda: [0] * 5)
+    # INV_SLOTS_MAX in the .ino. Sized generously rather than exactly: the
+    # server sends the whole array and these are only the pre-sync defaults.
+    inv_type: list = field(default_factory=lambda: [0] * INV_SLOTS_MAX)
+    inv_qty: list = field(default_factory=lambda: [0] * INV_SLOTS_MAX)
+    equip: list = field(default_factory=lambda: [0] * EQUIP_SLOTS)
+    # Effective values the server computes (base + equipment); appendPackArrays.
+    inv_slots: int = 8            # is:    pack size in effect
+    ll_cap: int = 7               # llCap: LL ceiling in effect
     in_encounter: bool = False
     depth: int = 0                # 0 surface, 1 bunker tunnel
     tq: int = 0
@@ -80,6 +86,8 @@ class PlayerState:
         if "wnd"   in d: self.wounds        = list(d["wnd"])
         if "fth"   in d: self.f_thresh      = d["fth"]
         if "wth"   in d: self.w_thresh      = d["wth"]
+        if "is"    in d: self.inv_slots     = int(d["is"])
+        if "llCap" in d: self.ll_cap        = int(d["llCap"])
         if "it"    in d: self.inv_type      = list(d["it"])
         if "iq"    in d: self.inv_qty       = list(d["iq"])
         if "eq"    in d: self.equip         = list(d["eq"])
@@ -93,6 +101,31 @@ class PlayerState:
         if "sk"    in d: self.skills        = list(d["sk"])
         if "kr"    in d: self.known_recipes = d["kr"]
         if "rt"    in d: self.resting       = bool(d["rt"])
+
+
+@dataclass(slots=True)
+class Hatch:
+    """One entry of the firmware's bunkerHatches[] table, as far as a client
+    can reconstruct it.
+
+    The pairing -- which surface hatch comes out at which shaft -- is derived
+    at generation time and rides the save header; it is never sent on the
+    wire.  The only way to learn it is to watch a tun_in / tun_out event,
+    which names the hatch index and the SURFACE hex, and pair that against
+    where the survivor actually was underground.  So `sq`/`sr` are cheap (any
+    client sees them, for any player) and `tq`/`tr` are earned: you learn a
+    shaft's surface exit by using it, or by watching someone else use it and
+    being down there to see where they went.
+    """
+    idx: int
+    sq: int = -1
+    sr: int = -1
+    tq: int = -1
+    tr: int = -1
+
+    @property
+    def paired(self) -> bool:
+        return self.sq >= 0 and self.tq >= 0
 
 
 @dataclass(slots=True)
@@ -136,6 +169,19 @@ class Observation:
         self.weather = 0
         self.vision_r = 0
         self.map = WorldMap()
+        # The bunker tunnel board: a second, walled 16x10 grid.  Kept
+        # separately because a tunnel coordinate applied to the surface map
+        # would corrupt a hex 60 columns away, and vice versa.
+        self.tunnel = WorldMap(TUN_ROWS, TUN_COLS, wraps=False)
+        self.tunnel_synced = False
+        self.tunnel_vision_r = TUNNEL_VIS_BASE
+        # Our own position underground.  p.q/p.r stay pinned to the hatch we
+        # came down, so they are NOT where we are -- see the load-bearing
+        # invariant in tunnels.hpp.  Fed by tsync, by our own dp=1 mv events
+        # and by the broadcast's tq/tr, whichever lands last.
+        self.tunnel_pos = None
+        self.hatches: dict[int, Hatch] = {}
+        self._pending_hatch = None      # idx of a descent awaiting its tsync
         self.players = [PlayerState(pid=i) for i in range(MAX_PLAYERS)]
         self.world = WorldState()
         self.ground_items = []
@@ -152,6 +198,66 @@ class Observation:
 
     def rivals(self):
         return [p for p in self.players if p.pid != self.pid and p.connected]
+
+    # ── Which board are we on? ──────────────────────────────────────────
+    # Every policy that reads the map has to go through these.  Reading
+    # obs.map[(me.q, me.r)] while underground silently describes the surface
+    # hex above the hatch we came down -- which is a real, plausible-looking
+    # cell, so the mistake produces confident nonsense rather than a crash.
+    @property
+    def underground(self) -> bool:
+        return bool(self.me.depth)
+
+    @property
+    def board(self):
+        """The grid we are actually standing on."""
+        return self.tunnel if self.underground else self.map
+
+    def pos(self) -> tuple[int, int]:
+        """Our position on the board we are standing on."""
+        me = self.me
+        if not me.depth:
+            return (me.q, me.r)
+        if self.tunnel_pos is not None:
+            return self.tunnel_pos
+        return (me.tq, me.tr)
+
+    def here(self):
+        """The cell under our feet, on whichever board that is."""
+        return self.board[self.pos()]
+
+    def at_hatch(self) -> bool:
+        """Standing on a Bunker Entrance or Vent Shaft.  On the surface that
+        is the way down; underground it is the way up.  Note that merely
+        standing on one does nothing -- you arrive by transition, and only a
+        fresh step ONTO one crosses the boards."""
+        cell = self.here()
+        return cell is not None and is_hatch_terrain(cell.terrain)
+
+    def surface_hatches(self):
+        """Every hatch hex we have revealed on the surface, as (q, r, cell)."""
+        return [(q, r, c) for q, r, c in self.map.known_cells()
+                if is_hatch_terrain(c.terrain)]
+
+    def tunnel_shafts(self):
+        """Every shaft we have revealed underground, as (q, r, cell).  These
+        are the ways out; the pairing to a surface hex is only known for the
+        ones in self.hatches with `paired` set."""
+        return [(q, r, c) for q, r, c in self.tunnel.known_cells()
+                if is_hatch_terrain(c.terrain)]
+
+    def hatch_for_shaft(self, tq: int, tr: int):
+        """The Hatch record for the shaft at (tq, tr), if we have paired it."""
+        for h in self.hatches.values():
+            if h.tq == tq and h.tr == tr and h.paired:
+                return h
+        return None
+
+    def _hatch(self, idx: int) -> Hatch:
+        h = self.hatches.get(idx)
+        if h is None:
+            h = self.hatches[idx] = Hatch(idx=idx)
+        return h
 
     def apply(self, msg):
         """Fold one server message in.  Returns its type, for the caller log."""
@@ -170,6 +276,7 @@ class Observation:
                 self.world.update(msg["world"])
             self.ground_items = list(msg.get("gi", []))
             self.synced = True
+            self._sync_tunnel_pos()
         elif t == "s":
             self.tick = msg.get("tk", self.tick)
             for i, pd in enumerate(msg.get("p", [])):
@@ -178,12 +285,43 @@ class Observation:
             self._apply_gs(msg.get("gs"))
             if "world" in msg:
                 self.world.update(msg["world"])
+            self._sync_tunnel_pos()
+        elif t == "tsync":
+            # The whole fogged tunnel board, unicast on descent and again on
+            # reconnect-while-underground.  Merged, not replaced: see
+            # WorldMap.load_full.
+            self.tunnel.resize(msg.get("rows", TUN_ROWS), msg.get("cols", TUN_COLS))
+            self.tunnel_vision_r = msg.get("vr", self.tunnel_vision_r)
+            if "q" in msg and "r" in msg:
+                self.tunnel_pos = (msg["q"], msg["r"])
+                # tsync is the first message that knows where we came out, so
+                # it is what completes the pairing our own tun_in started.
+                if self._pending_hatch is not None:
+                    h = self._hatch(self._pending_hatch)
+                    h.tq, h.tr = msg["q"], msg["r"]
+                    self._pending_hatch = None
+            if "map" in msg:
+                try:
+                    self.tunnel.load_full(msg["map"], merge=True)
+                    self.tunnel_synced = True
+                except ValueError:
+                    # A short board is a firmware buffer problem, not ours.
+                    # Keep whatever we already had rather than dropping the run.
+                    pass
         elif t == "vis":
-            self.vision_r = msg.get("vr", self.vision_r)
             # dp=1 frames describe the bunker tunnel board, which is a
-            # different grid -- ignore rather than corrupting the surface map.
-            if not msg.get("dp") and "cells" in msg:
-                self.map.apply_vis(msg["cells"])
+            # different grid -- applying them to the surface map would rewrite
+            # a hex 60 columns away from anywhere the player has ever been.
+            if msg.get("dp"):
+                self.tunnel_vision_r = msg.get("vr", self.tunnel_vision_r)
+                if "q" in msg and "r" in msg:
+                    self.tunnel_pos = (msg["q"], msg["r"])
+                if "cells" in msg:
+                    self.tunnel.apply_vis(msg["cells"])
+            else:
+                self.vision_r = msg.get("vr", self.vision_r)
+                if "cells" in msg:
+                    self.map.apply_vis(msg["cells"])
         elif t == "ev":
             self._apply_event(msg)
         elif t == "err":
@@ -193,11 +331,39 @@ class Observation:
             if "it"  in msg: me.inv_type = list(msg["it"])
             if "iq"  in msg: me.inv_qty  = list(msg["iq"])
             if "inv" in msg: me.inv      = list(msg["inv"])
+            # eq/is/llCap ride every item_result too (appendPackArrays). Without
+            # these the pack updated instantly but the equipment slots and the
+            # pack size did not, so for one tick after an equip the bot saw the
+            # item gone from its pack and not yet on its body.
+            if "eq"    in msg: me.equip      = list(msg["eq"])
+            if "is"    in msg: me.inv_slots  = int(msg["is"])
+            if "llCap" in msg: me.ll_cap     = int(msg["llCap"])
         elif t == "ground_update":
             self.ground_items = list(msg.get("gi", self.ground_items))
         elif t == "enc_path":
             self.encounter = msg
         return t
+
+    def _sync_tunnel_pos(self):
+        """Keep tunnel_pos honest against the broadcast.
+
+        tq/tr ride every `s`, so the broadcast is the authority; our own dp=1
+        mv events are merely fresher between ticks.  Surfacing clears it --
+        the firmware leaves tq/tr pointing at the shaft we climbed out of, and
+        a stale position there would have us pathing on the wrong board the
+        next time we went down."""
+        me = self.me
+        if me.depth:
+            # (0, 0) is treated as "the broadcast did not carry tq/tr" rather
+            # than as a position: PlayerState defaults them to 0, so a
+            # firmware that stopped sending them would otherwise teleport us
+            # to the top-left corner of the tunnel board every tick. It is a
+            # legal cell, so a real (0,0) is still adopted when we have no
+            # other fix, and the dp=1 mv events correct it either way.
+            if (me.tq, me.tr) != (0, 0) or self.tunnel_pos is None:
+                self.tunnel_pos = (me.tq, me.tr)
+        else:
+            self.tunnel_pos = None
 
     def _apply_gs(self, gs):
         if not gs:
@@ -219,10 +385,42 @@ class Observation:
             pass
         elif k in ("enc_end", "enc_bank") and mine:
             self.encounter = None
+        elif k == "mv":
+            # Every event that names a hex carries the board it belongs to.
+            # Our own underground steps are the freshest position we get --
+            # the broadcast's tq/tr is up to a tick behind.
+            if mine and ev.get("dp") and "q" in ev and "r" in ev:
+                self.tunnel_pos = (ev["q"], ev["r"])
+        elif k in ("tun_in", "tun_out"):
+            # q/r are the SURFACE hatch in both directions, for every player,
+            # so a hatch's surface hex is learned just by watching anyone use
+            # it -- including from the other board.
+            idx = ev.get("hatch")
+            if isinstance(idx, int) and idx >= 0:
+                h = self._hatch(idx)
+                if "q" in ev and "r" in ev:
+                    h.sq, h.sr = ev["q"], ev["r"]
+                if mine and k == "tun_in":
+                    # The shaft we land on is only named by the tsync that
+                    # follows; hold the index until it arrives.
+                    self._pending_hatch = idx
+                elif mine and k == "tun_out":
+                    # We climbed out of whichever shaft we were standing on,
+                    # which pairs it with the surface hex in this event.
+                    if self.tunnel_pos is not None:
+                        h.tq, h.tr = self.tunnel_pos
+                    self._pending_hatch = None
+                    self.tunnel_pos = None
         elif k == "regen":
-            # New world: the cached map is meaningless now.
+            # New world: both cached boards are meaningless now, and so is
+            # every hatch pairing -- generateTunnels() re-rolls the lot.
             self.synced = False
             self.map = WorldMap()
+            self.tunnel = WorldMap(TUN_ROWS, TUN_COLS, wraps=False)
+            self.tunnel_synced = False
+            self.tunnel_pos = None
+            self.hatches = {}
+            self._pending_hatch = None
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:

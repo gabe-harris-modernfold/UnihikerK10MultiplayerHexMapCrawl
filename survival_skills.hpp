@@ -68,7 +68,15 @@ static bool healWound(Player& p, int tier) {
 
 // Move F track by dir (+1 or -1).  Checks threshold crossings and accumulates
 // llDelta (+1 = restore LL, -1 = lose LL).  F clamps [1,6].
-// F thresholds: box 4 (fThreshBelow bit0), box 2 (fThreshBelow bit1).
+// F thresholds: box 4 (fThreshBelow bit0), box 2 (bit1), box 1 (bit2 — fires
+// when F==1 and dir==-1).
+//
+// The floor penalty (bit2) mirrors applyWStep's: without it food had two
+// breakpoints to water's three, and starving *at the floor* cost nothing at
+// all once both bits had latched — so a survivor could sit at F1 indefinitely
+// and only thirst would keep billing them. Measured across 9 bot runs,
+// hunger was 0.2% of all LL lost and killed nobody, against thirst's 34%.
+// This is the asymmetry that made starvation decorative.
 static void applyFStep(Player& p, int dir, int& llDelta) {
   uint8_t oldF = p.food;
   if (dir > 0) {
@@ -76,11 +84,18 @@ static void applyFStep(Player& p, int dir, int& llDelta) {
     // Upward crossings → restore LL if threshold was previously tripped
     if (oldF < 4 && p.food >= 4 && (p.fThreshBelow & 1)) { p.fThreshBelow &= ~1; llDelta++; }
     if (oldF < 2 && p.food >= 2 && (p.fThreshBelow & 2)) { p.fThreshBelow &= ~2; llDelta++; }
+    // Clear the floor penalty when F rises off 1, same as W's bit2
+    if (oldF < 2 && p.food >= 2 && (p.fThreshBelow & 4)) { p.fThreshBelow &= ~4; llDelta++; }
   } else {
-    if (p.food > 1) p.food--;
-    // Downward crossings → LL loss on first crossing below each threshold
-    if (oldF >= 4 && p.food < 4 && !(p.fThreshBelow & 1)) { p.fThreshBelow |= 1; llDelta--; }
-    if (oldF >= 2 && p.food < 2 && !(p.fThreshBelow & 2)) { p.fThreshBelow |= 2; llDelta--; }
+    if (p.food > 1) {
+      p.food--;
+      // Downward crossings → LL loss on first crossing below each threshold
+      if (oldF >= 4 && p.food < 4 && !(p.fThreshBelow & 1)) { p.fThreshBelow |= 1; llDelta--; }
+      if (oldF >= 2 && p.food < 2 && !(p.fThreshBelow & 2)) { p.fThreshBelow |= 2; llDelta--; }
+    } else {
+      // F is already at floor 1: "crossing below box 1" — fires once
+      if (!(p.fThreshBelow & 4)) { p.fThreshBelow |= 4; llDelta--; }
+    }
   }
 }
 

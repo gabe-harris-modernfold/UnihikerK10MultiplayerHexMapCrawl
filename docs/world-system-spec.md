@@ -58,10 +58,14 @@ static HexDynamic W_hex[MAP_ROWS][MAP_COLS];  // zero-initialised at boot
 ```cpp
 struct Caravan {
     int16_t  q, r;
-    int16_t  wq, wr;        // current waypoint
+    int16_t  wq, wr;        // current waypoint (always a Settlement once active)
+    int16_t  pq, pr;        // settlement just departed; -1,-1 = none yet (excluded
+                             // from the next pick so it doesn't double back)
     bool     active;
     uint8_t  inv[5];        // resource slots: water/food/fuel/med/scrap (matches Player.inv)
     uint8_t  restockTimer;  // world ticks until inventory refills
+    uint8_t  stockItem[CARAVAN_STOCK_SLOTS];  // consumable shelf (see "Shelf" below); 0 = empty slot
+    uint8_t  stockQty[CARAVAN_STOCK_SLOTS];
 };
 
 struct CreepingDoom {
@@ -121,9 +125,13 @@ void wOnPlayerAction(int16_t q, int16_t r, uint8_t mpSpent) {
 }
 ```
 
-**Single call site:** inside `spendMP(Player& p, int cost)` in `survival_skills.hpp`, after `p.movesLeft` is decremented. Hooking `spendMP` itself (rather than each `do*` handler) captures every action-driven track in one place. Real per-action MP costs in the current code: Forage = 2, Water = 1–3 (variable), Scavenge = 2, Shelter = 1 or 2 (auto-selected), Survey = 1 (0 for Scout). Heavier actions leave hotter tracks.
+**Call site 1 — actions:** inside `spendMP(Player& p, int cost)` in `survival_skills.hpp`, after `p.movesLeft` is decremented. Hooking `spendMP` itself (rather than each `do*` handler) captures every action-driven track in one place. Real per-action MP costs in the current code: Forage = 2, Water = 1–3 (variable), Scavenge = 2, Shelter = 1 or 2 (auto-selected), Survey = 1 (0 for Scout). Heavier actions leave hotter tracks.
 
-Movement does not lay tracks: the move handler in `survival_state.hpp` decrements `p.movesLeft` directly without going through `spendMP`. Stepping through a hex leaves no scent; doing things in a hex does. `ACT_REST` also does not call `spendMP`, so resting is silent.
+**Call site 2 — movement:** `movePlayer()` in `survival_state.hpp` deducts the terrain move cost `mc` directly rather than going through `spendMP`, so it calls `wOnPlayerAction(p.q, p.r, mc)` itself right after the deduction. Travelling therefore lays a trail proportional to how hard the ground was to cross: open scrub (1 MP — 2 heat) stays under `SCENT_THRESHOLD`, rough terrain (2–3 MP) does not.
+
+This reverses the original design, where movement was silent and only in-hex actions laid scent. In practice that left the Doom nothing to follow — see the Detection Radius note below — so a player who kept moving was permanently invisible to it.
+
+`ACT_REST` still calls neither hook, so resting remains silent: the intended counter to Doom's attention (see Player Resting as Counter).
 
 ### Decay
 
@@ -138,7 +146,9 @@ void decayTracks() {
 }
 ```
 
-With `TRACK_AP_SCALE = 2` and `TRACK_DECAY_RATE = 3`: a forage action (MP 2) lays 4 heat — readable on the next world tick (god reads before decay), then cold one tick later (~30 s real time). An improved shelter build (MP 2 + a follow-up scrap deposit) lays ~4–8 heat — fades within 1–3 world ticks. A scavenge in ruins (MP 2) lays 4 heat. To make heavier actions leave longer trails, raise `TRACK_AP_SCALE`; to make the god less sensitive, raise `SCENT_THRESHOLD`. The numbers in the Constants table are starting points to tune in playtest.
+With `TRACK_AP_SCALE = 2` and `TRACK_DECAY_RATE = 1`: a forage action (MP 2) lays 4 heat, which sits at or above `SCENT_THRESHOLD` (4) for four world ticks (~60 s real time) before going cold. A 3 MP water draw lays 6 heat and stays warm for ~90 s. A 1 MP step lays 2 heat — never smellable on its own. To make heavier actions leave longer trails, raise `TRACK_AP_SCALE`; to make the Doom less sensitive, raise `SCENT_THRESHOLD` or `TRACK_DECAY_RATE`.
+
+`TRACK_DECAY_RATE` was originally 3 and `SCENT_THRESHOLD` 8, which made the system unreachable: no single action in the game costs more than 3 MP, so no single action could ever lay 8 heat, and a 2 MP action's 4 heat was gone in two ticks. `hottestTrackWithin()` therefore almost never cleared the threshold and awareness decayed to 0 and stayed there.
 
 ---
 
@@ -150,32 +160,52 @@ A roaming APC that the player can trade resources with when co-located. Provides
 
 ### Waypoint Movement
 
-The caravan holds a single target waypoint. Each world tick it steps one hex toward it using `hexDistWrap`. On arrival it picks a new waypoint biased toward unexplored or low-fire hexes:
+The caravan holds a single target waypoint, always a Settlement hex. Each world tick it steps one hex toward it using `hexDistWrap`. On arrival it picks the next settlement to head to:
 
 ```cpp
 void tickCaravan() {
     if (!W.caravan.active) return;
 
-    // Step toward waypoint
-    if (W.caravan.q != W.caravan.wq || W.caravan.r != W.caravan.wr) {
+    // Hold for a customer (see Trade Hold), else step toward waypoint
+    if (caravanHasCustomer() && W.caravan.holdTicks < CARAVAN_TRADE_HOLD) {
+        W.caravan.holdTicks++;
+    } else if (W.caravan.q != W.caravan.wq || W.caravan.r != W.caravan.wr) {
+        W.caravan.holdTicks = 0;
         moveOneStep(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr);
     } else {
+        W.caravan.holdTicks = 0;
         pickCaravanWaypoint();   // arrived — choose next destination
     }
 
-    // Restock timer
+    // Restock timer — counts down whether the caravan moved or held
     if (W.caravan.restockTimer > 0) W.caravan.restockTimer--;
     else restockCaravan();
 }
 ```
 
-### Waypoint Bias
+### Trade Hold
 
-`pickCaravanWaypoint()` samples 8 random hexes and picks the candidate with the lowest combined score of: `fire_intensity * 10 + hexDistWrap(to creeping doom) < 3 ? 50 : 0`. Caravan prefers open ground away from Creeping Doom and away from fire.
+The caravan parks while a survivor is standing on its hex, so it cannot roll away mid-purchase: a `car_buy` aimed at a caravan that stepped off one world tick earlier fails the co-location check with `why = 1` ("the caravan has moved on"), which reads as a bug from the shelf screen rather than as world simulation. `caravanHasCustomer()` uses the same filter as the trade prompt — connected, not encounter-locked — plus "not downed", since a downed survivor cannot open the action panel and so has nothing to finish.
+
+The hold is capped at `CARAVAN_TRADE_HOLD = 4` world ticks (~60 s) so a parked player cannot pin the trade route indefinitely; past the cap the caravan resumes its route with the player still standing there. `Caravan.holdTicks` resets the moment the hex is clear (or the cap is hit and it moves), and it is runtime-only — not in `SaveHeader`, so a reboot simply restarts the wait. Mirrored in `mock-server/server.js` (`tickCaravan(connected)` / `caravanHasCustomer(connected)`).
+
+### Waypoint Selection
+
+`pickCaravanWaypoint()` scans the map for Settlement hexes and picks the nearest one by `hexDistWrap`, excluding the hex the caravan is currently standing on. It also excludes `W.caravan.pq/pr` — the settlement it just departed — when another candidate exists, so it doesn't settle into bouncing between two mutually-nearest settlements; that pair becomes `pq/pr` for the *next* pick instead. `pq/pr` starts at the `-1,-1` sentinel (no settlement departed yet) and, like `wq/wr`, is not persisted across a save/load — a reload just gives the caravan a fresh route. If the map has no other settlement to head to at all (degenerate case — map generation guarantees at least 27), it falls back to a random passable hex.
+
+### Tire Tracks
+
+Each successful step in `tickCaravan()` also marks the hex it just entered: `G.map[r][q].tireTrack = 1` (`HexCell.tireTrack`, `Esp32HexMapCrawl.ino`) — the same "mark the hex I just moved onto" idiom player footprints use, but a single shared bit rather than a per-player mask, since it's just "a vehicle drove through here" with no attribution needed. It rides in bit 7 of the wire-encoded `TT` byte (`encodeCell()`, `hex-map.hpp`) — free because terrain only needs 4 bits and bit 6 is already the improved-shelter flag — so the map/vis-disk wire format doesn't grow a byte. Like footprints (and unlike `HexDynamic.track`, the unrelated invisible AP-scent value Creeping Doom follows — see Track System below), tire tracks never fade or decay; they're cleared only by `generateMap()` on a full world regen. Client renders them with `GLYPH.TIRE_TRACK` via `drawTireTracks()` (`data/renderer.js`), the same worn-in-mark idiom as `drawFootprints()`. The mock (`mock-server/server.js`) mirrors this with a `caravanTracks` overlay Set consulted from `ttFor()`.
+
+The caravan isn't the only source: `movePlayer()` (`survival_state.hpp`) sets the same bit when the moving player has any equipped item flagged `tracks = yes` in `items.cfg` — today just the Motorbike (id 26). `hasTireTracks(pid)` (`inventory_items.hpp`) checks every equip slot for the flag, mirroring `hasPassTerrainBit()`'s loop rather than hardcoding `EQUIP_VEHICLE`, so a future non-vehicle item could set it too. The mock's `case 'm'` handler mirrors this by checking `p.eq` against `ITEM_DEFS[itemId]?.tracks` before adding to `caravanTracks`. No fuel gating: the mark fires whenever the item is equipped and the player moves, regardless of whether the day's fuel cost was actually paid (see Restock/dawn-cost sections — `applyDawnItemCosts()` only gates the MP *bonus*, and there's no separate "fuelled today" flag to check at move time).
+
+Unlike the caravan, a player mover's `EVT_MOVE` (`mv`) event isn't broadcast unconditionally by position — it already reaches every client, so the "did this step leave a track" fact just needs to ride along: `ev.amt` (`GameEvent`'s generic per-event-type field, same reuse idiom as fire/flood events) carries it as `trk` in the wire JSON. Client-side, `_evMv()` (`data/network.js`) stamps `gameMap[r][q].tireTrack = 1` on an already-revealed cell when `ev.trk` is set — the same "vis-disk only reaches the mover" reasoning that makes it also stamp footprints there, and the same pattern `_applyWorldState()` uses for the caravan's own position-driven stamp just above it.
 
 ### Trade
 
-`resolveProximity()` checks if any connected player shares `(q, r)` with the caravan. If so — **and only on the tick the player first co-locates** (see Proximity Debounce below) — it enqueues `EVT_CARAVAN_TRADE` targeting that player. The client opens the trade panel.
+`resolveProximity()` checks if any connected player shares `(q, r)` with the caravan. If so — **and only on the tick the player first co-locates** (see Proximity Debounce below) — it enqueues `EVT_CARAVAN_TRADE` targeting that player, which the client logs and toasts.
+
+Opening the shelf, though, does **not** wait on that event: it fires on the world tick, up to `WORLD_TICK_INTERVAL` (~15 s) after the step that caused it, which is far too late for "I walked onto the trader". The client edge-triggers the panel itself off the 100 ms state broadcast — which carries both the player's position and the caravan's — in `maybeAutoOpenCaravanTrade()` (`data/ui-panels.js`, called from `_msgState`/`_msgSync` in `data/network.js`). It re-arms when the player leaves the hex, and stands down while the player is downed, encounter-locked, or has another overlay open. `EVT_CARAVAN_TRADE` remains the log/toast notice.
 
 Trade itself is handled by a **dedicated** message handler `handleMsg_caravan_trade` in `network-msg-trade.hpp`. It does **not** reuse the existing `tradeOffers[MAX_PLAYERS]` table or the player-to-player accept/decline flow — that machinery is hard-bounded to `pid < MAX_PLAYERS` (see `network-msg-trade.hpp` and `findSlot()` in `hex-map.hpp`) and shoehorning a pseudo-pid would require a 254-branch in every trade function. Instead the caravan handler:
 
@@ -186,9 +216,21 @@ Trade itself is handled by a **dedicated** message handler `handleMsg_caravan_tr
 
 Wire format: `{"t":"car_trade","give":[5],"want":[5]}`. No accept/decline round-trip — the caravan transacts immediately.
 
+### Shelf — consumables for resource tokens
+
+Beyond the token swap, the caravan carries a small shelf of consumables it sells for resource tokens (`Caravan.stockItem[CARAVAN_STOCK_SLOTS]` / `stockQty[]`; `CARAVAN_STOCK_SLOTS = 4` lives in the `.ino` because `SaveHeader` needs it, `CARAVAN_STOCK_MAX = 3` units per slot in `world-system.hpp`). What can appear on it is data-driven from `data/items.cfg`: any `category = consumable` item with `trade = yes`. The crafted concoctions (ids 52+) are `trade = no` so a learned recipe stays the only way to get one; key items are `trade = no` by definition.
+
+The asking price per unit is the item's `value` key (floored at 1) — `caravanPrice()`. It is paid in **token-worth, not token count**: `CARAVAN_TOKEN_WORTH[5] = {0, 1, 2, 1, 1}` (water/food/fuel/med/scrap) — food, meds and scrap count 1 each, fuel counts 2, and water is worth nothing and is refused outright (`why = 4`); mirrored in `data/game-data.js` and the mock. Overpaying is accepted (the caravan doesn't make change; the client keeps it to at most one fuel token's rounding). The price is never stored: `appendCaravanStock()` (`network-sync.hpp`) reads it at serialisation time, so editing `items.cfg` re-prices the shelf on the next boot.
+
+Purchase handler: `handleMsg_caravan_buy` (`network-msg-trade.hpp`), wire `{"t":"car_buy","item":ID,"n":QTY,"give":[5]}`. `give[]` is the payment; its sum must cover `price × n` (overpaying is accepted — the client caps its steppers at the exact price). Every check runs before anything is spent — co-located, shelf holds ≥ n, player holds `give[]`, `invRoomFor()` has room for all n — then the tokens move player → caravan `inv`, the shelf slot decrements (item id cleared at 0 so the next restock re-rolls it) and `addItemToInv()` grants the goods. Success emits `EVT_TRADE_RESULT` (`tradeTo = CARAVAN_PID`, `tradeItem`/`tradeItemQty` set, so `trd_res` gains `"item","n"`) for every client's log, plus a targeted `{"t":"item_result","act":"buy",…}` so the buyer's pack and token counts update immediately (typed inventory never rides the state broadcast). Failure replies `{"t":"trade_fail","why":N}` — 1 not co-located / not in stock, 2 can't pay, 3 pack full, 4 tried to pay with water.
+
+Client: with the caravan as target, the TRADE sub-panel shows a CARAVAN STOCK list above the swap steppers (`buildStockList()` in `data/ui-panels.js`); picking a card opens a PAY WITH stepper row pre-filled from whatever the player holds most of. The mock (`mock-server/server.js`) mirrors the shelf, restock and `car_buy`.
+
 ### Restock
 
 Every `CARAVAN_RESTOCK_TICKS` world ticks, each `inv` slot refills to a terrain-weighted amount. Caravan never runs fully dry on all slots simultaneously — at least one slot always has stock (clamp in restock logic).
+
+The shelf restocks on the same timer: one occupied slot is rotated out for a fresh roll (so stock still turns over for a party that never buys), empty slots get a new random stockable consumable (`rollCaravanStockItem()`, never a duplicate of what is already on the shelf) with 1–3 units, and every other slot gains one unit up to `CARAVAN_STOCK_MAX`.
 
 ---
 
@@ -257,42 +299,51 @@ Emits `EVT_FIRE_DAMAGE` with `pid`, `q`, `r`, `intensity`. Client plays an audio
 
 `awareness` is the sole state variable driving all behavior. No stored mode enum — behavior is derived at tick time from threshold checks.
 
-| Awareness | Behavior | Detection Radius |
-|---|---|---|
-| 0–20 | Random walk; ignores tracks | 2 |
-| 21–50 | Moves toward hottest track in radius | 3 |
-| 51–75 | Pathfinds aggressively to hottest track | 4 |
-| 76–99 | Ignores terrain cost; ignites hexes on arrival | 5 |
-| 100 | Locks adjacent to player; effect every world tick | 6 |
+| Awareness | Behavior | Detection Radius | Hexes / tick |
+|---|---|---|---|
+| 0–20 | Random walk; ignores tracks | 6 | 1 |
+| 21–50 | Moves toward hottest track in radius | 6–7 | 1 |
+| 51–75 | Pathfinds aggressively to hottest track | 8 | 1 |
+| 76–99 | Ignores terrain cost; ignites hexes on arrival | 9 | 2 |
+| 100 | Locks adjacent to player; effect every world tick | 10 | 3 |
+
+`doomStepsPerTick()` supplies the last column. At one hex per 15 s world tick the Doom needed minutes to cross a single hex, which made even a fully-aware hunt unthreatening to anyone who had simply stopped nearby. Three hexes per tick is still ~1 hex per 5 s against a player's ~1 hex per 0.2–0.9 s (`MOVE_CD_MS * mc`), so running remains a complete answer — it just means a hunting Doom actually arrives.
 
 ```cpp
 int doomDetectionRadius() {
-    return 2 + (W.creepingDoom.awareness / 25);  // 2 at 0, 6 at 100
+    return DOOM_BASE_RADIUS + (W.creepingDoom.awareness / 25);  // 6 at 0, 10 at 100
 }
 ```
 
+The base was originally 2. On a 75-column map a random-walking entity that can only smell two hexes will essentially never cross a player's trail, so awareness never left 0 on hardware and none of the `>=51` effects could fire — the Doom was visible on the K10 minimap and completely inert. `DOOM_BASE_RADIUS = 6` gives a dormant Doom a realistic chance of picking up a trail without making it omniscient; awareness still has to climb five consecutive scent ticks (~75 s) before it even warns.
+
 ### Tick Logic
+
+The scent read happens **first**, at every awareness level including 100, and the lock-on branch is gated on there actually being a live trail:
 
 ```cpp
 void tickCreepingDoom() {
-    // Awareness == 100: lock to nearest connected player (overrides scent path)
-    if (W.creepingDoom.awareness >= 100) {
+    int radius = doomDetectionRadius();
+    HexCoord hotspot = hottestTrackWithin(W.creepingDoom.q, W.creepingDoom.r, radius);
+    bool hasScent = W_hex[hotspot.r][hotspot.q].track >= SCENT_THRESHOLD;
+    int  steps    = doomStepsPerTick();
+
+    // Awareness 100 + a live trail: drop the trail, go for the survivor
+    if (W.creepingDoom.awareness >= 100 && hasScent) {
         int tgt = nearestConnectedPlayer(W.creepingDoom.q, W.creepingDoom.r);  // -1 if none
         if (tgt >= 0) {
-            stepAdjacentTo(W.creepingDoom.q, W.creepingDoom.r,
-                           G.players[tgt].q, G.players[tgt].r);
+            for (int s = 0; s < steps; s++)
+                stepAdjacentTo(W.creepingDoom.q, W.creepingDoom.r,
+                               G.players[tgt].q, G.players[tgt].r);
             wIgnite(W.creepingDoom.q, W.creepingDoom.r, 2);
             return;
         }
-        // No player connected — fall through to scent path and let awareness decay
     }
 
-    int radius = doomDetectionRadius();
-    HexCoord hotspot = hottestTrackWithin(W.creepingDoom.q, W.creepingDoom.r, radius);
-
-    if (W_hex[hotspot.r][hotspot.q].track >= SCENT_THRESHOLD) {
+    if (hasScent) {
         // Found scent — close in
-        stepToward(W.creepingDoom.q, W.creepingDoom.r, hotspot.q, hotspot.r);
+        for (int s = 0; s < steps; s++)
+            stepToward(W.creepingDoom.q, W.creepingDoom.r, hotspot.q, hotspot.r);
         W.creepingDoom.awareness = (uint8_t)min(100, (int)W.creepingDoom.awareness + AWARENESS_GAIN);
     } else {
         // Lost scent — wander and fade
@@ -314,13 +365,129 @@ Handled in `resolveProximity()`. Effect escalates with awareness:
 
 | Awareness | Effect |
 |---|---|
-| 51–75 | Emit warning event only (dread, audio cue) |
+| 51–75 | Emit warning event only (dread; no motif here — audio is the distance-driven ostinato below) |
 | 76–99 | Destroy one resource node on the player's hex (set `G.map[r][q].amount = 0`) |
 | 100 | LL−1 per world tick; destroy resource node |
 
+### Taunts
+
+`tickDoomTaunts()` gives the Doom a voice, keyed off the same awareness
+thresholds every other behaviour tier uses so a taunt always coincides with a
+real change in what it is doing to you:
+
+| Tier | Awareness | Meaning |
+|---|---|---|
+| 1 | 51–75 | it has your scent |
+| 2 | 76–99 | it is unmaking what you gather |
+| 3 | 100 | it has stopped tracking and started hunting |
+| 0 | <51 | it lost you — the release beat |
+
+Tier 0 is only ever sent **after** a higher tier, so a session that never drew
+the Doom's attention stays silent rather than opening with "it lost you".
+
+**Firing rule.** A tier change is news and speaks immediately, but never
+within `DOOM_TAUNT_MIN_GAP` (2) world ticks of the previous line; otherwise
+only the full `DOOM_TAUNT_COOLDOWN` (8 ticks, ~2 min) lets it speak again, and
+only while `tier > 0`. The floor matters because awareness gains 12 and decays
+5 per tick, so a running battle parks it right on a threshold and flutters
+across it — without `MIN_GAP` that taunts every single world tick. A tier
+change suppressed by the floor is not lost: `lastTauntTier` is only updated
+once the line actually goes out, so the change fires on the next eligible
+tick.
+
+**The wording never goes on the wire.** `EVT_DOOM_TAUNT` carries `pid`
+(`nearestConnectedPlayer()` — who it addresses), `amt` = tier, and `res` = a
+raw random byte. The client reduces that byte modulo its own row length in
+`DOOM_TAUNTS` (`data/game-data.js`), so lines can be added or reworded without
+touching the firmware and the two sides never have to agree on how many exist.
+The K10 keeps its own phrasings in the `EVT_DOOM_TAUNT` handler via `K10_SAY`,
+the same way every other event does.
+
+**Presentation.** Broadcast to every client like `EVT_DOOM_WARNING` — the rest
+of the party seeing the Doom single someone out is most of the effect — but
+only the addressed player gets a toast; everyone else gets the log line.
+`showToast(msg, 'doom')` applies a `.toast-doom` class: blood-tinted, italic
+and *not* uppercased, so it reads as something in the wasteland talking rather
+than the UI reporting. Every other `showToast` caller omits the argument and
+is unchanged.
+
+Taunt state (`lastTauntTier`, `tauntCooldown`) lives on `CreepingDoom` but is
+**not** persisted — `SaveHeader` still carries only q/r/awareness, so no
+`SAVE_VERSION` bump. `tryLoadSave()` re-seeds `lastTauntTier` from the restored
+awareness so a reboot mid-hunt doesn't re-announce a tier the player already
+heard.
+
+### Audio — the pair
+
+`tickDoomAudio()` gives the Doom the only ostinato in the tone palette: two
+notes a minor 2nd apart (`DOOM_LO` 131 Hz / `DOOM_HI` 139 Hz, C3/C#3,
+`tone-motifs.hpp`) alternating, where the **repeat rate carries the
+information** and the pitch never moves. It is the lowest recurring voice on
+the box, so the Doom reads as underneath everything else the K10 says.
+
+Two tuning constraints were found on hardware and are worth not rediscovering:
+
+- **Note-length floor.** A tone needs ~10 cycles before the ear hears pitch
+  rather than a click. The first cut accelerated by *shortening notes* to
+  50–90 ms, which at the original 98 Hz `DOOM_LO` is 5–9 cycles — it played as
+  a burst of clicks. No note in the family now goes below 150 ms (~20 cycles
+  at C3), and tempo comes from shrinking the **gaps**, never the notes.
+- **Register.** 98/104 Hz (G2/G#2) is at the bottom of what the K10 speaker
+  can move; at a low `audioVol` almost none of the fundamental survived.
+  Raised a fourth to C3/C#3 for roughly double the output. The tritone drop
+  (`DOOM_DROP`) lands on G2 — the old `DOOM_LO`, and `MOTIF_HEAVY_DOOR_DRAG`'s
+  opening note, so known-good on this hardware.
+
+The sequencer itself is **not** a suspect: measured on-device,
+`i2s_set_sample_rates(I2S_NUM_0, 8000)` takes correctly (`live=8000` against a
+vendor default of 16000) and a 1720 ms nominal figure plays in 1726 ms.
+
+Because tempo is the message, the cue is chosen by **distance**, not by
+awareness. Awareness is how locked-on the Doom is, which is a different
+question from where it is standing, so it only gates whether the Doom makes
+any sound at all (the same `>= 51` threshold the proximity effect uses). The
+audible range is the scent radius: if it can smell you, you can hear it.
+
+| Band | Condition | Motif | Cadence |
+|---|---|---|---|
+| 0 | awareness < 51, nobody connected, or `dist > radius` | silent | — |
+| 1 | outer half of the scent radius | `MOTIF_DOOM_FAR` | every 2nd world tick (~30 s) |
+| 2 | inner half (`dist * 2 <= radius`) | `MOTIF_DOOM_NEAR` | every world tick (~15 s) |
+| 3 | `dist <= 2`, or awareness 100 | `MOTIF_DOOM_HUNT` | every world tick |
+| — | band falls to 0 after having risen | `MOTIF_DOOM_LOST` | once |
+
+`MOTIF_DOOM_HUNT` ends on a tritone below `DOOM_HI` (G2, 98 Hz) — the floor
+dropping out. `MOTIF_DOOM_LOST` is the release: the pair *breaks*, ending on
+the low note with its answer missing. Like the tier-0 taunt it only ever fires
+after the Doom had actually closed on someone, so a session that never drew
+its attention stays silent.
+
+A fully-aware Doom on the far side of the map makes no sound. That is the
+point — the sound is proximity, and it has to be possible to outrun it.
+
+**Why it is not a one-shot on the effect.** The old cues fired from
+`resolveProximity()` and were gated on `hexDistWrap <= 1`, so the only audio
+the Doom ever made arrived at the moment it was already on top of you, and
+both motifs were borrowed from unrelated events (`MOTIF_DISTANT_THUD` is the
+weather shift, `MOTIF_ROTTEN_CHORD` is score loss). Those calls are gone; at
+that range band 3 is sounding every tick anyway, and a one-shot would only
+race it and lose — `k10PlaySeq()` drops a cue while another is live, it never
+queues. One figure is ~1.0–1.1 s against a 15 s world tick, so even the
+tightest band occupies ~7% of the single tone voice.
+
+`lastAudioBand` / `audioPhase` live on `CreepingDoom` alongside the taunt
+state and are likewise **not** persisted. `tryLoadSave()` resets both to 0 —
+the opposite of the `lastTauntTier` treatment, because seeding the band from
+the restored position would let the first world tick after a reboot fire the
+release cue for a hunt this boot never played.
+
+---
+
 ### Player Resting as Counter
 
-`ACT_REST` sets `p.resting = true` and `p.actUsed = true` but does **not** call `spendMP` — therefore the rest action lays no track via the `spendMP` hook. Track intensity on the resting hex still decays each world tick. After 2–3 consecutive days of rest, all of a player's recent hexes decay below `SCENT_THRESHOLD` and Creeping Doom's awareness drops via `AWARENESS_DECAY` — resting is the natural counter to Creeping Doom's attention.
+`ACT_REST` sets `p.resting = true` and `p.actUsed = true` but calls neither track hook (not `spendMP`, and not the movement hook either, since resting doesn't move you) — therefore the rest action lays no scent. Track intensity on the resting hex still decays each world tick, so a player's recent hexes fall below `SCENT_THRESHOLD` within a few ticks and Creeping Doom's awareness drops via `AWARENESS_DECAY` — resting is the natural counter to Creeping Doom's attention.
+
+This now holds at **every** tier, including 100. The awareness-100 lock-on originally ran ahead of the scent read and `return`ed unconditionally, so awareness was never touched again once it reached 100: with anyone connected it was a permanent hunt with no escape, directly contradicting this section. Gating the lock on `hasScent` restores it — go still, let the trail go cold, and it loses you and cools off like at any other level. Escaping still costs you: from 100 it takes `100 / AWARENESS_DECAY` = 20 cold ticks to reach 0, and ten of those are still above the 51 effect threshold.
 
 ---
 
@@ -346,6 +513,7 @@ EVT_FIRE_SPREAD      = 21,   // hex caught fire: q, r, intensity (broadcast to n
 EVT_CARAVAN_TRADE    = 22,   // caravan trade available: pid (co-located player)
 EVT_DOOM_WARNING     = 23,   // creeping doom adjacent, low threshold: pid
 EVT_DOOM_ACT         = 24,   // creeping doom destroyed resource / drained LL: pid, q, r, actLLD
+EVT_DOOM_TAUNT       = 29,   // the Doom speaks: pid = addressee, amt = tier 0-3, res = line index
 ```
 
 `EVT_FIRE_SPREAD` and `EVT_DOOM_ACT` use the existing range-filter in `drainEvents()` — only players within vision radius of the affected hex receive them.
@@ -360,7 +528,7 @@ EVT_DOOM_ACT         = 24,   // creeping doom destroyed resource / drained LL: p
 
 ```json
 "world": {
-  "caravan": { "q": 12, "r": 7, "active": true },
+  "caravan": { "q": 12, "r": 7, "active": true, "inv": [w, f, fu, m, s], "stock": [[itemId, qty, price], ...] },
   "doom":    { "q": 4,  "r": 2, "awareness": 63 },
   "fire":    [[q, r, intensity], ...]
 }
@@ -382,14 +550,19 @@ Tracks are **not** sent to clients — the trail is server-internal state.
 // ── World system tuning ────────────────────────────────────────
 static constexpr uint8_t  WORLD_TICK_INTERVAL  = 150;   // game ticks between world updates
 static constexpr uint8_t  TRACK_AP_SCALE       = 2;     // heat added = apSpent * TRACK_AP_SCALE
-static constexpr uint8_t  TRACK_DECAY_RATE     = 3;     // track intensity lost per world tick
-static constexpr uint8_t  SCENT_THRESHOLD      = 8;     // min track intensity god will pursue
+static constexpr uint8_t  TRACK_DECAY_RATE     = 1;     // track intensity lost per world tick
+static constexpr uint8_t  SCENT_THRESHOLD      = 4;     // min track intensity Doom will pursue
+static constexpr uint8_t  DOOM_BASE_RADIUS     = 6;     // scent radius at awareness 0
 static constexpr uint8_t  AWARENESS_GAIN       = 12;    // per world tick when following scent
+static constexpr uint8_t  DOOM_TAUNT_COOLDOWN  = 8;     // world ticks between repeat taunts
+static constexpr uint8_t  DOOM_TAUNT_MIN_GAP   = 2;     // floor between any two taunts, incl. tier changes
 static constexpr uint8_t  AWARENESS_DECAY      = 5;     // per world tick when cold
 static constexpr uint8_t  FIRE_SPREAD_CHANCE   = 20;    // percent chance of spread per neighbour
 static constexpr uint8_t  FIRE_CAP             = 20;    // max simultaneous burning hexes
 static constexpr uint8_t  CARAVAN_RESTOCK_TICKS = 40;  // world ticks between caravan restocks
 static constexpr uint8_t  CARAVAN_PID          = 254;  // sentinel for EVT_TRADE_RESULT.tradeTo on caravan trades
+static constexpr uint8_t  CARAVAN_STOCK_SLOTS  = 4;    // consumable shelf slots (defined in the .ino — SaveHeader needs it)
+static constexpr uint8_t  CARAVAN_STOCK_MAX    = 3;    // max units per shelf slot
 ```
 
 ---
@@ -415,3 +588,5 @@ All in static RAM alongside other globals. Well within ESP32-S3 budget.
 - Fire cap enforced (no runaway burn)
 - Persistence: `W.caravan` (q, r, restockTimer, inv) and `W.creepingDoom` (q, r, awareness) added to `SaveHeader` extension; bumps `SAVE_VERSION` from 9 to 10. **Existing v9 saves will fail the version check in `tryLoadSave()` and be ignored — boot will fall through to `generateMap()`.** This is a deliberate one-shot reset; no migration path is provided. Document in release notes.
 - `W_hex` (track + fire) is **not** persisted. Tracks decay in seconds anyway, and fires extinguish on power cycle (parity with player respawn).
+- Shelf persistence (`SAVE_VERSION` 15): `caravanStockItem[]` / `caravanStockQty[]` in `SaveHeader`. Prices are not persisted (they come from `items.cfg`), and an id the cfg no longer knows is dropped on load.
+- Tire tracks (`SAVE_VERSION` 16): not a `SaveHeader` field — `HexCell` itself grew a `tireTrack` byte, which changes `MAP_BYTES` (the raw `G.map` block `saveGame()`/`tryLoadSave()` read/write). Same one-shot-reset precedent as the other bumps above: a v15 save is ignored, not migrated.

@@ -20,13 +20,35 @@ const uiMP          = van.state(6);
 const uiRad         = van.state(0);
 // §5 Action tracking
 const uiResting     = van.state(false);  // true after REST until dawn
+// Bunker tunnels (tunnel-board.js): 0 = surface, 1 = underground. Drives the
+// HUD depth chip and the underground styling; set via setMyDepth().
+const uiDepth       = van.state(0);
 const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
+// Reactive LL ceiling — drives the LIFE LEVEL track box count. 7 plus every
+// equipped item's "ll" bonus minus any permanent penalty; the server sends it
+// as llCap (appendPackArrays). The track used to be a hardcoded 7, so +LL
+// armour raised a ceiling nothing on screen could show.
+const uiLLCap = van.state(7);
+// Equipment slots whose daily *_cost went unpaid at the last dawn (bitmask,
+// bit 0 = head .. bit 4 = vehicle). EVT_DAWN "unf". A fuel-gated MP bonus is
+// dormant on such a day, and the equipment panel greys it out to say so.
+const uiUnfuelled = van.state(0);
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);
 // Log panel visibility (persisted to localStorage)
 const uiLogVisible  = van.state(localStorage.getItem('logVisible') === '1');
 // K10 screen flip (persisted to localStorage)
 const uiScreenFlip  = van.state(localStorage.getItem('k10_screenFlip') === '1');
+// Known WiFi networks the board auto-joins (SSIDs only — the board owns this
+// list; passwords never leave it). Pushed by {t:'wifi',status:'nets'}.
+const uiWifiNets    = van.state([]);
+const uiWifiCur     = van.state('');
+// Link mode reported by handleConnect(): are we on the board's own softAP, how
+// many that AP seats, and where the board answers on a real network (if it has
+// one). Drives the standing notice in Settings > WiFi Network.
+const uiApLink      = van.state(false);
+const uiApCap       = van.state(0);
+const uiStaIp       = van.state('');
 // Overlay open states — toggled via .val; van.derive in ui.js handles class changes
 const uiHexInfoOpen = van.state(false);
 const uiCharOpen    = van.state(false);

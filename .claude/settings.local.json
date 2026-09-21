@@ -101,7 +101,25 @@
       "PowerShell(.\\\\scripts\\\\build.ps1)",
       "Bash(node --check server.js)",
       "Read(//c/SourceCode/**)",
-      "Bash(cd mock-server *)"
+      "Bash(cd mock-server *)",
+      "Bash(curl.exe -s -m 5 http://192.168.4.72/state)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(curl.exe -s -m 3 http://192.168.4.1/state)",
+      "Bash(echo \"AP_EXIT:$?\")",
+      "Bash(timeout 12 \"/c/Program Files/Arduino CLI/arduino-cli.exe\" monitor -p COM5 --config baudrate=115200)",
+      "Read(//c/tmp/**)",
+      "Bash(timeout 10 \"/c/Program Files/Arduino CLI/arduino-cli.exe\" monitor -p COM5 --config baudrate=115200)",
+      "Bash(echo \"exit:$?\")",
+      "PowerShell(1..254 | ForEach-Object { Start-Job -ScriptBlock { param\\($i\\) Test-Connection -ComputerName \"192.168.4.$i\" -Count 1 -TimeoutSeconds 1 -Quiet } -ArgumentList $_ } | Wait-Job -Timeout 25 | Out-Null; Get-Job | Remove-Job -Force; arp -a | Select-String \"192.168.4\\\\.\")",
+      "Bash(find \"/c/Users/harrisg1/AppData/Local/Arduino15\" -iname \"esptool.py\" 2>/dev/null | head -5; find \"/c/Program Files/Arduino CLI\" -iname \"esptool*\" 2>/dev/null)",
+      "Bash(find \"/c/Users/harrisg1\" -iname \"esptool*\" 2>/dev/null | grep -v OneDrive | head -20)",
+      "Bash(\"/c/Users/harrisg1/AppData/Local/Arduino15/packages/UNIHIKER/tools/esptool_py/4.6/esptool.exe\" --chip esp32s3 --port COM5 run)",
+      "Bash(curl.exe -s -m 5 http://192.168.4.193/assets.json)",
+      "Bash(curl.exe -s -m 5 http://192.168.4.193/state)",
+      "Bash(grep -rn \"collectResource\" *.hpp | head -5 && sed -n '/static .*collectResource/,/^}/p' survival_state.hpp | head -60)",
+      "Bash(node river-proto.js 200)",
+      "Bash(node river-proto.js 300)",
+      "Bash(node river-proto.js show 7)"
     ]
   }
 }

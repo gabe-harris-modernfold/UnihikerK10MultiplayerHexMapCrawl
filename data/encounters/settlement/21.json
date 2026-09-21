@@ -1,0 +1,39 @@
+{
+  "id": "settlement_raftbuilder_01",
+  "title": "{{builder_name}}'s Dock",
+  "start_node": "dock",
+  "nodes": {
+    "dock": {
+      "text": "A rickety plank dock juts into a flooded lot, half a dozen lashed-together hulls bobbing beside it. {{builder_name}} is up to their elbows in scrap cord, not looking up. 'You want across, or you want to sink. I can only really help with one of those.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask how the rafts are built.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 3,
+          "success_node": "the_lashing",
+          "hazard_id": "splinter"
+        }
+      ]
+    },
+    "the_lashing": {
+      "text": "'Scrap wood, lashed tight, tar the seams if you've got it.' {{builder_name}} taps the nearest hull. 'Won't win a race. Won't sink either, mostly. Floats you over anything wet like it was dry ground.'",
+      "can_bank": true,
+      "loot": [
+        { "recipe": 17 }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "splinter": {
+      "text": "A jagged plank end catches your palm before you can pull back.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "builder_name": ["Driftwood Nell", "Old Man Buoy", "Pontoon Pete", "Silt-Handed Mara"]
+  }
+}

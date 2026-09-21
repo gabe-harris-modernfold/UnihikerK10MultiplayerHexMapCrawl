@@ -11,10 +11,17 @@ Fog matters: an unrevealed cell is None.  Treating unknown as impassable would
 strand a bot behind its own vision radius, so unknown cells are traversable at
 an assumed cost and are themselves worth reaching -- they are where the
 exploration points and the unseen piles are.
+
+Everything here takes the *board* as an argument rather than reading
+MAP_COLS/MAP_ROWS, because there are two of them.  The bunker tunnel board is
+16x10 and walled: `world.wraps` is False, and a neighbour outside it is a wall,
+not the far side.  Pass `obs.board` (or `obs.map` / `obs.tunnel` explicitly)
+and the same Dijkstra serves both.
 """
 import heapq
 
-from config import DQ, DR, MAP_COLS, MAP_ROWS, TERRAIN_MC, IMPASSABLE, NUM_TERRAIN
+from config import (DQ, DR, MAP_COLS, MAP_ROWS, TERRAIN_MC, IMPASSABLE,
+                    NUM_TERRAIN, tun_distance)
 
 # What an unrevealed cell is assumed to cost.  Slightly above the average
 # passable cost (1.50 measured over the real map) so a bot prefers a known
@@ -33,26 +40,47 @@ def step_cost(cell) -> int | None:
     return None if mc == IMPASSABLE else mc
 
 
-def dijkstra(world, start_q, start_r, max_cost=60):
+def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
     """Cost-to-reach every cell within max_cost.
 
     Returns (dist, first_dir): dist[(q, r)] -> MP, first_dir[(q, r)] -> the
     direction to step from the start to begin that path.  Frontier is capped
     by max_cost so this stays bounded on a 4275-cell map.
+
+    `cost_fn(cell)` overrides step_cost -- return None to make a cell
+    impassable for this search.
+
+    `stop_at(cell, q, r)` marks a cell that can be *entered* but not walked
+    through.  Hatches need this: stepping onto a Bunker Entrance or Vent
+    Shaft crosses the boards as the last act of the move, so a route that
+    merely passes over one does not exist -- it ends there, somewhere the
+    caller did not choose.  Without it the pathfinder happily plots a line
+    through a hatch and the survivor is ejected mid-journey.
     """
     dist = {(start_q, start_r): 0}
     first = {(start_q, start_r): -1}
     pq = [(0, start_q, start_r)]
+    wraps = getattr(world, "wraps", True)
+    cols, rows = world.cols, world.rows
+    cost = cost_fn or step_cost
     while pq:
         d, q, r = heapq.heappop(pq)
         if d > dist.get((q, r), 1 << 30):
             continue
         if d >= max_cost:
             continue
+        if stop_at is not None and (q, r) != (start_q, start_r) \
+                and stop_at(world[(q, r)], q, r):
+            continue        # enterable, but the journey ends on it
         for direction in range(6):
-            nq = (q + DQ[direction]) % MAP_COLS
-            nr = (r + DR[direction]) % MAP_ROWS
-            c = step_cost(world[(nq, nr)])
+            nq = q + DQ[direction]
+            nr = r + DR[direction]
+            if wraps:
+                nq %= cols
+                nr %= rows
+            elif not (0 <= nq < cols and 0 <= nr < rows):
+                continue        # walled board: off the edge is rock
+            c = cost(world[(nq, nr)])
             if c is None:
                 continue
             nd = d + c
@@ -63,13 +91,14 @@ def dijkstra(world, start_q, start_r, max_cost=60):
     return dist, first
 
 
-def best_target(world, start_q, start_r, score_fn, max_cost=40):
+def best_target(world, start_q, start_r, score_fn, max_cost=40,
+                cost_fn=None, stop_at=None):
     """Pick the reachable cell maximising score_fn(cell, q, r, cost).
 
     score_fn returns None for "not a candidate".  Ties break toward the
     cheaper cell.  Returns (q, r, direction, cost, value) or None.
     """
-    dist, first = dijkstra(world, start_q, start_r, max_cost)
+    dist, first = dijkstra(world, start_q, start_r, max_cost, cost_fn, stop_at)
     best = None
     for (q, r), cost in dist.items():
         if cost == 0:
@@ -97,11 +126,28 @@ def hex_distance(q1, r1, q2, r2) -> int:
 def frontier_bonus(world, q, r) -> int:
     """How many of this cell's neighbours are still fogged.  A cell with more
     unknown neighbours reveals more when stepped on, which is worth something
-    to an explorer beyond the flat +1 for a new hex."""
+    to an explorer beyond the flat +1 for a new hex.
+
+    On a walled board an off-board neighbour is rock, not fog -- counting it
+    would make the tunnel board's edges look like the most promising ground on
+    it and pin an explorer against the wall."""
     n = 0
+    wraps = getattr(world, "wraps", True)
     for direction in range(6):
-        nq = (q + DQ[direction]) % MAP_COLS
-        nr = (r + DR[direction]) % MAP_ROWS
+        nq = q + DQ[direction]
+        nr = r + DR[direction]
+        if wraps:
+            nq %= world.cols
+            nr %= world.rows
+        elif not (0 <= nq < world.cols and 0 <= nr < world.rows):
+            continue
         if world[(nq, nr)] is None:
             n += 1
     return n
+
+
+def board_distance(world, q1, r1, q2, r2) -> int:
+    """Terrain-free hex distance on whichever board this is."""
+    if getattr(world, "wraps", True):
+        return hex_distance(q1, r1, q2, r2)
+    return tun_distance(q1, r1, q2, r2)

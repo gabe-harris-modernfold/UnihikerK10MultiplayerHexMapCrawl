@@ -5,6 +5,36 @@
 // The static buffers here are per-function, not shared, so concurrent calls
 // from different message types are safe (each function has its own static).
 
+// ── pushVisDisk ───────────────────────────────────────────────────────────
+// Send one client a fresh vis disk.  Call after anything that can move that
+// survivor's playerVisParams(): a reveal_fog consumable, and equipping or
+// unequipping gear carrying the passive +1 vision (Dark Goggles, Glow
+// Dentures, Doom Clicker).
+//
+// The equip path had no push at all.  Server-side visR was right immediately,
+// but nothing told the client: putting the goggles on revealed nothing until
+// the next step, and taking them off left the client's radius too wide.  The
+// message carries "vr", so it corrects the radius in both directions.
+// Takes G.mutex itself — call it with the mutex released.
+static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
+  if (!client || pid < 0) return;
+  static char visBuf[1100];
+  int visLen = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    int vr; bool mr;
+    playerVisParams(pid, &vr, &mr);
+    // Depth-aware for the same reason handleMsg_move() is: using a player's
+    // q/r while they are below reveals the surface around their hatch.
+    uint8_t dep = G.players[pid].depth;
+    visLen = buildVisDisk(visBuf, sizeof(visBuf),
+                          dep ? G.players[pid].tq : G.players[pid].q,
+                          dep ? G.players[pid].tr : G.players[pid].r,
+                          vr, mr, nullptr, dep);
+    xSemaphoreGive(G.mutex);
+  }
+  if (visLen > 0) client->text(visBuf);
+}
+
 static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
@@ -12,7 +42,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
-  static char ack[320];
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int capturedSlot = -1;
@@ -32,19 +62,12 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
       }
       ok = useItem(mySlot, (uint8_t)slotIdx);
       capturedSlot = mySlot;
-      snprintf(ack, sizeof(ack),
-        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"use\",\"slot\":%d,\"pid\":%d,"
-        "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d],\"efxp\":%d}",
-        ok?"true":"false", slotIdx, mySlot,
-        pl.invType[0],pl.invType[1],pl.invType[2],pl.invType[3],
-        pl.invType[4],pl.invType[5],pl.invType[6],pl.invType[7],
-        pl.invType[8],pl.invType[9],pl.invType[10],pl.invType[11],
-        pl.invQty[0],pl.invQty[1],pl.invQty[2],pl.invQty[3],
-        pl.invQty[4],pl.invQty[5],pl.invQty[6],pl.invQty[7],
-        pl.invQty[8],pl.invQty[9],pl.invQty[10],pl.invQty[11],
-        pl.equip[0],pl.equip[1],pl.equip[2],pl.equip[3],pl.equip[4],
+      int ap = appendFmt(ack, sizeof(ack), 0,
+        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"use\",\"slot\":%d,\"pid\":%d,",
+        ok?"true":"false", slotIdx, mySlot);
+      ap = appendPackArrays(ack, sizeof(ack), ap, mySlot);
+      appendFmt(ack, sizeof(ack), ap,
+        ",\"inv\":[%d,%d,%d,%d,%d],\"efxp\":%d}",
         pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4],
         (int)narParam);
     }
@@ -54,18 +77,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
   // EFX_REVEAL_FOG items: send a fresh vis disk so the client sees newly revealed cells
-  if (ok && capturedSlot >= 0 && revealParam >= 2) {
-    static char visBuf[1100];
-    int visLen = 0;
-    if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      int vr; bool mr;
-      playerVisParams(capturedSlot, &vr, &mr);
-      visLen = buildVisDisk(visBuf, sizeof(visBuf),
-                            G.players[capturedSlot].q, G.players[capturedSlot].r, vr, mr);
-      xSemaphoreGive(G.mutex);
-    }
-    if (visLen > 0) client->text(visBuf);
-  }
+  if (ok && capturedSlot >= 0 && revealParam >= 2) pushVisDisk(client, capturedSlot);
 }
 
 static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -75,33 +87,33 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
-  static char ack[256];
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
+  int  capturedSlot = -1;
+  bool visChanged   = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
+      // A swap can change vision through EITHER item, so diff the bonus
+      // rather than inspecting the one being put on.
+      int visBefore = equipVisionBonus(mySlot);
       ok = equipItem(mySlot, (uint8_t)slotIdx);
+      capturedSlot = mySlot;
+      visChanged   = ok && (equipVisionBonus(mySlot) != visBefore);
       Player& pl = G.players[mySlot];
-      snprintf(ack, sizeof(ack),
-        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"equip\",\"slot\":%d,\"pid\":%d,"
-        "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
-        ok?"true":"false", slotIdx, mySlot,
-        pl.invType[0],pl.invType[1],pl.invType[2],pl.invType[3],
-        pl.invType[4],pl.invType[5],pl.invType[6],pl.invType[7],
-        pl.invType[8],pl.invType[9],pl.invType[10],pl.invType[11],
-        pl.invQty[0],pl.invQty[1],pl.invQty[2],pl.invQty[3],
-        pl.invQty[4],pl.invQty[5],pl.invQty[6],pl.invQty[7],
-        pl.invQty[8],pl.invQty[9],pl.invQty[10],pl.invQty[11],
-        pl.equip[0],pl.equip[1],pl.equip[2],pl.equip[3],pl.equip[4],
+      int ap = appendFmt(ack, sizeof(ack), 0,
+        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"equip\",\"slot\":%d,\"pid\":%d,",
+        ok?"true":"false", slotIdx, mySlot);
+      ap = appendPackArrays(ack, sizeof(ack), ap, mySlot);
+      appendFmt(ack, sizeof(ack), ap, ",\"inv\":[%d,%d,%d,%d,%d]}",
         pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4]);
     }
     xSemaphoreGive(G.mutex);
   }
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
+  if (visChanged) pushVisDisk(client, capturedSlot);
 }
 
 static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -111,33 +123,31 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
   const char* ev = strchr(ep + 7, ':'); if (!ev) return;
   int eslot = atoi(ev + 1);
   if (eslot < 0 || eslot >= EQUIP_SLOTS) return;
-  static char ack[256];
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
+  int  capturedSlot = -1;
+  bool visChanged   = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
+      int visBefore = equipVisionBonus(mySlot);
       ok = unequipItem(mySlot, (uint8_t)eslot);
+      capturedSlot = mySlot;
+      visChanged   = ok && (equipVisionBonus(mySlot) != visBefore);
       Player& pl = G.players[mySlot];
-      snprintf(ack, sizeof(ack),
-        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"unequip\",\"eslot\":%d,\"pid\":%d,"
-        "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
-        ok?"true":"false", eslot, mySlot,
-        pl.invType[0],pl.invType[1],pl.invType[2],pl.invType[3],
-        pl.invType[4],pl.invType[5],pl.invType[6],pl.invType[7],
-        pl.invType[8],pl.invType[9],pl.invType[10],pl.invType[11],
-        pl.invQty[0],pl.invQty[1],pl.invQty[2],pl.invQty[3],
-        pl.invQty[4],pl.invQty[5],pl.invQty[6],pl.invQty[7],
-        pl.invQty[8],pl.invQty[9],pl.invQty[10],pl.invQty[11],
-        pl.equip[0],pl.equip[1],pl.equip[2],pl.equip[3],pl.equip[4],
+      int ap = appendFmt(ack, sizeof(ack), 0,
+        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"unequip\",\"eslot\":%d,\"pid\":%d,",
+        ok?"true":"false", eslot, mySlot);
+      ap = appendPackArrays(ack, sizeof(ack), ap, mySlot);
+      appendFmt(ack, sizeof(ack), ap, ",\"inv\":[%d,%d,%d,%d,%d]}",
         pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4]);
     }
     xSemaphoreGive(G.mutex);
   }
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
+  if (visChanged) pushVisDisk(client, capturedSlot);
 }
 
 static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -149,7 +159,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   const char* qp = strstr(data, "\"qty\"");
   int qty = qp ? atoi(strchr(qp + 5, ':') + 1) : 1;
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) return;
-  static char ack[256];
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   static char upd[1280];
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
@@ -176,19 +186,11 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
         snprintf(upd + upos, sizeof(upd) - upos, "]}");
       }
       Player& pl = p;
-      snprintf(ack, sizeof(ack),
-        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"drop\",\"slot\":%d,\"pid\":%d,"
-        "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
-        ok?"true":"false", slotIdx, mySlot,
-        pl.invType[0],pl.invType[1],pl.invType[2],pl.invType[3],
-        pl.invType[4],pl.invType[5],pl.invType[6],pl.invType[7],
-        pl.invType[8],pl.invType[9],pl.invType[10],pl.invType[11],
-        pl.invQty[0],pl.invQty[1],pl.invQty[2],pl.invQty[3],
-        pl.invQty[4],pl.invQty[5],pl.invQty[6],pl.invQty[7],
-        pl.invQty[8],pl.invQty[9],pl.invQty[10],pl.invQty[11],
-        pl.equip[0],pl.equip[1],pl.equip[2],pl.equip[3],pl.equip[4],
+      int ap = appendFmt(ack, sizeof(ack), 0,
+        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"drop\",\"slot\":%d,\"pid\":%d,",
+        ok?"true":"false", slotIdx, mySlot);
+      ap = appendPackArrays(ack, sizeof(ack), ap, mySlot);
+      appendFmt(ack, sizeof(ack), ap, ",\"inv\":[%d,%d,%d,%d,%d]}",
         pl.inv[0],pl.inv[1],pl.inv[2],pl.inv[3],pl.inv[4]);
     }
     xSemaphoreGive(G.mutex);
@@ -257,7 +259,7 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
   const char* gv = strchr(gp + 7, ':'); if (!gv) return;
   int gslot = atoi(gv + 1);
   if (gslot < 0 || gslot >= MAX_GROUND) return;
-  static char ack[256];
+  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   static char upd[1280];
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
@@ -284,19 +286,11 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
         snprintf(upd + upos, sizeof(upd) - upos, "]}");
       }
       Player& pl2 = p2;
-      snprintf(ack, sizeof(ack),
-        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"pickup\",\"gslot\":%d,\"pid\":%d,"
-        "\"it\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"iq\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-        "\"eq\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
-        ok?"true":"false", gslot, mySlot,
-        pl2.invType[0],pl2.invType[1],pl2.invType[2],pl2.invType[3],
-        pl2.invType[4],pl2.invType[5],pl2.invType[6],pl2.invType[7],
-        pl2.invType[8],pl2.invType[9],pl2.invType[10],pl2.invType[11],
-        pl2.invQty[0],pl2.invQty[1],pl2.invQty[2],pl2.invQty[3],
-        pl2.invQty[4],pl2.invQty[5],pl2.invQty[6],pl2.invQty[7],
-        pl2.invQty[8],pl2.invQty[9],pl2.invQty[10],pl2.invQty[11],
-        pl2.equip[0],pl2.equip[1],pl2.equip[2],pl2.equip[3],pl2.equip[4],
+      int ap = appendFmt(ack, sizeof(ack), 0,
+        "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"pickup\",\"gslot\":%d,\"pid\":%d,",
+        ok?"true":"false", gslot, mySlot);
+      ap = appendPackArrays(ack, sizeof(ack), ap, mySlot);
+      appendFmt(ack, sizeof(ack), ap, ",\"inv\":[%d,%d,%d,%d,%d]}",
         pl2.inv[0],pl2.inv[1],pl2.inv[2],pl2.inv[3],pl2.inv[4]);
     }
     xSemaphoreGive(G.mutex);

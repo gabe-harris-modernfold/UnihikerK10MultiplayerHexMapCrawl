@@ -15,7 +15,8 @@ hex, and 48.5% of hexes hold a pile.  So the optimal play is close to "keep
 moving, prefer piles, keep pack space free" -- which is exactly the finding
 worth confirming or refuting on hardware.
 """
-from config import RES_FOOD, RES_WATER
+from config import (RES_FOOD, RES_WATER, NAR_COLD_IMMUNE, NAR_FIRE_STARTER,
+                    NAR_LAND_FORAGE, NAR_RIVER_FORAGE, NAR_SCAV_DOUBLE)
 from navigate import best_target, frontier_bonus
 from .base import Action
 from .survivor import SurvivorPolicy
@@ -30,6 +31,17 @@ STAPLE_BONUS = 12      # extra pull toward water/food piles when running low
 
 class ScoreMaxPolicy(SurvivorPolicy):
     name = "scoremax"
+    # The measured economy is "keep moving, prefer piles, keep pack space
+    # free", so mobility and carry space are the whole story. Slots now bite
+    # twice: collectResource() refuses at the cap, and tokenRoomFor() gates
+    # FORAGE/WATER/SCAV as well. LL only matters as far as staying upright.
+    gear_weights = {
+        "mp": 4.0, "slots": 3.5, "vision": 1.5, "ll": 1.0,
+        "rad": 0.5, "threat": 0.25, "terrain": 1.0,
+        "nar": {NAR_SCAV_DOUBLE: 2.0, NAR_LAND_FORAGE: 1.5,
+                NAR_RIVER_FORAGE: 0.5, NAR_COLD_IMMUNE: 2.0,
+                NAR_FIRE_STARTER: 1.0},
+    }
     # Opens a POI it is standing on (handled in SurvivorPolicy.decide) but
     # never detours for one -- that is the contrast against ContentMax.
     engage_encounters = True

@@ -28,18 +28,21 @@ const STORM_SLANT   = 0.6; // squall-line tilt — front leans along +mapR
 // instead of the hex-clipped flat fill the other phases use — bleeding past
 // each hex's own edge into its neighbors so covered patches blend into one
 // fuzzy blob, not a mosaic of crisp hexagon tiles. Both fog phases use it;
-// rain/storm/chem keep the crisp flat fill since nobody's asked for those to
-// go soft too. tintRGB/softRGB are the same colors as tintColor/baseColor,
+// rain/storm/chem keep the flat fill since nobody's asked for those to go
+// soft too — its clip bleeds a hair past each hex edge (STORM_WASH_BLEED in
+// renderer.js) so the flat path has no per-hex seams either; what stays
+// crisp is the outer boundary where the covered patch ends, not the grid
+// inside it. tintRGB/softRGB are the same colors as tintColor/baseColor,
 // just pre-split into "R,G,B" so the gradient's rgba() strings don't need to
 // parse a hex string every frame.
 const STORM_PHASE_CFG = {
   1: { speed: 0.00042, halfWidth: 5, density: 0.34, darkMax: 0.22,
        baseColor: '#1C2430', lightning: false },
-  2: { speed: 0.00085, halfWidth: 8, density: 0.55, darkMax: 0.62,
+  2: { speed: 0.00085, halfWidth: 8, density: 0.55, darkMax: 0.74,
        baseColor: '#05070C', tintColor: '#3E5670', tintAlpha: 0.22, lightning: true },
   3: { speed: 0.00055, halfWidth: 9, density: 0.60, darkMax: 0.48,
        baseColor: '#050F08', tintColor: '#22FF66', tintAlpha: 0.24, arcLightning: true },
-  4: { speed: 0.00022, halfWidth: 12, density: 0.72, darkMax: 0.8,
+  4: { speed: 0.00010, halfWidth: 12, density: 0.72, darkMax: 0.8,
        baseColor: '#020302', tintColor: '#173820', tintAlpha: 0.14, staticBursts: true, popIn: true,
        soft: true, softRGB: '2,3,2', tintRGB: '23,56,32' },
   5: { speed: 0.00030, halfWidth: 12, density: 0.75, darkMax: 0.95,

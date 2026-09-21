@@ -15,6 +15,7 @@
   "scripts": [
     "van.js",
     "game-data.js",
+    "tunnel-board.js",
     "ash-particle-system.js",
     "weather-particle-system.js",
     "storm-field.js",

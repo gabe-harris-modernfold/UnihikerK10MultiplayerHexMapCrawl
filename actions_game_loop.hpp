@@ -9,17 +9,14 @@
 // can end early the moment every connected player is resting — so a group
 // spamming REST back-to-back could otherwise collapse days to seconds and
 // cycle weather absurdly fast. lastWeatherChangeMs/weatherNextGapMs enforce
-// a ~1.5-2.5 real-minute floor between actual phase changes regardless of how
+// a ~1.1-1.9 real-minute floor between actual phase changes regardless of how
 // fast in-game days are flying by; the day-counter mechanic above still
 // governs everything else (bad-weather streak, duration-in-days) untouched.
 // Not persisted across reboot/load — same as lastQuakeMs — a slightly-early
 // first change right after a fresh boot is a harmless edge case.
 static uint32_t lastWeatherChangeMs = 0;
-static uint32_t weatherNextGapMs    = 90000;
+static uint32_t weatherNextGapMs    = 67500;
 static void updateWeatherPhase() {
-  // Accumulate bad-weather streak in game-days
-  if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
-
   if (G.weatherCounter > 0) { G.weatherCounter--; return; }
 
   if (lastWeatherChangeMs != 0 && millis() - lastWeatherChangeMs < weatherNextGapMs) {
@@ -27,7 +24,24 @@ static void updateWeatherPhase() {
     return;
   }
 
-  static constexpr uint16_t BAD_WEATHER_CAP = 6; // max 6 game-days of bad weather
+  // Accumulate the bad-weather streak — counted in *phase changes actually
+  // evaluated*, not raw dawns.
+  //
+  // This used to increment at the top of the function, before both early
+  // returns, so it counted every dawn including the many that bail out on
+  // the real-time gap above. For a human at ~5-minute days that is one
+  // increment per change and the two are identical. For anything faster it
+  // is not: a bot fleet collapses a day to 3-5s while weatherNextGapMs holds
+  // changes to 67-112s, so ~20-30 dawns elapse per change and the counter
+  // blew past the cap every single time. Every transition was therefore
+  // forced to CLEAR, which made the weather strictly alternate
+  // clear -> one bad phase -> clear, and put every two-step state out of
+  // reach entirely. WEATHER_CHEM is only reachable from WEATHER_STORM, so
+  // chem storms could not occur at all — measured: 0 across 15 bot runs,
+  // and the observed transitions contained no bad->bad pair of any kind.
+  if (G.weatherPhase != WEATHER_CLEAR) G.badWeatherTicks++;
+
+  static constexpr uint16_t BAD_WEATHER_CAP = 6; // max 6 bad phases in a row
   uint8_t next;
   if (G.badWeatherTicks >= BAD_WEATHER_CAP) {
     next = WEATHER_CLEAR;  // force clear once the bad-weather streak hits the cap
@@ -55,11 +69,20 @@ static void updateWeatherPhase() {
 
   if (next == WEATHER_CLEAR) G.badWeatherTicks = 0;
 
-  G.weatherCounter = WEATHER_DUR_MIN[next] +
+  // Every phase change hands back the chem-storm travel allowance — the dash
+  // for cover is per storm, not per game. See movePlayer().
+  for (int i = 0; i < MAX_PLAYERS; i++) G.players[i].chemMoves = 0;
+
+  // A phase lasts (weatherCounter + 1) dawns, so scale the *duration in days*
+  // -- not the raw counter -- to shorten the gap between weather events by 25%.
+  uint16_t durDays = 1 + WEATHER_DUR_MIN[next] +
     (uint16_t)(esp_random() % (WEATHER_DUR_MAX[next] - WEATHER_DUR_MIN[next] + 1));
+  durDays = (durDays * 3 + 2) / 4;          // -25%, rounded to nearest day
+  if (durDays < 1) durDays = 1;
+  G.weatherCounter = durDays - 1;
   G.weatherPhase      = next;
   lastWeatherChangeMs = millis();
-  weatherNextGapMs    = 90000 + (esp_random() % 60001);  // 1.5-2.5 real minutes until the next one
+  weatherNextGapMs    = 67500 + (esp_random() % 45001);  // 1.1-1.9 real minutes until the next one
   GameEvent ev = {}; ev.type = EVT_WEATHER;
   ev.q = (int16_t)next; ev.r = (int16_t)G.weatherCounter;
   enqEvt(ev);
@@ -201,11 +224,114 @@ static void broadcastQuake(const QuakeResult& q) {
              (int)q.destroyedCount, q.destroyedCount > 1 ? "s" : "");
   else
     snprintf(lb, sizeof(lb), "The earth heaves. Nothing stays put.");
-  k10LogAdd(lb, -1, TONE_ILL);
+  k10LogAdd(lb, -1, TONE_ILL, GLY_QUAKE);
   k10Play(MOTIF_DISTANT_THUD);
 }
 
 // ── Game tick (Core 1) ────────────────────────────────────────────────────────
+// ── Dread publisher (Core 1) ────────────────────────────────────────────────
+// Fills g_dread (Esp32HexMapCrawl.ino) with the party-and-threat half of the
+// LED story. Called once per tick from inside tickGame()'s G.mutex hold, so it
+// touches G/W/W_hex freely and never contends with the 10 Hz lamp loop that
+// reads the result. It lives here rather than in ui-leds.hpp because that
+// header is included before world-system.hpp and cannot see W at all, and
+// rather than in world-system.hpp because effectiveMaxLL() is only declared
+// once inventory_items.hpp has been pulled in.
+//
+// Everything is normalised to 0-255 "how bad is it", worst-case across the
+// party rather than averaged: the board is a shared display with no focused
+// survivor (drawPlayerScreen() renders all six), so the lamps speak for the
+// party as a whole, and one survivor bleeding out must not be averaged away
+// by five healthy ones.
+static constexpr int     DREAD_FW_FULL    = 6;   // a full food/water track
+static constexpr int     DREAD_RAD_MAX    = 10;  // radiation ceiling (applyItem clamp)
+static constexpr int     DREAD_FIRE_R     = 4;   // how far out a fire glow reads
+static constexpr uint8_t DREAD_DOOM_FLOOR = 24;  // "aware but far" floor
+
+static void publishDread() {
+  DreadSnapshot d = {};
+
+  // Threat clock: a band for the discrete beats (the strip changes character
+  // at each threshold) plus a smooth 0-255 ramp, so the drift between bands
+  // is visible on a lamp instead of arriving as four sudden steps.
+  d.tcLevel  = (G.threatClock >= TC_THRESHOLD_D) ? 4 :
+               (G.threatClock >= TC_THRESHOLD_C) ? 3 :
+               (G.threatClock >= TC_THRESHOLD_B) ? 2 :
+               (G.threatClock >= TC_THRESHOLD_A) ? 1 : 0;
+  d.tcWeight = (uint8_t)min(255, (int)G.threatClock * 255 / (int)TC_THRESHOLD_D);
+
+  int nearestFire = 99;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    const Player& p = G.players[i];
+    if (!p.connected) continue;
+    d.connected++;
+    if (encounters[i].active) d.encActive = true;
+    if (p.depth) { d.under++; continue; }   // below ground; the sky is not their problem
+
+    uint8_t maxLL = effectiveMaxLL(i);
+    if (maxLL) {
+      int shortfall = (int)(maxLL - min(p.ll, maxLL)) * 255 / (int)maxLL;
+      if (shortfall > (int)d.attrition) d.attrition = (uint8_t)shortfall;
+    }
+    if (p.ll == 0) d.downed++;
+
+    if (p.food < DREAD_FW_FULL)
+      d.hunger = (uint8_t)max((int)d.hunger,
+                              (DREAD_FW_FULL - (int)p.food) * 255 / DREAD_FW_FULL);
+    if (p.water < DREAD_FW_FULL)
+      d.thirst = (uint8_t)max((int)d.thirst,
+                              (DREAD_FW_FULL - (int)p.water) * 255 / DREAD_FW_FULL);
+
+    int rad = min((int)p.radiation, DREAD_RAD_MAX) * 255 / DREAD_RAD_MAX;
+    if (rad > (int)d.radLoad) d.radLoad = (uint8_t)rad;
+
+    // A major wound counts double; four weighted points saturates the lamp.
+    int wl = min(255, ((int)p.wounds[WOUND_MINOR] + 2 * (int)p.wounds[WOUND_MAJOR]) * 64);
+    if (wl > (int)d.woundLoad) d.woundLoad = (uint8_t)wl;
+
+    // Nearest fire to anyone on the surface. A small window around each
+    // survivor, not a whole-map scan: this runs every tick and only the
+    // near field can legibly glow on a three-lamp strip anyway.
+    for (int dr = -DREAD_FIRE_R; dr <= DREAD_FIRE_R; dr++) {
+      for (int dq = -DREAD_FIRE_R; dq <= DREAD_FIRE_R; dq++) {
+        int nq = wrapQ(p.q + dq), nr = wrapR(p.r + dr);
+        if (!W_hex[nr][nq].fire) continue;
+        int dist = hexDistWrap(p.q, p.r, (int16_t)nq, (int16_t)nr);
+        if (dist < nearestFire) nearestFire = dist;
+      }
+    }
+  }
+  d.allUnder = (d.connected > 0 && d.under == d.connected);
+  if (nearestFire <= DREAD_FIRE_R)
+    d.fireClose = (uint8_t)((DREAD_FIRE_R - nearestFire) * 255 / DREAD_FIRE_R);
+
+  // Creeping Doom. Below awareness 51 it is wandering, not hunting
+  // (resolveProximity() in world-system.hpp returns early under 51), so the
+  // lamps stay quiet - the sonar has to mean something when it starts. Once
+  // it is hunting, distance to the nearest survivor drives the pulse rate in
+  // ui-leds.hpp. Outside the detection radius an aware Doom still leaves a
+  // faint floor, so "it is out there and it knows" reads differently from
+  // "it has lost you". Players in the tunnels are not counted: the Doom
+  // cannot follow them down, and the lamps should say so.
+  d.doomAware = W.creepingDoom.awareness;
+  if (d.doomAware >= 51) {
+    int radius = (int)doomDetectionRadius();
+    int best   = 99;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+      const Player& p = G.players[i];
+      if (!p.connected || p.depth) continue;
+      int dist = hexDistWrap(p.q, p.r, W.creepingDoom.q, W.creepingDoom.r);
+      if (dist < best) best = dist;
+    }
+    if (best <= radius && radius > 0)
+      d.doomClose = (uint8_t)max((int)DREAD_DOOM_FLOOR, (radius - best) * 255 / radius);
+    else if (best < 99)
+      d.doomClose = DREAD_DOOM_FLOOR;
+  }
+
+  memcpy((void*)&g_dread, &d, sizeof(d));
+}
+
 static void tickGame() {
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
   G.tickId++;
@@ -266,24 +392,45 @@ static void tickGame() {
     }
   }
 
+  // ── Downed underground ────────────────────────────────────────
+  // Anything can down a survivor -- dusk, dawn, an encounter hazard, the
+  // world system. Rather than remember to surface them at each of those
+  // eight EVT_DOWNED sites (and forget it at the ninth), sweep for it once
+  // here: downed + underground means haul them up to their hatch, because
+  // movesLeft is zeroed on downing and the bad air keeps ticking.
+  for (int pid = 0; pid < MAX_PLAYERS; pid++) {
+    Player& p = G.players[pid];
+    if (p.connected && p.depth && p.ll == 0) surfacePlayer(pid);
+  }
+
   // ── Chem-storm per-tick hazard ────────────────────────────────────────────
-  // CHEM_TICK_RATE is tuned so a survivor standing in the open on the worst
-  // terrain (intensity 1.0) loses about 1 LL per real minute (600 ticks), i.e.
-  // roughly 5 LL over a full 300-second day — dangerous, but survivable long
-  // enough to reach cover.  Basic shelter halves the rate; improved shelter,
-  // Settlement, and Broken Urban are immune.
+  // The design rule, plainly: **cover keeps you safe, the open kills you.**
+  // Chem is the one hazard that is entirely answerable — there is no roll to
+  // lose and no bad luck to eat, only the question of whether you got under
+  // something before it arrived. So ANY shelter is full immunity, not a
+  // discount, alongside Settlement, Broken Urban and the bunker tunnels.
+  //
+  // A basic shelter used to merely halve the rate, which made cover a way to
+  // die slower rather than a way to live, and left the player with no action
+  // that actually resolved the threat.
+  //
+  // CHEM_TICK_RATE stays as tuned: a survivor caught in the open on the worst
+  // terrain (intensity 1.0) loses about 1 LL per real minute (600 ticks), so
+  // being caught out is a genuine emergency with a clear answer — run for
+  // cover, or build it. Chem killed 6 of 15 survivors in the first runs after
+  // it became reachable at all, every one of them a bot that never builds
+  // shelter; that is the intended shape, not an overshoot.
   if (G.weatherPhase == WEATHER_CHEM) {
     static constexpr float CHEM_TICK_RATE = 1.0f / 600.0f;
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
       if (!p.connected || (p.ll == 0)) continue;
+      if (p.depth) continue;   // weather does not reach the bunker tunnels
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
-      uint8_t shelter = G.map[p.r][p.q].shelter;
-      if (shelter >= 2) continue;
+      if (G.map[p.r][p.q].shelter >= 1) continue;   // any cover is full cover
       float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * CHEM_TICK_RATE;
-      if (shelter == 1) prob *= 0.5f;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP); }
         if (p.ll == 0) {
@@ -312,6 +459,7 @@ static void tickGame() {
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
       if (!p.connected || (p.ll == 0)) continue;
+      if (p.depth) continue;   // weather does not reach the bunker tunnels
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
@@ -353,6 +501,9 @@ static void tickGame() {
     maybeIgniteLightning();
     resolveFireDamage();
     resolveDoomProximity();
+    tickDoomTaunts();       // after the act event, so the voice follows the damage
+    tickDoomAudio();        // and the ostinato last — effect, voice, then the sound of it still being there
+    tickTunnelTaunts();     // the other voice: second thoughts, for anyone camped in a bare corridor
     spreadFire();
     maybeTriggerFlashFlood();
     spreadFlood();
@@ -366,6 +517,8 @@ static void tickGame() {
   QuakeResult quakeResult = {};
   maybeTriggerQuake(quakeResult);
 
+  publishDread();   // refresh the LED dread snapshot while we still hold the mutex
+
   xSemaphoreGive(G.mutex);
   if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
   if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
@@ -377,6 +530,12 @@ static void tickGame() {
 static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   Player& p  = G.players[pid];
   uint8_t dn = TERRAIN_FORAGE_DN[terr];
+  // FORAGE is deliberately NOT capped by tokenRoomFor(): you can always feed
+  // yourself, and the overflow is priced by the encumbrance penalty in
+  // effectiveMP() rather than refused.  Capping it here meant a pack full of
+  // scrap could starve a survivor through a button that did nothing and said
+  // nothing -- the bot harness livelocked on exactly that.  SCAVENGE, which
+  // is loot rather than survival, does keep the cap.
   if (!dn || p.movesLeft < 2) return;
   spendMP(p, 2);
   CheckResult cr = resolveCheck(pid, SK_FORAGE, dn, 0);
@@ -404,6 +563,8 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
 
 static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
   Player& p = G.players[pid];
+  // Uncapped for the same reason as FORAGE: drinking is survival, and the
+  // overflow is paid for in encumbrance, not refused.
   if (!TERRAIN_HAS_WATER[terr] || p.movesLeft < 1) return;
   int spend = max(1, min(3, min(mpParam, (int)p.movesLeft)));
   spendMP(p, spend);
@@ -417,6 +578,10 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   Player& p  = G.players[pid];
   uint8_t dn = TERRAIN_SALVAGE_DN[terr];
   if (!dn || p.movesLeft < 2) return;
+  // Salvage is loot, not survival, so this one IS bound by the pack size --
+  // and says so, because "my pack is full of scrap" is not visible from the
+  // SCAVENGE button the way "there is nothing to salvage here" is.
+  if (tokenRoomFor(p) <= 0) { ev.actWhy = ABW_PACK_FULL; return; }
   spendMP(p, 2);
   if (TERRAIN_IS_RUINS[terr] && G.threatClock < 20) {
     G.threatClock++;
@@ -429,8 +594,10 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
     uint8_t scrapYield = 2;
     // Portable Forge doubles scrap yield on scavenge
     if (hasNarrativeParam(pid, NAR_SCAV_DOUBLE)) scrapYield = 4;
-    // A partial always comes in strictly under a clean success.
+    // A partial always comes in strictly under a clean success, and never
+    // more than the pack can still hold.
     if (partial) scrapYield = (uint8_t)max(1, (int)scrapYield / 2);
+    scrapYield   = (uint8_t)min((int)scrapYield, tokenRoomFor(p));
     p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
     ev.actScrapD = scrapYield;
     addScore(p, ev, partial ? 2 : 5);
@@ -495,10 +662,14 @@ struct SettleResult {
   int16_t settleQ, settleR;   // the hex that became Settlement
 };
 
+// Surface only: founding a settlement needs three survivors actually stood
+// on the hex, and an underground one only looks like they are there because
+// their q/r is pinned to the hatch overhead.
 static int countConnectedPlayersOn(int16_t q, int16_t r) {
   int n = 0;
   for (int i = 0; i < MAX_PLAYERS; i++)
-    if (G.players[i].connected && G.players[i].q == q && G.players[i].r == r) n++;
+    if (G.players[i].connected && !G.players[i].depth &&
+        G.players[i].q == q && G.players[i].r == r) n++;
   return n;
 }
 
@@ -545,7 +716,11 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
 
   if (shelterType == 2) {
     int16_t q = p.q, r = p.r;
-    if (countConnectedPlayersOn(q, r) >= 3) {
+    // A hatch hex must never be converted: bunkerHatches[] would still point
+    // here while the terrain no longer reads as an entrance, leaving the shaft
+    // below reachable only one way. Camping ON a hatch is fine -- the shelter
+    // above already built -- it just can't grow into a Settlement.
+    if (countConnectedPlayersOn(q, r) >= 3 && !isHatchTerrain(G.map[r][q].terrain)) {
       G.map[r][q].shelter  = 0;
       G.map[r][q].terrain  = 9;
       settle.fired         = true;
@@ -556,7 +731,13 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
     } else {
       int16_t triQ[3], triR[3];
       if (findShelterTriangle(q, r, triQ, triR)) {
+        // Same rule as above: roll the settlement site off any hatch corner
+        // rather than overwriting an entrance. All three corners being hatches
+        // is impossible (HATCH_MIN_DIST keeps them far apart), so this always
+        // lands on a legal hex.
         uint8_t pick = (uint8_t)(esp_random() % 3);
+        for (uint8_t i = 0; i < 3; i++)
+          if (isHatchTerrain(G.map[triR[pick]][triQ[pick]].terrain)) pick = (uint8_t)((pick + 1) % 3);
         for (uint8_t i = 0; i < 3; i++) G.map[triR[i]][triQ[i]].shelter = 0;
         G.map[triR[pick]][triQ[pick]].terrain = 9;
         settle.fired        = true;
@@ -589,7 +770,8 @@ static void broadcastSettle(const SettleResult& s) {
   ws.textAll(buf, len);
   Log.notice("EVT settle removed=%d settlement=(%d,%d)",
              (int)s.removedCount, (int)s.settleQ, (int)s.settleR);
-  k10LogAdd("A settlement takes root. Someone will stay.", -1, TONE_GOOD);
+  k10LogAdd("A settlement takes root. Someone will stay.", -1, TONE_GOOD,
+            GLY_SETTLE);
 }
 
 static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* survLen) {
@@ -624,10 +806,15 @@ static void doRest(int pid, GameEvent& ev) {
   Player& p = G.players[pid];
   if (p.resting) return;  // already resting; prevent duplicate REST commands
   p.resting = true;  // mark as resting; if all players rest, day ends early
-  HexCell& cell = G.map[p.r][p.q];
-  if (cell.shelter == 1 && hasNarrativeParam(pid, NAR_FIRE_STARTER)) {
-    cell.shelter = 2;
-    ev.actCnd    = 2;
+  // Fire Starter banks up the shelter you bed down in -- surface only. q/r are
+  // pinned to the hatch while underground (tunnels.hpp), so without the depth
+  // guard sleeping in a corridor would improve a shelter on the hex overhead.
+  if (!p.depth) {
+    HexCell& cell = G.map[p.r][p.q];
+    if (cell.shelter == 1 && hasNarrativeParam(pid, NAR_FIRE_STARTER)) {
+      cell.shelter = 2;
+      ev.actCnd    = 2;
+    }
   }
   ev.actOut = AO_SUCCESS;
 }
@@ -637,15 +824,17 @@ static void doRest(int pid, GameEvent& ev) {
 // encounter_engine.hpp's "recipe" loot entries). applyRecipe() (in
 // inventory_items.hpp) does the material/resource bookkeeping and confirms
 // the output has somewhere to go before anything is consumed, so a blocked
-// craft never costs MP or materials.
-static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev) {
+// craft never costs MP or materials. Every AO_BLOCKED path names its reason
+// in *why (a static string) so handleMsg_act can toast it back to the
+// crafting client — the 'act' broadcast alone only says "blocked".
+static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev, const char** why) {
   Player& p = G.players[pid];
-  if (terr != TERRAIN_SETTLEMENT) return;                                // AO_BLOCKED: not at a Settlement
-  if (p.movesLeft < 1) return;                                           // AO_BLOCKED: exhausted
+  if (terr != TERRAIN_SETTLEMENT) { *why = "CRAFT requires a Settlement"; return; }
+  if (p.movesLeft < 1)            { *why = "Not enough MP";               return; }
   // recipeId is client-supplied — bound it before the shift (1u << 32+ is UB).
-  if (!recipeId || recipeId > MAX_RECIPES) return;                       // AO_BLOCKED: no such recipe
-  if (!(p.knownRecipes & (1u << (recipeId - 1)))) return;                // AO_BLOCKED: not discovered
-  if (!applyRecipe(pid, recipeId)) return;                               // AO_BLOCKED: can't afford it / pack full
+  if (!recipeId || recipeId > MAX_RECIPES)        { *why = "No such recipe";             return; }
+  if (!(p.knownRecipes & (1u << (recipeId - 1)))) { *why = "You don't know that recipe"; return; }
+  if (const char* blocked = applyRecipe(pid, recipeId)) { *why = blocked; return; }  // can't afford it / pack full
   spendMP(p, 1);
   ev.actOut    = AO_SUCCESS;
   ev.actRecipe = recipeId;
@@ -661,14 +850,39 @@ static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev) {
 // caller (handleMsg_act) uses this to know whether ACT_CRAFT actually
 // mutated invType[]/invQty[]/knownRecipes and needs a targeted resync +
 // saveGame().
+// blockWhy: out-param naming why ACT_CRAFT was refused (static string; left
+// untouched on success and for every other action) — handleMsg_act toasts it
+// to the acting client.
 static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId,
                          char* survBuf, int survCap, int* survLen,
-                         SettleResult& settleOut) {
+                         SettleResult& settleOut, const char** blockWhy) {
   Player& p    = G.players[pid];
-  uint8_t terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
+  // Read the hex off whichever board this survivor is standing on.
+  uint8_t terr;
+  if (p.depth) {
+    terr = tunIn(p.tq, p.tr) ? G.tunnel[p.tr][p.tq].terrain : 15;
+  } else {
+    terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
+  }
   if (terr >= NUM_TERRAIN) terr = 0;
   if (p.ll == 0) return false;  // downed — no actions until respawn
   if (encounters[pid].active)  return false;  // locked during active encounter
+  // Underground, only the resource actions and REST make sense.
+  // FORAGE self-blocks (TERRAIN_FORAGE_DN[14] is 0) and TREAT self-gates to
+  // Medics, so those need no entry here. The three below must be refused
+  // explicitly -- and SURVEY is the one that actually matters, because
+  // doSurvey() writes p.surveyedMap[], which is sized for the 75x57 surface
+  // map and would be indexed with tunnel coordinates.
+  //
+  // REST was on this list and is not any more: a bunker is somewhere you can
+  // sleep, and it is the only cover on the map no weather reaches (dawnUpkeep
+  // switches exposure off at depth). It is not free -- the same tick rolls
+  // TUNNEL_REST_LL_PCT for bad air. Refusing it was also a live desync: the
+  // #fab-rest-btn is not depth-gated, so the client lit its RESTING state and
+  // the server never set p.resting, and the day would not end.
+  // data/game-data.js actAvailable() mirrors this so the menu agrees.
+  if (p.depth && (actType == ACT_SHELTER || actType == ACT_CRAFT ||
+                  actType == ACT_SURVEY)) return false;
 
   GameEvent ev = {};
   ev.type    = EVT_ACTION;
@@ -683,7 +897,7 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
     case ACT_TREAT:   doTreat  (pid, terr, ev);                      break;
     case ACT_SCAV:    doScav   (pid, terr, ev);                      break;
     case ACT_SHELTER: doShelter(pid, ev, settleOut);                 break;
-    case ACT_CRAFT:   doCraft  (pid, terr, recipeId, ev);            break;
+    case ACT_CRAFT:   doCraft  (pid, terr, recipeId, ev, blockWhy);  break;
     case ACT_SURVEY:  doSurvey (pid, ev, survBuf, survCap, survLen); break;
     case ACT_REST:    doRest   (pid, ev);                            break;
     default: break;

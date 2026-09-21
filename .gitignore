@@ -11,3 +11,7 @@
 /data/style.css.gz
 /data/index.html.gz
 /data/assets.json
+
+# Python bytecode from scripts/ (png_quant is imported by the art tools)
+__pycache__/
+*.pyc

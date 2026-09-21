@@ -17,7 +17,8 @@ gets accepted; it is to find out whether a hostile client can grief a human
 through the trade channel, and whether the 30 s TRADE_EXPIRE_MS window plus
 repeated offers amounts to spam a player cannot escape.
 """
-from config import RES_FOOD, RES_WATER
+from config import (RES_FOOD, RES_WATER, NAR_COLD_IMMUNE, NAR_FIRE_STARTER,
+                    NAR_LAND_FORAGE, NAR_RIVER_FORAGE, NAR_SCAV_DOUBLE)
 from navigate import best_target, frontier_bonus, hex_distance
 from .base import Action
 from .survivor import SurvivorPolicy
@@ -36,6 +37,16 @@ TRADE_RANGE = 6
 
 class RivalPolicy(SurvivorPolicy):
     name = "rival"
+    # Denial is a race, and a race is won on mobility and sight. Carry space
+    # matters more here than for ContentMax because this bot also hoovers up
+    # dropped ground items to keep them from anyone else.
+    gear_weights = {
+        "mp": 4.0, "vision": 3.0, "slots": 2.0, "ll": 1.5,
+        "threat": 1.0, "rad": 0.5, "terrain": 1.5,
+        "nar": {NAR_COLD_IMMUNE: 2.0, NAR_SCAV_DOUBLE: 1.5,
+                NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
+                NAR_FIRE_STARTER: 1.0},
+    }
     engage_encounters = True
     min_success = 0.35
     bank_greed = 0.50

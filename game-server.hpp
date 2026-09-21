@@ -50,6 +50,10 @@ static void gameLoopTask(void* param) {
       }
     }
     broadcastState();
+    // Refresh per-slot WS liveness so handleConnect's stale-slot reap only
+    // fires on a slot that has been unverifiable for the whole grace window,
+    // not on one bad ws.client() look (see network-session.hpp).
+    refreshWsLiveness();
     uint32_t tickDurMs = millis() - t0tick;
     if (tickDurMs > g_maxTickMs) g_maxTickMs = tickDurMs;
   }
@@ -286,6 +290,13 @@ static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
     g_uploadDest  = dest;
     g_uploadTotal = 0;
     if (g_uploadFile) g_uploadFile.close();
+    // Create any missing parent directories -- SD.open(FILE_WRITE) will not,
+    // so a sync that introduces a new folder (e.g. encounters/traps/) used to
+    // 500 on every file in it.
+    for (int s = dest.indexOf("/", 1); s > 0; s = dest.indexOf("/", s + 1)) {
+      String dir = dest.substring(0, s);
+      if (!SD.exists(dir.c_str())) SD.mkdir(dir.c_str());
+    }
     g_uploadFile = SD.open(dest.c_str(), FILE_WRITE);
     g_uploadOk   = (bool)g_uploadFile;
     if (g_uploadOk) Log.notice("UPLOAD start dest=%s", dest.c_str());
@@ -318,9 +329,14 @@ static void setupWiFiAndServer() {
   Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(AP_SSID);
-  Log.notice("AP start SSID=%s", AP_SSID);
+  WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);
+  Log.notice("AP start SSID=%s maxClients=%d", AP_SSID, AP_MAX_CLIENTS);
+  wifiStoreLoad();
   {
+    // Fast path first: the ESP32's own one-slot credential is whatever network
+    // we last joined, so at home this connects in a few seconds with no scan.
+    // If it doesn't answer (we're somewhere else), loop()'s roaming sweep takes
+    // over and hunts for any other network in wifi-store.hpp.
     wifi_config_t staCfg = {};
     if (esp_wifi_get_config(WIFI_IF_STA, &staCfg) == ESP_OK && staCfg.sta.ssid[0]) {
       strlcpy(savedSsid, (char*)staCfg.sta.ssid, sizeof(savedSsid));
@@ -330,6 +346,11 @@ static void setupWiFiAndServer() {
       Log.notice("STA connect attempt (saved creds)");
       bootWifiPending = true;
       bootWifiStartMs = millis();
+    } else if (g_knownCount > 0) {
+      Log.notice("No STA creds in NVS but %d known network(s) -> sweeping",
+                 (int)g_knownCount);
+      splashAdd("Scanning for known WiFi...", 0x4080C0);
+      wifiNextSweepMs = millis();   // loop() kicks the sweep on its next pass
     } else {
       Log.verbose("No saved STA creds");
     }
@@ -498,6 +519,7 @@ static void setupWiFiAndServer() {
               j += ",\"resourceName\":\""; j += RES_NAME_L[res]; j += "\"";
               j += ",\"amount\":"; j += cell.amount;
               j += ",\"footprints\":"; j += cell.footprints;
+              j += ",\"tireTrack\":";  j += cell.tireTrack ? "true" : "false";
               j += ",\"poi\":";        j += cell.poi ? "true" : "false";
               j += "}";
             }
@@ -519,7 +541,11 @@ static void setupWiFiAndServer() {
         j += ",\"name\":\"";     j += p.name; j += "\"";
         j += ",\"arch\":";        j += p.archetype;
         j += ",\"archName\":\""; j += (p.archetype < NUM_ARCHETYPES ? ARCHETYPE_NAME[p.archetype] : "?"); j += "\"";
-        j += ",\"invSlots\":";    j += p.invSlots;
+        j += ",\"invSlots\":";    j += p.invSlots;              // archetype base
+        j += ",\"invSlotsEff\":"; j += effectiveInvSlots(p);    // base + equipment "slots"
+        j += ",\"equip\":[";
+        for (int s = 0; s < EQUIP_SLOTS; s++) { if (s) j += ","; j += p.equip[s]; }
+        j += "]";
         j += ",\"q\":";           j += p.q;
         j += ",\"r\":";           j += p.r;
         j += ",\"ll\":";          j += p.ll;

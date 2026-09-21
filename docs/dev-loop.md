@@ -28,6 +28,10 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   - **HTTP `/upload` while running** → the LCD auto-flips to a "FILE UPLOAD"
     screen for ~1.5 s after the last chunk. Module: [ui-upload.hpp](../ui-upload.hpp).
     Handler: [game-server.hpp:628](../game-server.hpp:628).
+- **Wi-Fi is multi-network:** the board remembers the last 8 networks it
+  joined ([wifi-store.hpp](../wifi-store.hpp), NVS namespace `wifinets`) and
+  rejoins whichever one is in range — carry it to another house and it finds
+  that house's network by itself. See "Wi-Fi: known networks and roaming".
 - **Offline UI work:** `cd mock-server && npm install && npm run dev` →
   serves `data/` on `http://localhost:8765/` and accepts the same `/upload`
   POSTs (drop on disk under `mock-server/uploads/`). Use this before flashing
@@ -130,6 +134,54 @@ came up. Hold the K10 reset/boot button briefly while replugging USB to recover.
 The "FILE UPLOAD" screen takes precedence over the gameplay screens — it
 suppresses the screen rotation while uploads are streaming so a partial sync
 is unmistakable.
+
+## Wi-Fi: known networks and roaming
+
+The ESP32 itself stores exactly **one** STA credential, which is why the board
+used to need its password retyped after every move. [wifi-store.hpp](../wifi-store.hpp)
+adds a second, larger list on top of that.
+
+| Piece | Where |
+|---|---|
+| Known-network list (8 max, most-recent first, LRU eviction) | [wifi-store.hpp](../wifi-store.hpp), NVS namespace `wifinets` (`n`, `s0..s7`, `p0..p7`) |
+| Boot: join the ESP32's own single credential (fast, no scan) | [game-server.hpp](../game-server.hpp) `setupWiFiAndServer()` |
+| Roaming sweep: scan, rank known SSIDs by RSSI, join strongest | [network-session.hpp](../network-session.hpp) `wifiAutoJoinTask` / `wifiStartAutoJoin()` |
+| Sweep scheduler (backoff 30s → 60 → 120 → 240 → 300) | `loop()` in [Esp32HexMapCrawl.ino](../Esp32HexMapCrawl.ino), `wifiNextSweepMs` / `wifiSweepBackoff` |
+| Settings UI ("REMEMBERED NETWORKS", ✕ = forget) | [data/ui-panels.js](../data/ui-panels.js), state in [data/ui-state.js](../data/ui-state.js) |
+
+Boot order, in one breath: softAP `WASTELAND` comes up first and never drops →
+the board tries its last network directly (connected in ~2-4 s at home, no
+scan) → if that times out (12 s) the sweep starts, scans, and joins the best
+known network that answered → if nothing known is in range it keeps the AP and
+retries later, backing off to one sweep per 5 minutes.
+
+A network is remembered **only after a successful join** — from the settings
+panel, from the boot credential, or from the sweep itself. So the friend's
+house flow is: join their AP `WASTELAND` once, type their SSID + password in
+Settings → Wi-Fi Network, connect. Every later visit is automatic.
+
+Protocol (all over `/ws`):
+
+| Message | Direction | Meaning |
+|---|---|---|
+| `{t:"wifi",ssid,pass}` | client → board | join now, and remember on success |
+| `{t:"wifi_forget",ssid}` | client → board | drop from the list; an active link stays up |
+| `{t:"wifi",status:"nets",cur,nets:[…]}` | board → all | the full list + the SSID currently joined (SSIDs only, never passwords) |
+| `{t:"wifi",status:"forgot",ssid}` | board → all | clients clear that SSID from `localStorage`, else the next reconnect would auto-send it and re-add the network |
+| `{t:"wifi",status:"saved"\|"ok"\|"fail"\|"busy"}` | board → client | unchanged from before |
+
+Gotchas:
+
+- **A scan stalls the softAP for a second or two.** That's why sweeps only run
+  while the board is off every known network, never during an `/upload`, and
+  back off to 5-minute spacing.
+- **Forgetting does not disconnect.** It only removes the network from future
+  auto-joins, so you can drop a network you're standing in without dropping the
+  players on it.
+- Serial log lines to grep for: `wifiStore:`, `AutoJoin sweep`, `AutoJoin try`,
+  `AutoJoin connected`, `AutoJoin no known network in range`.
+- The mock-server fakes the whole list (seeded `WASTELAND-HOME` +
+  `friends-house-5G`) so the panel can be exercised offline.
 
 ## Deploy `data/` to a running board
 
@@ -290,6 +342,61 @@ If the game page stops loading part-way and the board stops answering:
   `Content-Length` with the local file (all 120 web+image files were checked
   that way).
 
+## Art assets (`data/img/`)
+
+Two scripts, both dry-run by default and both needing only Pillow + numpy.
+Neither changes a filename, an extension or a route, so no firmware, engine.js
+or MIME change is involved.
+
+```bash
+python scripts/optimize_art.py                  # dry run: prints the table
+python scripts/optimize_art.py --apply          # rewrite in place
+python scripts/gen_missing_tiles.py --apply     # fill empty variant slots
+```
+
+- **`optimize_art.py`** re-encodes everything under `data/img/` as palette PNG
+  with a real alpha ramp (`scripts/png_quant.py`), picking the smallest colour
+  count that stays inside `--quality` (visible RMSE, measured after
+  compositing over the map background — the naive RGB metric scores a visually
+  perfect requantise at 87 because it is reading the transparent corners).
+  It also caps hex tiles at `--max-edge 256`: tiles are drawn at
+  `imgSz = HEX_SZ * 2` and `HEX_SZ` tops out near 125, so 250 CSS px is the
+  widest one is ever painted. It only ever downscales, only rewrites a file
+  that actually got smaller, and only resizes `hex*` / `poi_*`.
+  **2360 KB → 679 KB (71%) on the first pass, no visible change.**
+  Already-indexed (mode `P`) files are skipped so the pass is idempotent:
+  re-quantising a quantised image scores its error against the *degraded*
+  version and will shave another 10% every time you run it, which is visible
+  banding after a few passes. `--force` if you really mean it.
+- **`gen_missing_tiles.py`** fills empty `hex<Name><N>.png` slots with flat
+  labelled placeholders — terrain name, variant number and the target filename
+  printed on the tile, ~4.3 KB each. It only appends at the next free index,
+  so it cannot open a gap in the numbering that `setupVariantCounts()` would
+  silently turn into a wasted slot. Skips River Channel (drawn with the
+  animated `drawRiverRipples()` on purpose) and the tunnel terrains unless
+  asked. `--regen` redraws its own earlier output (tagged in a PNG tEXt chunk,
+  so hand-painted art is never touched); `--no-guide` drops the square overlay.
+- **Tile art belongs on a SQUARE canvas.** `renderHexContent()` draws into
+  `imgSz = HEX_SZ * 2` on *both* axes, so a non-square source is stretched, not
+  letterboxed — while the hex `drawHexPath()` strokes is only `√3 × HEX_SZ`
+  tall. Correct authoring is a square canvas with the hexagon at full width and
+  the middle 86.6% of the height. The placeholders are built that way and draw
+  the box as a dashed square with corner brackets. The existing painted tiles
+  are *not*: their hexagon fills the canvas, so it renders 7–15% too tall and
+  overhangs its neighbours. It reads as a slight overlap rather than a fault,
+  so this is a note for new art, not a bug to go fix.
+- **Don't re-encode `data/img/survivors/*.jpg`.** They are already near the
+  knee: q85 saves 13% for a visible generation loss, and the portrait panel is
+  300 CSS px with `background-size:cover`, so 280×420 is already short of what
+  a 2× display wants. The only real win there is WebP, which costs the
+  `.png`/`.jpg` literals in engine.js, the suffix test in
+  `setupVariantCounts()` and the MIME literal in `game-server.hpp`.
+- `img/ui_glyphs.png` is skipped by the optimiser: `_glyphTile()` recolours it
+  with `source-in`, so only its alpha reaches the screen, and snapping that to
+  6 levels would chew the antialiasing to save under a kilobyte.
+- Prompts for the real hand-painted art: [HEX_TILE_PROMPTS.md](../data/img/HEX_TILE_PROMPTS.md)
+  and [items/ICON_PROMPTS.md](../data/img/items/ICON_PROMPTS.md).
+
 ## Mock-server dev loop (no board needed)
 
 ```bash
@@ -331,7 +438,19 @@ sequence; the roll mirrors `computeEncounterDN()` + 2d6. The server is
 authoritative: `enc_choice` carries only `{ci: <choice index>}` and both the
 firmware ([encounter_engine.hpp](../encounter_engine.hpp)) and the mock read
 costs, hazards, loot and `can_bank` from the encounter JSON themselves. The
-client's copy of the JSON is for display only. Two test-only
+client's copy of the JSON is for display only.
+
+The one client→server payload with gameplay meaning is `enc_bank`'s optional
+`keep:[w,f,fu,m,s]` — how much of each resource the player left on the haul
+tray's +/− steppers. It is a *request*: `handleMsg_enc_bank` banks
+`min(pendingLoot[i], keep[i])`, so a drifted or hostile client can only ever
+take **less** than it won. An absent `keep` means "bank everything", which is
+what an older client sends. Trimmed tokens are left behind and gone — there is
+no ground drop and no score refund, unlike `drop_res`. Score follows the
+trimmed total (3 pts/token), and the `enc_bank` event reports the *banked*
+amounts, not the rolled ones, so the client's `inv[]` stays in sync.
+
+Two test-only
 WebSocket messages exist in the mock (the firmware ignores them) — send them
 from the browser console:
 
@@ -344,6 +463,10 @@ send({ t: 'dbg_caravan' });                       // teleport the mock caravan o
 send({ t: 'dbg_ignite' });                        // ignite the sender's own hex at intensity 2 (world-system-spec.md)
 send({ t: 'dbg_doom', awareness: 100 });          // teleport Creeping Doom adjacent to the sender, set its awareness (world-system-spec.md)
 send({ t: 'dbg_settle' });                        // force a settlement to form on the sender's hex (actions_game_loop.hpp doShelter())
+send({ t: 'dbg_flood' });                         // force-flood the sender's hex at intensity 2, ignoring the water/storm gates
+send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill MP (tunnel-system-spec.md)
+send({ t: 'dbg_tunnel', h: 2, below: 1, mp: 0 }); // ...underground on that shaft instead, with a pinned MP budget
+send({ t: 'dbg_collapse', d: 0 });                // cave in the tunnel hex in direction d from the sender
 ```
 
 Encounter JSON `skill` ids use the firmware's 5-skill enum — 0 NAVIGATE,
@@ -398,11 +521,21 @@ Client module: [data/ui-encounter.js](../data/ui-encounter.js). Markup lives in
 - **The mock-server is wire-compatible, not behaviour-compatible.** It will
   ack any `/upload` POST, but encounter logic / save persistence is faked.
   Validate game logic against real hardware.
+- **The mock applies `WEATHER_VIS_PENALTY` to the surface vis radius**
+  (`surfaceVis()` in `mock-server/server.js`), so storm/chem/strangle-fog
+  blind you there the same way they do on the board. It used to send a flat
+  `vr: 4`, which hid every bug in anything gated on fog of war. Like the
+  firmware, the radius is only resampled when a vis disk is sent (on move) —
+  a phase change while you stand still does not take effect until you step.
+  Terrain/Scout/equipment vision modifiers are still not modelled.
 - **Don't `git add mock-server/uploads/` or `node_modules/`.** Both are
   ignored at the repo root.
 - **Every file under `data/img/` (one subdir deep) is loaded into the PSRAM
-  image cache at boot, capped at `MAX_IMG_CACHE = 100` (currently 95 used).**
-  Anything past the cap is silently skipped and served as 204. Pixel glyphs
+  image cache at boot, capped at `MAX_IMG_CACHE = 160` (currently 114 used,
+  1116 KB).** Anything past the cap is silently skipped and served as 204.
+  That count is *files*, not images — the three `*_PROMPTS.md` / `IMAGES_NEEDED.md`
+  notes under `data/img/` burn three slots and ~29 KB of PSRAM for text the
+  board never serves. Pixel glyphs
   (item fallback icons, `img/ui_glyphs.png` sprite strip) are hand-drawn ASCII
   in `scripts/gen_pixel_glyphs.py` — edit the grids there and re-run it rather
   than adding one PNG per glyph.

@@ -33,6 +33,15 @@ const ARC_MIN_GAP_MS   = 4200;
 const ARC_STRIKE_CHANCE = 0.02; // chem storm's hex-to-hex arc, same cadence idea as the sky strike
 const QUAKE_DUST_CHANCE = 0.28; // rolled twice per frame per active quake
 const QUAKE_CONVERTED_DUST_CHANCE = 0.8; // rolled several times per frame per leveled-settlement hex
+// The flat (non-soft) storm wash clips to the hex, so two washed neighbours
+// meet along a shared edge. Clipping short of the cell left an unwashed
+// hairline between every pair and the band read as a mosaic of tiles rather
+// than one weather front; clipping exactly on the edge still leaves canvas's
+// antialiased clip covering ~half the boundary pixel from each side. A hair
+// of bleed past the edge makes the two clips overlap so the seam closes.
+// Pixels, not a ratio: the seam is a ~1px rasterisation artifact at every
+// zoom, so it must not grow with HEX_SZ.
+const STORM_WASH_BLEED = 0.75;
 
 // ── Smooth animation state ────────────────────────────────────────
 const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0 }));
@@ -102,9 +111,62 @@ let HEX_SZ    = 56;
 let cssWidth  = 0;
 let cssHeight = 0;
 
-const ZOOM_STEP_PX  = 4;
-const ZOOM_STEP_MAX = 6;
-let   zoomStep      = 0;
+// One step is a ratio, not a pixel delta — 3 steps each way walks the whole
+// 28..92px range, so the controls are never more than a few clicks from either
+// end (linear 4px steps took eight).
+const ZOOM_STEP_FACTOR = 1.25;
+const ZOOM_STEP_MAX    = 3;
+let   zoomStep      = (() => {
+  const v = Number.parseInt(localStorage.getItem(MAP_ZOOM_STORAGE_KEY) ?? '0');
+  return Number.isFinite(v) ? Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, v)) : 0;
+})();
+
+// Hex size the viewport alone would pick, before any zoom is applied.
+function baseHexSize() {
+  return Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(cssWidth / HEX_SZ_VIEWPORT_DIVISOR)));
+}
+
+// Recompute HEX_SZ from the current viewport + zoomStep. Cheap: no canvas
+// buffer reallocation, so wheel/pinch can call it every tick.
+function hexSizeForStep(step) {
+  return Math.round(Math.max(MAP_ZOOM_MIN_PX,
+    Math.min(MAP_ZOOM_MAX_PX, baseHexSize() * Math.pow(ZOOM_STEP_FACTOR, step))));
+}
+function applyLayout() { HEX_SZ = hexSizeForStep(zoomStep); }
+
+// True when another step in this direction would change nothing (clamped).
+function zoomAtLimit(dir) {
+  const step = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, zoomStep + dir));
+  return hexSizeForStep(step) === HEX_SZ;
+}
+
+function setZoomStep(step) {
+  const next = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX, Math.round(step)));
+  if (next === zoomStep) { updateZoomUI(); return; }
+  zoomStep = next;
+  try { localStorage.setItem(MAP_ZOOM_STORAGE_KEY, String(zoomStep)); } catch { /* private mode */ }
+  applyLayout();
+  updateZoomUI();
+}
+function nudgeZoom(delta) { setZoomStep(zoomStep + delta); }
+function resetZoom()      { setZoomStep(0); }
+function getZoomStep()    { return zoomStep; }
+
+// Zoom readout + button disabled-look. Defined here so every entry point
+// (buttons, wheel, pinch, keyboard) funnels through setZoomStep().
+let zoomChipTimer = null;
+function updateZoomUI() {
+  const inBtn  = document.getElementById('zoom-in-btn');
+  const outBtn = document.getElementById('zoom-out-btn');
+  if (inBtn)  inBtn.classList.toggle('zoom-limit',  zoomAtLimit(+1));
+  if (outBtn) outBtn.classList.toggle('zoom-limit', zoomAtLimit(-1));
+  const chip = document.getElementById('zoom-chip');
+  if (!chip) return;
+  chip.textContent = (HEX_SZ / baseHexSize()).toFixed(2).replace(/0$/, '') + '×';
+  chip.classList.add('show');
+  clearTimeout(zoomChipTimer);
+  zoomChipTimer = setTimeout(() => chip.classList.remove('show'), 1100);
+}
 
 function resize() {
   const wrap = document.getElementById('canvas-wrap');
@@ -116,19 +178,20 @@ function resize() {
   canvas.style.width  = cssWidth  + 'px';
   canvas.style.height = cssHeight + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);  // reset any prior transform then scale
-  const base = Math.max(HEX_SZ_MIN, Math.min(HEX_SZ_MAX, Math.floor(cssWidth / HEX_SZ_VIEWPORT_DIVISOR)));
-  HEX_SZ = Math.max(HEX_SZ_MIN - ZOOM_STEP_PX * ZOOM_STEP_MAX,
-                    Math.min(HEX_SZ_MAX + ZOOM_STEP_PX * ZOOM_STEP_MAX,
-                             base + zoomStep * ZOOM_STEP_PX));
+  applyLayout();
 }
 window.addEventListener('resize', resize);
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  zoomStep = Math.max(-ZOOM_STEP_MAX, Math.min(ZOOM_STEP_MAX,
-    zoomStep + (e.deltaY > 0 ? -1 : 1)));
-  resize();
+  nudgeZoom(e.deltaY > 0 ? -1 : 1);
 }, { passive: false });
 resize();
+
+document.getElementById('zoom-in-btn') ?.addEventListener('click', () => nudgeZoom(+1));
+document.getElementById('zoom-out-btn')?.addEventListener('click', () => nudgeZoom(-1));
+document.getElementById('zoom-reset-btn')?.addEventListener('click', resetZoom);
+// Reflect the restored zoom on the buttons without flashing the chip on load.
+(() => { const c = document.getElementById('zoom-chip'); updateZoomUI(); c?.classList.remove('show'); })();
 
 // ── Pixel glyphs ───────────────────────────────────────────────────
 // Tinted copies of one 16px cell from the glyph strip, keyed `${idx}|${color}`.
@@ -335,11 +398,21 @@ function lerpPlayerPositions() {
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i];
     if (!p.on) { renderPos[i].q = p.q; renderPos[i].r = p.r; continue; }
-    let tq = p.q, tr = p.r;
-    while (tq - renderPos[i].q >  MAP_COLS / 2) tq -= MAP_COLS;
-    while (renderPos[i].q - tq >  MAP_COLS / 2) tq += MAP_COLS;
-    while (tr - renderPos[i].r >  MAP_ROWS / 2) tr -= MAP_ROWS;
-    while (renderPos[i].r - tr >  MAP_ROWS / 2) tr += MAP_ROWS;
+    // Where this player sits on the board WE are looking at. null means they
+    // are on the other one; leave their marker where it was rather than
+    // dragging it somewhere meaningless (renderCharacters skips them anyway).
+    const v = playerViewPos(i);
+    if (!v) continue;
+    let tq = v.q, tr = v.r;
+    // Only the surface wraps. Underground the board is walled, so the
+    // shortest-path unwrapping below would be wrong (and could push the
+    // marker off-board entirely).
+    if (boardWraps()) {
+      while (tq - renderPos[i].q >  MAP_COLS / 2) tq -= MAP_COLS;
+      while (renderPos[i].q - tq >  MAP_COLS / 2) tq += MAP_COLS;
+      while (tr - renderPos[i].r >  MAP_ROWS / 2) tr -= MAP_ROWS;
+      while (renderPos[i].r - tr >  MAP_ROWS / 2) tr += MAP_ROWS;
+    }
     renderPos[i].q += (tq - renderPos[i].q) * LERP_RATE;
     renderPos[i].r += (tr - renderPos[i].r) * LERP_RATE;
   }
@@ -347,7 +420,11 @@ function lerpPlayerPositions() {
 
 function buildCamera() {
   const meRp  = myId >= 0 ? renderPos[myId] : { q: 0, r: 0 };
-  const meAct = myId >= 0 ? players[myId]   : { q: 0, r: 0 };
+  // meAct is the authoritative hex the vision falloff measures from, so it
+  // must be the position on the board being drawn -- underground that is
+  // tq/tr, not the surface hatch q/r is pinned to.
+  const meAct = (myId >= 0 ? playerViewPos(myId) : null) ??
+                (myId >= 0 ? players[myId] : { q: 0, r: 0 });
   const cp    = hexToPixel(meRp.q, meRp.r, HEX_SZ);
   // Whole-view quake shake — applied to the shared camera offset so every
   // layer (terrain, grid, characters, ...) trembles together, not just the
@@ -403,6 +480,16 @@ function drawFootprints(cx, cy, cell) {
   }
 }
 
+function drawTireTracks(cx, cy, cell) {
+  if (!cell.tireTrack) return;
+  // Worn-in tracks: same idiom as drawFootprints (dark, semi-transparent),
+  // but a single centered mark — the caravan or a ridden vehicle (e.g. the
+  // Motorbike) leaves it with no per-source attribution, so no ring layout
+  // is needed — sized up slightly to read as a heavier vehicle.
+  const sz = Math.max(8, Math.round(HEX_SZ * 0.32));
+  drawGlyph(ctx, GLYPH.TIRE_TRACK, cx - sz / 2, cy - sz / 2, sz, '#000000', 0.75);
+}
+
 function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
   const imgs = shelterImgs[0] ?? [];   // mock server never sends shelter variants
   const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
@@ -417,6 +504,81 @@ function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
               cx + HEX_SZ * 0.35 - sz, cy - HEX_SZ * 0.35, sz,
               cell.shelter === 2 ? '#7EC8E3' : '#D4A574');
   }
+}
+
+// Storm clump darkening — only hexes the moving squall line currently
+// covers go dark; deeper into a clump's core (and worse the phase) means
+// darker. Untouched hexes stay fully lit even while it's raining nearby.
+// Rain storm gets a neon-blue tint on top of the dark fill; chem storm
+// (phase 3) reuses the exact same clump mechanic with a radioactive-green
+// tint instead, fog (phase 4) reuses it again with its own slow travel
+// speed and a steep "pop" onset curve (see popIn in STORM_PHASE_CFG), and
+// mist (phase 5) reuses it once more with no tintColor at all and darkMax
+// near 1 — but mist alone renders as a soft radial wash (see cfg.soft
+// below) instead of a hex-clipped flat fill, so covered patches blend into
+// one fuzzy blob instead of a mosaic of crisp hexagon tiles.
+//
+// Deliberately NOT gated on fog of war, unlike everything else drawn per
+// hex. Fog of war hides *information* — what terrain, what resources, what
+// is standing there. Rain falling on ground you can't identify is not
+// information, and gating it on visibility was self-defeating: the weather
+// subtracts WEATHER_VIS_PENALTY from vision (hex-map.hpp playerVisParams),
+// which squeezes the player hard in exactly the phases with the best
+// effects — so storm/chem/strangle-fog had at most one anchor hex on
+// screen, no particles most frames, and chem's arc lightning (needs 2+
+// anchors, see LightningSystem.maybeArc) could never fire at all. Chem has
+// since been eased (3, down from 5); storm was tried at 2 and put back to 3
+// because it showed too much ground. The gating stays wrong on principle,
+// and strangle fog still reaches visR 0.
+// stormIntensityAt() is pure (mapQ, mapR, phase, now), so it works on a hex
+// the client knows nothing about.
+//
+// Returns the 0..1 intensity it drew at (0 = nothing drawn), which
+// drawCellOverlays uses to gate the raindrop glyph.
+function drawStormWash(cx, cy, mapQ, mapR) {
+  const cfg = STORM_PHASE_CFG[weatherPhase];
+  if (!cfg) return 0;   // phase 0 (clear) has no entry
+  const intensity = stormIntensityAt(mapQ, mapR, weatherPhase, weatherNow);
+  if (intensity <= 0.04) return 0;
+  if (cfg.soft) {
+    // Radius extends well past this hex's own edge so neighboring
+    // covered hexes' gradients overlap and merge — no hard hexagon
+    // boundary anywhere, unlike the clip+fillRect path below. A second
+    // wash (tintRGB/tintAlpha) layers the same way as the flat path's
+    // tintColor, for phases like Strangle Fog that need both a base
+    // wash and a colored one, not just a single flat color like mist's.
+    const r = HEX_SZ * 1.9;
+    const drawWash = (rgb, alpha) => {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0,    `rgba(${rgb},${alpha})`);
+      g.addColorStop(0.55, `rgba(${rgb},${alpha * 0.75})`);
+      g.addColorStop(1,    `rgba(${rgb},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    ctx.save();
+    drawWash(cfg.softRGB, intensity * cfg.darkMax);
+    if (cfg.tintRGB) drawWash(cfg.tintRGB, intensity * cfg.tintAlpha);
+    ctx.restore();
+  } else {
+    const clipR = HEX_SZ + STORM_WASH_BLEED;
+    ctx.save();
+    drawHexPath(ctx, cx, cy, clipR);
+    ctx.clip();
+    ctx.globalAlpha = intensity * cfg.darkMax;
+    ctx.fillStyle   = cfg.baseColor;
+    ctx.fillRect(cx - clipR, cy - clipR, clipR * 2, clipR * 2);
+    if (cfg.tintColor) {
+      ctx.globalAlpha = intensity * cfg.tintAlpha;
+      ctx.fillStyle   = cfg.tintColor;
+      ctx.fillRect(cx - clipR, cy - clipR, clipR * 2, clipR * 2);
+    }
+    ctx.restore();
+  }
+  stormyHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity });
+  return intensity;
 }
 
 function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
@@ -437,66 +599,18 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
 
   if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
 
-  // Storm clump darkening — only hexes the moving squall line currently
-  // covers go dark; deeper into a clump's core (and worse the phase) means
-  // darker. Untouched hexes stay fully lit even while it's raining nearby.
-  // Rain storm gets a neon-blue tint on top of the dark fill; chem storm
-  // (phase 3) reuses the exact same clump mechanic with a radioactive-green
-  // tint instead, fog (phase 4) reuses it again with its own slow travel
-  // speed and a steep "pop" onset curve (see popIn in STORM_PHASE_CFG), and
-  // mist (phase 5) reuses it once more with no tintColor at all and darkMax
-  // near 1 — but mist alone renders as a soft radial wash (see cfg.soft
-  // below) instead of a hex-clipped flat fill, so covered patches blend into
-  // one fuzzy blob instead of a mosaic of crisp hexagon tiles.
-  if (weatherPhase === 1 || weatherPhase === 2 || weatherPhase === 3 || weatherPhase === 4 || weatherPhase === 5) {
-    const intensity = stormIntensityAt(mapQ, mapR, weatherPhase, weatherNow);
-    if (intensity > 0.04) {
-      const cfg = STORM_PHASE_CFG[weatherPhase];
-      if (cfg.soft) {
-        // Radius extends well past this hex's own edge so neighboring
-        // covered hexes' gradients overlap and merge — no hard hexagon
-        // boundary anywhere, unlike the clip+fillRect path below. A second
-        // wash (tintRGB/tintAlpha) layers the same way as the flat path's
-        // tintColor, for phases like Strangle Fog that need both a base
-        // wash and a colored one, not just a single flat color like mist's.
-        const r = HEX_SZ * 1.9;
-        const drawWash = (rgb, alpha) => {
-          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-          g.addColorStop(0,    `rgba(${rgb},${alpha})`);
-          g.addColorStop(0.55, `rgba(${rgb},${alpha * 0.75})`);
-          g.addColorStop(1,    `rgba(${rgb},0)`);
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(cx, cy, r, 0, Math.PI * 2);
-          ctx.fill();
-        };
-        ctx.save();
-        drawWash(cfg.softRGB, intensity * cfg.darkMax);
-        if (cfg.tintRGB) drawWash(cfg.tintRGB, intensity * cfg.tintAlpha);
-        ctx.restore();
-      } else {
-        ctx.save();
-        drawHexPath(ctx, cx, cy, HEX_SZ - 1);
-        ctx.clip();
-        ctx.globalAlpha = intensity * cfg.darkMax;
-        ctx.fillStyle   = cfg.baseColor;
-        ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
-        if (cfg.tintColor) {
-          ctx.globalAlpha = intensity * cfg.tintAlpha;
-          ctx.fillStyle   = cfg.tintColor;
-          ctx.fillRect(cx - HEX_SZ, cy - HEX_SZ, HEX_SZ * 2, HEX_SZ * 2);
-        }
-        ctx.restore();
-      }
-      // Only rain/storm get the little raindrop glyph — chem gets its
-      // radioactive pulses instead and fog/mist get their own particle
-      // treatment (or none, for mist), neither of which reads as rain.
-      if ((weatherPhase === 1 || weatherPhase === 2) && intensity > 0.3) {
-        drawGlyph(ctx, GLYPH.RAIN, cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48,
-                  Math.max(8, Math.round(HEX_SZ * 0.28)), '#FFF', 0.55 + 0.3 * intensity);
-      }
-      stormyHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity });
-    }
+  // Storm wash + particle anchor. Drawn here for known hexes so it layers
+  // terrain art -> weather -> fire; fogged hexes get the same wash from
+  // renderHexTerrain's else branch instead (see drawStormWash).
+  const stormIntensity = drawStormWash(cx, cy, mapQ, mapR);
+  // Only rain/storm get the little raindrop glyph — chem gets its
+  // radioactive pulses instead and fog/mist get their own particle
+  // treatment (or none, for mist), neither of which reads as rain.
+  // Unlike the wash, this one stays known-hexes-only: it's a readability
+  // marker on a hex you can actually read, not atmosphere.
+  if ((weatherPhase === 1 || weatherPhase === 2) && stormIntensity > 0.3) {
+    drawGlyph(ctx, GLYPH.RAIN, cx - HEX_SZ * 0.48, cy - HEX_SZ * 0.48,
+              Math.max(8, Math.round(HEX_SZ * 0.28)), '#FFF', 0.55 + 0.3 * stormIntensity);
   }
 
   // Fire — layered on top of weather darkening so it stays visible even
@@ -543,19 +657,22 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
   }
 }
 
-function applyHexFill(cell, dist, visible, surveyed, vr) {
+function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
   if (visible || surveyed) {
     ctx.globalAlpha = surveyed ? 0.7 : 1;
     ctx.fillStyle   = TERRAIN[cell.terrain]?.fill || '#2A2010';
-  } else if (dist === vr + 1) {
-    ctx.globalAlpha = FOG_INNER_ALPHA;
-    ctx.fillStyle   = '#141008';
-  } else if (dist === vr + 2) {
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle   = '#141008';
-  } else {
+  } else if (remembered) {
+    // Base coat only — renderMemoryHex draws the art over this and then
+    // veils the lot, so the fill just stops fog showing through gaps in art.
     ctx.globalAlpha = 1;
-    ctx.fillStyle   = '#080402';
+    ctx.fillStyle   = TERRAIN[remembered.terrain]?.fill || '#2A2010';
+  } else {
+    // Ring 0 is the first hidden ring; everything at or past FOG_FADE_RINGS is
+    // the flat void. Clamped low as well as high: a cell can be null inside vr
+    // if a vis disk ever arrives short, and a negative index would hand
+    // fillStyle an undefined and silently keep the previous colour.
+    ctx.globalAlpha = 1;
+    ctx.fillStyle   = FOG_RING_FILL[Math.min(Math.max(dist - vr - 1, 0), FOG_FADE_RINGS)];
   }
 }
 
@@ -573,7 +690,29 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
   }
   ctx.globalAlpha = 1;
   drawFootprints(cx, cy, cell);
+  drawTireTracks(cx, cy, cell);
   drawCellOverlays(cx, cy, cell, mapQ, mapR);
+}
+
+// Ground you have seen and walked away from. Terrain and shelter only: no
+// resources, no footprints, no tire tracks, no fire — those are all things
+// that change while your back is turned, and drawing a remembered one is
+// worse than drawing nothing. No quake jitter either; you are recalling this
+// hex, not standing on it.
+function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
+  const _tv  = terrainImgVariants[cell.terrain];
+  const tImg = poiArtFor(cell.terrain, cell.variant) ||
+               (_tv?.length > 0 ? (_tv[cell.variant % _tv.length] || _tv[0]) : null);
+  if (tImg?.loaded) {
+    const imgSz = HEX_SZ * 2;
+    ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
+  } else if (cell.terrain !== 11) {
+    drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
+  }
+  if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
+  drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+  ctx.fillStyle = EXPLORED_VEIL_FILL[weatherPhase] || EXPLORED_VEIL.fill;
+  ctx.fill();
 }
 
 // ── Pass 1: Hex fills + terrain icons + resources ─────────────────
@@ -584,8 +723,11 @@ function renderHexTerrain(cam) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
       const vr   = centreR + dr;
-      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
-      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      // boardNorm() wraps on the surface and bounds-checks in the
+      // tunnels, where off-board is solid rock and simply not drawn.
+      const _n = boardNorm(vq, vr);
+      if (!_n) continue;
+      const mapQ = _n.q, mapR = _n.r;
 
       const px = hexToPixel(vq, vr, HEX_SZ);
       const cx = px.x + ox;
@@ -594,13 +736,27 @@ function renderHexTerrain(cam) {
       if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
       if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
 
-      const dist     = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
-      const cell     = gameMap[mapR][mapQ];
+      const dist     = boardDist(meAct.q, meAct.r, mapQ, mapR);
+      const cell     = boardCells()[mapR][mapQ];
       const visible  = dist <= effectiveVR && cell !== null;
-      const surveyed = !visible && cell !== null && surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158 — populated in network.js
+      // One key per hex, not one per lookup: at minimum zoom this loop runs
+      // ~2000 times a frame and both sets below are keyed the same way.
+      const key      = `${mapQ}_${mapR}`;
+      const surveyed = !visible && cell !== null && surveyedCells.has(key); // NOSONAR S4158 — populated in network.js
+      // Explored: seen once, out of sight now. gameMap still holds the cell
+      // until a sync blanks it, so prefer that and fall back to the memory
+      // store. Surface only — a remembered tunnel corridor you cannot see
+      // into is not the same promise as a ridge remembered on the horizon.
+      const remembered = (!visible && !surveyed && !myDepth)
+        ? (cell || memoryCells.get(key) || null)
+        : null;
+      // Survey peeks sit one ring past the edge and already read as "not here
+      // right now" through their 0.7 alpha, so only live sight gets the ring
+      // fade — stacking both would make a surveyed hex darker than the fog.
+      const fade     = visible ? sightFadeLevel(dist, effectiveVR) : 0;
 
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
-      applyHexFill(cell, dist, visible, surveyed, effectiveVR);
+      applyHexFill(cell, dist, visible, surveyed, effectiveVR, remembered);
       ctx.fill();
       ctx.globalAlpha = 1;
 
@@ -617,6 +773,28 @@ function renderHexTerrain(cam) {
           ccy += (Math.random() - 0.5) * mag;
         }
         renderHexContent(ccx, ccy, cell, mapQ, mapR, surveyed);
+        if (fade > 0) {
+          // Veiled last so it covers terrain art, footprints, weather and fire
+          // alike — otherwise the edge of sight would show a crisp flame on a
+          // hazed hex. Unjittered cx/cy, matching the base fill: the veil is
+          // the cell, not its contents. Entities and the POI outline draw in
+          // later passes and stay clear on purpose — at the limit of vision
+          // you can still tell *someone* is out there, just not much about
+          // the ground they are standing on.
+          drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+          ctx.globalAlpha = SIGHT_FADE_ALPHA[fade];
+          ctx.fillStyle   = SIGHT_FADE_FILL;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        // Remembered, or genuinely unknown. Either way the squall sweeping
+        // over it is still visible, so the weather no longer disappears
+        // exactly when it blinds you. Unjittered cx/cy on purpose: a quake
+        // shakes the ground, not the sky — and the wash goes on last so
+        // weather reads the same over memory as it does over open fog.
+        if (remembered) renderMemoryHex(cx, cy, remembered, mapQ, mapR);
+        drawStormWash(cx, cy, mapQ, mapR);
       }
     }
   }
@@ -644,9 +822,9 @@ function renderGridLines(cam) {
 }
 
 function isPOIRenderable(mapQ, mapR, meAct) {
-  const cell = gameMap[mapR]?.[mapQ];
+  const cell = boardCells()[mapR]?.[mapQ];
   if (!cell?.poi) return false;
-  const dist = hexDistWrap(meAct.q, meAct.r, mapQ, mapR);
+  const dist = boardDist(meAct.q, meAct.r, mapQ, mapR);
   const effectiveVR = getEffectiveVR();
   return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
 }
@@ -664,15 +842,22 @@ function renderHexLabels(cam) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
       const vr   = centreR + dr;
-      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
-      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      // boardNorm() wraps on the surface and bounds-checks in the
+      // tunnels, where off-board is solid rock and simply not drawn.
+      const _n = boardNorm(vq, vr);
+      if (!_n) continue;
+      const mapQ = _n.q, mapR = _n.r;
       const px = hexToPixel(vq, vr, HEX_SZ);
       const cx = px.x + ox;
       const cy = px.y + oy;
       if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
       if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
       const ty = cy - HEX_SZ * 0.78;
-      ctx.fillText(hexLabel[mapR * MAP_COLS + mapQ], cx, ty);
+      // hexLabel is a permutation sized for the surface grid; underground
+      // just number the cells in row order -- a 16x10 board is small enough
+      // that a scrambled id would be noise rather than a landmark.
+      ctx.fillText(myDepth ? (mapR * boardCols() + mapQ + 1)
+                           : hexLabel[mapR * MAP_COLS + mapQ], cx, ty);
     }
   }
   ctx.restore();
@@ -689,8 +874,11 @@ function renderPOIOutlines(cam) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
       const vr   = centreR + dr;
-      const mapQ = ((vq % MAP_COLS) + MAP_COLS) % MAP_COLS;
-      const mapR = ((vr % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+      // boardNorm() wraps on the surface and bounds-checks in the
+      // tunnels, where off-board is solid rock and simply not drawn.
+      const _n = boardNorm(vq, vr);
+      if (!_n) continue;
+      const mapQ = _n.q, mapR = _n.r;
       const px   = hexToPixel(vq, vr, HEX_SZ);
       const cx   = px.x + ox;
       const cy   = px.y + oy;
@@ -716,6 +904,7 @@ function renderCurrentHex(cam) {
 }
 
 function closestWrapCoords(rp, meRp) {
+  if (!boardWraps()) return { vq: rp.q, vr: rp.r };   // tunnels are walled
   let vq = rp.q, vr = rp.r, bestD = Infinity;
   for (let dq2 = -1; dq2 <= 1; dq2++) {
     for (let dr2 = -1; dr2 <= 1; dr2++) {
@@ -735,6 +924,9 @@ function renderCharacters(cam) {
   const hexGroups = new Map(); // "q_r" -> [playerIndex, ...]
   for (let i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].on) continue;
+    // Only survivors on the board we are looking at get a marker. Someone
+    // below us is drawn as a hatch marker instead, further down.
+    if (!playerViewPos(i)) continue;
     const { vq, vr } = closestWrapCoords(renderPos[i], meRp);
     const key = `${Math.round(vq)}_${Math.round(vr)}`;
     if (!hexGroups.has(key)) hexGroups.set(key, []);
@@ -744,6 +936,7 @@ function renderCharacters(cam) {
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i];
     if (!p.on) continue;
+    if (!playerViewPos(i)) continue;   // on the other board
 
     const { vq, vr } = closestWrapCoords(renderPos[i], meRp);
     const pp  = hexToPixel(vq, vr, HEX_SZ);
@@ -772,6 +965,37 @@ function renderCharacters(cam) {
       sc:    p.sc   ?? 0,
     });
   }
+
+  // Survivors who have gone below. Their q/r is still pinned to the hatch they
+  // used, so the marker lands on the right hex -- but that is usually the hex
+  // someone else is standing on, so it is drawn LAST (over the character icons)
+  // and pushed to the lower edge of the hex, clear of the centred icon and of
+  // the name tag above it.
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    const p = players[i];
+    if (!p.on || !playerIsBelowUs(i)) continue;
+    const dpx = hexToPixel(p.q, p.r, HEX_SZ);
+    const dcx = dpx.x + ox;
+    const dcy = dpx.y + oy + HEX_SZ * 0.46;
+    if (dcx < -HEX_SZ * 2 || dcx > cssWidth  + HEX_SZ * 2) continue;
+    if (dcy < -HEX_SZ * 2 || dcy > cssHeight + HEX_SZ * 2) continue;
+    const rad = Math.max(4, HEX_SZ * 0.17);
+    ctx.save();
+    ctx.fillStyle   = '#0B0906';
+    ctx.beginPath(); ctx.arc(dcx, dcy, rad * 1.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle   = ARCHETYPE_COLORS[p.arch ?? 0] ?? PLAYER_COLORS[i];
+    ctx.beginPath(); ctx.arc(dcx, dcy, rad, 0, Math.PI * 2); ctx.fill();
+    // Downward chevron: "gone under here".
+    ctx.strokeStyle = '#0B0906';
+    ctx.lineWidth   = Math.max(1.5, rad * 0.34);
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    ctx.moveTo(dcx - rad * 0.52, dcy - rad * 0.24);
+    ctx.lineTo(dcx,              dcy + rad * 0.44);
+    ctx.lineTo(dcx + rad * 0.52, dcy - rad * 0.24);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // ── Pass 2.5: Weather overlay + particles ─────────────────────────
@@ -794,7 +1018,12 @@ function renderWeatherOverlay() {
       weatherParticles.emitCreepingFog(0.16, anchors);
       if (cfg.staticBursts) weatherParticles.emitStatic(0.03, anchors);
     } else if (weatherPhase !== 5) {
-      const count = weatherPhase === 1 ? 2 : weatherPhase === 2 ? 4 : 5;
+      // Chem (3) emits the fewest, not the most. Its blips are sustained
+      // Geiger pulses that sit in place for ~35-65 frames, where rain and
+      // storm lines fall out of frame fast — so the same spawn rate piles up
+      // several times the on-screen count. It used to emit 5 and read as a
+      // wall of green dots.
+      const count = weatherPhase === 1 ? 2 : weatherPhase === 2 ? 4 : 2;
       weatherParticles.emit(count, weatherPhase, cssWidth, cssHeight, anchors);
       if (weatherPhase === 1 || weatherPhase === 2) {
         weatherParticles.emitFog(weatherPhase === 1 ? 0.06 : 0.1, anchors);
@@ -841,6 +1070,30 @@ function renderQuakeOverlay() {
   }
 }
 
+// ── Underground tint ──────────────────────────────────────────────
+// A cold, heavy vignette so the bunker tunnels never read as "the surface map
+// at night". Drawn over the board but under the time-of-day tint, because the
+// day/night cycle still runs while you are down there -- your MP budget does
+// not stop just because you cannot see the sky.
+function renderUnderground() {
+  if (!myDepth) return;
+  ctx.save();
+  ctx.globalAlpha = 0.34;
+  ctx.fillStyle   = 'rgb(6,8,14)';
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+  // Radial falloff centred on the viewport -- the lamp only reaches so far.
+  const g = ctx.createRadialGradient(
+    cssWidth / 2, cssHeight / 2, HEX_SZ * 0.5,
+    cssWidth / 2, cssHeight / 2, Math.max(cssWidth, cssHeight) * 0.62);
+  g.addColorStop(0,   'rgba(0,0,0,0)');
+  g.addColorStop(0.55,'rgba(0,0,0,0.45)');
+  g.addColorStop(1,   'rgba(0,0,0,0.92)');
+  ctx.globalAlpha = 1;
+  ctx.fillStyle   = g;
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+  ctx.restore();
+}
+
 // ── Time-of-day tint overlay ──────────────────────────────────────
 function renderTimeOfDay() {
   // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting.
@@ -879,10 +1132,13 @@ const LAYERS = [
   { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
   { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
-  { name: 'caravan',      draw: (cam) => renderCaravan(cam) },
-  { name: 'doom',         draw: (cam) => renderDoom(cam) },
-  { name: 'weather',      draw: (_)   => renderWeatherOverlay() },
-  { name: 'quake',        draw: (_)   => renderQuakeOverlay() },
+  // The world system and the weather live on the surface map. Underground
+  // their coordinates would land on the wrong board entirely, so skip them
+  // rather than drawing a caravan in a bunker corridor.
+  { name: 'caravan',      draw: (cam) => { if (!myDepth) renderCaravan(cam); } },
+  { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
+  { name: 'weather',      draw: (_)   => { if (!myDepth) renderWeatherOverlay(); } },
+  { name: 'quake',        draw: (_)   => { if (!myDepth) renderQuakeOverlay(); } },
   // Ticks unconditionally — shared by weather (gated above) and quake dust
   // (not weather-gated), so it must run regardless of weatherPhase.
   // Fire particles emit here too (not weather-gated — a fire burns
@@ -891,7 +1147,8 @@ const LAYERS = [
   // it deliberately spills over characters standing on the hex, which lights
   // them by the fire rather than leaving them flatly lit inside it.
   { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.renderFireGlow(ctx, fireHexesThisFrame); weatherParticles.emitFire(fireHexesThisFrame); weatherParticles.update(); weatherParticles.render(ctx); } } },
-  { name: 'ash',          draw: (cam) => { if (ashParticles) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
+  { name: 'ash',          draw: (cam) => { if (ashParticles && !myDepth) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
+  { name: 'underground',  draw: (_)   => renderUnderground() },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },
 ];

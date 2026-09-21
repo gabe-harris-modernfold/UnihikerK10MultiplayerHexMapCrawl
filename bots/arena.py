@@ -40,6 +40,11 @@ from telemetry import TelemetryPoller, fetch_state
 
 RUNS_DIR = Path(__file__).parent / "runs"
 
+# How long the whole fleet may be unseated before the run is written off.
+# Generous on purpose: the seat-loss bug unseats everyone at once and the
+# clients re-pick on their own, so a short fuse here scraps healthy runs.
+NO_SEAT_GRACE = 45.0
+
 
 class SprintPolicy(Policy):
     """Wraps any policy to enable sprint mode.
@@ -53,6 +58,13 @@ class SprintPolicy(Policy):
     Caveat: weatherNextGapMs pins real weather changes to a ~1.1-1.9 real
     minute floor no matter how fast game-days fly, so sprint runs exercise
     the economy and survival loop but barely touch weather.
+
+    REST at depth 1 used to be refused, which meant one survivor underground
+    held the whole fleet's day open -- tickGame() needs *every* connected
+    player resting. That is no longer true: a bot down a hole can sleep like
+    any other, so sprint mode no longer depends on the tunnel policies timing
+    their way back to the surface. What a night below costs them now is the
+    TUNNEL_REST_LL_PCT bad-air roll (config.py), not the fleet's wall clock.
     """
 
     def __init__(self, inner: Policy):
@@ -172,7 +184,8 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
     path = RUNS_DIR / f"run-{stamp}-{run_idx:02d}.jsonl"
     meta = {"run": run_idx, "seed": seed, "host": args.host,
             "bots": args.bots, "policies": args.policies, "mode": args.mode,
-            "target": args.target, "started": datetime.now().isoformat(timespec="seconds")}
+            "target": args.target, "shelter": bool(getattr(args, "shelter", False)),
+            "started": datetime.now().isoformat(timespec="seconds")}
 
     rng = random.Random(seed)
     with Recorder(path, meta) as rec:
@@ -198,6 +211,10 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
             pname = names[i % len(names)].strip()
             bot_rng = random.Random(seed * 1000 + i)
             pol = policy_mod.make(pname, bot_rng)
+            # Set on the instance, not the class, so a mixed fleet is possible
+            # and so the flag does not leak between runs in a --runs loop.
+            if getattr(args, "shelter", False) and hasattr(pol, "shelter_when_exposed"):
+                pol.shelter_when_exposed = True
             if args.mode == "sprint":
                 pol = SprintPolicy(pol)
             bots.append(BotClient(
@@ -213,24 +230,34 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
 
         reason, t_start = "unknown", time.monotonic()
         deadline = t_start + args.max_minutes * 60
+        # "Nobody is seated" has two completely different meanings and this
+        # is the only place that can tell them apart.  A refused pick is
+        # silent, so a fleet that never got in looks exactly like a quiet
+        # game -- but the unflashed seat-loss bug also unseats the whole
+        # fleet at once mid-run, and those bots re-pick within seconds.
+        # Timing from the last moment anyone was seated covers both: a fleet
+        # that never joined still bails at NO_SEAT_GRACE, while a live run
+        # gets the same grace to recover instead of being scrapped.  Before
+        # this, 2 of 4 runs in a batch died at day 1 and day 6.
+        last_seated = t_start
         try:
             while True:
                 await asyncio.sleep(2.0)
                 joined = [b for b in bots if b.joined()]
                 scores = [b.obs.me.score for b in joined]
                 alive = [b for b in joined if b.obs.me.ll > 0]
-                elapsed = time.monotonic() - t_start
+                now = time.monotonic()
+                elapsed = now - t_start
+                if joined:
+                    last_seated = now
                 if max(scores, default=0) >= args.target:
                     reason = "target"
                     break
-                if time.monotonic() > deadline:
+                if now > deadline:
                     reason = "timeout"
                     break
-                # A refused pick is silent, so failing to seat anyone looks
-                # identical to a quiet game.  Bail rather than burning the
-                # whole timeout in the lobby.
-                if not joined and elapsed > 45:
-                    reason = "no_join"
+                if now - last_seated > NO_SEAT_GRACE:
+                    reason = "no_join" if last_seated == t_start else "seats_lost"
                     break
                 if joined and not alive and elapsed > 60:
                     reason = "all_downed"
@@ -271,6 +298,22 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       f"banked={c['encounters_banked']} aborted={c['encounters_aborted']} "
                       f"nodes={c['nodes_seen']} rolls={c['rolls_won']}/{c['rolls']} "
                       f"recipes={c['recipes']} downed={c['downed']}")
+            # Only the tunnel policies carry these. mp_per_surface_hex is the
+            # headline: underground MP spent per surface hex actually crossed,
+            # against a surface average MC of ~1.6.
+            if c and "descents" in c:
+                saving = c.get("mp_per_surface_hex")
+                print(f"       tunnels: dives={c['descents']}/{c['ascents']} "
+                      f"steps={c['tunnel_steps']} below/above="
+                      f"{c['tunnel_steps']}/{c['surface_steps']} "
+                      f"shafts={c['shafts_used']}/{c['hatches_known']} "
+                      f"crossed={c['transit_hexes']}hx "
+                      f"mp/hex={saving if saving is not None else '-'} "
+                      f"dawnsBelow={c['dawns_below']} "
+                      f"(bunker={c['bunker_dawns']} vent={c['vent_dawns']})")
+                # dawnsBelow is now a bad-air exposure count, not an LL one:
+                # the split by hatch type only prices the climb out (1 MP
+                # against 2) since dawnUpkeep stopped reading the surface hex.
         bd = summary["board"]
         print(f"    board: worst maxTickMs={bd['worst_maxTickMs']} "
               f"minHeap={bd['min_heap']} pollFail={bd['poll_failures']}")
@@ -324,6 +367,11 @@ def parse_args(argv=None):
                    help="safety timeout per run")
     p.add_argument("--no-reset", action="store_true",
                    help="skip eraseslot+regen (keeps the current world/save)")
+    p.add_argument("--shelter", action="store_true",
+                   help="let the survivor policies build a basic shelter before "
+                        "sleeping on exposed ground (1 scrap, 1 MP). The other "
+                        "arm of the exposure experiment -- see death_causes in "
+                        "metrics.py")
     args = p.parse_args(argv)
     if not 1 <= args.bots <= MAX_PLAYERS:
         p.error(f"--bots must be 1..{MAX_PLAYERS}")

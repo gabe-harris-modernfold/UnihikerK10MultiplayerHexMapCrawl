@@ -268,9 +268,21 @@ function _applyGameState(gs) {
 // Merges the "world" sync/state key into worldState. A partial payload (e.g.
 // Phase 1's `{caravan:{...}}` with no `doom`/`fire` keys yet) leaves the
 // other fields at their current value rather than clobbering them.
+let _lastCaravanHex = null;  // {q,r} — last hex we stamped a tire track onto
 function _applyWorldState(world) {
   Object.assign(worldState, world);
   if (world.fire) fireField?.setFromSync(world.fire);
+  // Stamp tire track immediately, same reason _evMv stamps footprints: the
+  // authoritative bit only reaches us via a vis-disk covering that hex, which
+  // may never happen for a player who's never nearby. Caravan position rides
+  // every state broadcast regardless of vision, so use that instead of
+  // waiting on one. Only patches an already-revealed cell — a still-fogged
+  // hex gets the real bit for free whenever it's eventually revealed.
+  const c = worldState.caravan;
+  if (c?.active && (c.q !== _lastCaravanHex?.q || c.r !== _lastCaravanHex?.r)) {
+    if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], tireTrack: 1 };
+    _lastCaravanHex = { q: c.q, r: c.r };
+  }
 }
 
 function _msgAsgn(msg) {
@@ -342,8 +354,14 @@ function _msgSync(msg) {
   if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
   if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
   updateSidebar();
-  if (myId >= 0 && players[myId]?.mp > 0) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
+  // maxMP is the DAY'S BUDGET and only a dawn event knows it. players[].mp is
+  // what is LEFT, so seeding it here rescaled the MP track (and renderer.js's
+  // time-of-day fade, which divides by maxMP) to whatever was unspent at the
+  // moment of a mid-day reconnect. Only raise it, never shrink it: on a fresh
+  // connect it is the best estimate available, and the next dawn corrects it.
+  if (myId >= 0 && players[myId]?.mp > maxMP) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
   if (myId >= 0) displayMP = players[myId].mp ?? 6;
+  if (myId >= 0 && players[myId]?.llCap) uiLLCap.val = players[myId].llCap;
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
@@ -354,6 +372,7 @@ function _msgSync(msg) {
     renderEquipment?.();
     if (myId >= 0) renderWounds?.(players[myId]);
   }
+  globalThis.maybeAutoOpenCaravanTrade?.();
 }
 
 function _msgState(msg) {
@@ -381,8 +400,25 @@ function _msgState(msg) {
     if (pd.it) p.it = pd.it;   // typed inventory types
     if (pd.iq) p.iq = pd.iq;   // typed inventory quantities
     if (pd.eq) p.eq = pd.eq;   // equipment slots
+    // is/llCap are the EFFECTIVE values (archetype base + equipment), computed
+    // by appendPackArrays() server-side. Never recompute them from eq[] on top
+    // of these — that double-counts the bonus.
+    if (pd.is    !== undefined) p.is    = pd.is;
+    if (pd.llCap !== undefined) p.llCap = pd.llCap;
     if (pd.kr !== undefined) p.kr = pd.kr;  // known-recipes bitmask (mock's 's' sends it; firmware's doesn't — kr there only ever arrives via 'sync' or a craft item_result)
     if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
+    // Bunker tunnels: which board this survivor is on, and where on it.
+    // q/r above stay pinned to their entrance hatch while dp is 1.
+    if (pd.dp !== undefined) {
+      const wasDp = p.dp | 0;
+      p.dp = pd.dp | 0;
+      p.tq = pd.tq | 0;
+      p.tr = pd.tr | 0;
+      // Changing board teleports a player as far as the renderer is
+      // concerned -- snap rather than lerping them across the screen.
+      if (p.dp !== wasDp) { const v = playerViewPos(i); if (v) { renderPos[i].q = v.q; renderPos[i].r = v.r; } }
+      if (i === myId) setMyDepth(p.dp);
+    }
   });
   _packFullRearmCheck();   // fresh token totals — did the player free up room?
   // Sync can carry stale eq after item_result; refresh equipment grid only if open.
@@ -398,16 +434,22 @@ function _msgState(msg) {
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
+  // Both halves of "am I standing on the caravan?" ride this message, so
+  // the shelf pops within a tick of the step (ui-panels.js).
+  globalThis.maybeAutoOpenCaravanTrade?.();
 }
 
 function _handleSelfVis() {
   const _me = players[myId];
-  const _cell = gameMap[_me.r]?.[_me.q];
+  const _here = playerViewPos(myId) ?? { q: _me.q, r: _me.r };
+  const _cell = boardCell(_here.q, _here.r);
   if (_cell) {
-    // Mirrors movePlayer(): terrain MC plus the weather movement penalty.
-    // Equipment-unlocked terrain (river, cliffs) uses the server's MC 2.
-    let _mc = TERRAIN[_cell.terrain]?.mc;
-    if (_mc === 255) _mc = 2;
+    // Mirrors canEnterTerrain() + movePlayer(): terrain MC, the equipment
+    // perks that override it, then the weather movement penalty. Reading
+    // TERRAIN[].mc alone charged a Vertical Regret wearer the full Mountain
+    // MC 4 cooldown for a step the server billed at 2, and ignored the Raft
+    // on water entirely.
+    let _mc = terrainMCFor(_cell.terrain, _me);
     if (_mc) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * (_mc + (WEATHER_MOVE_PENALTY[weatherPhase] ?? 0));
   }
   // A "hex still holds a resource after the move → pack must be full" toast
@@ -416,25 +458,48 @@ function _handleSelfVis() {
   // reveals send one too, so standing on an uncollectable pile re-toasted on
   // every keypress — on top of the col_fail toast for the same pickup. The
   // server's col_fail (reason 2) is authoritative; it is the only notice now.
-  const _cur = gameMap[_me.r]?.[_me.q];
-  // Auto-trigger encounter: vis fires after applyVisDisk so gameMap is guaranteed fresh.
-  if (_cur?.poi) {
+  // Auto-trigger encounter: vis fires after applyVisDisk so the board is fresh.
+  // Coordinates are whichever board we are on — handleMsg_enc_start() reads
+  // the player's own depth server-side, so nothing extra rides the message.
+  if (_cell?.poi) {
     globalThis._lastEncStartT = Date.now();
-    console.log('%c[ENC] POI detected — sending enc_start', 'color:#c0f;font-weight:bold', `q=${_me.q} r=${_me.r} t=${globalThis._lastEncStartT}`);
-    send({ t: 'enc_start', q: _me.q, r: _me.r });
+    console.log('%c[ENC] POI detected — sending enc_start', 'color:#c0f;font-weight:bold', `q=${_here.q} r=${_here.r} dp=${myDepth} t=${globalThis._lastEncStartT}`);
+    send({ t: 'enc_start', q: _here.q, r: _here.r });
   }
 }
 
 function _msgVis(msg) {
   if (msg.vr !== undefined) myVisionR = msg.vr;
+  // "dp" names the board these cells belong to. Underground the coordinates
+  // are tunnel coordinates, so they must land in tq/tr — writing them to q/r
+  // would move the player's surface pin off their entrance hatch.
+  const depth = msg.dp ? 1 : 0;
   if (msg.q !== undefined && myId >= 0) {
-    players[myId].q = msg.q;
-    players[myId].r = msg.r;
+    if (depth) { players[myId].tq = msg.q; players[myId].tr = msg.r; }
+    else       { players[myId].q  = msg.q; players[myId].r  = msg.r; }
   }
-  applyVisDisk(msg.cells);
+  applyVisDisk(msg.cells, depth);
   if (myId >= 0) _handleSelfVis();
   updateTerrainCard();
   updateSidebar();
+}
+
+// ── Tunnel board sync ────────────────────────────────────────────
+// The whole fogged bunker tunnel board, sent on descend and on reconnecting
+// while already underground. Carries its own dimensions — the firmware owns
+// TUN_COLS/TUN_ROWS and the client just follows.
+function _msgTunnelSync(msg) {
+  initTunnelMap(msg.cols | 0, msg.rows | 0);
+  parseMapFog(msg.map, tunnelMap, tunnelCols, tunnelRows, 'TUN');
+  if (msg.vr !== undefined) myVisionR = msg.vr;
+  if (msg.q !== undefined && myId >= 0) {
+    players[myId].tq = msg.q;
+    players[myId].tr = msg.r;
+  }
+  setMyDepth(1);
+  updateTerrainCard();
+  updateSidebar();
+  updateDirButtons();
 }
 
 function _msgGroundUpdate(msg) {
@@ -450,6 +515,26 @@ function _msgWifi(msg) {
     serverHasWifiCreds = true;
     if (msg.ssid) localStorage.setItem('wifi_ssid', msg.ssid);
     if (msg.pass !== undefined) localStorage.setItem('wifi_pass', msg.pass);
+  } else if (msg.status === 'nets') {
+    // Roaming list — every network the board will go looking for on its own.
+    uiWifiNets.val = Array.isArray(msg.nets) ? msg.nets : [];
+    uiWifiCur.val  = msg.cur || '';
+  } else if (msg.status === 'link') {
+    // How we reached the board. ap=1 means we are on its own softAP, where one
+    // radio is doing the job of a whole router - see showUplinkWarning().
+    uiApLink.val = !!msg.ap;
+    uiApCap.val  = msg.cap | 0;
+    uiStaIp.val  = msg.ip || '';
+    if (msg.ap) showUplinkWarning(msg.cap | 0, msg.ip || '');
+  } else if (msg.status === 'forgot') {
+    // Drop our cached copy too, otherwise the next reconnect auto-sends these
+    // credentials and the board re-learns the network we just told it to forget.
+    if (localStorage.getItem('wifi_ssid') === msg.ssid) {
+      localStorage.removeItem('wifi_ssid');
+      localStorage.removeItem('wifi_pass');
+      const si = document.getElementById('wifi-ssid'); if (si) si.value = '';
+      const pi = document.getElementById('wifi-pass'); if (pi) pi.value = '';
+    }
   }
 }
 
@@ -468,6 +553,7 @@ function handleMsg(msg) {
     case 'sync':          _msgSync(msg);         break;
     case 's':             _msgState(msg);        break;
     case 'vis':           _msgVis(msg);          break;
+    case 'tsync':         _msgTunnelSync(msg);   break;
     case 'ev':            handleEvent(msg);      break;
     case 'ground_update': _msgGroundUpdate(msg); break;
     case 'item_result':   _evItemResult(msg);    break;
@@ -493,9 +579,19 @@ function handleMsg(msg) {
       // so the player still sees *something* instead of the error vanishing.
       if (!globalThis._onEncError?.(msg.msg)) showToast(msg.msg || 'Action failed.');
       break;
-    case 'trade_fail':
-      showToast('⇄ Trade offer failed — check the target is still on your hex and you have the resources.');
+    case 'trade_fail': {
+      // `why` only comes back from car_buy (handleMsg_caravan_buy): 1 the
+      // caravan left / the item sold out, 2 can't cover the price, 3 no pack
+      // room, 4 tried to pay with water (the caravan refuses it).
+      const WHY = {
+        1: '⇄ The caravan has moved on, or that item just sold out.',
+        2: '⇄ Not enough tokens to cover that price.',
+        3: '⇄ Pack full — make room before you buy.',
+        4: "⇄ The caravan won't take water — pay in food, fuel, meds or scrap.",
+      };
+      showToast(WHY[msg.why] || '⇄ Trade offer failed — check the target is still on your hex and you have the resources.');
       break;
+    }
   }
   buildAgentState();
 }
@@ -535,16 +631,21 @@ function _evCol(ev) {
   // partial-pickup leak fix. Older servers that don't send it default to 0,
   // matching pre-fix behavior.
   const rem = ev.rem ?? 0;
-  if (gameMap[ev.r]?.[ev.q]) {
-    gameMap[ev.r][ev.q].resource = rem > 0 ? ev.res : 0;
-    gameMap[ev.r][ev.q].amount   = rem;
+  const grid = ev.dp ? tunnelMap : gameMap;
+  if (grid[ev.r]?.[ev.q]) {
+    grid[ev.r][ev.q].resource = rem > 0 ? ev.res : 0;
+    grid[ev.r][ev.q].amount   = rem;
   } else {
-    console.log('[COL] gameMap miss — no cached cell at', ev.q, ev.r, '(client never had it in vision)');
+    console.log('[COL] board miss — no cached cell at', ev.q, ev.r, 'dp=', ev.dp | 0, '(client never had it in vision)');
   }
   // Only mark the hex as "locally collected" when fully drained; otherwise the
   // map-decoder guard in applyVisDisk would force-zero a still-present resource.
-  if (rem === 0) collectedCells.add(`${ev.q}_${ev.r}`);
-  else           collectedCells.delete(`${ev.q}_${ev.r}`);
+  // Surface only: collectedCells is keyed "q_r" with no board, and the tunnel
+  // visdisk skips that guard for exactly this reason.
+  if (!ev.dp) {
+    if (rem === 0) collectedCells.add(`${ev.q}_${ev.r}`);
+    else           collectedCells.delete(`${ev.q}_${ev.r}`);
+  }
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   addLog(`<span class="log-col">${escHtml(who)} +${ev.amt}× ${RES_NAMES[ev.res]}</span>`);
   if (ev.pid === myId) {
@@ -624,14 +725,25 @@ function _evMv(ev) {
     pm.mp = ev.mp;
     if (ev.pid === myId) updateSidebar();
   }
-  pm.q = ev.q; pm.r = ev.r;
+  // Underground, q/r are tunnel coordinates: they belong in tq/tr, and the
+  // surface pin must stay on the entrance hatch.
+  if (ev.dp) { pm.dp = 1; pm.tq = ev.q; pm.tr = ev.r; }
+  else       { pm.dp = 0; pm.q  = ev.q; pm.r  = ev.r; }
   // Surveyed cells are relative to a fixed vantage point — clear on any move.
   if (ev.pid === myId) surveyedCells.clear();
   // Stamp footprint immediately — vis-disk only goes to the moving player,
   // so other players would never see footprints without this client-side update.
-  if (gameMap[ev.r]?.[ev.q]) {
-    const c = gameMap[ev.r][ev.q];
-    gameMap[ev.r][ev.q] = { ...c, footprints: (c.footprints || 0) | (1 << ev.pid) };
+  const mgrid = ev.dp ? tunnelMap : gameMap;
+  if (mgrid[ev.r]?.[ev.q]) {
+    const c = mgrid[ev.r][ev.q];
+    mgrid[ev.r][ev.q] = { ...c, footprints: (c.footprints || 0) | (1 << ev.pid) };
+  }
+  // Same reasoning for a tire track: ev.trk means this step was made with
+  // tracks-flagged gear equipped (the Motorbike) — mirrors the caravan's own
+  // client-side stamp in _applyWorldState() above. Never set underground:
+  // nothing drives a bunker corridor.
+  if (ev.trk && !ev.dp && gameMap[ev.r]?.[ev.q]) {
+    gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], tireTrack: 1 };
   }
   if (ev.radd && ev.radd > 0) _handleRadiation(ev, pm);
   // Exploration bonus: log first-visit score
@@ -680,12 +792,22 @@ function _applyDawnToPlayer(ev) {
   p.water = ev.w;
   p.ll    = ev.ll;
   p.mp    = ev.mp;
-  if (ev.pid === myId) { maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT; }
+  if (ev.pid === myId) {
+    maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT;
+    // Which equipped items could not pay their daily cost this dawn (bitmask,
+    // bit 0 = head .. bit 4 = vehicle). Their MP bonus is dormant for the day
+    // and the equipment panel greys it out instead of promising it.
+    uiUnfuelled.val = ev.unf | 0;
+  }
   p.rest = false;
   if (ev.wnd) p.wnd = ev.wnd;
   if (ev.pid === myId) {
     _tickNarrativeEffects();
-    if (uiResting.val && ev.expd < 0) showShelterWarning();
+    // Two different nights, two different banners. Exposure is off entirely
+    // underground (survival_state.hpp), so these are mutually exclusive in
+    // practice -- bad air is checked first so the ordering says which wins.
+    if (uiResting.val && ev.air < 0)       showBadAirWarning();
+    else if (uiResting.val && ev.expd < 0) showShelterWarning();
     uiResting.val = false;
     restSent = false;
   }
@@ -739,6 +861,12 @@ function _buildActOutcome(out) {
 
 function _buildActDetail(ev) {
   let d = '';
+  // Why an AO_BLOCKED action was refused (ABW_* in the .ino). Blocked used to
+  // be silent, which is fine while every reason is visible on the player's own
+  // screen -- "nothing to salvage here", "no MP". A pack full of scrap is not,
+  // and an unexplained dead button is the worst version of that.
+  if (ev.out === AO_BLOCKED && ev.bw === ABW_PACK_FULL)
+    return ' — pack full, drop something first';
   if (ev.dn)     d += ` DN${ev.dn}=${ev.tot}`;
   if (ev.fd)     d += ` +${ev.fd}Food`;
   if (ev.wd)     d += ` +${ev.wd}Water`;
@@ -843,6 +971,16 @@ function _evTrdRes(ev) {
   const fromName = (ev.from >= 0 && ev.from < MAX_PLAYERS && players[ev.from]?.nm) || 'P' + ev.from;
   const toName   = ev.to === CARAVAN_PID ? 'Caravan'
     : (ev.to >= 0 && ev.to < MAX_PLAYERS && players[ev.to]?.nm) || 'P' + ev.to;
+  // A caravan purchase (car_buy) names the goods — say what changed hands
+  // instead of the generic ACCEPTED line. The buyer's own pack/token update
+  // arrives separately as the targeted item_result (act:'buy').
+  if (ev.res === 1 && ev.to === CARAVAN_PID && ev.item) {
+    const name   = getItemById?.(ev.item)?.name ?? `Item #${ev.item}`;
+    const qtyTxt = ev.n > 1 ? `${ev.n}× ` : '';
+    addLog(`<span class="log-col">⇄ ${escHtml(fromName)} bought ${qtyTxt}${escHtml(name)} from the Caravan</span>`);
+    if (ev.from === myId) showToast(`⇄ ${qtyTxt}${name} is yours. The caravan pockets your tokens.`);
+    return;
+  }
   const TRADE_LABELS = ['', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'FAILED'];
   const label = TRADE_LABELS[ev.res] ?? 'UNKNOWN';
   const cls   = ev.res === 1 ? 'log-col' : 'log-check-fail';
@@ -893,7 +1031,10 @@ function _evFloodWashout(ev) {
 
 function _evFloodDamage(ev) {
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
-  addLog(`<span class="log-check-fail">🌊 ${escHtml(who)} swept off their feet by a flash flood</span>`);
+  // llLost arrives from firmware/mock; older builds omit it, so the log
+  // degrades to the bare sweep rather than printing "-undefined LL".
+  const ll = ev.llLost > 0 ? ` (−${ev.llLost} LL)` : '';
+  addLog(`<span class="log-check-fail">🌊 ${escHtml(who)} swept off their feet by a flash flood${ll}</span>`);
   if (ev.pid === myId) {
     showToast('🌊 The ground gives way — you\'re swept downstream.');
     updateSidebar();
@@ -917,6 +1058,38 @@ function _evDoomAct(ev) {
                          : '☠ Your supplies crumble to dust before your eyes.');
     updateSidebar();
   }
+}
+
+// The Doom addressing someone directly. `tier` picks the row of DOOM_TAUNTS
+// and `idx` the line within it (reduced mod the row length client-side, so
+// the firmware never needs to know how many lines exist) — see
+// tickDoomTaunts() in world-system.hpp.
+//
+// Everyone gets the log line, only the addressed player gets the toast: the
+// party seeing that it has singled someone out is most of the effect, but a
+// toast in the Doom's voice should only interrupt the person it's about.
+function _evDoomTaunt(ev) {
+  const line = doomTauntLine(ev.tier, ev.idx);
+  const who  = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  const cls  = ev.tier === 0 ? 'log-check-ok' : 'log-check-fail';
+  addLog(`<span class="${cls}">☠ ${escHtml(who)}: “${escHtml(line)}”</span>`);
+  if (ev.pid === myId) showToast(line, 'doom');
+}
+
+// Second thoughts in a bare corridor. `idx` is a raw byte the server does not
+// interpret, reduced mod TUNNEL_TAUNTS here -- see tickTunnelTaunts() in
+// tunnels.hpp.
+//
+// Unlike the Doom's taunt this arrives unicast, so there is no "is it me"
+// branch: if it got here, it is about us. It is deliberately quieter than
+// the Doom, too -- a log line and a toast in its own voice, no banner. The
+// banner is reserved for things that actually took a Life Level off you
+// (showBadAirWarning), and the whole point of this voice is that it is
+// commenting on a decision that mostly turned out fine.
+function _evTunTaunt(ev) {
+  const line = tunnelTauntLine(ev.idx);
+  addLog(`<span class="log-tunnel-taunt">\u25BE ${escHtml(line)}</span>`);
+  showToast(line, 'tunnel');
 }
 
 function _evCarAvail(ev) {
@@ -972,14 +1145,22 @@ function _evItemResult(ev) {
     if (ev.it) { console.log('[INV] applying server inv state', ev.it); p.it = ev.it; }
     if (ev.iq) p.iq = ev.iq;
     if (ev.eq) { console.log('[INV] applying server eq state', ev.eq); p.eq = ev.eq; }
-    // CRAFT is the one item action that also spends resource tokens (inv[]),
-    // unlike use/equip/unequip/drop which only touch it[]/iq[]/eq[].
-    if (ev.act === 'craft') {
+    // Equipping a Backpack changes the pack size and equipping a Dent Absorber
+    // changes the LL ceiling — both in the same message that reports the equip,
+    // so the grid and the LIFE track move immediately instead of at next sync.
+    if (ev.is    !== undefined) p.is    = ev.is;
+    if (ev.llCap !== undefined) { p.llCap = ev.llCap; if (ev.pid === myId) uiLLCap.val = ev.llCap; }
+    // CRAFT and a caravan BUY are the item actions that also spend resource
+    // tokens (inv[]), unlike use/equip/unequip/drop which only touch
+    // it[]/iq[]/eq[]. (The buy's log line comes from the trd_res broadcast.)
+    if (ev.act === 'craft' || ev.act === 'buy') {
       if (ev.inv) p.inv = ev.inv;
       if (ev.kr !== undefined) p.kr = ev.kr;
       if (ev.pid === myId) {
-        const outName = getItemById?.(getRecipeById(ev.recipe)?.outputItem)?.name ?? 'something';
-        addLog?.(`<span class="log-col">⚒ Crafted ${escHtml ? escHtml(outName) : outName}.</span>`);
+        if (ev.act === 'craft') {
+          const outName = getItemById?.(getRecipeById(ev.recipe)?.outputItem)?.name ?? 'something';
+          addLog?.(`<span class="log-col">⚒ Crafted ${escHtml ? escHtml(outName) : outName}.</span>`);
+        }
         updateSidebar?.();
       }
     }
@@ -1074,6 +1255,54 @@ function _evEncEnd(ev) {
   }
 }
 
+// ── Bunker tunnels ───────────────────────────────────────────────
+// q/r are the SURFACE hatch in both events, so a player still on the surface
+// can mark where a teammate went down without ever seeing the tunnel board.
+function _evTunIn(ev) {
+  const p = players[ev.pid];
+  if (p) { p.dp = 1; p.q = ev.q; p.r = ev.r; p.hatchIdx = ev.hatch; }
+  if (ev.mp !== undefined && p) p.mp = ev.mp;
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-mv">▼ ${escHtml(who)} climbed down into the bunker tunnels</span>`);
+  if (ev.pid === myId) {
+    updateSidebar();
+    showToast('▼ You descend. The air is stale and the dark closes in.');
+  }
+}
+
+function _evTunOut(ev) {
+  const p = players[ev.pid];
+  if (p) {
+    p.dp = 0; p.q = ev.q; p.r = ev.r; p.hatchIdx = ev.hatch;
+    // Surfacing somewhere else entirely is the whole point of the network, so
+    // never lerp it -- snap, or the marker slides across the whole map.
+    renderPos[ev.pid].q = ev.q;
+    renderPos[ev.pid].r = ev.r;
+  }
+  if (ev.mp !== undefined && p) p.mp = ev.mp;
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  addLog(`<span class="log-mv">▲ ${escHtml(who)} climbed out of the tunnels</span>`);
+  if (ev.pid === myId) {
+    setMyDepth(0);
+    surveyedCells.clear();
+    updateSidebar();
+    updateTerrainCard();
+    updateDirButtons();
+    showToast('▲ You haul yourself into daylight.');
+  }
+}
+
+// A cave-in. amt is the resulting terrain id (15, Collapsed Tunnel) -- the same
+// "intensity carries a terrain id" idiom the flash flood uses for washouts.
+function _evTunCollapse(ev) {
+  if (tunnelMap[ev.r]?.[ev.q])
+    tunnelMap[ev.r][ev.q] = { ...tunnelMap[ev.r][ev.q], terrain: ev.amt ?? 15 };
+  if (myDepth) {
+    addLog('<span class="log-hazard">⚠ The roof gives way somewhere close by</span>');
+    updateDirButtons();
+  }
+}
+
 // ── Event handler ────────────────────────────────────────────────────────────
 
 function handleEvent(ev) {
@@ -1086,6 +1315,9 @@ function handleEvent(ev) {
       collectedCells.delete(`${ev.q}_${ev.r}`);
       break;
     case 'mv':          _evMv(ev);         break;
+    case 'tun_in':      _evTunIn(ev);      break;
+    case 'tun_out':     _evTunOut(ev);     break;
+    case 'tun_collapse':_evTunCollapse(ev);break;
     case 'join':
       players[ev.pid].on = true;
       // Snap renderPos so the new player doesn't lerp from (0,0) to their hex (Bug-4)
@@ -1118,6 +1350,8 @@ function handleEvent(ev) {
     case 'car_avail':   _evCarAvail(ev);   break;
     case 'doom_warn':   _evDoomWarn(ev);   break;
     case 'doom_act':    _evDoomAct(ev);    break;
+    case 'doom_taunt':  _evDoomTaunt(ev);  break;
+    case 'tun_taunt':   _evTunTaunt(ev);   break;
     case 'fire_spread':   _evFireSpread(ev);   break;
     case 'fire_dmg':      _evFireDamage(ev);   break;
     case 'flood_washout': _evFloodWashout(ev); break;

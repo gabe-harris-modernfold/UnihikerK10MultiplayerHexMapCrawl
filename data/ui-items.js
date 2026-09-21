@@ -23,11 +23,11 @@ function renderInventory() {
   const grid = document.getElementById('cs-item-grid');
   if (!grid || myId < 0) return;
   const me = players[myId];
-  // Pack size = archetype base (server `is`) + equipment slot bonuses, capped at
-  // the 12-slot grid — mirrors effectiveInvSlots() in inventory_items.hpp.
-  const base  = me.is ?? ARCHETYPES[me.arch ?? 0]?.invSlots ?? 8;
-  const bonus = computeEquipBonuses(me).tot.slots || 0;
-  const slots = Math.max(1, Math.min(12, base + bonus));
+  // Pack size comes straight from the server: `is` IS effectiveInvSlots(),
+  // base plus equipment. This used to add computeEquipBonuses().slots on top
+  // of it, double-counting every slot bonus — the old Math.min(12) clamp hid
+  // that, and with INV_SLOTS_MAX at 18 it no longer would.
+  const slots = packSlotsOf(me);
   const occupied = (me.it ?? []).filter(id => id > 0).length;
   console.log('%c[INV] renderInventory', 'color:#fc0', `myId=${myId} slots=${slots} occupied=${occupied}`);
   grid.innerHTML = '';
@@ -73,22 +73,47 @@ function _formatMods(m) {
 }
 
 // Sum equipment bonuses across all equipped slots; collect qualitative notes.
+// Effective pack size for a player, straight from the server's `is`.
+// The ONE place the client decides how many slots a survivor has; the encounter
+// haul tray and the craft panel both call it rather than re-deriving it.
+function packSlotsOf(player) {
+  const n = player?.is ?? ARCHETYPES[player?.arch ?? 0]?.invSlots ?? 8;
+  return Math.max(1, Math.min(INV_SLOTS_MAX, n));
+}
+
+// Does this item's MP bonus depend on paying a daily resource cost?
+// applyDawnItemCosts() only grants such a bonus on a dawn where the cost was
+// actually paid, so the panel must not promise it unconditionally.
+function _isCostGated(m) {
+  return !!(m && (m.fuelCost || m.waterCost || m.foodCost || m.medCost || m.scrapCost));
+}
+
 function computeEquipBonuses(player) {
   const tot = { mp:0, ll:0, slots:0, vision:0, rad:0,
                 fuelCost:0, waterCost:0, foodCost:0, medCost:0, scrapCost:0 };
   const notes = [];
-  if (!player?.eq) return { tot, notes };
-  for (const id of player.eq) {
-    if (!id) continue;
+  const dormant = [];   // cost-gated items that went unpaid at the last dawn
+  if (!player?.eq) return { tot, notes, dormant };
+  const unf = (myId >= 0 && player === players[myId]) ? (uiUnfuelled.val | 0) : 0;
+  player.eq.forEach((id, slot) => {
+    if (!id) return;
     const m = getItemMods?.(id);
-    if (!m) continue;
-    for (const k in tot) if (m[k]) tot[k] += m[k];
-    if (m.note) {
-      const item = getItemById?.(id);
-      notes.push({ name: item?.name ?? `Item #${id}`, note: m.note });
+    if (!m) return;
+    const starved = _isCostGated(m) && !!(unf & (1 << slot));
+    for (const k in tot) {
+      if (!m[k]) continue;
+      // A Motorbike with no fuel in the pack grants nothing that day: the
+      // server skips its STAT_MP and reports the slot in EVT_DAWN "unf".
+      // This panel used to add the +5 regardless, which is a good part of
+      // what "the MP bonus doesn't work" looked like from the player's side.
+      if (starved && (k === 'mp' || k.endsWith('Cost'))) continue;
+      tot[k] += m[k];
     }
-  }
-  return { tot, notes };
+    const item = getItemById?.(id);
+    if (starved) dormant.push({ name: item?.name ?? `Item #${id}` });
+    if (m.note)  notes.push({ name: item?.name ?? `Item #${id}`, note: m.note });
+  });
+  return { tot, notes, dormant };
 }
 
 // Render equipment slots into #cs-equip-grid (EQUIP_HEAD..VEHICLE, equip[0..4])
@@ -130,7 +155,7 @@ function renderEquipment() {
 
   // Totals summary block \u2014 sums bonuses across all equipped items.
   // Display only; gameplay still driven by server-side calculations.
-  const { tot, notes } = computeEquipBonuses(me);
+  const { tot, notes, dormant } = computeEquipBonuses(me);
   const totals = document.createElement('div');
   totals.className = 'equip-totals';
   totals.style.cssText = 'grid-column:1 / -1;padding:8px;border-top:1px solid var(--bdr-mid,#333);margin-top:6px;font-size:12px';
@@ -143,6 +168,9 @@ function renderEquipment() {
       : (hasAny ? '' : '<div style="color:var(--txt-dim,#888)">\u2014 nothing strapped on \u2014</div>')) +
     notes.map(n =>
       `<div style="color:var(--txt-dim,#aaa);font-style:italic;margin-top:2px">\u2022 ${escHtml(n.name)}: ${escHtml(n.note)}</div>`
+    ).join('') +
+    dormant.map(d =>
+      `<div style="color:var(--warn,#cc8866)">NO FUEL: ${escHtml(d.name)} grants nothing today</div>`
     ).join('');
   grid.appendChild(totals);
 }
@@ -359,6 +387,12 @@ document.querySelectorAll('.inv-box[data-res]').forEach(box => {
   box.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openResDropMenu(res); }
   });
+});
+
+// ...and the sidebar Supplies DROP buttons, which open the same sheet. Real
+// <button>s, so Enter/Space already fire click - no keydown handler here.
+document.querySelectorAll('.res-drop-btn[data-res]').forEach(btn => {
+  btn.addEventListener('click', () => openResDropMenu(parseInt(btn.dataset.res, 10)));
 });
 
 document.getElementById('res-drop-minus')?.addEventListener('click', () => {
