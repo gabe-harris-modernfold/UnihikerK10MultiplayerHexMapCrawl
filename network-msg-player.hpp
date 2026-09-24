@@ -202,6 +202,38 @@ static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len)
   if (pv) pv++;
   const char* pe = pv ? strchr(pv, '"') : nullptr;
 
+  // Only a socket the board actually took -- seated, or waiting in the lobby.
+  // On 2026-09-24 a browser tab whose reconnect was refused ("WS REJECT
+  // reason=full" never sends the "saved" echo) auto-sent its stored creds 300 ms
+  // later, with an empty password, and the board dropped a working link to
+  // rejoin with it -- knocking all five bots off, twice in three minutes.
+  bool known = false;
+  taskENTER_CRITICAL(&evtMux);
+  for (int i = 0; i < MAX_PLAYERS && !known; i++) known = (lobbyIds[i] == client->id());
+  taskEXIT_CRITICAL(&evtMux);
+  if (!known) known = (findSlot(client->id()) >= 0);   // read-only look, as handleConnect does
+  if (!known) {
+    Log.warning("WIFI join refused id=%u: socket not seated or in the lobby", (unsigned)client->id());
+    wsNack(client, "not_in_lobby");
+    return;
+  }
+
+  // Already on that network: nothing to do. Rejoining it would only drop every
+  // connection for as long as the handshake takes -- and with the empty
+  // password a browser sends when it never stored one, the rejoin fails.
+  {
+    char want[33];
+    int wl = (int)(se - sv); if (wl > 32) wl = 32;
+    memcpy(want, sv, wl); want[wl] = 0;
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == want) {
+      Log.notice("WIFI join ignored id=%u: already on ssid=%s", (unsigned)client->id(), want);
+      char b[96];
+      int n = snprintf(b, sizeof(b), "{\"t\":\"wifi\",\"status\":\"saved\",\"ssid\":\"%s\"}", want);
+      client->text(b, (size_t)n);   // what handleConnect would have told it
+      return;                       // acked by wsReqEnd: the request is satisfied
+    }
+  }
+
   if (wifiConnecting || bootWifiPending) {
     const char* busy = "{\"t\":\"wifi\",\"status\":\"busy\"}";
     client->text(busy, strlen(busy));

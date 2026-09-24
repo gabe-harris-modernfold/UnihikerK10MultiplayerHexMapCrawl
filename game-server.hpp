@@ -624,6 +624,12 @@ static void setupWiFiAndServer() {
     free(t);
   }
   WiFi.onEvent(onWifiEvent);     // before WiFi.mode(), so the first association is logged too
+  // wifi-store.hpp is the one list of credentials. With persistence on (the
+  // Arduino default) every WiFi.begin(ssid, pass) also rewrote the ESP32's
+  // own one-slot NVS copy -- a failed join included -- and boot trusted that
+  // slot: on 2026-09-24 a browser's empty-password join left it wrong and the
+  // next boots failed to join the network the store had right all along.
+  WiFi.persistent(false);
   WiFi.setHostname(MDNS_HOST);   // DHCP hostname; must precede WiFi.mode()
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);
@@ -644,8 +650,19 @@ static void setupWiFiAndServer() {
     // we last joined, so at home this connects in a few seconds with no scan.
     // If it doesn't answer (we're somewhere else), loop()'s roaming sweep takes
     // over and hunts for any other network in wifi-store.hpp.
+    // The store's first entry is the network we last actually joined (every
+    // success moves it to the front). The ESP32's own NVS slot is only the
+    // fallback for a board whose store is still empty.
     wifi_config_t staCfg = {};
-    if (esp_wifi_get_config(WIFI_IF_STA, &staCfg) == ESP_OK && staCfg.sta.ssid[0]) {
+    if (g_knownCount > 0) {
+      strlcpy(savedSsid, g_knownNets[0].ssid, sizeof(savedSsid));
+      Log.notice("Known network ssid=%s -> joining", savedSsid);
+      splashAdd("Joining saved WiFi...", 0x4080C0);
+      WiFi.begin(g_knownNets[0].ssid, g_knownNets[0].pass[0] ? g_knownNets[0].pass : nullptr);
+      Log.notice("STA connect attempt (known[0])");
+      bootWifiPending = true;
+      bootWifiStartMs = millis();
+    } else if (esp_wifi_get_config(WIFI_IF_STA, &staCfg) == ESP_OK && staCfg.sta.ssid[0]) {
       strlcpy(savedSsid, (char*)staCfg.sta.ssid, sizeof(savedSsid));
       Log.notice("Saved STA creds found ssid=%s -> joining", savedSsid);
       splashAdd("Joining saved WiFi...", 0x4080C0);
@@ -653,11 +670,6 @@ static void setupWiFiAndServer() {
       Log.notice("STA connect attempt (saved creds)");
       bootWifiPending = true;
       bootWifiStartMs = millis();
-    } else if (g_knownCount > 0) {
-      Log.notice("No STA creds in NVS but %d known network(s) -> sweeping",
-                 (int)g_knownCount);
-      splashAdd("Scanning for known WiFi...", 0x4080C0);
-      wifiNextSweepMs = millis();   // loop() kicks the sweep on its next pass
     } else {
       LOG_VERBOSE("No saved STA creds");
     }

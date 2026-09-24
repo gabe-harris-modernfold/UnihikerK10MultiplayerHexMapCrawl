@@ -246,6 +246,11 @@ static void drawPlayerScreen() {
   } else if (savedSsid[0]) {
     snprintf(buf, sizeof(buf), "%.14s", savedSsid);
     stColor = C_INFO;
+  } else if (g_knownCount > 0) {
+    // Known networks, none joined yet: the roaming sweep is looking. This used
+    // to read "no credentials" after any failed join, with creds saved.
+    snprintf(buf, sizeof(buf), "searching");
+    stColor = C_INFO;
   } else {
     snprintf(buf, sizeof(buf), "no credentials");
     stColor = C_DIM;

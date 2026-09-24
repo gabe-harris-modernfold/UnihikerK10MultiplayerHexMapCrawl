@@ -329,11 +329,13 @@ static void wifiConnectTask(void* param) {
     wifiStoreRemember(ctx->ssid, ctx->pass);
     wifiSweepBackoff = WIFI_SWEEP_MIN;
   } else {
-    Log.warning("STA FAIL ssid=%s elapsed=%lums reverting to AP-only",
-                ctx->ssid, (unsigned long)(millis() - t0));
+    // Back to what worked: drop the attempt and let the roaming sweep rejoin a
+    // known network. This used to switch to WIFI_AP and restart the softAP --
+    // kicking its clients -- only for the sweep to switch straight back.
+    Log.warning("STA FAIL ssid=%s elapsed=%u ms, sweeping known networks",
+                ctx->ssid, (unsigned)(millis() - t0));
     WiFi.disconnect(false);
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);
+    wifiNextSweepMs = millis() + 1000;
     // Clear in-memory SSID so handleConnect won't send a 'saved' message that
     // would suppress the client's auto-send retry (NVS copy is kept for next boot).
     savedSsid[0] = '\0';
@@ -364,10 +366,27 @@ static void wifiAutoJoinTask(void* param) {
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 
+  // Stop any connect still in flight (the core's auto-reconnect keeps
+  // retrying after a failure). A scan started on top of one is refused at
+  // once with WIFI_SCAN_FAILED (-2), which is every sweep's first scan in the
+  // 2026-09-24 logs.
+  WiFi.disconnect(false);
+  vTaskDelay(pdMS_TO_TICKS(200));
+
   uint32_t scanT0 = millis();
   int found = WiFi.scanNetworks(false /*async*/, false /*showHidden*/);
-  Log.notice("AutoJoin scan found=%d elapsed=%lums", found,
-             (unsigned long)(millis() - scanT0));
+  Log.notice("AutoJoin scan found=%d elapsed=%u ms", found,
+             (unsigned)(millis() - scanT0));
+  if (found < 0) {
+    // The radio refused the scan: that says nothing about what is in range,
+    // so no backoff -- look again shortly.
+    WiFi.scanDelete();
+    wifiNextSweepMs = millis() + 5000;
+    Log.warning("AutoJoin scan failed (%d), retrying in 5 s", found);
+    wifiConnecting = false;
+    vTaskDelete(NULL);
+    return;
+  }
 
   // Rank the known networks that actually answered, strongest signal first.
   int cand[WIFI_MAX_NETS], candRssi[WIFI_MAX_NETS], nCand = 0;

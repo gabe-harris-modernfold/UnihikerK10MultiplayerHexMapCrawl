@@ -1534,8 +1534,11 @@ void loop() {
       broadcastWifiNets();
       Log.notice("NTP configTime(pool.ntp.org, time.nist.gov) called");
       configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-    } else if (wst == WL_CONNECT_FAILED || wst == WL_NO_SSID_AVAIL ||
-               now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
+    } else if (wst == WL_CONNECT_FAILED || now - bootWifiStartMs > BOOT_WIFI_TIMEOUT) {
+      // Not WL_NO_SSID_AVAIL: a first attempt that misses the AP (reason 201,
+      // common while the softAP is coming up on the same channel) is retried
+      // by the core's auto-reconnect. Giving up on it cost both 2026-09-24
+      // boots a minute of "no credentials" on a network that was right there.
       bootWifiPending = false;
       Log.warning("Boot STA FAIL ssid=%s status=%d elapsed=%ums",
                   savedSsid, (int)wst, (unsigned)(now - bootWifiStartMs));
