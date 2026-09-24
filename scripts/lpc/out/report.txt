@@ -1,0 +1,108 @@
+snd-vocab LPC report -- 2026-09-23 13:22
+voice Microsoft David Desktop, SAPI rate -1, REF_RMS 0.35
+encoder: EncoderConfig(lpc_window=240, k_offset=160, k_offset_jump=125, preemph_voiced=0.85, preemph_unvoiced=0.0, lag_window_hz=0.0, noise_floor=1.0001, beam=4, cands=3, p_offset=100, pitch_lowpass_hz=1000.0, nccf_window=240, lag_min=20, lag_max=160, lag_bias=0.1, voice_nccf=0.4, voice_zcr=0.3, strong_nccf=0.7, strong_zcr=0.45, sonorant_nccf=0.25, sonorant_zcr=0.3, sonorant_db=-10.0, fill_zcr=0.45, fill_db=-15.0, voice_gate_db=-30.0, confident_nccf=0.5, silence_gate_db=-40.0, energy_ac=True, energy_search='viterbi', clip_weight=64.0, tail_frames=6, repeat=True)
+LSD = cepstrally smoothed log-spectral distance on voiced frames, dB (see gen_vocab.py);
+clip% = samples whose raw lattice output left [-2048, 2047]; voi% = voiced share of the
+non-silent frames; env_r = correlation of source and decoded 25 ms RMS; rep = repeat frames.
+
+ID              frm bytes  dur_s bit/s   LSD  clip%  voi%  env_r  rep  text
+N1               19    97   0.47  1634  4.42   0.34    88  0.969    0  one
+N2               15    63   0.38  1344  4.20   0.13    73  0.986    0  two
+N3               18    90   0.45  1600  3.98   0.06    87  0.965    0  three
+N4               20    84   0.50  1344  4.05   0.18    67  0.954    0  four
+N5               22    93   0.55  1353  5.76   0.20    65  0.956    0  five
+N6               24    93   0.60  1240  3.53   0.02    35  0.992    0  six
+N7               24   112   0.60  1493  4.72   0.08    70  0.976    0  seven
+N8               16    61   0.40  1220  4.27   0.00    80  0.945    0  eight
+N9               23   116   0.57  1614  4.39   0.13    89  0.960    0  nine
+N10              21    95   0.53  1448  5.38   0.14    81  0.989    0  ten
+N11              24   128   0.60  1707  3.94   0.23    90  0.963    0  eleven
+N12              25   118   0.62  1510  4.33   0.20    71  0.975    0  twelve
+N13              24   120   0.60  1600  4.17   0.17    76  0.915    0  thirteen
+N14              28   136   0.70  1554  4.87   0.05    83  0.905    0  fourteen
+N15              26   121   0.65  1489  4.70   0.08    76  0.962    0  fifteen
+N16              31   142   0.78  1466  4.43   0.23    59  0.986    0  sixteen
+N17              35   173   0.88  1582  4.57   0.09    71  0.968    0  seventeen
+N18              24   117   0.60  1560  4.73   0.00    80  0.970    0  eighteen
+N19              30   157   0.75  1675  4.27   0.27    88  0.960    0  nineteen
+N20              23   109   0.57  1517  5.18   0.20    65  0.979    0  twenty
+N30              18    90   0.45  1600  4.21   0.08    87  0.976    0  thirty
+N40              21   101   0.53  1539  3.82   0.07    82  0.980    0  forty
+N50              24    94   0.60  1253  4.51   0.10    65  0.978    0  fifty
+N60              27   118   0.68  1399  5.43   0.02    46  0.984    0  sixty
+N70              29   143   0.72  1578  4.26   0.14    69  0.976    0  seventy
+N80              18    87   0.45  1547  4.66   0.00    93  0.970    0  eighty
+N90              23   119   0.57  1656  4.64   0.22    85  0.977    0  ninety
+N100             26   118   0.65  1452  4.70   0.06    71  0.973    0  hundred
+DAY              15    66   0.38  1408  5.09   0.13    82  0.965    0  day
+DAWN_GREY        71   365   1.77  1645  3.70   0.14    77  0.959    0  comes up grey over the waste.
+DAWN_THIN       111   418   2.77  1205  4.04   0.14    84  0.974    0  thin light. and we are still here.
+DAWN_SUN         36   184   0.90  1636  4.34   0.26    84  0.948    0  another sun.
+NIGHT            38   189   0.95  1592  3.88   0.22    71  0.979    0  night falls.
+NIGHT2           50   245   1.25  1568  4.87   0.15    85  0.969    0  the dark comes down.
+TC1             141   511   3.52  1160  4.00   0.06    74  0.984    0  the clock turns. something out there woke up.
+TC2             159   638   3.98  1284  4.07   0.08    78  0.981    0  the clock turns again. the waste is paying attention.
+TC3             154   634   3.85  1317  4.02   0.11    81  0.971    0  the clock turns. nothing out here is sleeping now.
+TC4              94   479   2.35  1631  4.06   0.10    70  0.970    0  the clock has run out of patience with us.
+TOO_LATE         25   126   0.62  1613  4.33   0.10    77  0.925    0  too late.
+WARNING          22   112   0.55  1629  4.15   0.18    94  0.933    0  warning.
+GUIDE            24   125   0.60  1667  4.36   0.12    95  0.962    0  the guide
+QUARTERMASTER    47   242   1.18  1648  4.49   0.18    74  0.961    0  the quartermaster
+MEDIC            25   117   0.62  1498  3.66   0.16    80  0.985    0  the medic
+MULE             28   147   0.70  1680  4.15   0.14    92  0.982    0  the mule
+SCOUT            27   114   0.68  1351  4.69   0.04    55  0.967    0  the scout
+ENDURER          31   174   0.78  1796  4.48   0.32    96  0.947    0  the endurer
+JOINS            60   304   1.50  1621  4.38   0.12    74  0.978    0  takes up the road with us.
+LEAVES          102   437   2.55  1371  4.13   0.13    82  0.981    0  walks out, and does not look back.
+DOWN            119   425   2.98  1143  4.14   0.11    83  0.974    0  goes down. and does not get up.
+NO_ONE           47   241   1.18  1641  3.79   0.24    83  0.971    0  no one is left.
+WX0             165   585   4.12  1135  4.15   0.06    69  0.986    0  the sky clears. small mercy, and brief.
+WX1              70   383   1.75  1751  3.90   0.17    82  0.957    0  rain comes in thin and cold.
+WX2              82   408   2.05  1592  3.84   0.16    75  0.967    0  a storm walks in off the flats.
+WX3             120   471   3.00  1256  4.39   0.21    87  0.976    0  the rain turns wrong. chem burn.
+WX4              98   527   2.45  1721  3.93   0.16    74  0.976    0  strangle fog settles in the low ground.
+WX5              98   502   2.45  1639  3.86   0.11    81  0.971    0  fog closes the world to arm's length.
+QUAKE            46   239   1.15  1663  4.19   0.20    76  0.983    0  the ground heaves.
+FIRE             24    98   0.60  1307  3.24   0.08    61  0.989    0  fire.
+FLOOD            37   185   0.93  1600  4.28   0.30    73  0.982    0  flash flood.
+DARK            110   460   2.75  1338  4.20   0.07    74  0.975    0  steps off the map, and into the dark.
+CORRECT          39   187   0.97  1534  3.91   0.06    68  0.944    0  that is correct.
+INCORRECT        45   226   1.12  1607  4.29   0.06    79  0.956    0  that is incorrect.
+LIGHT            45   246   1.12  1749  4.06   0.12    88  0.942    0  back into the light.
+CLEARED         115   396   2.88  1102  3.75   0.03    71  0.981    0  picked clean. every last piece.
+STEP_UP         117   376   2.92  1028  4.24   0.09    76  0.975    0  step right up. step right up.
+CARAVAN          54   289   1.35  1713  4.16   0.10    80  0.979    0  the caravan is here.
+BARGAIN          80   347   2.00  1388  4.73   0.11    86  0.975    0  a bargain, for the brave.
+DOOM00          154   616   3.85  1280  4.09   0.10    84  0.972    0  the weight behind you lifts. it has lost the thread.
+DOOM01           88   482   2.20  1753  3.57   0.17    84  0.966    0  whatever was following has turned away.
+DOOM02          107   370   2.67  1107  3.78   0.13    82  0.981    0  the air goes quiet. for now.
+DOOM10           74   384   1.85  1661  4.08   0.12    72  0.960    0  something out there has your scent.
+DOOM11          148   601   3.70  1299  4.05   0.12    77  0.974    0  the wind changed. it knows which way you went.
+DOOM12          103   542   2.58  1684  4.16   0.18    84  0.957    0  you left too much of yourself on that ground.
+DOOM20           97   451   2.42  1488  4.39   0.13    85  0.975    0  everything you gather, it unmakes.
+DOOM21           78   458   1.95  1879  4.30   0.14    93  0.926    0  it is eating the ground behind you.
+DOOM22          100   521   2.50  1667  4.11   0.10    78  0.959    0  your work rots as fast as you can do it.
+DOOM30          118   423   2.95  1147  4.41   0.09    79  0.975    0  it has stopped looking. it is coming.
+DOOM31          135   568   3.38  1346  4.14   0.14    88  0.975    0  there is no track to follow now. only you.
+DOOM32           58   314   1.45  1732  4.53   0.10    81  0.936    0  it knows the shape of you.
+RUN              21   103   0.53  1570  4.28   0.17    88  0.951    0  run.
+I_SEE_YOU        29   148   0.72  1633  4.79   0.02    84  0.922    0  i see you.
+MINE             22   112   0.55  1629  4.56   0.20    94  0.973    0  mine.
+COME_HERE        27   133   0.68  1576  3.15   0.09    78  0.974    0  come here.
+WASTELAND        63   339   1.57  1722  4.45   0.07    83  0.954    0  welcome to the wasteland.
+SURVIVORS        51   275   1.27  1725  4.13   0.06    83  0.971    0  survivors remain.
+
+phrases              85
+total bytes          22153  (budget 40960)
+total duration       122.55 s
+average bit rate     1446 bit/s
+clipped samples      0.122 %
+mean LSD, voiced     4.18 dB over 2986 frames (per-phrase mean 4.27)
+mean LSD, unvoiced   7.80 dB over 800 frames
+mean envelope r      0.967 (min 0.905)
+repeat frames        0 of 4902
+voiced DC / AC RMS   0.248 (unipolar chirp)
+peak |lattice node|  3435 (u0 clamps at 2048)
+worst LSD            N5 5.76, N60 5.43, N10 5.38, N20 5.18, DAY 5.09
+
+all checks passed
