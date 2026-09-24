@@ -241,7 +241,7 @@ static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size
   }}
   int paid = caravanPaymentValue(give);
 
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   int why = 1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {

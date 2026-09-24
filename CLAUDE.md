@@ -7,7 +7,10 @@ port, and on-device verification step lives there.
 Other key references:
 
 - `scripts/` — `build.ps1`, `flash.ps1`, `sync_data.ps1` (push `data/` over
-  HTTP `/upload`), `sync_data.sh` (bash mirror).
+  HTTP `/upload`), `sync_data.sh` (bash mirror). `build.ps1` pins libraries
+  into repo-local `.arduino\` (`setup_libs.ps1`, versions in
+  `_arduino-env.ps1`) and stages the sketch — always build through it, not a
+  bare `arduino-cli compile`. Extra compiler flags go in `build_opt.h`.
 - `mock-server/` — Node mock of `/ws` + `/upload` for offline UI work
   (`npm run dev` on `:8765`).
 - **[docs/bot-testing.md](docs/bot-testing.md)** — `bots/`, the Python harness

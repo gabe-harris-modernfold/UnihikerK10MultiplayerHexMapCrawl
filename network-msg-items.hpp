@@ -18,7 +18,7 @@
 // Takes G.mutex itself — call it with the mutex released.
 static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
   if (!client || pid < 0) return;
-  static char visBuf[1100];
+  PSRAM_STATIC(char, visBuf, [1100]);
   int visLen = 0;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int vr; bool mr;
@@ -42,7 +42,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int capturedSlot = -1;
@@ -87,7 +87,7 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
   const char* sv = strchr(sp + 6, ':'); if (!sv) return;
   int slotIdx = atoi(sv + 1);
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int  capturedSlot = -1;
@@ -123,7 +123,7 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
   const char* ev = strchr(ep + 7, ':'); if (!ev) return;
   int eslot = atoi(ev + 1);
   if (eslot < 0 || eslot >= EQUIP_SLOTS) return;
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int  capturedSlot = -1;
@@ -159,8 +159,8 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   const char* qp = strstr(data, "\"qty\"");
   int qty = qp ? atoi(strchr(qp + 5, ':') + 1) : 1;
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) return;
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
-  static char upd[1280];
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
@@ -218,7 +218,7 @@ static void handleMsg_drop_res(AsyncWebSocketClient* client, char* data, size_t 
   int qty = qv ? atoi(qv + 1) : 1;
   if (res < 1 || res > 5 || qty <= 0) return;
   if (qty > 99) qty = 99;
-  static char ack[256];
+  PSRAM_STATIC(char, ack, [256]);
   static char upd[96];
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
@@ -259,8 +259,8 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
   const char* gv = strchr(gp + 7, ':'); if (!gv) return;
   int gslot = atoi(gv + 1);
   if (gslot < 0 || gslot >= MAX_GROUND) return;
-  static char ack[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
-  static char upd[1280];
+  PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';

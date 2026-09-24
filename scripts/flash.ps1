@@ -19,7 +19,8 @@ $ErrorActionPreference = 'Stop'
 # `powershell -File ...` (Windows PowerShell 5.1), which made -Sketch resolve
 # to C:\ -- so derive the repo root here instead.
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $Sketch) { $Sketch = (Resolve-Path (Join-Path $here '..')).Path }
+. (Join-Path $here '_arduino-env.ps1')
+if (-not $Sketch) { $Sketch = $RepoRoot }
 
 if (-not (Test-Path $Cli)) {
   Write-Error "arduino-cli not found at $Cli. Install Arduino CLI or pass -Cli <path>."
@@ -57,8 +58,11 @@ if ($Build) {
   & (Join-Path $here 'build.ps1') -Cli $Cli -Sketch $Sketch
 }
 
+# Same staged sketch dir build.ps1 compiled, so upload finds that build.
+Use-PinnedLibs
+$sketchDir = Resolve-SketchDir $Sketch
 Write-Host "[flash] uploading to $Port ..."
-& $Cli upload -p $Port --fqbn UNIHIKER:esp32:k10 $Sketch
+& $Cli upload -p $Port --fqbn $Fqbn $sketchDir
 if ($LASTEXITCODE -ne 0) { Write-Error "upload failed (exit $LASTEXITCODE)" }
 Write-Host "[flash] OK -- board should reboot into the WASTELAND splash."
 Write-Host "[flash] To monitor (interactive only):"

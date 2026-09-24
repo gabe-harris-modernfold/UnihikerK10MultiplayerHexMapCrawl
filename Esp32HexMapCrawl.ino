@@ -746,7 +746,7 @@ static constexpr int MAX_LOOT_TABLES = 40;
 static constexpr int LOOT_ENTRIES_MAX = 12;
 struct LootEntry { uint8_t item; uint8_t qtyMin; uint8_t qtyMax; uint8_t weight; };
 struct LootTable  { char name[20]; LootEntry entries[LOOT_ENTRIES_MAX]; uint8_t count; };
-static LootTable  lootTables[MAX_LOOT_TABLES];
+static LootTable* lootTables = nullptr;       // [MAX_LOOT_TABLES], PSRAM (allocPsramGlobals)
 static uint8_t    lootTableCount = 0;
 
 struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
@@ -754,7 +754,7 @@ struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 struct GameState {
   HexCell  (*map)[MAP_COLS];   // PSRAM: MAP_ROWS rows, allocated by allocPsramGlobals(); G.map[r][q] unchanged
   HexCell  (*tunnel)[TUN_COLS];  // PSRAM: the bunker tunnel board, G.tunnel[r][q] (tunnels.hpp)
-  Player   players[MAX_PLAYERS];
+  Player*  players;           // PSRAM: [MAX_PLAYERS], allocated by allocPsramGlobals(); G.players[i] unchanged
   uint32_t tickId;
   int      connectedCount;
   SemaphoreHandle_t mutex;
@@ -940,7 +940,7 @@ struct K10LogEntry {
   uint8_t  plate;   // K10Plate — PLATE_NONE for an ordinary written line
   uint8_t  pv[5];   // plate figures; what they mean is per-kind (BOOK_PLATE)
 };
-static K10LogEntry  k10Log[K10_LOG_SIZE];
+static K10LogEntry* k10Log = nullptr;   // [K10_LOG_SIZE], PSRAM (allocPsramGlobals)
 static uint8_t      k10LogHead  = 0;
 static uint8_t      k10LogCount = 0;
 static uint16_t     k10LogTotal = 0;   // entries ever set down — the page number
@@ -1119,11 +1119,18 @@ static void allocPsramGlobals() {
   recipeRegistry= (RecipeDef*)              psramStaticAlloc(sizeof(RecipeDef) * MAX_RECIPES);
   imgCache      = (ImgFile*)                psramStaticAlloc(sizeof(ImgFile)   * MAX_IMG_CACHE);
   webFiles      = (WebFile*)                psramStaticAlloc(sizeof(WebFile)   * MAX_WEB_FILES);
-  Log.notice("PSRAM globals: map=%u tunnel=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u B; heap %u->%uKB psram=%uKB",
+  G.players     = (Player*)                 psramStaticAlloc(sizeof(Player)    * MAX_PLAYERS);
+  lootTables    = (LootTable*)              psramStaticAlloc(sizeof(LootTable) * MAX_LOOT_TABLES);
+  k10Log        = (K10LogEntry*)            psramStaticAlloc(sizeof(K10LogEntry) * K10_LOG_SIZE);
+  g_knownNets   = (KnownNet*)               psramStaticAlloc(sizeof(KnownNet)  * WIFI_MAX_NETS);
+  Log.notice("PSRAM globals: map=%u tunnel=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u "
+             "players=%u loot=%u k10log=%u nets=%u B; heap %u->%uKB psram=%uKB",
              (unsigned)MAP_BYTES, (unsigned)TUNNEL_BYTES, (unsigned)W_HEX_BYTES,
              (unsigned)(sizeof(GameEvent) * EVT_QUEUE_SIZE), (unsigned)(sizeof(ItemDef) * MAX_ITEMS),
              (unsigned)(sizeof(RecipeDef) * MAX_RECIPES),
              (unsigned)(sizeof(ImgFile) * MAX_IMG_CACHE), (unsigned)(sizeof(WebFile) * MAX_WEB_FILES),
+             (unsigned)(sizeof(Player) * MAX_PLAYERS), (unsigned)(sizeof(LootTable) * MAX_LOOT_TABLES),
+             (unsigned)(sizeof(K10LogEntry) * K10_LOG_SIZE), (unsigned)(sizeof(KnownNet) * WIFI_MAX_NETS),
              (unsigned)(heapBefore / 1024), (unsigned)(ESP.getFreeHeap() / 1024),
              (unsigned)(ESP.getFreePsram() / 1024));
 }
@@ -1165,12 +1172,10 @@ void setup() {
   Log.notice("K10 hw init ok");
   loadK10Prefs();
   Log.notice("K10 prefs loaded: audioVol=%d ledBright=%d", (int)s_audioVol, (int)s_ledBright);
-  // TEMP DIAGNOSTIC - remove. Measures the tone sequencer at boot.
-  k10Play(MOTIF_DOOM_HUNT);
 
   // ── LovyanGFX display init ────────────────────────────────────
   // k10.begin() turns backlight off (XL9535 P0.0=LOW). Enable it via Wire.
-  Log.verbose("I2C begin SDA=47 SCL=48");
+  LOG_VERBOSE("I2C begin SDA=47 SCL=48");
   Wire.begin(47, 48);  // SDA=47, SCL=48 (K10 I2C bus)
   {
     // Config P0.0 as output
@@ -1182,7 +1187,7 @@ void setup() {
     Wire.requestFrom((uint8_t)0x20, (uint8_t)1); uint8_t out0 = Wire.read();
     Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(out0 | 0x01); Wire.endTransmission();
   }
-  Log.verbose("XL9535 backlight enabled");
+  LOG_VERBOSE("XL9535 backlight enabled");
   tft.init();
   tft.setRotation(s_screenFlip ? 0 : 2);
   Log.notice("Display init ok rotation=%d", s_screenFlip ? 0 : 2);
@@ -1265,7 +1270,7 @@ void setup() {
 
   setupVariantCounts();
 
-  Log.verbose("Effect table init");
+  LOG_VERBOSE("Effect table init");
   initEffectTable();
   Log.notice("Items load start");
   splashAdd("Loading items...");
@@ -1307,8 +1312,11 @@ void setup() {
 
   setupWiFiAndServer();
 
-  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 24576, NULL, 2, NULL, 1);
-  Log.notice("gameLoopTask spawned core=1 prio=2 stack=24KB");
+  // 18 KB: was 24 KB until drainEvents()'s 6.4 KB snapshot[] moved to PSRAM,
+  // so headroom is unchanged. Task stacks come out of internal heap; check
+  // the "gameLoop wm: stack_free=" log line before trimming further.
+  xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 18432, NULL, 2, NULL, 1);
+  Log.notice("gameLoopTask spawned core=1 prio=2 stack=18KB");
   Log.notice("==== BOOT COMPLETE elapsed=%ums ====", (unsigned)(millis() - _bootT0));
 }
 
@@ -1411,7 +1419,7 @@ void loop() {
 
   if (now - lastStatusMs >= STATUS_MS) {
     lastStatusMs = now;
-    Log.verbose("status: connected=%d tick=%lu freeHeap=%uKB",
+    LOG_VERBOSE("status: connected=%d tick=%lu freeHeap=%uKB",
                 (int)G.connectedCount, (unsigned long)G.tickId,
                 (unsigned)(ESP.getFreeHeap() / 1024));
   }

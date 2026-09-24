@@ -23,7 +23,7 @@ struct KnownNet {
   char pass[65];
 };
 
-static KnownNet g_knownNets[WIFI_MAX_NETS];
+static KnownNet* g_knownNets = nullptr;   // [WIFI_MAX_NETS], PSRAM (allocPsramGlobals in the .ino)
 static uint8_t  g_knownCount = 0;
 
 static int wifiStoreFind(const char* ssid) {
@@ -55,7 +55,7 @@ static void wifiStoreSave() {
 static void wifiStoreLoad() {
   Preferences p;
   g_knownCount = 0;
-  if (!p.begin("wifinets", true)) { Log.verbose("wifiStore: no NVS namespace yet"); return; }
+  if (!p.begin("wifinets", true)) { LOG_VERBOSE("wifiStore: no NVS namespace yet"); return; }
   uint8_t n = p.getUChar("n", 0);
   if (n > WIFI_MAX_NETS) n = WIFI_MAX_NETS;
   char key[6];
@@ -72,7 +72,7 @@ static void wifiStoreLoad() {
   p.end();
   Log.notice("wifiStore: %d known network(s) loaded", (int)g_knownCount);
   for (uint8_t i = 0; i < g_knownCount; i++)
-    Log.verbose("wifiStore: known[%d] ssid=%s", (int)i, g_knownNets[i].ssid);
+    LOG_VERBOSE("wifiStore: known[%d] ssid=%s", (int)i, g_knownNets[i].ssid);
 }
 
 // Record a network that was just joined successfully. An existing entry moves

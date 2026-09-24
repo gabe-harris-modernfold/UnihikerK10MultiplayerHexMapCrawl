@@ -56,9 +56,13 @@ static void handleConnect(AsyncWebSocketClient* client) {
              (unsigned)client->id(), client->remoteIP().toString().c_str());
 
   // Idle-ping keepalive (defense-in-depth alongside AsyncClient's own 5s ack
-  // timeout) and: don't force-close a client whose 32-msg send queue fills —
+  // timeout) and: don't force-close a client whose send queue fills —
   // broadcastState() re-sends full state every 100ms, so a superseded queued
   // message is safe to drop; closing the connection over it is not.
+  // The queue is capped at 8 (WS_MAX_QUEUED_MESSAGES in build_opt.h, down
+  // from the library's 32): each queued tick is a ~3-4 KB buffer, and under
+  // 4 KB malloc stays on the internal heap, so one stalled client could pin
+  // ~100 KB of it -- enough to starve LWIP (docs/dev-loop.md "HTTP wedge").
   client->keepAlivePeriod(15);
   client->setCloseClientOnQueueFull(false);
 
@@ -75,7 +79,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
         // connecting client silently unseat a live player.
         uint32_t seen = lastWsAliveMs[i];
         if (seen != 0 && (nowMs - seen) < WS_REAP_GRACE_MS) {
-          Log.verbose("Reap skipped slot=%d wsId=%u — seen %lums ago (grace %lums)",
+          LOG_VERBOSE("Reap skipped slot=%d wsId=%u — seen %lums ago (grace %lums)",
                       i, (unsigned)p.wsClientId,
                       (unsigned long)(nowMs - seen),
                       (unsigned long)WS_REAP_GRACE_MS);
@@ -169,7 +173,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
   // If we have saved WiFi credentials, echo them to this client so its
   // localStorage (and the Settings inputs) stay in sync across devices/reboots.
   if (savedSsid[0]) {
-    Log.verbose("WS echo wifi creds to id=%u ssid=%s", (unsigned)client->id(), savedSsid);
+    LOG_VERBOSE("WS echo wifi creds to id=%u ssid=%s", (unsigned)client->id(), savedSsid);
     char credBuf[160];
     int credLen = snprintf(credBuf, sizeof(credBuf),
       "{\"t\":\"wifi\",\"status\":\"saved\",\"ssid\":\"%s\",\"pass\":\"%s\"}",
@@ -202,7 +206,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
     client->text(lb, (size_t)llen);
   }
 
-  Log.verbose("WS send lobby msg id=%u", (unsigned)client->id());
+  LOG_VERBOSE("WS send lobby msg id=%u", (unsigned)client->id());
   sendLobbyMsg(client);
 }
 
@@ -254,7 +258,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       tradeOffers[slot].active = false;
       lastCaravanHex[slot].q = -1; lastCaravanHex[slot].r = -1;  // same reuse hazard as tradeOffers above
       { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev);
-        Log.verbose("Enq EVT_LEFT pid=%d", slot); }
+        LOG_VERBOSE("Enq EVT_LEFT pid=%d", slot); }
     }
     xSemaphoreGive(G.mutex);
   }
@@ -285,7 +289,7 @@ static void wifiConnectTask(void* param) {
   // Only switch mode if not already in AP+STA — re-calling WiFi.mode() when
   // already in WIFI_AP_STA can reset the WiFi stack and drop the softAP.
   if (WiFi.getMode() != WIFI_MODE_APSTA) {
-    Log.verbose("Switching mode -> WIFI_AP_STA");
+    LOG_VERBOSE("Switching mode -> WIFI_AP_STA");
     WiFi.mode(WIFI_AP_STA);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
@@ -298,7 +302,7 @@ static void wifiConnectTask(void* param) {
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
     wl_status_t cur = WiFi.status();
     if (cur != lastStatus) {
-      Log.verbose("STA status=%d elapsed=%lums", (int)cur, (unsigned long)(millis() - t0));
+      LOG_VERBOSE("STA status=%d elapsed=%lums", (int)cur, (unsigned long)(millis() - t0));
       lastStatus = cur;
     }
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -334,7 +338,7 @@ static void wifiConnectTask(void* param) {
     blen = snprintf(buf, sizeof(buf), "{\"t\":\"wifi\",\"status\":\"fail\"}");
   }
 
-  Log.verbose("WS broadcast wifi result: %s", buf);
+  LOG_VERBOSE("WS broadcast wifi result: %s", buf);
   ws.textAll(buf, (size_t)blen);
   broadcastWifiNets();
   free(ctx);
@@ -353,7 +357,7 @@ static void wifiAutoJoinTask(void* param) {
   Log.notice("AutoJoin sweep start known=%d", (int)g_knownCount);
 
   if (WiFi.getMode() != WIFI_MODE_APSTA) {
-    Log.verbose("AutoJoin switching mode -> WIFI_AP_STA");
+    LOG_VERBOSE("AutoJoin switching mode -> WIFI_AP_STA");
     WiFi.mode(WIFI_AP_STA);
     vTaskDelay(pdMS_TO_TICKS(100));
   }

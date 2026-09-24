@@ -733,7 +733,7 @@ static void drawEventLogScreen() {
   uint8_t  snapHead = 0, snapCount = 0;
   uint16_t total    = 0;
   taskENTER_CRITICAL(&k10LogMux);
-  memcpy(snap, k10Log, sizeof(k10Log));
+  memcpy(snap, k10Log, sizeof(K10LogEntry) * K10_LOG_SIZE);
   snapHead  = k10LogHead;
   snapCount = k10LogCount;
   total     = k10LogTotal;

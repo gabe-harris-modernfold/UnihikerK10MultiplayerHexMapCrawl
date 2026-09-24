@@ -7,7 +7,11 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
 ## For AI coding agents (read first, ≤ 1 min)
 
 - **Compile:** `.\scripts\build.ps1` (wraps `arduino-cli compile`,
-  `UNIHIKER:esp32:k10`, `build.cdc_on_boot=1`).
+  `UNIHIKER:esp32:k10`, `build.cdc_on_boot=1`). Libraries are pinned and
+  repo-local (`.arduino\`, installed on first build) — see "Library pinning".
+  Don't point `arduino-cli compile` at the repo folder directly: the folder
+  name doesn't match the `.ino`, and the script also works around the
+  build-speed traps listed under "Build".
 - **Flash:** `.\scripts\flash.ps1` (auto-detects COM port; pass `-Port COM3`
   to override; `-Build` chains compile + upload).
 - **Push `data/` to a running board (don't curl files by hand):**
@@ -21,13 +25,13 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   and the browser loader reads the manifest. See "Web asset pipeline" below.
 - **Two upload modes coexist; do not add a third toggle:**
   - **Hold Button A at boot** → SD card mounts as USB-MSC (`usb_drive.h`,
-    entered from [Esp32HexMapCrawl.ino:927](../Esp32HexMapCrawl.ino:927)).
+    entered from [Esp32HexMapCrawl.ino:1261](../Esp32HexMapCrawl.ino:1261)).
     To verify/bulk-sync, hash-diff repo `data/` against the mounted drive
     rather than trusting it's current — see "Verifying / bulk-syncing via
     USB-MSC" below.
   - **HTTP `/upload` while running** → the LCD auto-flips to a "FILE UPLOAD"
     screen for ~1.5 s after the last chunk. Module: [ui-upload.hpp](../ui-upload.hpp).
-    Handler: [game-server.hpp:628](../game-server.hpp:628).
+    Handler: [game-server.hpp:729](../game-server.hpp:729).
 - **Wi-Fi is multi-network:** the board remembers the last 8 networks it
   joined ([wifi-store.hpp](../wifi-store.hpp), NVS namespace `wifinets`) and
   rejoins whichever one is in range — carry it to another house and it finds
@@ -36,10 +40,10 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   serves `data/` on `http://localhost:8765/` and accepts the same `/upload`
   POSTs (drop on disk under `mock-server/uploads/`). Use this before flashing
   whenever the change is in `data/*.{html,js,css}`.
-- **Pointers:** `/upload` handler [game-server.hpp:628](../game-server.hpp:628),
-  USB-MSC entry [Esp32HexMapCrawl.ino:927](../Esp32HexMapCrawl.ino:927),
+- **Pointers:** `/upload` handler [game-server.hpp:729](../game-server.hpp:729),
+  USB-MSC entry [Esp32HexMapCrawl.ino:1261](../Esp32HexMapCrawl.ino:1261),
   upload screen [ui-upload.hpp](../ui-upload.hpp), LCD refresh switch around
-  [Esp32HexMapCrawl.ino:1010](../Esp32HexMapCrawl.ino:1010).
+  [Esp32HexMapCrawl.ino:1382](../Esp32HexMapCrawl.ino:1382).
 
 ---
 
@@ -54,26 +58,51 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
 - **FQBN:** `UNIHIKER:esp32:k10`.
 - **Required build flag:** `build.cdc_on_boot=1` (already set by `build.ps1`).
 
-### Library pinning (re-verified 2026-09-12, 21% flash / 63% static RAM)
+### Library pinning (re-verified 2026-09-24, 22% flash / 17% static RAM)
 
-The sketchbook (`arduino-cli config get directories.user` →
-`...\Documents\Arduino\libraries\`, on this machine under OneDrive) is where
-libraries actually resolve from. **Check with `arduino-cli lib list` rather
-than trusting this table** — an earlier revision of it listed `AsyncTCP 1.1.4`
-/ `ESP Async WebServer 2.10.8` while the build had been using the 3.x pair
-for some time.
+Libraries come **only** from the repo-local, gitignored sketchbook
+`.arduino\` — `build.ps1` / `flash.ps1` set `ARDUINO_DIRECTORIES_USER` to it,
+so the machine-wide sketchbook (OneDrive `Documents\Arduino`) is never
+searched. That sketchbook had drifted to `AsyncTCP 1.1.4` / `ESP Async
+WebServer 2.10.8`, which the current code no longer compiles against.
+Versions are pinned in [scripts/_arduino-env.ps1](../scripts/_arduino-env.ps1)
+(`$PinnedLibs`); `scripts/setup_libs.ps1` installs them, and build.ps1 runs it
+automatically when `.arduino\pinned.txt` doesn't match. To bump one: edit
+`$PinnedLibs`, build.
 
-| Library | Verified version | Notes |
+| Library | Pinned | Notes |
 |---|---|---|
-| `ESP Async WebServer` (ESP32Async) | `3.10.3` | Provides `beginResponse(int, contentType, const uint8_t*, len)` (used for every PSRAM-served asset) — `beginResponse_P` still compiles but is deprecated. Adds `Connection: close` to every response; there is no keep-alive, so every asset the browser fetches is a new TCP connection. |
+| `ESP Async WebServer` (ESP32Async) | `3.10.3` | Provides `beginResponse(int, contentType, const uint8_t*, len)` (used for every PSRAM-served asset) — `beginResponse_P` still compiles but is deprecated. Adds `Connection: close` to every response; there is no keep-alive, so every asset the browser fetches is a new TCP connection. Per-client WS queue capped at 8 via `build_opt.h` (below). |
 | `Async TCP` (ESP32Async) | `3.4.10` | Event queue `CONFIG_ASYNC_TCP_QUEUE_SIZE=64`; when the queue is ≥¾ full it starts *discarding poll events* and throttling — that is where `ERR_CONNECTION_RESET` under a request burst comes from. Priority 10, 16 KB stack. |
 | `ArduinoLog` | `1.1.1` | Required transitively. |
-| `LovyanGFX` | `1.2.20` | `Bus_RGB.cpp` and `Panel_RGB.cpp` under `src/lgfx/v1/platforms/esp32s3/` must be renamed `*.cpp.disabled`. They aren't used (K10 is SPI ILI9341) and they `#include <hal/gdma_ll.h>` which collides with the SDK's `esp_private/gdma.h` declarations. |
-| `unihiker_k10`, `lv_lib_qrcode`, `TFT_eSPI` | bundled with `UNIHIKER:esp32 0.0.3` (arduino-esp32 2.0.x core) | No action. |
+| `LovyanGFX` | `1.1.16` | **Not 1.2.x**: 1.2.x adds `src/lgfx/v1/lv_font/font_fmt_txt.c`, whose `lv_font_*_fmt_txt` symbols collide with the core's `liblvgl.a` at link time (`multiple definition of lv_font_get_bitmap_fmt_txt`). `setup_libs.ps1` also renames `Bus_RGB.cpp` / `Panel_RGB.cpp` under `src/lgfx/v1/platforms/esp32s3/` to `*.cpp.disabled` — unused (K10 is SPI ILI9341), and their `<hal/gdma_ll.h>` collides with the SDK's `esp_private/gdma.h`. |
+| `unihiker_k10`, `lv_lib_qrcode`, `TFT_eSPI` | bundled with `UNIHIKER:esp32 0.0.3` (arduino-esp32 2.0.x core) | No action. `unihiker_k10.h` drags in TFT_eSPI (~25 KB flash; ~25% of the sketch's preprocessed lines) and LVGL headers, though only `begin()`, the buttons and `rgb` are used. |
 
 If the build fails with `'GDMA_TRIG_PERIPH_*' conflicts with a previous
-declaration`, your `LovyanGFX` install has the RGB platform files enabled —
-disable them as above.
+declaration`, the RGB files weren't disabled — run
+`.\scripts\setup_libs.ps1 -Force`.
+
+### Build flags: `build_opt.h`
+
+[build_opt.h](../build_opt.h) (repo root) is the platform's hook for extra
+compiler flags: it is passed as `@build_opt.h` to **every** compile —
+sketch, libraries and core — so a library's `#ifndef` default can be
+overridden consistently. It is a gcc response file: flags only, no comments.
+
+- `-DWS_MAX_QUEUED_MESSAGES=8` — per-client WebSocket send queue (library
+  default 32). Each queued `broadcastState` tick is a ~3–4 KB buffer, and on
+  this core malloc keeps anything ≤ 4 KB on the **internal** heap
+  (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` is 4096 in the linked IDF), so one
+  stalled client could pin ~100 KB of internal heap — the HTTP-wedge failure
+  mode. With `setCloseClientOnQueueFull(false)` a full queue drops the
+  message; broadcasts are superseded 100 ms later anyway.
+- Optional `-DLOG_STRIP_VERBOSE` — compiles out every `LOG_VERBOSE` /
+  `LOG_FN` call (see [logging.hpp](../logging.hpp)). Off by default because
+  this doc and the bots rely on verbose lines such as `gameLoop wm:`.
+
+arduino-cli's dependency tracking can't see `@file` flags, so an edit to
+`build_opt.h` would leave library objects built with the old flags;
+`build.ps1` hashes the file and passes `--clean` when it changes.
 
 ### PSRAM placement (why static RAM must stay low)
 
@@ -85,16 +114,34 @@ boot for the Wi-Fi driver, LWIP and AsyncTCP. A page load dips the heap by
 allocations failed mid-burst and the whole network stack wedged — no ping,
 no HTTP, until power-cycle. That was the "HTTP wedge".
 
-Fix: the large buffers moved to the 8 MB PSRAM, static RAM is now 21%
-(70 KB) and idle heap ~180 KB. Two helpers in the `.ino`:
+Fix: the large buffers moved to the 8 MB PSRAM, static RAM is now 17%
+(58 KB, 2026-09-24) and idle heap ~180 KB. Two helpers in the `.ino`:
 
 - `PSRAM_STATIC(T, name, [dims])` — a function-local static array that lives
   in PSRAM but keeps array semantics (`sizeof(name)`, `name[r][c]`). Used
   for `sendSync`'s 40 KB buffer, `broadcastState`, `generateMap` scratch,
-  `spreadFire` `next`, `drawMapScreen` `terr`, `efxNarrative` `surveyed`.
+  `spreadFire` `next`, `drawMapScreen` `terr`, `efxNarrative` `surveyed`,
+  the WS handlers' reply buffers (`network-msg-*.hpp`), and `drainEvents`'
+  6.4 KB `snapshot[]` (which let the GameLoop task stack drop 24 → 18 KB).
 - `allocPsramGlobals()` — first call in `setup()`; allocates `G.map`,
-  `W_hex`, `pendingEvents`, `itemRegistry`, `imgCache`, `webFiles`. These
-  are pointers now: use `MAP_BYTES` / `W_HEX_BYTES` instead of `sizeof()`.
+  `W_hex`, `pendingEvents`, `itemRegistry`, `imgCache`, `webFiles`,
+  `G.players`, `lootTables`, `k10Log`, `g_knownNets`. These are pointers
+  now: use `MAP_BYTES` / `W_HEX_BYTES` / `sizeof(T) * N` instead of
+  `sizeof()`.
+
+A `PSRAM_STATIC` buffer is one shared copy, so use it only where a single
+task touches the buffer (the WS handlers all run on async_tcp; `drainEvents`
+only on GameLoop), or where one lock is held across *every* use of it —
+including the `client->text()` that copies it out. `sendSync`'s 40 KB `buf`
+is the second kind: it runs on async_tcp (`pick`) and GameLoop (regen
+resync), so it sends before releasing `G.mutex`. `sendTunnelSync`'s 1.3 KB
+`buf` stays on the stack for the same reason — it is reached from both tasks
+via `sendSync`.
+
+Heap, not just `.bss`: task stacks and every malloc ≤ 4 KB come out of
+internal RAM (bigger blocks go to PSRAM automatically). So a 10 KB `String`
+is harmless, while thousands of small reallocs (the old `/enc`
+`f.readString()`) or a queue of ~4 KB WS messages are not.
 
 Rule: any new buffer over ~1 KB goes through one of those. Check the build
 line — if `Global variables` climbs back toward 30%+, find it with
@@ -106,8 +153,29 @@ line — if `Global variables` climbs back toward 30%+, find it with
 .\scripts\build.ps1
 ```
 
-Expected: "Sketch uses ~21% flash", "Global variables use ~21%" — exit 0. If static RAM is back above ~30%, something large landed in internal .bss; see "PSRAM placement" below. First build pulls the
-ESP32 toolchain (~5 min); subsequent builds are 30–60 s.
+Expected: "Sketch uses ~22% flash", "Global variables use ~17%" — exit 0. If static RAM is back above ~30%, something large landed in internal .bss; see "PSRAM placement" above. The first build installs the pinned
+libraries and compiles them plus the core (~6 min). After that, an edit to
+any firmware file rebuilds in ~20–40 s, and a no-change build takes ~20–30 s
+(arduino-cli start-up plus the link).
+
+What `build.ps1` does that a bare `arduino-cli compile .` doesn't — each item
+cost real time or correctness before 2026-09-24:
+
+- **Stages the sketch** in `%LOCALAPPDATA%\k10-sketch-stage\Esp32HexMapCrawl\`
+  as hard links to the repo-root `*.ino` / `*.h` / `*.hpp` / `*.c` / `*.cpp`
+  plus `partitions.csv`. arduino-cli requires folder name == `.ino` name, and
+  it copies every `.h/.c/.cpp/.json/.md` *anywhere* under the sketch folder
+  into the build dir on every build — with `.arduino\`, `data\` and
+  `docs\` that was 136 MB and ~35 s per build. Compiler errors therefore
+  show the stage path; since those are hard links, editing that path edits
+  the repo file. New root-level source files are picked up automatically.
+- **Shortens the SDK path** (`compiler.sdk.path` → junction
+  `%LOCALAPPDATA%\k10sdk`). The platform emits ~290 SDK `-I` flags; at the
+  full Arduino15 path the sketch command line nears Windows' 32K limit,
+  arduino-cli relativizes its paths, its own `.d` check then fails
+  ("Depfile is about different object file") and the sketch recompiled on
+  every build. Debug with `arduino-cli compile --log --log-level debug`.
+- **Pins libraries** and **cleans on a `build_opt.h` change** (both above).
 
 ## Flash
 

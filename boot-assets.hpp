@@ -35,7 +35,7 @@ static void cacheWebFile(File& f, const String& fname) {
   bool gz = lower.endsWith(".gz");
   String plainLower = gz ? lower.substring(0, lower.length() - 3) : lower;
   const char* mime = webMimeFor(plainLower);
-  if (!mime) { Log.verbose("WEB skip (not a web asset): %s", fname.c_str()); return; }
+  if (!mime) { LOG_VERBOSE("WEB skip (not a web asset): %s", fname.c_str()); return; }
 
   char url[48];
   String plainName = gz ? fname.substring(0, fname.length() - 3) : fname;
@@ -47,7 +47,7 @@ static void cacheWebFile(File& f, const String& fname) {
   int existing = findWebFile(url);
   if (existing >= 0) {
     if (webFiles[existing].gzip) {                              // gz already cached — plain loses
-      Log.verbose("WEB skip (gz sibling cached): %s", fname.c_str()); return;
+      LOG_VERBOSE("WEB skip (gz sibling cached): %s", fname.c_str()); return;
     }
     if (!gz) return;                                            // duplicate plain (case-diff) — ignore
   }
@@ -105,7 +105,7 @@ static void loadWebFilesToRAM() {
                 imgCache[imgCacheCount].name[39] = 0;
                 imgCache[imgCacheCount].buf = buf;
                 imgCache[imgCacheCount].len = sz;
-                Log.verbose("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
+                LOG_VERBOSE("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
                 imgCacheCount++;
               } else {
                 Log.error("IMG cache ps_malloc FAIL size=%u name=%s/%s",
@@ -124,7 +124,7 @@ static void loadWebFilesToRAM() {
             imgCache[imgCacheCount].name[39] = 0;
             imgCache[imgCacheCount].buf = buf;
             imgCache[imgCacheCount].len = sz;
-            Log.verbose("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
+            LOG_VERBOSE("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
             imgCacheCount++;
           } else {
             Log.error("IMG cache ps_malloc FAIL size=%u name=%s", (unsigned)sz, imgFile.name());

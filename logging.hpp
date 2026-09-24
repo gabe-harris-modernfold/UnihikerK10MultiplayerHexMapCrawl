@@ -64,8 +64,20 @@ static void logInit(unsigned long baud = 115200) {
   Log.setSuffix(logPrintSuffix);
 }
 
+// ── Verbose level: compiled in by default ──────────────────────────────────
+// The runtime level is VERBOSE and the dev-loop / bot docs lean on verbose
+// lines (`gameLoop wm:`, `HTTP GET ... heap=`), so they stay in by default.
+// Add -DLOG_STRIP_VERBOSE to build_opt.h for a quieter build: every
+// LOG_VERBOSE / LOG_FN call and its format string then compile out entirely
+// (arguments are not evaluated -- keep them side-effect free).
+#ifdef LOG_STRIP_VERBOSE
+#define LOG_VERBOSE(...) ((void)0)
+#else
+#define LOG_VERBOSE(...) Log.verbose(__VA_ARGS__)
+#endif
+
 // ── Convenience macros for common call-site shapes ──────────────────────────
-#define LOG_FN()         Log.verbose(">> %s", __func__)
+#define LOG_FN()         LOG_VERBOSE(">> %s", __func__)
 #define LOG_SD_READ(p,sz,ms) Log.notice("SD READ: %s size=%u took=%ums", (p), (unsigned)(sz), (unsigned)(ms))
 #define LOG_SD_WRITE(p)  Log.notice("SD WRITE: %s", (p))
 #define LOG_SD_MISS(p)   Log.warning("SD MISSING: %s", (p))

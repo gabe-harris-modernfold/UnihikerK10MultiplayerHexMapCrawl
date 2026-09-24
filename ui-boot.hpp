@@ -3,9 +3,11 @@
 // Boot splash diagnostic log and thread-safe K10 event ring buffer.
 
 // ── Boot splash diagnostic log ─────────────────────────────────────────────
-static char    _sLog[14][30];
+// Boot-only, so it lives in PSRAM rather than internal .bss.
+static char    (*_sLog)[30] = nullptr;   // [14][30], allocated on first use
 static uint8_t _sN = 0;
 static void splashAdd(const char* msg, uint32_t col = 0) {
+  if (!_sLog) _sLog = (char(*)[30])psramStaticAlloc(14 * 30);
   if (_sN == 14) {
     for (int i = 0; i < 13; i++) memcpy(_sLog[i], _sLog[i+1], 30);
     _sN = 13;

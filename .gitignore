@@ -15,3 +15,6 @@
 # Python bytecode from scripts/ (png_quant is imported by the art tools)
 __pycache__/
 *.pyc
+
+# pinned Arduino libraries (scripts/setup_libs.ps1)
+/.arduino

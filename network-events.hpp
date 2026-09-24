@@ -94,7 +94,10 @@ static void drainEvents() {
 
   // Atomically snapshot the event queue so Core-0 connect/disconnect handlers
   // can enqueue safely while we drain on Core-1 without a race on pendingCount.
-  GameEvent snapshot[EVT_QUEUE_SIZE];
+  // PSRAM, not the stack: at ~6 KB this was most of the GameLoop task's stack
+  // (see its size in setup()). Only gameLoopTask calls drainEvents(), so one
+  // static copy is safe.
+  PSRAM_STATIC(GameEvent, snapshot, [EVT_QUEUE_SIZE]);
   int snapCount = 0;
   taskENTER_CRITICAL(&evtMux);
   snapCount = pendingCount;
@@ -102,7 +105,7 @@ static void drainEvents() {
   pendingCount = 0;
   taskEXIT_CRITICAL(&evtMux);
 
-  if (snapCount > 0) Log.verbose("drainEvents: %d pending", snapCount);
+  if (snapCount > 0) LOG_VERBOSE("drainEvents: %d pending", snapCount);
 
   // Longest payload is enc_res at ~207 chars worst case; 288 leaves headroom.
   char buf[288];
@@ -143,13 +146,13 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"rsp\",\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
           ev.q, ev.r, ev.res, ev.amt);
         ws.textAll(buf, len);
-        Log.verbose("EVT rsp q=%d r=%d res=%d amt=%d (broadcast)",
+        LOG_VERBOSE("EVT rsp q=%d r=%d res=%d amt=%d (broadcast)",
                     (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
         break;
       }
 
       case EVT_MOVE:
-        Log.verbose("EVT mv pid=%d ->(%d,%d) rad=%d explo=%d mp=%d trk=%d",
+        LOG_VERBOSE("EVT mv pid=%d ->(%d,%d) rad=%d explo=%d mp=%d trk=%d",
                     (int)ev.pid, (int)ev.q, (int)ev.r,
                     (int)ev.radR, (int)ev.exploD, (int)ev.moveMP, (int)ev.amt);
         len = snprintf(buf, sizeof(buf),
@@ -649,7 +652,7 @@ static void drainEvents() {
         // it to a player who hasn't explored that hex would leak outside
         // their fog of war — unlike EVT_FIRE_DAMAGE above (about a specific
         // player who is already there).
-        Log.verbose("EVT fire_spread q=%d r=%d intensity=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
+        LOG_VERBOSE("EVT fire_spread q=%d r=%d intensity=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"fire_spread\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.q, (int)ev.r, (int)ev.amt);
@@ -671,7 +674,7 @@ static void drainEvents() {
         // progression). There's no "receded" sentinel the way fire has amt=0
         // for "just went out" — flood recession is a silent per-tick decay
         // with no broadcast-worthy moment.
-        Log.verbose("EVT flood_washout q=%d r=%d terrain=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
+        LOG_VERBOSE("EVT flood_washout q=%d r=%d terrain=%d", (int)ev.q, (int)ev.r, (int)ev.amt);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"flood_washout\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.q, (int)ev.r, (int)ev.amt);
@@ -801,6 +804,6 @@ static void drainEvents() {
         break;
     }
   }
-  if (snapCount > 0) Log.verbose("drainEvents: dispatched=%d", snapCount);
+  if (snapCount > 0) LOG_VERBOSE("drainEvents: dispatched=%d", snapCount);
   // pendingCount was already reset to 0 inside the spinlock snapshot above.
 }

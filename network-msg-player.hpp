@@ -91,7 +91,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   const char* dv = strchr(dp + 3, ':');  if (!dv) return;
   int dir = atoi(dv + 1);
 
-  static char visBuf[1100];
+  PSRAM_STATIC(char, visBuf, [1100]);
   int visLen = 0, visCells = 0;
   int vr = VISION_R; bool mr = false;
   int slot = -1;
@@ -212,7 +212,7 @@ static void handleMsg_wifi_forget(AsyncWebSocketClient* client, char* data, size
   strncpy(ssid, sv, sl); ssid[sl] = 0;
 
   if (!wifiStoreForget(ssid)) {
-    Log.verbose("wifi_forget: ssid=%s not in store", ssid);
+    LOG_VERBOSE("wifi_forget: ssid=%s not in store", ssid);
     return;
   }
   // Tell clients to drop their cached copy too, otherwise the next reconnect
@@ -360,7 +360,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   if (rp) { const char* rv = strchr(rp + 3, ':'); if (rv) recipeId = atoi(rv + 1); }
   if (recipeId < 0 || recipeId > 255) recipeId = 0;
 
-  static char survBuf[1100];
+  PSRAM_STATIC(char, survBuf, [1100]);
   int  survLen = 0;
   int  slot    = -1;
   bool actOk   = false;
@@ -370,7 +370,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   // tick or the 'ev'/'act' broadcast below, so a successful craft needs its
   // own targeted snapshot back to the crafting client (and a saveGame(),
   // same as use_item/equip_item/drop_item do for the same kind of mutation).
-  static char craftAck[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, craftAck, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   craftAck[0] = '\0';
   const char* craftWhy = nullptr;  // why ACT_CRAFT was refused (static string), toasted back below
 

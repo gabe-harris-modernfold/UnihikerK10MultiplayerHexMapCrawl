@@ -18,7 +18,7 @@ static void gameLoopTask(void* param) {
     uint32_t loopMs = millis();
     if (loopMs - lastWatermarkMs >= 5000) {
       lastWatermarkMs = loopMs;
-      Log.verbose("gameLoop wm: stack_free=%u heap=%uKB psram=%uKB tickId=%lu connected=%d",
+      LOG_VERBOSE("gameLoop wm: stack_free=%u heap=%uKB psram=%uKB tickId=%lu connected=%d",
                   (unsigned)uxTaskGetStackHighWaterMark(NULL),
                   (unsigned)(ESP.getFreeHeap() / 1024),
                   (unsigned)(ESP.getFreePsram() / 1024),
@@ -193,14 +193,14 @@ static void sendWebFile(AsyncWebServerRequest* req, int i) {
   const char* cc = cacheControlFor(wf.url, wf.mime);
   if (req->hasHeader("If-None-Match") &&
       req->getHeader("If-None-Match")->value() == wf.etag) {
-    Log.verbose("HTTP 304 %s", wf.url);
+    LOG_VERBOSE("HTTP 304 %s", wf.url);
     AsyncWebServerResponse* r = req->beginResponse(304);
     r->addHeader("ETag", wf.etag);
     r->addHeader("Cache-Control", cc);
     req->send(r);
     return;
   }
-  Log.verbose("HTTP GET %s -> %s %u B%s heap=%uKB",
+  LOG_VERBOSE("HTTP GET %s -> %s %u B%s heap=%uKB",
               wf.url, wf.mime, (unsigned)wf.len, wf.gzip ? " gz" : "",
               (unsigned)(ESP.getFreeHeap() / 1024));
   AsyncWebServerResponse* resp = req->beginResponse(200, wf.mime, wf.buf, wf.len);
@@ -352,7 +352,7 @@ static void setupWiFiAndServer() {
       splashAdd("Scanning for known WiFi...", 0x4080C0);
       wifiNextSweepMs = millis();   // loop() kicks the sweep on its next pass
     } else {
-      Log.verbose("No saved STA creds");
+      LOG_VERBOSE("No saved STA creds");
     }
   }
   { char wb[30]; snprintf(wb, 30, "AP: %s", WiFi.softAPIP().toString().c_str());
@@ -380,13 +380,13 @@ static void setupWiFiAndServer() {
   }
   Log.notice("HTTP static routes: %d files", webFileCount);
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* req) {
-    Log.verbose("HTTP 204 /favicon.ico");
+    LOG_VERBOSE("HTTP 204 /favicon.ico");
     req->send(204);
   });
 
   // Captive-portal redirects
   auto toGame = [](AsyncWebServerRequest* req) {
-    Log.verbose("HTTP redirect %s -> /", req->url().c_str());
+    LOG_VERBOSE("HTTP redirect %s -> /", req->url().c_str());
     req->redirect("/");
   };
   server.on("/generate_204",              HTTP_GET, toGame);
@@ -401,10 +401,11 @@ static void setupWiFiAndServer() {
   server.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
     static const char* TNAME_FULL[NUM_TERRAIN] = {
       "Open Scrub","Ash Dunes","Rust Forest","Marsh","Broken Urban",
-      "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater","River Channel"
+      "Flooded Ruins","Glass Fields","Rolling Hills","Mountain","Settlement","Nuke Crater","River Channel",
+      "Bunker Entrance","Vent Shaft","Tunnel Floor","Tunnel Collapsed"
     };
     static const char* RES_NAME_L[6] = {"none","water","food","fuel","medicine","scrap"};
-    Log.verbose("HTTP /state pid=%s",
+    LOG_VERBOSE("HTTP /state pid=%s",
                 req->hasParam("pid") ? req->getParam("pid")->value().c_str() : "-");
     String j;
     j.reserve(10240);
@@ -626,7 +627,12 @@ static void setupWiFiAndServer() {
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
     uint32_t t0 = millis();
-    String content;
+    // One f.read() into a PSRAM block. f.readString() grew a String one byte
+    // at a time -- thousands of reallocs, every one under 4 KB landing on the
+    // internal heap, all while holding G.mutex. The response owns the block
+    // (shared_ptr captured by the filler) and frees it once sent.
+    std::shared_ptr<uint8_t> body;
+    size_t bodyLen = 0;
     bool found = false;
     bool mutexOk = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(500)) == pdTRUE);
     if (mutexOk) {
@@ -636,8 +642,14 @@ static void setupWiFiAndServer() {
         File f = SD.open(path, FILE_READ);
         if (f) {
           size_t fsz = f.size();
-          found = true;
-          content = f.readString();
+          uint8_t* blk = (uint8_t*)ps_malloc(fsz ? fsz : 1);
+          if (blk) {
+            body.reset(blk, free);
+            bodyLen = f.read(blk, fsz);
+            found = true;
+          } else {
+            Log.error("HTTP /enc: ps_malloc(%u) failed", (unsigned)fsz);
+          }
           f.close();
           Log.notice("SD READ: %s size=%u took=%ums",
                      path, (unsigned)fsz, (unsigned)(millis() - tsd));
@@ -656,15 +668,21 @@ static void setupWiFiAndServer() {
       Log.warning("HTTP /enc 404 path=%s", path);
       req->send(404, "text/plain", "Encounter not found"); return;
     }
-    Log.verbose("HTTP /enc 200 path=%s len=%u took=%ums",
-                path, (unsigned)content.length(), (unsigned)(millis() - t0));
-    req->send(200, "application/json", content);
+    LOG_VERBOSE("HTTP /enc 200 path=%s len=%u took=%ums",
+                path, (unsigned)bodyLen, (unsigned)(millis() - t0));
+    req->send(req->beginResponse("application/json", bodyLen,
+        [body, bodyLen](uint8_t* out, size_t maxLen, size_t index) -> size_t {
+          size_t n = (index < bodyLen) ? bodyLen - index : 0;
+          if (n > maxLen) n = maxLen;
+          memcpy(out, body.get() + index, n);
+          return n;
+        }));
   });
 
   // /img/*.png served from PSRAM imgCache
   server.onNotFound([](AsyncWebServerRequest* req) {
     String url = req->url();
-    Log.verbose("HTTP 404-check %s", url.c_str());
+    LOG_VERBOSE("HTTP 404-check %s", url.c_str());
     if (url.startsWith("/img/")) {
       if (!admitAssetRequest(req)) return;
       String filename = url.substring(5);
@@ -676,14 +694,14 @@ static void setupWiFiAndServer() {
             mimeType = "image/jpeg";
           if (req->hasHeader("If-None-Match") &&
               req->getHeader("If-None-Match")->value() == imgCache[i].etag) {
-            Log.verbose("HTTP 304 /img/%s", filename.c_str());
+            LOG_VERBOSE("HTTP 304 /img/%s", filename.c_str());
             AsyncWebServerResponse* r = req->beginResponse(304);
             r->addHeader("ETag", imgCache[i].etag);
             r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
             req->send(r);
             return;
           }
-          Log.verbose("HTTP /img/ hit %s (%u B) heap=%uKB", filename.c_str(),
+          LOG_VERBOSE("HTTP /img/ hit %s (%u B) heap=%uKB", filename.c_str(),
                       (unsigned)imgCache[i].len, (unsigned)(ESP.getFreeHeap() / 1024));
           AsyncWebServerResponse* resp = req->beginResponse(
               200, mimeType, imgCache[i].buf, imgCache[i].len);

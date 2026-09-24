@@ -41,7 +41,7 @@ static int appendVariantCounts(char* buf, size_t cap) {
 
 // {"t":"lobby","avail":[0,1,2,4,5]}  — indices of unconnected archetype slots
 static void sendLobbyMsg(AsyncWebSocketClient* client) {
-  Log.verbose("Lobby unicast id=%u", (unsigned)client->id());
+  LOG_VERBOSE("Lobby unicast id=%u", (unsigned)client->id());
   char buf[224]; int pos;   // was 72 — now also carries vc/sv/fa (NUM_TERRAIN entries), worst case ~130B
   pos = snprintf(buf, sizeof(buf), "{\"t\":\"lobby\",\"avail\":[");
   bool first = true;
@@ -99,7 +99,7 @@ static void broadcastLobbyUpdate() {
     AsyncWebSocketClient* cl = ws.client(snapIds[i]);
     if (cl) { cl->text(buf, len); recipients++; }
   }
-  Log.verbose("Lobby broadcast to %d clients", recipients);
+  LOG_VERBOSE("Lobby broadcast to %d clients", recipients);
 }
 
 // Sparse burning-hex list shared by broadcastState()/sendSync() below: writes
@@ -283,18 +283,27 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     "],\"sv\":[%d,%d],\"fa\":%d}",
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount);
-  int mapBytesLog = mapLen;
-  int totalBytesLog = pos;
+  // Send BEFORE releasing G.mutex. buf is one static copy, and sendSync runs
+  // on two tasks (async_tcp via pick, GameLoop via the EVT_REGEN resync), so
+  // releasing first let the other caller overwrite buf before text() had
+  // copied it -- a client could get a torn or someone else's sync. G.mutex
+  // already serialises the build, so holding it through the copy closes that.
+  // Deadlock-free: text() only takes this client's own lock (the library
+  // never runs a user callback while holding a client lock), and every
+  // G.mutex waiter uses a timeout. Costs no RAM; lengthens the hold by the
+  // copy, on a join/regen-only path.
+  client->text(buf, (size_t)pos);
+  uint32_t tickLog = G.tickId;
+  bool below = me.depth;
   xSemaphoreGive(G.mutex);
 
   Log.notice("SYNC pid=%d tick=%lu mapBytes=%d totalBytes=%d",
-             pid, (unsigned long)G.tickId, mapBytesLog, totalBytesLog);
-  client->text(buf, (size_t)pos);
+             pid, (unsigned long)tickLog, mapLen, pos);
   // Reconnecting while underground: the sync above only carries the surface
   // map, so hand over the tunnel board too or this player comes back to an
   // empty screen with no way to redraw it. Sent after the sync so the client
   // has its player id (and therefore its own depth) first.
-  if (me.depth) sendTunnelSync(client);
+  if (below) sendTunnelSync(client);
 }
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
@@ -323,7 +332,7 @@ static void broadcastState() {
     uint32_t nowMs = millis();
     if (nowMs - lastBusyLogMs >= 1000) {
       lastBusyLogMs = nowMs;
-      Log.verbose("broadcastState: G.mutex busy (rate-limited) totalSkips=%lu consec=%lu",
+      LOG_VERBOSE("broadcastState: G.mutex busy (rate-limited) totalSkips=%lu consec=%lu",
                   (unsigned long)g_broadcastSkips, (unsigned long)g_broadcastSkipsConsec);
     }
     return;
@@ -383,7 +392,7 @@ static void broadcastState() {
     uint32_t nowMs = millis();
     if (nowMs - lastPartialLogMs >= 1000) {
       lastPartialLogMs = nowMs;
-      Log.verbose("broadcastState: send %s (rate-limited) totalPartial=%lu",
+      LOG_VERBOSE("broadcastState: send %s (rate-limited) totalPartial=%lu",
                   st == AsyncWebSocket::DISCARDED ? "DISCARDED" : "PARTIAL",
                   (unsigned long)g_broadcastPartial);
     }

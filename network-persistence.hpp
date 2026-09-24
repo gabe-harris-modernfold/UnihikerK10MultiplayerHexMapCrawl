@@ -115,7 +115,7 @@ void saveGame() {
         giBytes += gf.write((uint8_t*)&sgi, sizeof(sgi));
       }
       gf.close();
-      Log.verbose("SD APPEND: %s ground=%u bytes", SAVE_MAP_F, (unsigned)giBytes);
+      LOG_VERBOSE("SD APPEND: %s ground=%u bytes", SAVE_MAP_F, (unsigned)giBytes);
     } else {
       Log.error("SD OPEN FAIL (append): %s", SAVE_MAP_F);
     }

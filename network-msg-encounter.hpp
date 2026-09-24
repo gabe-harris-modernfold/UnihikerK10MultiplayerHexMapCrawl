@@ -237,7 +237,7 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
   LOG_FN();
   // Built inside the mutex below (if any items were pending) and sent after
   // it's released — same static-ack pattern as handleMsg_act's craft path.
-  static char itemAck[512];   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
+  PSRAM_STATIC(char, itemAck, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   itemAck[0] = '\0';
   // Optional trim: {"t":"enc_bank","keep":[w,f,fu,m,s]} — how much of each
   // resource the player chose to take on the haul tray's steppers.  An absent

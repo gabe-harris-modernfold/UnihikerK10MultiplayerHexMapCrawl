@@ -16,7 +16,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   if (!te) { Log.warning("WS malformed msg id=%u (no t-value close quote)", (unsigned)client->id()); return; }
   size_t tl = (size_t)(te - tv);
 
-  Log.verbose("WS msg id=%u len=%u type=%.*s", (unsigned)client->id(), (unsigned)len, (int)tl, tv);
+  LOG_VERBOSE("WS msg id=%u len=%u type=%.*s", (unsigned)client->id(), (unsigned)len, (int)tl, tv);
 
   if      (strncmp(tv, "pick",          tl) == 0) handleMsg_pick(client, data, len);
   else if (strncmp(tv, "m",             tl) == 0) handleMsg_move(client, data, len);
@@ -60,7 +60,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
     case WS_EVT_ERROR:      tn = "ERROR"; break;
     default:                tn = "?"; break;
   }
-  Log.verbose("WS event id=%u type=%s", (unsigned)client->id(), tn);
+  LOG_VERBOSE("WS event id=%u type=%s", (unsigned)client->id(), tn);
 
   switch (type) {
     case WS_EVT_CONNECT:    handleConnect(client); break;
