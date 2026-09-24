@@ -335,7 +335,7 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
   // disconnect) already holds the emptied hex; without a save here a reboot
   // would keep that empty hex yet forget the loot, items and — worst of all —
   // the one-time recipes that were just banked from it.
-  if (banked) saveGame();
+  if (banked) requestSave();
   if (itemAck[0]) client->text(itemAck);
   // The overflow pile used to reach clients only with the next full sync.
   if (spilled) broadcastGroundUpdate(spillQ, spillR);

@@ -57,8 +57,14 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   wsReqEnd(client);
 }
 
+// Last time async_tcp delivered any WS event -- the network watchdog
+// (game-server.hpp) reports it, so a wedge shows how long the socket side
+// has been silent.
+static volatile uint32_t g_lastWsEvtMs = 0;
+
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
+  g_lastWsEvtMs = millis();
   const char* tn;
   switch (type) {
     case WS_EVT_CONNECT:    tn = "CONNECT"; break;

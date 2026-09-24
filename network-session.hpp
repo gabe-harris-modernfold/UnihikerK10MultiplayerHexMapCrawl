@@ -277,8 +277,8 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
              (unsigned)sessSec);
 
   broadcastLobbyUpdate();
-  Log.notice("Auto-save triggered by disconnect slot=%d", slot);
-  saveGame();
+  Log.notice("Auto-save queued by disconnect slot=%d", slot);
+  requestSave();
 }
 
 // ── WiFi STA join task (Core 0) ───────────────────────────────────────────────

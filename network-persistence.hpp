@@ -151,6 +151,21 @@ void saveGame() {
   }
 }
 
+// ── Deferred save ─────────────────────────────────────────────────────────────
+// WS handlers run on the async_tcp task, and a save is 110-150 ms of SD writes
+// with G.mutex held. When a 5-bot run ended on 2026-09-24 the five disconnects
+// each saved inline, ~0.6 s of the network task spent on the SD card, and the
+// network wedged at that moment. So handlers only ask: gameLoopTask saves after
+// its next tick (<= TICK_MS later), and asks in between coalesce into one save.
+// A request that lands while a save is running is kept for the next tick.
+static volatile bool g_saveRequested = false;
+static inline void requestSave() { g_saveRequested = true; }
+static void serviceSaveRequest() {
+  if (!g_saveRequested) return;
+  g_saveRequested = false;
+  saveGame();
+}
+
 // ── Ground ages + remains (SAVE_GND_F) ───────────────────────────────────────
 // Called by tryLoadSave() once map.bin -- and with it the ground piles and
 // G.dayCount -- has loaded. Without the file (a save older than it) every pile

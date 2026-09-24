@@ -3723,14 +3723,31 @@ static void fxPresent(uint32_t now, bool takeover) {
   uint32_t t2 = micros();
   // What a frame actually costs on the board, every 30 s while anything moved:
   // the numbers the frame periods in fxFramePeriod() were guessed from.
-  static uint32_t nF = 0, sumC = 0, sumP = 0, maxC = 0, lastLog = 0;
+  static uint32_t nF = 0, sumC = 0, sumP = 0, maxC = 0, lastLog = 0, nSlow = 0, lastSlow = 0;
   nF++; sumC += t1 - t0; sumP += t2 - t1;
   if (t1 - t0 > maxC) maxC = t1 - t0;
+  // One frame at a time, when it is slow. These are wall-clock times and the
+  // loop task runs at priority 1, so a slow frame is either the compositor
+  // doing too much or the loop being preempted -- `seated` and the heap say
+  // which it lines up with. At most one line a second.
+  if (t2 - t0 >= 150000) {
+    nSlow++;
+    if (now - lastSlow >= 1000) {
+      lastSlow = now;
+      Log.warning("LCD FX slow frame: compose=%uus push=%uus madness=%u level=%u seated=%u iheap=%uKB",
+                  (unsigned)(t1 - t0), (unsigned)(t2 - t1), (unsigned)FX.madness,
+                  (unsigned)FX.level, (unsigned)g_dread.connected,
+                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    }
+  }
   if (now - lastLog >= 30000) {
-    Log.notice("LCD FX: %u frames/30s compose avg=%uus max=%uus push avg=%uus madness=%u level=%u",
+    // busy: the share of the window the loop spent composing and pushing.
+    uint32_t winMs = lastLog ? now - lastLog : 30000;
+    Log.notice("LCD FX: %u frames/30s compose avg=%uus max=%uus push avg=%uus busy=%u%% slow=%u madness=%u level=%u",
                (unsigned)nF, (unsigned)(sumC / nF), (unsigned)maxC, (unsigned)(sumP / nF),
+               (unsigned)((sumC + sumP) / 10 / winMs), (unsigned)nSlow,
                (unsigned)FX.madness, (unsigned)FX.level);
-    nF = sumC = sumP = maxC = 0;
+    nF = sumC = sumP = maxC = nSlow = 0;
     lastLog = now;
   }
 }
@@ -3789,9 +3806,15 @@ static bool fxWantsFrame(uint32_t now) {
 
 // How long the loop may sleep: a frame's worth while something moves, the old
 // 100 ms when nothing does.
+// While anyone is seated the LCD gets at most 10 frames a second. During the
+// 2026-09-24 bot run it went from ~10 frames/30 s to 250+, the loop spending
+// most of core 1 on the panel just as the network wedged. The table is still
+// worth watching at 10; the players' sockets are worth more.
+static constexpr uint32_t FX_SEATED_MIN_PERIOD_MS = 100;
 static uint32_t fxLoopDelay(uint32_t now, uint32_t frameStart) {
   if (!fxLive() || !fxAnimating(now)) return 100;
   uint32_t per = fxFramePeriod(now), spent = millis() - frameStart;
+  if (g_dread.connected && per < FX_SEATED_MIN_PERIOD_MS) per = FX_SEATED_MIN_PERIOD_MS;
   return (spent + 5 >= per) ? 5 : per - spent;
 }
 

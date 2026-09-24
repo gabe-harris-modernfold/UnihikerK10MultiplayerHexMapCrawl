@@ -4,6 +4,124 @@
 // Game loop task (Core 1) and server setup helpers extracted from setup().
 // Included LAST, after all gameplay and network .hpp files.
 
+#include "lwip/tcpip.h"
+#include "esp_wifi.h"
+
+// ── Network watchdog ───────────────────────────────────────────
+// 2026-09-24: when a 5-bot run ended, the board stopped answering ARP, HTTP
+// and WS for over 15 minutes while the game loop, LCD and audio carried on,
+// and WiFi.status() still said connected. The task watchdog (10 s, core 0's
+// idle task) never fired, so nothing was spinning: a network task was
+// blocked. gameLoopTask calls netWatchdog() every 5 s. It posts a no-op
+// through lwIP's own task (tcpip_try_callback) and, when one is still
+// unanswered 5 s later, logs every task's state plus the driver's own view of
+// the association and the internal heap -- what is stuck, and on what.
+static volatile uint32_t g_tcpipPongMs  = 0;   // set by netProbeCb, in the lwIP task
+static uint32_t          g_tcpipPingMs  = 0;   // when the outstanding probe went in; 0 = none
+static uint32_t          g_tcpipRttMs   = 0;   // last answered probe's round trip
+static uint32_t          g_netStallT0   = 0;   // first unanswered probe of the current stall; 0 = none
+static uint32_t          g_netDumpMs    = 0;
+static uint32_t          g_netBeatMs    = 0;
+static uint32_t          g_netMboxFull  = 0;
+
+static void netProbeCb(void*) { g_tcpipPongMs = millis(); }
+
+static const char* netTaskState(eTaskState s) {
+  switch (s) {
+    case eRunning:   return "RUN";
+    case eReady:     return "READY";
+    case eBlocked:   return "BLOCKED";
+    case eSuspended: return "SUSP";
+    case eDeleted:   return "DEL";
+    default:         return "?";
+  }
+}
+
+// One line on the link: the driver's association (not WiFi.status(), which
+// only moves when the event task delivers an event), the heap the network
+// stack allocates from, and how long since async_tcp last delivered anything.
+static void netLogLink(const char* tag, uint32_t now) {
+  wifi_ap_record_t ap = {};
+  bool assoc = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+  Log.notice("NETWD %s tcpip rtt=%ums assoc=%d rssi=%d wifiStatus=%d wsIdle=%us seated=%d "
+             "iheap=%uKB ilargest=%uKB imin=%uKB mboxFull=%u",
+             tag, (unsigned)g_tcpipRttMs, assoc ? 1 : 0, assoc ? (int)ap.rssi : 0,
+             (int)WiFi.status(), (unsigned)((now - g_lastWsEvtMs) / 1000),
+             (int)G.connectedCount,
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)g_netMboxFull);
+}
+
+// The tasks that matter, by name. uxTaskGetSystemState() would list them all,
+// but the core's prebuilt FreeRTOS is linked without the trace facility.
+// tiT = lwIP, wifi = the driver, sys_evt / arduino_events = the event loops
+// WiFi.status() depends on.
+static void netDumpTasks() {
+  static const char* const NAMES[] = { "tiT", "wifi", "async_tcp", "sys_evt", "arduino_events",
+                                       "esp_timer", "snd", "GameLoop", "loopTask", "wifiSweep",
+                                       "wifiConn" };
+  for (const char* nm : NAMES) {
+    TaskHandle_t h = xTaskGetHandle(nm);
+    if (!h) continue;
+    BaseType_t core = xTaskGetAffinity(h);
+    Log.warning("NETWD   task=%s state=%s prio=%u core=%d stack_free=%u",
+                nm, netTaskState(eTaskGetState(h)), (unsigned)uxTaskPriorityGet(h),
+                core == tskNO_AFFINITY ? -1 : (int)core,
+                (unsigned)uxTaskGetStackHighWaterMark(h));
+  }
+}
+
+static void netWatchdog(uint32_t now) {
+  bool pending = g_tcpipPingMs && (int32_t)(g_tcpipPongMs - g_tcpipPingMs) < 0;
+  if (pending) {
+    // Still no answer after a whole period. One probe at a time: stacking
+    // more on a stuck mbox only fills it.
+    if (!g_netStallT0) g_netStallT0 = g_tcpipPingMs;
+    if (!g_netDumpMs || now - g_netDumpMs >= 30000) {
+      g_netDumpMs = now;
+      Log.warning("NETWD STALL: lwIP task has not run a probe for %ums", (unsigned)(now - g_tcpipPingMs));
+      netLogLink("stall", now);
+      netDumpTasks();
+    }
+    return;
+  }
+  if (g_tcpipPingMs) g_tcpipRttMs = g_tcpipPongMs - g_tcpipPingMs;
+  if (g_netStallT0) {
+    Log.warning("NETWD recovered: lwIP task was stuck for %ums", (unsigned)(g_tcpipPongMs - g_netStallT0));
+    g_netStallT0 = 0; g_netDumpMs = 0;
+  }
+  if (now - g_netBeatMs >= 60000) { g_netBeatMs = now; netLogLink("ok", now); }
+  g_tcpipPingMs = now ? now : 1;
+  if (tcpip_try_callback(netProbeCb, nullptr) != ERR_OK) {
+    // The lwIP mailbox is full: the task is not draining it. Counted, and
+    // treated as a probe that never got answered.
+    g_netMboxFull++;
+    Log.warning("NETWD lwIP mailbox full (x%u)", (unsigned)g_netMboxFull);
+  }
+}
+
+// Wi-Fi events. None were logged before, so a dropped association left no
+// trace in the serial log. Runs on the Arduino event task.
+static void onWifiEvent(arduino_event_id_t ev, arduino_event_info_t info) {
+  switch (ev) {
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Log.notice("WIFI STA associated ch=%d", (int)info.wifi_sta_connected.channel); break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Log.warning("WIFI STA disconnected reason=%d", (int)info.wifi_sta_disconnected.reason); break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Log.notice("WIFI STA got ip=%s", IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str()); break;
+    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      Log.warning("WIFI STA lost ip"); break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      Log.notice("WIFI AP client joined aid=%d", (int)info.wifi_ap_staconnected.aid); break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      Log.notice("WIFI AP client left aid=%d", (int)info.wifi_ap_stadisconnected.aid); break;
+    default: break;
+  }
+}
+
 // ── Game loop task (Core 1) ────────────────────────────────────
 static uint32_t g_maxTickMs = 0;  // worst-case tickGame+drainEvents+broadcastState time, surfaced via /state
 
@@ -23,6 +141,7 @@ static void gameLoopTask(void* param) {
                   (unsigned)(ESP.getFreeHeap() / 1024),
                   (unsigned)(ESP.getFreePsram() / 1024),
                   (unsigned long)G.tickId, (int)G.connectedCount);
+      netWatchdog(loopMs);
     }
     uint32_t t0tick = millis();
     tickGame();
@@ -56,6 +175,9 @@ static void gameLoopTask(void* param) {
     refreshWsLiveness();
     uint32_t tickDurMs = millis() - t0tick;
     if (tickDurMs > g_maxTickMs) g_maxTickMs = tickDurMs;
+    // Saves the WS handlers asked for (network-persistence.hpp), after the
+    // tick is timed so maxTickMs keeps meaning the tick.
+    serviceSaveRequest();
   }
 }
 
@@ -353,6 +475,7 @@ static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
 static void setupWiFiAndServer() {
   Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
+  WiFi.onEvent(onWifiEvent);     // before WiFi.mode(), so the first association is logged too
   WiFi.setHostname(MDNS_HOST);   // DHCP hostname; must precede WiFi.mode()
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);

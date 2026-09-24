@@ -84,7 +84,7 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
     xSemaphoreGive(G.mutex);
   }
   // saveGame and client->text called outside mutex so saveGame can acquire it
-  if (ok) saveGame();
+  if (ok) requestSave();
   if (ack[0]) client->text(ack);
   // EFX_REVEAL_FOG items: send a fresh vis disk so the client sees newly revealed cells
   if (ok && capturedSlot >= 0 && revealParam >= 2) pushVisDisk(client, capturedSlot);
@@ -124,7 +124,7 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
     }
     xSemaphoreGive(G.mutex);
   }
-  if (ok) saveGame();
+  if (ok) requestSave();
   if (ack[0]) client->text(ack);
   if (visChanged) pushVisDisk(client, capturedSlot);
   nackItem(client, locked, mySlot, ok);
@@ -161,7 +161,7 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
     }
     xSemaphoreGive(G.mutex);
   }
-  if (ok) saveGame();
+  if (ok) requestSave();
   if (ack[0]) client->text(ack);
   if (visChanged) pushVisDisk(client, capturedSlot);
   nackItem(client, locked, mySlot, ok);
@@ -201,7 +201,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
     xSemaphoreGive(G.mutex);
   }
   if (ok) {
-    saveGame();
+    requestSave();
     broadcastGroundUpdate(gq, gr);
   }
   if (ack[0]) client->text(ack);
@@ -254,7 +254,7 @@ static void handleMsg_drop_res(AsyncWebSocketClient* client, char* data, size_t 
   }
   // saveGame outside the mutex so it can acquire it itself (same as drop_item)
   if (dropped) {
-    saveGame();
+    requestSave();
     if (upd[0]) ws.textAll(upd);
   }
   if (ack[0]) client->text(ack);
@@ -290,7 +290,7 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
     xSemaphoreGive(G.mutex);
   }
   if (ok) {
-    saveGame();
+    requestSave();
     broadcastGroundUpdate(gq, gr);   // also drops the grave marker once the hex is bare
   }
   if (ack[0]) client->text(ack);
@@ -335,7 +335,7 @@ static void handleMsg_loot(AsyncWebSocketClient* client, char* data, size_t len)
   if (ack[0]) client->text(ack);
   if (out == LOOT_OK) {
     broadcastGroundUpdate(gq, gr);
-    saveGame();
+    requestSave();
   }
   if      (!locked)          wsNack(client, "busy");
   else if (mySlot < 0)       wsNack(client, "not_seated");

@@ -94,7 +94,7 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
     broadcastLobbyUpdate();
     if (lateDrop) {
       broadcastGroundUpdate(lateQ, lateR, "fell", arch);
-      saveGame();
+      requestSave();
     }
   } else {
     wsNack(client, refused ? refused : "busy");
@@ -404,7 +404,7 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
   }
 
   broadcastLobbyUpdate();
-  saveGame();
+  requestSave();
 }
 
 static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -468,7 +468,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   // saveGame outside the mutex (it acquires it itself) — same pattern as
   // handleMsg_use_item, and for the same reason: a craft just changed
   // invType[]/invQty[]/knownRecipes.
-  if (actType == ACT_CRAFT && actOk) saveGame();
+  if (actType == ACT_CRAFT && actOk) requestSave();
   if (survLen > 0)
     client->text(survBuf, (size_t)survLen);
   if (craftAck[0])

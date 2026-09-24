@@ -316,7 +316,7 @@ static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size
     xSemaphoreGive(G.mutex);
   }
   if (why == 0) {
-    saveGame();  // outside the mutex — it takes G.mutex itself (same as craft/use_item)
+    requestSave();  // outside the mutex — it takes G.mutex itself (same as craft/use_item)
     if (ack[0]) client->text(ack);
   } else {
     char fb[48];
