@@ -126,9 +126,14 @@ static int findSlot(uint32_t id) {
     if (G.players[i].connected && G.players[i].wsClientId == id) return i;
   return -1;
 }
+// Every event gets the next seq whether or not it fits; the ones that do not
+// fit are counted in g_evtDrops, since a gap in "sq" alone can also be an
+// event this socket was simply not sent (see GameEvent::seq).
 static void enqEvt(GameEvent ev) {
   taskENTER_CRITICAL(&evtMux);
+  ev.seq = ++g_evSeq;
   if (pendingCount < EVT_QUEUE_SIZE) pendingEvents[pendingCount++] = ev;
+  else                               g_evtDrops++;
   taskEXIT_CRITICAL(&evtMux);
 }
 

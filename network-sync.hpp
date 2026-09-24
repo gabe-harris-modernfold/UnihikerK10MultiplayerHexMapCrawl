@@ -212,8 +212,8 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   playerVisParams(pid, &visR, &maskRes);
 
   int pos = snprintf(buf, sizeof(buf),
-    "{\"t\":\"sync\",\"id\":%d,\"tk\":%lu,\"vr\":%d,\"map\":\"",
-    pid, (unsigned long)G.tickId, visR);
+    "{\"t\":\"sync\",\"id\":%d,\"pv\":%d,\"tk\":%lu,\"vr\":%d,\"map\":\"",
+    pid, PROTO_VERSION, (unsigned long)G.tickId, visR);
   int mapStart = pos;
   pos += encodeMapFog(buf + pos, (int)sizeof(buf) - pos, me.q, me.r, visR, maskRes);
   int mapLen = pos - mapStart;
@@ -347,13 +347,17 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,",
+      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,",
       p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.radiation,
       (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
-      (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], (int)computeValidMoves(i));
+      (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], (int)computeValidMoves(i),
+      // Resting used to ride only in sync, so "resting" and "simply out of
+      // MP" looked the same from the tick -- and one survivor who never
+      // actually rested holds the whole fleet's day open.
+      p.resting ? 1 : 0);
     pos = appendPackArrays(buf, sizeof(buf), pos, i);
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       ",\"enc\":%d,\"dp\":%d,\"tq\":%d,\"tr\":%d}",

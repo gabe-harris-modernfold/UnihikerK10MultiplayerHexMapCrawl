@@ -18,34 +18,42 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 
   LOG_VERBOSE("WS msg id=%u len=%u type=%.*s", (unsigned)client->id(), (unsigned)len, (int)tl, tv);
 
-  if      (strncmp(tv, "pick",          tl) == 0) handleMsg_pick(client, data, len);
-  else if (strncmp(tv, "m",             tl) == 0) handleMsg_move(client, data, len);
-  else if (strncmp(tv, "n",             tl) == 0) handleMsg_name(client, data, len);
-  else if (strncmp(tv, "wifi",          tl) == 0) handleMsg_wifi(client, data, len);
-  else if (strncmp(tv, "wifi_forget",   tl) == 0) handleMsg_wifi_forget(client, data, len);
-  else if (strncmp(tv, "check",         tl) == 0) handleMsg_check(client, data, len);
-  else if (strncmp(tv, "regen",         tl) == 0) handleMsg_regen(client, data, len);
-  else if (strncmp(tv, "eraseslot",     tl) == 0) handleMsg_eraseslot(client, data, len);
-  else if (strncmp(tv, "act",           tl) == 0) handleMsg_act(client, data, len);
-  else if (strncmp(tv, "trade_offer",   tl) == 0) handleMsg_trade_offer(client, data, len);
-  else if (strncmp(tv, "trade_accept",  tl) == 0) handleMsg_trade_accept(client, data, len);
-  else if (strncmp(tv, "trade_decline", tl) == 0) handleMsg_trade_decline(client, data, len);
-  else if (strncmp(tv, "car_trade",     tl) == 0) handleMsg_caravan_trade(client, data, len);
-  else if (strncmp(tv, "car_buy",       tl) == 0) handleMsg_caravan_buy(client, data, len);
-  else if (strncmp(tv, "use_item",      tl) == 0) handleMsg_use_item(client, data, len);
-  else if (strncmp(tv, "equip_item",    tl) == 0) handleMsg_equip_item(client, data, len);
-  else if (strncmp(tv, "unequip_item",  tl) == 0) handleMsg_unequip_item(client, data, len);
-  else if (strncmp(tv, "drop_item",     tl) == 0) handleMsg_drop_item(client, data, len);
-  else if (strncmp(tv, "drop_res",      tl) == 0) handleMsg_drop_res(client, data, len);
-  else if (strncmp(tv, "pickup_item",   tl) == 0) handleMsg_pickup_item(client, data, len);
-  else if (strncmp(tv, "settings",      tl) == 0) handleMsg_settings(client, data, len);
-  else if (strncmp(tv, "enc_start",     tl) == 0) handleMsg_enc_start(client, data, len);
-  else if (strncmp(tv, "enc_choice",    tl) == 0) handleMsg_enc_choice(client, data, len);
-  else if (strncmp(tv, "enc_bank",      tl) == 0) handleMsg_enc_bank(client, data, len);
-  else if (strncmp(tv, "enc_abort",     tl) == 0) handleMsg_enc_abort(client, data, len);
+  // Exact match on the whole type. This was strncmp(tv, NAME, tl) with tl the
+  // *sender's* length, so any prefix matched the first name it began: "e" ran
+  // eraseslot, "r" ran regen, "" ran pick -- one typo away from a wiped world.
+#define CMD_IS(name) (tl == sizeof(name) - 1 && memcmp(tv, name, tl) == 0)
+  wsReqBegin(data, tv, tl);
+  if      (CMD_IS("pick")         ) handleMsg_pick(client, data, len);
+  else if (CMD_IS("m")            ) handleMsg_move(client, data, len);
+  else if (CMD_IS("n")            ) handleMsg_name(client, data, len);
+  else if (CMD_IS("wifi")         ) handleMsg_wifi(client, data, len);
+  else if (CMD_IS("wifi_forget")  ) handleMsg_wifi_forget(client, data, len);
+  else if (CMD_IS("check")        ) handleMsg_check(client, data, len);
+  else if (CMD_IS("regen")        ) handleMsg_regen(client, data, len);
+  else if (CMD_IS("eraseslot")    ) handleMsg_eraseslot(client, data, len);
+  else if (CMD_IS("act")          ) handleMsg_act(client, data, len);
+  else if (CMD_IS("trade_offer")  ) handleMsg_trade_offer(client, data, len);
+  else if (CMD_IS("trade_accept") ) handleMsg_trade_accept(client, data, len);
+  else if (CMD_IS("trade_decline")) handleMsg_trade_decline(client, data, len);
+  else if (CMD_IS("car_trade")    ) handleMsg_caravan_trade(client, data, len);
+  else if (CMD_IS("car_buy")      ) handleMsg_caravan_buy(client, data, len);
+  else if (CMD_IS("use_item")     ) handleMsg_use_item(client, data, len);
+  else if (CMD_IS("equip_item")   ) handleMsg_equip_item(client, data, len);
+  else if (CMD_IS("unequip_item") ) handleMsg_unequip_item(client, data, len);
+  else if (CMD_IS("drop_item")    ) handleMsg_drop_item(client, data, len);
+  else if (CMD_IS("drop_res")     ) handleMsg_drop_res(client, data, len);
+  else if (CMD_IS("pickup_item")  ) handleMsg_pickup_item(client, data, len);
+  else if (CMD_IS("settings")     ) handleMsg_settings(client, data, len);
+  else if (CMD_IS("enc_start")    ) handleMsg_enc_start(client, data, len);
+  else if (CMD_IS("enc_choice")   ) handleMsg_enc_choice(client, data, len);
+  else if (CMD_IS("enc_bank")     ) handleMsg_enc_bank(client, data, len);
+  else if (CMD_IS("enc_abort")    ) handleMsg_enc_abort(client, data, len);
   else {
     Log.warning("WS unknown msg type=%.*s id=%u", (int)tl, tv, (unsigned)client->id());
+    wsNack(client, "unknown_cmd");
   }
+#undef CMD_IS
+  wsReqEnd(client);
 }
 
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,

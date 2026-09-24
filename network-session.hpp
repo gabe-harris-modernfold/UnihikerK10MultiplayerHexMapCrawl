@@ -170,14 +170,16 @@ static void handleConnect(AsyncWebSocketClient* client) {
   Log.notice("Lobby add: id=%u slot=%d connected=%d lobby=%d",
              (unsigned)client->id(), addedSlot, connectedCount, lobbySize + 1);
 
-  // If we have saved WiFi credentials, echo them to this client so its
-  // localStorage (and the Settings inputs) stay in sync across devices/reboots.
+  // If we have a saved network, tell this client which one, so it knows not
+  // to auto-send its own cached credentials (data/network.js connect()).
+  // SSID only: this used to echo the password too, in plain text, to every
+  // socket that connected -- anyone who could join the softAP could read it.
+  // The client already treats a missing "pass" as "leave localStorage alone".
   if (savedSsid[0]) {
-    LOG_VERBOSE("WS echo wifi creds to id=%u ssid=%s", (unsigned)client->id(), savedSsid);
-    char credBuf[160];
+    LOG_VERBOSE("WS echo wifi ssid to id=%u ssid=%s", (unsigned)client->id(), savedSsid);
+    char credBuf[96];
     int credLen = snprintf(credBuf, sizeof(credBuf),
-      "{\"t\":\"wifi\",\"status\":\"saved\",\"ssid\":\"%s\",\"pass\":\"%s\"}",
-      savedSsid, savedPass);
+      "{\"t\":\"wifi\",\"status\":\"saved\",\"ssid\":\"%s\"}", savedSsid);
     client->text(credBuf, (size_t)credLen);
   }
   {

@@ -191,6 +191,10 @@ class Observation:
         # enc_choice / enc_bank / enc_abort instead.
         self.encounter = None
         self.last_error = None
+        # Firmware PROTO_VERSION from sync "pv" (absent = 1, the pre-ack
+        # firmware and the mock). 2+ answers every request that carries a
+        # "rid" with ack/nack, stamps ev with "sq" and sends "rt" per tick.
+        self.proto = 1
 
     @property
     def me(self):
@@ -264,6 +268,7 @@ class Observation:
         t = msg.get("t", "?")
         if t == "sync":
             self.pid      = msg.get("id", self.pid)
+            self.proto    = msg.get("pv", 1)
             self.tick     = msg.get("tk", self.tick)
             self.vision_r = msg.get("vr", self.vision_r)
             if "map" in msg:
@@ -372,6 +377,14 @@ class Observation:
         self.day     = gs.get("dc", self.day)
         self.weather = gs.get("wp", self.weather)
 
+    def _surface_cell(self, d):
+        """The surface cell a {q, r} dict names, or None if it names none --
+        the surface wraps, so a missing coordinate must not become -1."""
+        q, r = d.get("q"), d.get("r")
+        if not (isinstance(q, int) and isinstance(r, int)):
+            return None
+        return self.map[(q, r)]
+
     def _apply_event(self, ev):
         k = ev.get("k")
         # NOTE: ev messages go out via ws.textAll(), so every one of these is
@@ -424,9 +437,41 @@ class Observation:
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:
-                # dawnUpkeep() clears p.resting, but the periodic broadcast
-                # carries no `rt` field -- only sync does -- so this event is
-                # the only way to learn we have stopped resting.
+                # dawnUpkeep() clears p.resting. Protocol 2+ also carries
+                # `rt` in every tick, but older firmware sent it only in
+                # sync, which made this event the only signal -- keep it.
                 self.players[self.pid].resting = False
+        elif k == "act" and ev.get("out") == 1 and ev.get("a") in (4, 7):
+            # SHELTER (4), and REST (7) with a Fire Starter, report the hex's
+            # shelter level afterwards as "cnd" -- the same field the browser
+            # uses (_handleShelterSuccess), because no vis disk follows an
+            # action and the map would otherwise say "no shelter" until the
+            # next step.  SHELTER is refused underground, so the actor's
+            # surface q/r is the hex.
+            pid = ev.get("pid")
+            if isinstance(pid, int) and 0 <= pid < MAX_PLAYERS                     and not self.players[pid].depth and "cnd" in ev:
+                p = self.players[pid]
+                cell = self.map[(p.q, p.r)]
+                if cell is not None and (ev["a"] == 4 or ev["cnd"] == 2):
+                    cell.shelter = ev["cnd"]
+        elif k == "quake":
+            # Shelters on the fault line are gone; settlements on it level to
+            # Open Scrub (the browser's quake handler does the same).
+            for c in ev.get("destroyed", []) or []:
+                cell = self._surface_cell(c)
+                if cell is not None:
+                    cell.shelter = 0
+            for c in ev.get("converted", []) or []:
+                cell = self._surface_cell(c)
+                if cell is not None:
+                    cell.terrain, cell.shelter = 0, 0
+        elif k == "settle":
+            for c in ev.get("removed", []) or []:
+                cell = self._surface_cell(c)
+                if cell is not None:
+                    cell.shelter = 0
+            cell = self._surface_cell(ev)
+            if cell is not None:
+                cell.terrain = 9
         elif k == "weather":
             self.weather = ev.get("wp", self.weather)

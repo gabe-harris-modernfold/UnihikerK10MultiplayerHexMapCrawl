@@ -318,6 +318,7 @@ static void maybeIgniteLightning() {
     if (p.ll == 0) {
       p.movesLeft = 0;
       GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
+      dev.res = DC_LIGHTNING;
       dev.evWsId = p.wsClientId; enqEvt(dev);
     }
   }
@@ -492,6 +493,7 @@ static void spreadFlood() {
             // other hazard uses, and the order causes.py matches against.
             if (p.ll == 0) {
               GameEvent ddev = {}; ddev.type = EVT_DOWNED; ddev.pid = (uint8_t)i;
+              ddev.res = DC_FLOOD;
               ddev.evWsId = p.wsClientId; enqEvt(ddev);
             }
           }
@@ -663,6 +665,7 @@ static void resolveDoomProximity() {
       if (p.ll == 0) {
         p.movesLeft = 0;
         GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
+        dev.res = DC_DOOM;
         dev.evWsId = p.wsClientId; enqEvt(dev);
       }
     }
@@ -984,6 +987,7 @@ static void resolveFireDamage() {
     if (p.ll == 0) {
       p.movesLeft = 0;
       GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
+      dev.res = DC_FIRE;
       dev.evWsId = p.wsClientId; enqEvt(dev);
     }
   }

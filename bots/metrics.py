@@ -33,6 +33,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from causes import CAUSE_ORDER, DamageLedger
+import findings as findings_mod
 from config import ACT_NAME, ARCHETYPE_NAME, RES_NAME, SK_NAME, WEATHER_NAME
 from navigate import hex_distance
 from record import read as read_run
@@ -1034,6 +1035,14 @@ def _load_arm(paths, allow_dirty=False):
         reports.append(rep)
     for p, why in skipped:
         print(f"   (skipping {Path(p).name}: {why})")
+    # Pooled, not skipped: a run that tripped a critical finding may still be
+    # informative, but its balance numbers stand on a board that misbehaved.
+    suspect = [Path(r.path).name for r in reports
+               if any(f.get("severity") == "critical"
+                      for f in findings_mod.load([r.path]))]
+    if suspect:
+        print(f"   (warning: {len(suspect)} pooled run(s) had critical findings -- "
+              f"run findings.py on them: {', '.join(suspect)})")
     return reports
 
 
@@ -1115,6 +1124,10 @@ def main(argv=None):
     for p in paths:
         rep = RunReport(p)
         print(rep.render())
+        rows = findings_mod.load([p])
+        if rows:
+            print("-- findings (findings.py for the full repro)")
+            findings_mod.report(rows)
         print()
         blobs.append(rep.all())
     if a.json:

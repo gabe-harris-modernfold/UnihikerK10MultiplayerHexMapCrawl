@@ -87,6 +87,8 @@
 #include <FS.h>
 #include <SD.h>
 #include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>          // k10.local (game-server.hpp)
+#include <esp_core_dump.h>    // last-crash summary for /state
 #include "logging.hpp"
 #include "wifi-store.hpp"   // known-network roaming list (NVS "wifinets")
 
@@ -258,8 +260,35 @@ static constexpr uint8_t AO_BLOCKED = 0;
 // could already see on their own screen (wrong terrain, no MP).  "Your pack
 // is full of scrap" is not one of those, and a silent refusal there reads
 // exactly like a dead button -- it livelocked the bot harness for a whole run.
-static constexpr uint8_t ABW_NONE      = 0;
-static constexpr uint8_t ABW_PACK_FULL = 1;  // no token capacity left
+//
+// Every AO_BLOCKED path names one of these, so a refusal is never silent. The
+// browser only acts on ABW_PACK_FULL; the rest are for bots (the "bw" field on
+// the act event, and the nack reply -- see network-reply.hpp).
+static constexpr uint8_t ABW_NONE       = 0;
+static constexpr uint8_t ABW_PACK_FULL  = 1;  // no token capacity left
+static constexpr uint8_t ABW_TERRAIN    = 2;  // this action cannot be done on this hex
+static constexpr uint8_t ABW_NO_MP      = 3;
+static constexpr uint8_t ABW_NO_RES     = 4;  // missing the resource it consumes (scrap, medicine)
+static constexpr uint8_t ABW_NOT_NEEDED = 5;  // nothing to do: no wound to treat, shelter already improved
+static constexpr uint8_t ABW_RESTING    = 6;  // already resting
+static constexpr uint8_t ABW_ARCHETYPE  = 7;  // this archetype cannot (TREAT outside a Settlement)
+static constexpr uint8_t ABW_CRAFT      = 8;  // CRAFT refused; the err reply carries the reason
+static constexpr uint8_t ABW_BAD_ACT    = 9;  // unknown action type
+// ABW_* as a nack code (network-reply.hpp).
+static const char* abwName(uint8_t w) {
+  switch (w) {
+    case ABW_PACK_FULL:  return "pack_full";
+    case ABW_TERRAIN:    return "terrain";
+    case ABW_NO_MP:      return "no_mp";
+    case ABW_NO_RES:     return "no_res";
+    case ABW_NOT_NEEDED: return "not_needed";
+    case ABW_RESTING:    return "resting";
+    case ABW_ARCHETYPE:  return "archetype";
+    case ABW_CRAFT:      return "craft";
+    case ABW_BAD_ACT:    return "bad_act";
+    default:             return "blocked";
+  }
+}
 static constexpr uint8_t AO_SUCCESS = 1;
 static constexpr uint8_t AO_PARTIAL = 2;
 static constexpr uint8_t AO_FAIL    = 3;
@@ -603,14 +632,45 @@ enum EvtType : uint8_t {
   // ── Creeping Doom taunts (world-system.hpp) ──
   EVT_DOOM_TAUNT    = 29,  // the Doom speaks: pid = who it addresses, amt = tier (0-3), res = line index
   // ── Bunker tunnel taunts (tunnels.hpp) ──
-  EVT_TUNNEL_TAUNT  = 30   // second thoughts about sleeping rough underground:
+  EVT_TUNNEL_TAUNT  = 30,  // second thoughts about sleeping rough underground:
                            // pid = whose, res = line index. Unicast, unlike the
                            // Doom's — this one is nobody else's business.
+  // LL lost to a hazard that has no event of its own (chem storm, Strangle
+  // Fog). pid, amt = LL lost, res = DC_* cause. Every other LL loss already
+  // rides its own event (dawn, dusk, fire_dmg, flood_dmg, doom_act, enc_res).
+  EVT_DAMAGE        = 31
 };
+
+// Why a survivor went down: rides EVT_DOWNED (and EVT_DAMAGE) as ev.res, and
+// goes on the wire as "cause" in the names bots/causes.py already reports.
+enum DownCause : uint8_t {
+  DC_UNKNOWN = 0, DC_THIRST, DC_HUNGER, DC_EXPOSURE, DC_BAD_AIR, DC_RADIATION,
+  DC_FIRE, DC_LIGHTNING, DC_FLOOD, DC_DOOM, DC_ENC_HAZARD, DC_ENC_COST,
+  DC_ACTION, DC_CHEM, DC_FOG, DC_COUNT
+};
+static const char* const DC_NAME[DC_COUNT] = {
+  "unattributed", "thirst", "hunger", "exposure", "bad air", "radiation",
+  "fire", "lightning", "flood", "creeping doom", "encounter hazard",
+  "encounter cost", "action", "chem storm", "strangle fog"
+};
+static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] : DC_NAME[0]; }
+
+// Bump when a message's shape changes in a way a client could trip over.
+// Rides sync and /state so a bot can refuse a build it was not written for.
+//   2: exact-match dispatch, rid/ack/nack, ev "sq", downed "cause", EVT_DAMAGE,
+//      "rt" in the tick broadcast, ABW_* codes 2-9.
+static constexpr int PROTO_VERSION = 2;
 
 struct GameEvent {
   EvtType  type;
   uint8_t  pid;
+  // Stamped by enqEvt() from g_evSeq, including for events the full queue
+  // then drops. It never repeats or goes backwards on any one socket, and one
+  // game event keeps one seq across every socket that sees it. A gap on one
+  // socket is NOT proof of a drop: unicast and vision-culled events (downed,
+  // col_fail, fire_spread, flood_washout, tun_taunt) spend a seq too. Drops
+  // are counted exactly in g_evtDrops (/state "evtDrops").
+  uint32_t seq;
   int16_t  q, r;
   uint8_t  res, amt;
   uint8_t  dawnF, dawnW, dawnLL;
@@ -863,6 +923,26 @@ struct __attribute__((packed)) SaveGroundItem {
 static GameEvent*     pendingEvents = nullptr;   // [EVT_QUEUE_SIZE], PSRAM (allocPsramGlobals)
 static int            pendingCount  = 0;
 static portMUX_TYPE   evtMux        = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t       g_evSeq       = 0;   // last seq handed out by enqEvt()
+static uint32_t       g_evtDrops    = 0;   // events lost to a full queue (/state)
+
+// ── Boot / crash telemetry (/state "boot") ─────────────────────
+// A board that crashed mid-run comes back looking exactly like one that was
+// power-cycled on purpose. The reset reason says which; the core dump the
+// panic handler leaves in the coredump partition says where.
+static constexpr const char* MDNS_HOST = "k10";
+static const char* g_resetReason = "UNKNOWN";
+struct CrashInfo {
+  bool     valid;          // a readable core dump is in flash
+  char     task[16];       // task that faulted
+  uint32_t pc;             // faulting PC
+  uint32_t cause;          // Xtensa EXCCAUSE
+  uint32_t vaddr;          // EXCVADDR
+  uint8_t  depth;          // backtrace entries kept in bt[]
+  uint32_t bt[8];
+  char     elf[9];         // first 8 hex chars of the crashing build's ELF SHA
+};
+static CrashInfo g_crash = {};
 static TradeOffer     tradeOffers[MAX_PLAYERS];
 
 // ── Item registry ─────────────────────────────────────────────
@@ -1096,6 +1176,7 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 #include "network-sync.hpp"
 #include "network-events.hpp"
 #include "network-session.hpp"
+#include "network-reply.hpp"     // rid / ack / nack for the handlers below
 #include "network-msg-player.hpp"
 #include "network-msg-trade.hpp"
 #include "network-msg-items.hpp"
@@ -1164,6 +1245,26 @@ void setup() {
       default:               rs = "UNKNOWN";   break;
     }
     Log.notice("reset reason=%s", rs);
+    g_resetReason = rs;
+  }
+  // The dump survives later clean resets, so it describes the LAST crash, not
+  // necessarily this boot -- /state pairs it with the reset reason, and "elf"
+  // says whether it came from the build that is running now.
+  if (esp_core_dump_image_check() == ESP_OK) {
+    esp_core_dump_summary_t cs;
+    if (esp_core_dump_get_summary(&cs) == ESP_OK) {
+      g_crash.valid = true;
+      strlcpy(g_crash.task, cs.exc_task, sizeof(g_crash.task));
+      g_crash.pc    = cs.exc_pc;
+      g_crash.cause = cs.ex_info.exc_cause;
+      g_crash.vaddr = cs.ex_info.exc_vaddr;
+      g_crash.depth = (uint8_t)min((int)cs.exc_bt_info.depth, 8);
+      for (int i = 0; i < g_crash.depth; i++) g_crash.bt[i] = cs.exc_bt_info.bt[i];
+      strlcpy(g_crash.elf, (const char*)cs.app_elf_sha256, sizeof(g_crash.elf));
+      Log.warning("last crash: task=%s pc=0x%08lx cause=%lu elf=%s",
+                  g_crash.task, (unsigned long)g_crash.pc,
+                  (unsigned long)g_crash.cause, g_crash.elf);
+    }
   }
 
   // ── K10 hardware init (buttons, LEDs, audio) ─────────────────

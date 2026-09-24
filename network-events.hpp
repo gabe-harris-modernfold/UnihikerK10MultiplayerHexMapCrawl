@@ -62,6 +62,38 @@ static const char* actProse(uint8_t type, bool ok) {
   }
 }
 
+// ── Event sequence stamp ──────────────────────────────────────────────────────
+// Every message built from a queued GameEvent carries that event's seq as "sq"
+// (stamped in enqEvt()), so a client can dedupe exactly across sockets and
+// check ordering. It is spliced in after the opening brace here
+// rather than added to thirty-odd format strings. Messages that never went
+// through the queue (chk, nm, quake, settle, the eraseslot left) carry none.
+// Only drainEvents() calls these, on the GameLoop task, so one buffer is safe.
+static uint32_t s_drainSeq = 0;
+
+static int evStamp(const char* json, int len, char* out, int cap) {
+  if (len <= 1 || json[0] != '{') return -1;
+  int n = snprintf(out, (size_t)cap, "{\"sq\":%lu,", (unsigned long)s_drainSeq);
+  if (n <= 0 || n + len > cap) return -1;
+  memcpy(out + n, json + 1, (size_t)(len - 1));   // everything after the '{'
+  out[n + len - 1] = 0;
+  return n + len - 1;
+}
+
+static char s_evStampBuf[320];   // 288-byte event buf + the "sq" prefix
+
+static void evTextAll(const char* json, int len) {
+  int n = evStamp(json, len, s_evStampBuf, sizeof(s_evStampBuf));
+  if (n > 0) ws.textAll(s_evStampBuf, (size_t)n);
+  else       ws.textAll(json, (size_t)len);
+}
+
+static void evTextTo(AsyncWebSocketClient* cl, const char* json, int len) {
+  int n = evStamp(json, len, s_evStampBuf, sizeof(s_evStampBuf));
+  if (n > 0) cl->text(s_evStampBuf, (size_t)n);
+  else       cl->text(json, (size_t)len);
+}
+
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
   int16_t  pq[MAX_PLAYERS], pr[MAX_PLAYERS];
@@ -112,6 +144,7 @@ static void drainEvents() {
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
+    s_drainSeq = ev.seq;   // stamped onto every message this event produces
     encStatsNote(ev);   // K10 Encounters screen tallies (ui-screens.hpp)
     switch (ev.type) {
 
@@ -121,7 +154,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"col\",\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d,\"rem\":%d,\"dp\":%d}",
           ev.pid, ev.q, ev.r, ev.res, ev.amt, (int)ev.dawnLL, (int)ev.depth);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         break;
 
       case EVT_COLLECT_FAIL:
@@ -134,7 +167,7 @@ static void drainEvents() {
           ev.pid, ev.q, ev.r, ev.res, ev.amt, (int)ev.dawnLL, (int)ev.depth);
         if (ev.pid < MAX_PLAYERS && conn[ev.pid]) {
           AsyncWebSocketClient* cl = ws.client(wsId[ev.pid]);
-          if (cl) cl->text(buf, len);
+          if (cl) evTextTo(cl, buf, len);
         }
         break;
 
@@ -145,7 +178,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"rsp\",\"q\":%d,\"r\":%d,\"res\":%d,\"amt\":%d}",
           ev.q, ev.r, ev.res, ev.amt);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         LOG_VERBOSE("EVT rsp q=%d r=%d res=%d amt=%d (broadcast)",
                     (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
         break;
@@ -158,7 +191,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"radd\":%d,\"rad\":%d,\"exploD\":%d,\"mp\":%d,\"trk\":%d,\"dp\":%d}",
           ev.pid, ev.q, ev.r, (int)ev.radD, (int)ev.radR, (int)ev.exploD, (int)ev.moveMP, (int)ev.amt, (int)ev.depth);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         break;
 
       // ── Bunker tunnels ──
@@ -174,7 +207,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"hatch\":%d,\"mp\":%d}",
           down ? "tun_in" : "tun_out", ev.pid, ev.q, ev.r, (int)ev.amt, (int)ev.moveMP);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         break;
       }
 
@@ -182,7 +215,7 @@ static void drainEvents() {
         Log.notice("EVT join pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"join\",\"pid\":%d}", ev.pid);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("takes up the road with us.",
                           "arrives out of the haze, still walking.",
                           "falls in with the line of march."),
@@ -195,7 +228,7 @@ static void drainEvents() {
         Log.notice("EVT left pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", ev.pid);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("walks out and does not look back.",
                           "is gone before the fire burns down.",
                           "leaves an empty place at the watch."),
@@ -218,7 +251,7 @@ static void drainEvents() {
           (int)ev.radR, (int)ev.dawnExpD, (int)ev.dawnAirD,
           (int)ev.dawnWndMin, (int)ev.dawnWndMaj,
           (int)ev.dawnUnfuelled);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         // Chronicle — only once per day (pid==0 guards double-logging for 6-player dawn)
         if (ev.pid == 0) {
           char lb[48];
@@ -251,7 +284,7 @@ static void drainEvents() {
           ev.pid, (int)ev.actOut,
           (int)ev.actDn, (int)ev.actTot,
           (int)ev.actNewLL, (int)ev.actLLD, (int)ev.radR);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         break;
 
       case EVT_ACTION: {
@@ -285,22 +318,28 @@ static void drainEvents() {
           (int)ev.actCnd, (int)ev.actScrapD,
           (int)ev.actMedD, (int)ev.actWndMin, (int)ev.actWndMaj,
           (int)ev.actScoreD, (int)ev.actRecipe, (int)ev.actWhy);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         break;
 
       case EVT_DOWNED: {
-        Log.warning("EVT downed pid=%d wsId=%u lobby-moved",
-                    (int)ev.pid, (unsigned)ev.evWsId);
-        // 1. Send targeted "downed" message to the player's client
+        Log.warning("EVT downed pid=%d wsId=%u cause=%s lobby-moved",
+                    (int)ev.pid, (unsigned)ev.evWsId, dcName(ev.res));
+        // 1. Send targeted "downed" message to the player's client. "cause" is
+        //    set at the site that took the last LL (DC_* in the .ino), so
+        //    nothing has to infer it from the events around the death.
         {
-          len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d}", (int)ev.pid);
+          len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"downed\",\"pid\":%d,\"cause\":\"%s\"}",
+                         (int)ev.pid, dcName(ev.res));
           if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) {
-            cl->text(buf, len);
+            evTextTo(cl, buf, len);
           }
         }
-        // 2. Broadcast EVT_LEFT so all clients remove the player icon
-        len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d}", (int)ev.pid);
-        ws.textAll(buf, len);
+        // 2. Broadcast EVT_LEFT so all clients remove the player icon. The
+        //    cause rides here too: "downed" is unicast, so without it only the
+        //    victim ever learns what killed them.
+        len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"left\",\"pid\":%d,\"cause\":\"%s\"}",
+                       (int)ev.pid, dcName(ev.res));
+        evTextAll(buf, len);
         // 3. Reset slot so it's available for re-pick; move client back to lobby.
         //    Take the name on the way past -- the slot is about to be handed to
         //    whoever picks it up next, and the death screen wants who it was.
@@ -339,7 +378,7 @@ static void drainEvents() {
         // Regen requested — generateMap() already called on Core 1 before enqueue
         // Broadcast regen event then send full syncs to all connected clients
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10Play(MOTIF_POWER_DOWN);
         int synced = 0;
         for (const auto& cl : ws.getClients()) {
@@ -371,7 +410,7 @@ static void drainEvents() {
           ev.tradeGive[3], ev.tradeGive[4],
           ev.tradeWant[0], ev.tradeWant[1], ev.tradeWant[2],
           ev.tradeWant[3], ev.tradeWant[4]);
-        ws.textAll(tbuf, tlen);
+        evTextAll(tbuf, tlen);
         k10LogAdd(K10_SAY("holds out a bargain to \x01.",
                           "names a price to \x01.",
                           "offers \x01 a trade and waits."),
@@ -396,7 +435,7 @@ static void drainEvents() {
           tlen += snprintf(tbuf + tlen, sizeof(tbuf) - tlen,
                            ",\"item\":%d,\"n\":%d", (int)ev.tradeItem, (int)ev.tradeItemQty);
         tlen += snprintf(tbuf + tlen, sizeof(tbuf) - tlen, "}");
-        ws.textAll(tbuf, tlen);
+        evTextAll(tbuf, tlen);
         // The caravan isn't a player slot (CARAVAN_PID), so bookName() would
         // write \x01 as "Someone" — give both caravan outcomes their own
         // phrasing instead of the survivor↔survivor lines below.
@@ -441,7 +480,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
           ev.pid, (int)ev.q, (int)ev.r);
          
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
          
         k10LogAdd(K10_SAY("steps off the map and into the dark.",
                           "goes in where the light stops.",
@@ -478,7 +517,7 @@ static void drainEvents() {
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5],
           (int)ev.encRecipe);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         // Success reads through the skill that carried it.
         static const char* ENC_WON[5] = {
           "picks the safe line through.",
@@ -533,7 +572,7 @@ static void drainEvents() {
           ev.pid, (int)ev.q, (int)ev.r,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.actScoreD, (unsigned long)ev.bankedRecipes);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
           char lb[48];
           snprintf(lb, sizeof(lb), "clears the place out entire. +%d.", (int)ev.actScoreD);
@@ -574,7 +613,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"enc_end\",\"pid\":%d,\"q\":%d,\"r\":%d,\"reason\":\"%s\"}",
           ev.pid, (int)ev.q, (int)ev.r, reason);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         if (ev.encOut == ENC_END_ABORT) {
           k10LogAdd(K10_SAY("turns back before the dark takes more.",
                             "leaves it unfinished, and lives."),
@@ -598,7 +637,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"weather\",\"phase\":%d,\"ticks\":%d}",
           (int)ev.q, (int)ev.r);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         // Weather is written as the world's own line — no name in front of it.
         static const char* WX_PROSE[6] = {
           "The sky clears. Small mercy, and brief.",
@@ -626,7 +665,7 @@ static void drainEvents() {
         Log.notice("EVT car_avail pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"car_avail\",\"pid\":%d}", (int)ev.pid);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("meets a caravan on the road.",
                           "falls in with traders for an hour."),
                   (int8_t)ev.pid, TONE_GOOD, GLY_CARAVAN);
@@ -639,7 +678,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"fire_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("is caught in the burn.",
                           "walks into fire and wears it out.",
                           "comes through the flames marked."),
@@ -660,7 +699,7 @@ static void drainEvents() {
           if (!conn[i]) continue;
           if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
           AsyncWebSocketClient* cl = ws.client(wsId[i]);
-          if (cl) cl->text(buf, len);
+          if (cl) evTextTo(cl, buf, len);
         }
         break;
       }
@@ -682,7 +721,7 @@ static void drainEvents() {
           if (!conn[i]) continue;
           if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
           AsyncWebSocketClient* cl = ws.client(wsId[i]);
-          if (cl) cl->text(buf, len);
+          if (cl) evTextTo(cl, buf, len);
         }
         break;
       }
@@ -697,7 +736,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"flood_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,"
           "\"intensity\":%d,\"llLost\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt, (int)ev.res);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("is swept off their feet by the flash flood.",
                           "loses their footing as the ground gives way.",
                           "goes under for a moment in the rising water."),
@@ -713,7 +752,7 @@ static void drainEvents() {
         // ostinato in tickDoomAudio(), so this is just the log + WS notice.
         Log.notice("EVT doom_warn pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"doom_warn\",\"pid\":%d}", (int)ev.pid);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("feels the Doom turn its head.",
                           "goes quiet. Something out there noticed."),
                   (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
@@ -728,7 +767,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"doom_act\",\"pid\":%d,\"q\":%d,\"r\":%d,\"llLost\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         k10LogAdd(K10_SAY("loses something to the Doom.",
                           "pays the Doom what it came for."),
                   (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
@@ -750,7 +789,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"tun_taunt\",\"pid\":%d,\"idx\":%d}",
           (int)ev.pid, (int)ev.res);
-        if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) cl->text(buf, len);
+        if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
         break;
       }
 
@@ -764,7 +803,7 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"doom_taunt\",\"pid\":%d,\"tier\":%d,\"idx\":%d}",
           (int)ev.pid, (int)ev.amt, (int)ev.res);
-        ws.textAll(buf, len);
+        evTextAll(buf, len);
         switch (ev.amt) {
           case 3: {
             k10LogAdd(K10_SAY("is being hunted. It has stopped tracking.",
@@ -796,6 +835,17 @@ static void drainEvents() {
             break;
           }
         }
+        break;
+      }
+
+      case EVT_DAMAGE: {
+        // LL lost to a hazard with no event of its own (chem storm, fog).
+        Log.notice("EVT dmg pid=%d amt=%d cause=%s ll=%d",
+                   (int)ev.pid, (int)ev.amt, dcName(ev.res), (int)ev.actNewLL);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"dmg\",\"pid\":%d,\"amt\":%d,\"cause\":\"%s\",\"ll\":%d}",
+          (int)ev.pid, (int)ev.amt, dcName(ev.res), (int)ev.actNewLL);
+        evTextAll(buf, len);
         break;
       }
 

@@ -218,7 +218,7 @@ import policy as pmod
 
 check("registry has every policy", set(pmod.REGISTRY) ==
       {"drunk", "scoremax", "contentmax", "coward", "rival",
-       "subterranean", "tunnelrunner"})
+       "subterranean", "tunnelrunner", "sentinel"})
 
 o3 = Observation()
 o3.apply(sync)
@@ -1161,5 +1161,724 @@ oe.players[2].inv_type = [64] + [0] * (config.INV_SLOTS_MAX - 1)
 oe.players[2].in_encounter = True
 check("no equip attempt while an encounter is open",
       eq_pol.gear_action(oe) is None)
+
+
+print("protocol 2: replies, wire causes, event sequence")
+import asyncio
+import re
+
+_FW = Path(__file__).resolve().parent.parent
+
+# -- drift: the firmware source is the authority for these, so read it ----
+_ino = (_FW / "Esp32HexMapCrawl.ino").read_text(encoding="utf-8")
+_m = re.search(r"DC_NAME\[DC_COUNT\]\s*=\s*\{(.*?)\};", _ino, re.S)
+_fw_causes = re.findall(r'"([^"]+)"', _m.group(1)) if _m else []
+from causes import CAUSE_ORDER
+check("firmware DC_NAME parsed", len(_fw_causes) >= 10)
+check("every firmware cause name is one metrics.py reports",
+      set(_fw_causes) <= set(CAUSE_ORDER))
+
+_disp = (_FW / "network-handlers.hpp").read_text(encoding="utf-8")
+_fw_cmds = set(re.findall(r'CMD_IS\("([a-z_]+)"\)', _disp))
+check("firmware dispatch table parsed", {"pick", "m", "act"} <= _fw_cmds)
+_samples = [Action("move"), Action("act"), Action("enc_start", q=1, r=1),
+            Action("enc_choice"), Action("enc_bank"), Action("enc_abort"),
+            Action("use_item"), Action("equip_item"), Action("unequip_item"),
+            Action("pickup_item"), Action("trade_offer")]
+_bot_cmds = {a.to_msg()["t"] for a in _samples} | {"pick", "regen", "eraseslot"}
+check("every command a bot sends is one the firmware dispatches "
+      f"(missing: {sorted(_bot_cmds - _fw_cmds)})", _bot_cmds <= _fw_cmds)
+
+# -- wire cause and dmg ----------------------------------------------------
+rows = [
+    _ev(1.0, {"k": "dmg", "pid": 1, "amt": 1, "cause": "chem storm", "ll": 1,
+              "sq": 10}),
+    {"ts": 1.2, "ch": "rx", "arch": 1,
+     "d": {"t": "ev", "k": "downed", "pid": 1, "cause": "chem storm", "sq": 11}},
+]
+led = DamageLedger(rows)
+d1 = led.deaths()
+check("a wire cause is taken at its word",
+      bool(d1) and d1[0]["cause"] == "chem storm" and d1[0]["via"] == "wire")
+check("dmg events reach the loss ledger",
+      led.loss_ledger().get("chem storm") == 1)
+
+# -- sq dedupe: exact across bots, and never merges two real events -------
+from causes import _dedupe
+_same = {"k": "act", "pid": 0, "a": 7, "out": 1, "sq": 5}
+rows = [_ev(1.0, _same, arch=0), _ev(1.002, _same, arch=1),  # one event, two sockets
+        _ev(1.1, dict(_same, sq=6), arch=0)]                  # a second, identical-looking one
+check("sq dedupes one event seen by two bots, keeps a distinct one",
+      len(_dedupe(rows)) == 2)
+rows = [_ev(1.0, {"k": "downed", "pid": 0, "sq": 7}),
+        _ev(1.0, {"k": "left", "pid": 0, "sq": 7})]
+check("one sq may carry two message kinds (downed + left)",
+      len(_dedupe(rows)) == 2)
+
+# -- state: rt per tick, pv from sync -------------------------------------
+o = Observation()
+o.apply({"t": "sync", "id": 0, "pv": 2, "tk": 1, "p": [{"on": 1}]})
+check("sync pv is recorded", o.proto == 2)
+o.apply({"t": "s", "tk": 2, "p": [{"on": 1, "rt": 1}]})
+check("tick rt sets resting", o.players[0].resting is True)
+o.apply({"t": "s", "tk": 3, "p": [{"on": 1, "rt": 0}]})
+check("tick rt clears resting", o.players[0].resting is False)
+o2 = Observation()
+o2.apply({"t": "sync", "id": 0, "tk": 1, "p": []})
+check("sync without pv reads as protocol 1", o2.proto == 1)
+
+# -- client: ack / nack bookkeeping ----------------------------------------
+# None of this opens a socket, so smoke.py keeps running without the one
+# third-party dependency installed.
+try:
+    import websockets  # noqa: F401
+except ImportError:
+    import sys, types
+    sys.modules["websockets"] = types.ModuleType("websockets")
+from client import BotClient, RateLimiter, SlotBroker
+from policy.base import Policy
+from findings import Finding, FindingLog, ReproBuffer
+from wire import ReplyTracker
+from oracles import WireOracle, StateOracle
+
+
+class _Rec:
+    def __init__(self):
+        self.rows = []
+
+    def write(self, ch, arch, d):
+        self.rows.append((ch, arch, d))
+
+
+class _Pol(Policy):
+    name = "probe"
+
+    def __init__(self):
+        super().__init__(random.Random(1))
+        self.replies = []
+
+    def on_reply(self, cmd, ok, why):
+        self.replies.append((cmd, ok, why))
+
+
+def _bot():
+    rng = random.Random(3)
+    rec, pol, broker = _Rec(), _Pol(), SlotBroker()
+    bc = BotClient("x", 0, pol, rec, rng, RateLimiter(0, rng),
+                   RateLimiter(0, rng), broker)
+    return bc, rec, pol, broker
+
+
+async def _reply_checks():
+    bc, rec, pol, broker = _bot()
+    rids = [bc.replies.stamp({"t": c})[0]["rid"] for c in ("m", "m", "act", "pick")]
+    await bc._on_message({"t": "ack", "rid": rids[0], "cmd": "m"})
+    await bc._on_message({"t": "nack", "rid": rids[1], "cmd": "m", "why": "no_mp"})
+    await bc._on_message({"t": "nack", "rid": rids[2], "cmd": "act", "why": "resting"})
+    ok1 = (bc.acks == 1
+           and bc.nacks == {"m": {"no_mp": 1}, "act": {"resting": 1}}
+           and pol.replies[1] == ("m", False, "no_mp")
+           and any(ch == "nack" for ch, _a, _d in rec.rows))
+    # A refused pick gives the slot back at once instead of waiting out the
+    # sync watchdog.
+    await broker.claim([2], 2)
+    bc._pending_slot = 2
+    await bc._on_message({"t": "nack", "rid": rids[3], "cmd": "pick", "why": "slot_taken"})
+    ok2 = (bc._pending_slot is None and bc.pick_failures == 1
+           and await broker.claim([2], 2) == 2)
+    # A reply nobody asked for -- answered twice, or never sent -- is a finding.
+    await bc._on_message({"t": "ack", "rid": rids[0], "cmd": "m"})
+    ok5 = any(s[0] == "reply_unmatched" for s in bc.findings.counts)
+    return ok1, ok2, ok5
+
+_r = asyncio.run(_reply_checks())
+check("acks and nacks are counted per command and reason", _r[0])
+check("a nacked pick releases its slot immediately", _r[1])
+check("a reply to a rid already answered is a finding", _r[2])
+
+
+async def _expiry_checks():
+    fl = FindingLog()
+    clock = [0.0]
+    tr = ReplyTracker(WireOracle(fl, "t"), clock=lambda: clock[0])
+    tr.stamp({"t": "m"})
+    clock[0] = 100.0
+    quiet = tr.expire(proto=1)
+    tr.stamp({"t": "m"})
+    clock[0] = 200.0
+    loud = tr.expire(proto=2)
+    return (not quiet and tr.unanswered == 1 and len(loud) == 1
+            and ("request_unanswered", "m") in fl.counts)
+
+check("no reply from a protocol-1 board is not a fault, from protocol 2 it is",
+      asyncio.run(_expiry_checks()))
+
+# -- telemetry: a reboot mid-run is recorded, not inferred -----------------
+import telemetry as _tele
+
+_states = iter([
+    {"mem": {"uptimeMs": 600000}, "evtDrops": 0, "boot": {"reset": "POWER_ON"}},
+    {"mem": {"uptimeMs": 4000}, "evtDrops": 0,
+     "boot": {"reset": "PANIC", "crash": {"task": "async_tcp", "pc": "0x42001234"}}},
+])
+
+
+async def _poll_twice():
+    rec = _Rec()
+    tp = _tele.TelemetryPoller("x", rec, interval=0.0)
+    real = _tele.fetch_state
+    _tele.fetch_state = lambda host, timeout=5.0: next(_states)
+    try:
+        task = asyncio.create_task(tp.run())
+        while len([r for r in rec.rows if r[0] == "telemetry"]) < 2:
+            await asyncio.sleep(0)
+        tp.stop.set()
+        await task
+    finally:
+        _tele.fetch_state = real
+    return tp, rec
+
+_tp, _trec = asyncio.run(_poll_twice())
+check("uptime going backwards is recorded as a board_reboot",
+      any(r[0] == "board_reboot" and r[2]["reset"] == "PANIC" for r in _trec.rows))
+check("the reboot carries the crash summary",
+      _tp.reboots and _tp.reboots[0]["crash"]["task"] == "async_tcp")
+
+
+print("findings")
+import copy
+import findings as fmod
+
+_frec = _Rec()
+_fl = FindingLog(_frec)
+for _i in range(5):
+    _fl.add(Finding(check="ll_over_cap", severity="major", summary="x", key=(1,)))
+_fl.add(Finding(check="board_rebooted", severity="critical", summary="y"))
+_fl.add(Finding(check="ll_over_cap", severity="major", summary="x", key=(2,)))
+check("one signature counts every occurrence", _fl.counts[("ll_over_cap", 1)] == 5)
+check("only the first few occurrences are written in full",
+      sum(1 for ch, _a, d in _frec.rows if ch == "finding"
+          and d["check"] == "ll_over_cap" and d["key"] == [1]) == fmod.WRITE_FIRST)
+check("summary puts the worst first", _fl.summary()[0]["check"] == "board_rebooted"
+      and _fl.worst() == "critical")
+try:
+    _fl.add(Finding(check="x", severity="bad", summary=""))
+    _bad_sev = False
+except ValueError:
+    _bad_sev = True
+check("an unknown severity is refused", _bad_sev)
+
+with tempfile.TemporaryDirectory() as _td:
+    _p = Path(_td) / "f.jsonl"
+    with Recorder(_p, {"kind": "t"}) as _r2:
+        _fl2 = FindingLog(_r2)
+        for _i in range(7):
+            _fl2.add(Finding(check="seat_lost", severity="major", summary="s"))
+        _fl2.flush()
+    _rows = fmod.load([_p])
+    import io
+    _buf = io.StringIO()
+    _n = fmod.report(_rows, out=_buf)
+check("findings.py reports the run-end total, not just the rows written",
+      _n == 1 and "seen 7x" in _buf.getvalue())
+
+print("oracles")
+
+
+def _tick(p=None, tk=10, **kw):
+    base = {"on": 1, "ll": 5, "llCap": 7, "food": 4, "water": 4, "rad": 0,
+            "mp": 3, "inv": [1, 1, 0, 0, 0], "vm": 7, "rt": 0, "sp": 10}
+    base.update(kw)
+    return {"t": "s", "tk": tk, "p": [base] + [{"on": 0}] * 5}
+
+
+def _wo(proto=2):
+    fl = FindingLog()
+    clock = [0.0]
+    o = WireOracle(fl, "t", clock=lambda: clock[0])
+    o.proto = proto
+    ob = Observation()
+    ob.pid = 0
+    return o, fl, ob, clock
+
+
+def _checks(fl):
+    return {s[0] for s in fl.counts}
+
+
+_o, _f, _ob, _c = _wo()
+_o.on_rx(_tick(), _ob)
+check("a healthy tick raises nothing", not _f.counts)
+for label, kw, want in [
+        ("LL over its cap", {"ll": 8}, "ll_over_cap"),
+        ("food outside [1, 6]", {"food": 0}, "food_out_of_range"),
+        ("water outside [1, 6]", {"water": 7}, "water_out_of_range"),
+        ("radiation outside [0, 10]", {"rad": 11}, "rad_out_of_range"),
+        ("a downed survivor with MP", {"ll": 0, "mp": 2}, "downed_with_mp"),
+        ("a move mask while out of MP", {"mp": 0}, "vm_when_immobile"),
+        ("a move mask while resting", {"rt": 1}, "vm_when_immobile"),
+        ("a resource count over 99", {"inv": [100, 0, 0, 0, 0]}, "inv_out_of_range")]:
+    _o, _f, _ob, _c = _wo()
+    _o.on_rx(_tick(**kw), _ob)
+    check(f"oracle catches {label}", want in _checks(_f))
+
+_o, _f, _ob, _c = _wo()
+_o.on_rx(_tick(sp=10, tk=10), _ob)
+_o.on_rx(_tick(sp=9, tk=9), _ob)
+check("oracle catches steps and tick going backwards",
+      {"steps_went_backwards", "tick_went_backwards"} <= _checks(_f))
+_o, _f, _ob, _c = _wo()
+_o.on_rx(_tick(sp=10), _ob)
+_o.on_rx({"t": "ev", "k": "join", "pid": 0}, _ob)
+_o.on_rx(_tick(sp=0, tk=11), _ob)
+check("a join starts a new life: steps may restart", not _f.counts)
+
+_o, _f, _ob, _c = _wo()
+for _ev_ in ({"k": "downed", "pid": 0, "sq": 5}, {"k": "left", "pid": 0, "sq": 5},
+             {"k": "mv", "pid": 1, "sq": 7}):
+    _o.on_rx(dict(_ev_, t="ev"), _ob)
+check("one seq may carry downed and left; seq may skip", not _f.counts)
+_o.on_rx({"t": "ev", "k": "mv", "pid": 1, "sq": 7}, _ob)
+_o.on_rx({"t": "ev", "k": "mv", "pid": 1, "sq": 6}, _ob)
+check("oracle catches a repeated and a backwards seq",
+      {"ev_duplicate", "ev_sq_backwards"} <= _checks(_f))
+
+_o, _f, _ob, _c = _wo()
+_o.on_rx({"t": "ev", "k": "left", "pid": 3, "cause": "thirst"}, _ob)
+_o.on_rx({"t": "ev", "k": "join", "pid": 3}, _ob)
+_o.on_rx({"t": "ev", "k": "left", "pid": 3, "cause": "exposure"}, _ob)
+check("a death, a rejoin and a death is two lives", not _f.counts)
+_o.on_rx({"t": "ev", "k": "left", "pid": 3, "cause": "fire"}, _ob)
+check("two deaths in one life is the seat-count bug", "double_downed" in _checks(_f))
+_o, _f, _ob, _c = _wo()
+_o.on_rx({"t": "ev", "k": "left", "pid": 3, "cause": "thirst"}, _ob)
+_o.new_socket()   # away: the rejoin happened while we were not looking
+_o.on_rx({"t": "ev", "k": "left", "pid": 3, "cause": "fire"}, _ob)
+check("a death seen across a reconnect is not called a double death", not _f.counts)
+_o.on_rx({"t": "ev", "k": "left", "pid": 4}, _ob)
+_o.on_rx({"t": "ev", "k": "left", "pid": 4}, _ob)
+check("a plain disconnect is not a death", "double_downed" not in
+      {s[0] for s in _f.counts if s[1:] == (4,)})
+
+_o, _f, _ob, _c = _wo()
+_o.on_reply(True, "m", None, seated=True)
+_o.on_rx({"t": "ev", "k": "mv", "pid": 0, "sq": 1}, _ob)
+_c[0] = 10.0
+_o.poll()
+check("an acked move with its mv raises nothing", not _f.counts)
+_o.on_reply(True, "m", None, seated=True)
+_c[0] = 20.0
+_o.poll()
+check("an acked move with no mv is ack_without_effect",
+      "ack_without_effect" in _checks(_f))
+
+_o, _f, _ob, _c = _wo()
+_o.on_reply(False, "act", "no_mp", seated=True)
+_o.on_rx({"t": "ev", "k": "act", "pid": 0, "out": 0, "bw": 3, "sq": 1}, _ob)
+_o.on_reply(False, "act", "pack_full", seated=True)
+_o.on_rx({"t": "ev", "k": "act", "pid": 0, "out": 0, "bw": 3, "sq": 2}, _ob)
+_o.on_reply(False, "act", "terrain", seated=True)
+_c[0] = 10.0
+_o.poll()
+_cs = _checks(_f)
+check("a nack and its blocked event must agree on the reason",
+      "nack_event_mismatch" in _cs and ("nack_event_mismatch", "no_mp") not in _f.counts)
+check("a nack whose blocked event never comes is caught", "nack_without_event" in _cs)
+_o, _f, _ob, _c = _wo()
+_o.on_reply(False, "act", "in_enc", seated=True)
+_c[0] = 10.0
+_o.poll()
+check("refusals made before any event exist expect none", not _f.counts)
+_o.on_reply(False, "m", "not_seated", seated=True)
+check("not_seated while holding a seat is a desync", "seat_desync" in _checks(_f))
+_o, _f, _ob, _c = _wo(proto=1)
+_o.on_reply(True, "m", None, seated=True)
+_c[0] = 10.0
+_o.poll()
+check("a protocol 1 board makes no promises to check", not _f.counts)
+
+_sf = FindingLog()
+_so = StateOracle(_sf)
+_st = {"connected": 2, "players": [{"pid": 0, "conn": True, "ll": 5, "food": 3, "water": 3}]
+       + [{"pid": i, "conn": False} for i in range(1, 6)],
+       "mem": {"uptimeMs": 50000, "minHeap": 90000}, "evtDrops": 0}
+_so.check(dict(_st, players=_st["players"][:1]))
+check("a /state read without the full player list is not compared",
+      not _sf.counts)
+_so.prev = None
+_so.check(_st)
+_st2 = copy.deepcopy(_st)
+_st2["mem"] = {"uptimeMs": 1000, "minHeap": 20000}
+_st2["evtDrops"] = 3
+_st2["boot"] = {"reset": "PANIC"}
+_so.check(_st2)
+check("state oracle: seat count, reboot, dropped events, heap floor",
+      {"connected_count_mismatch", "board_rebooted", "events_dropped", "heap_low"}
+      <= {s[0] for s in _sf.counts})
+
+print("fuzz corpus")
+import fuzz_cases as fz
+
+_names = [c.name for c in fz.CASES]
+check("fuzz case names are unique", len(_names) == len(set(_names)))
+check("fuzz COMMANDS is the firmware's dispatch table", set(fz.COMMANDS) == _fw_cmds)
+check("every command prefix is a case, and 'e'/'r' say what they used to run",
+      {"prefix:e", "prefix:r", "prefix:p"} <= set(_names)
+      and "eraseslot" in next(c.note for c in fz.CASES if c.name == "prefix:e")
+      and "regen" in next(c.note for c in fz.CASES if c.name == "prefix:r"))
+
+
+def _texts(case):
+    """Every concrete payload a case can produce, as text."""
+    p = case.payload
+    if callable(p):
+        ob = copy.deepcopy(o3)
+        ob.players[ob.pid].inv_type = [0] * config.INV_SLOTS_MAX
+        p = p(ob)
+    if p is None:
+        return []
+    if isinstance(p, dict):
+        return [json.dumps(p)]
+    return [p if isinstance(p, str) else p.decode("latin-1")]
+
+
+_unsafe = []
+for _c_ in fz.CASES + [fz.BURST]:
+    for _t in _texts(_c_):
+        _j = None
+        try:
+            _j = json.loads(_t.replace("@RID@", "1"))
+        except (json.JSONDecodeError, ValueError):
+            pass
+        _type = _j.get("t") if isinstance(_j, dict) else None
+        if _type == "regen":
+            _unsafe.append((_c_.name, "well-formed regen"))
+        if _type == "eraseslot" and isinstance(_j.get("arch"), int) \
+                and 0 <= _j["arch"] < config.MAX_PLAYERS:
+            _unsafe.append((_c_.name, "eraseslot of a real slot"))
+        if '"ssid"' in _t and '"wifi"' in _t and '"wifi_forget"' not in _t:
+            _unsafe.append((_c_.name, "wifi with an ssid"))
+        if _type == "drop_res" and isinstance(_j.get("res"), int) and 1 <= _j["res"] <= 5 \
+                and (_j.get("qty", 1) > 0 if isinstance(_j.get("qty", 1), int) else True):
+            _unsafe.append((_c_.name, "a drop_res that drops"))
+check(f"the corpus holds nothing destructive {_unsafe}", not _unsafe)
+
+check("judge: silence", fz.judge("none", None) is None
+      and fz.judge("none", {"t": "ack"}) is not None)
+check("judge: nack reasons", fz.judge("nack:parse", {"t": "nack", "why": "parse"}) is None
+      and fz.judge("nack:parse", {"t": "nack", "why": "bad_arg"}) is not None
+      and fz.judge("nack:parse", {"t": "ack"}) is not None
+      and fz.judge("reply", None) is not None)
+check("judge: cmd", fz.judge("cmd:check", {"t": "nack", "cmd": "check"}) is None
+      and fz.judge("cmd:check", {"t": "nack", "cmd": "zz"}) is not None)
+def _judge_ok(e):
+    try:
+        fz.judge(e, {"t": "nack", "why": "x", "cmd": "x"})
+        fz.judge(e, None)
+        return True
+    except ValueError:
+        return False
+
+
+check("every expectation in the corpus is one judge understands",
+      all(_judge_ok(c.expect) for c in fz.CASES) and not _judge_ok("nack-typo"))
+
+
+print("probe client (offline, against a fake board)")
+import fuzz as fuzzmod
+from wire import ProbeClient
+
+
+class _FakeTransport:
+    def __init__(self, ws):
+        self.ws = ws
+
+    def abort(self):
+        self.ws.aborted = True
+        self.ws.inbox.put_nowait(None)
+
+
+class _FakeWS:
+    """A few handlers' worth of protocol-2 board: enough to drive the probe
+    and the fuzz runner through every reply path without a K10."""
+
+    def __init__(self):
+        self.inbox = asyncio.Queue()
+        self.sent = []
+        self.aborted = False
+        self.close_code = None
+        self.transport = _FakeTransport(self)
+        self.seated = False
+        self.inbox.put_nowait(json.dumps({"t": "lobby", "avail": [3, 5]}))
+
+    def _reply(self, rid, cmd, why=None):
+        if rid is None:
+            return
+        m = {"t": "nack" if why else "ack", "rid": rid, "cmd": cmd}
+        if why:
+            m["why"] = why
+        self.inbox.put_nowait(json.dumps(m))
+
+    async def send(self, data):
+        if not isinstance(data, str):
+            if not isinstance(data, (bytes, bytearray)):
+                data = "".join(data)     # fragmented: the board drops it
+                self.sent.append(("frag", data))
+                return
+            self.sent.append(("bin", data))
+            return
+        self.sent.append(("text", data))
+        # Mimic the firmware's own scanner rather than a JSON parser.
+        import re as _re
+        t = _re.search(r'"t"\s*:\s*"([^"]*)"', data)
+        rid = _re.search(r'"rid"\s*:\s*(-?[^,}]*)', data)
+        ridv = None
+        if rid:
+            raw = rid.group(1).strip()
+            try:
+                v = int(raw)
+                ridv = v % (1 << 32) if v >= 0 and v < (1 << 32) else 4294967295
+            except ValueError:
+                ridv = 0
+        if not t:
+            return
+        cmd = t.group(1)
+        if cmd == "pick":
+            self.seated = True
+            self._reply(ridv, cmd)
+            self.inbox.put_nowait(json.dumps({"t": "asgn", "id": 5}))
+            self.inbox.put_nowait(json.dumps({"t": "sync", "id": 5, "pv": 2, "tk": 1,
+                                              "p": [{"on": 0}] * 5 + [{"on": 1, "ll": 5}]}))
+        elif cmd == "check":
+            self._reply(ridv, cmd, "bad_arg" if '"sk":9' in data else None)
+        elif cmd == "m" and not self.seated:
+            self._reply(ridv, cmd, "not_seated")
+        else:
+            self._reply(ridv, cmd, "unknown_cmd")
+
+    async def close(self):
+        self.close_code = 1000
+        self.inbox.put_nowait(None)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        m = await self.inbox.get()
+        if m is None:
+            raise StopAsyncIteration
+        return m
+
+
+async def _probe_checks():
+    fws = _FakeWS()
+
+    async def _connect(url, **kw):
+        return fws
+    fl = FindingLog()
+    pc = ProbeClient("fake", fl, min_interval=0.0, connect=_connect)
+    fuzzmod.SILENCE_WAIT_S = 0.05
+    fuzzmod.REPLY_WAIT_S = 0.5
+    await pc.open()
+    await pc.wait_for(lambda m: m.get("t") == "lobby", 1.0)
+    res = {}
+    by = {c.name: c for c in fz.CASES}
+    for name in ("unseated:m", "frame:not-json", "frame:binary", "frame:fragmented",
+                 "rid:string", "rid:huge", "prefix:e"):
+        why, _sent, _reply = await fuzzmod.run_case(pc, by[name])
+        res[name] = why
+    slot = await pc.seat()
+    why, _s, _r = await fuzzmod.run_case(pc, by["check:sk-9"])
+    res["check:sk-9"] = why
+    wrong = fz.Case("wrong", {"t": "check", "sk": 9, "dn": 5}, "ack")
+    res["wrong"], _s, _r = await fuzzmod.run_case(pc, wrong)
+    before = pc.arch
+    await pc.abort()
+    await pc.closed.wait()
+    return res, slot, fl, pc, before, fws
+
+_res, _slot, _pfl, _pc, _parch, _fws = asyncio.run(_probe_checks())
+check("probe: every fuzz case the fake board satisfies passes",
+      all(v is None for k, v in _res.items() if k != "wrong"))
+check("probe: a wrong expectation is reported, not swallowed", _res["wrong"] is not None)
+check("probe: a mangled rid is matched to what strtoul made of it",
+      not any(s[0] == "reply_unmatched" for s in _pfl.counts))
+check("probe: seat() takes the highest free slot and waits for sync",
+      _slot == 5 and _parch == 5)
+check("probe: silent cases leave nothing in flight", not _pc.tracker.inflight)
+check("probe: abort drops the socket without a close handshake",
+      _fws.aborted and _pc.closed.is_set())
+check("probe: fragments really are sent fragmented",
+      any(kind == "frag" for kind, _d in _fws.sent))
+
+print("sentinel")
+_os = Observation()
+_os.apply(copy.deepcopy(sync))
+_os.pid = 2
+_os.map = w
+_me = _os.players[2]
+_me.q, _me.r, _me.connected, _me.ll, _me.mp = 10, 10, True, 7, 0
+_me.inv = [5, 3, 0, 0, 0]
+_me.valid_moves = 0
+_sent_pol = pmod.make("sentinel", random.Random(3))
+_sm_pol = pmod.make("scoremax", random.Random(3))
+_sa = _sent_pol.decide(_os).to_msg()
+_ma = _sm_pol.decide(_os).to_msg()
+check("scoremax rests out of MP, the sentinel does not",
+      _ma and _ma.get("a") == config.ACT_REST
+      and not (_sa and _sa.get("t") == "act" and _sa.get("a") == config.ACT_REST))
+_me.ll = 1
+_sa = _sent_pol.decide(_os).to_msg()
+check("not even at critical LL", not (_sa and _sa.get("a") == config.ACT_REST))
+import arena as _arena
+try:
+    _arena.parse_args(["--policies", "sentinel", "--mode", "sprint"])
+    _sprint_ok = True
+except SystemExit:
+    _sprint_ok = False
+check("arena refuses a sentinel in sprint mode", not _sprint_ok)
+check("arena --target 0 is a time-only run", _arena.parse_args(["--target", "0"]).target == 0)
+
+print("sentinel camp")
+from policy.sentinel import camp_value
+
+
+def _sobs(q=10, r=10, mp=5, inv=(5, 3, 0, 0, 2)):
+    o = Observation()
+    o.apply(copy.deepcopy(sync))
+    o.pid = 2
+    o.map = copy.deepcopy(w)
+    me = o.players[2]
+    me.q, me.r, me.connected, me.ll, me.mp = q, r, True, 6, mp
+    me.food, me.water, me.depth = 4, 4, 0
+    me.inv = list(inv)
+    me.inv_type = [0] * config.INV_SLOTS_MAX
+    me.equip = [0] * config.EQUIP_SLOTS
+    me.valid_moves = 0b111111 if mp else 0
+    return o
+
+
+def _is(act, a):
+    m = act.to_msg()
+    return bool(m) and m.get("t") == "act" and m.get("a") == a
+
+
+check("camp: water beats forage beats bare scrub",
+      camp_value(mk(3), 0, 0, 0) > camp_value(mk(0), 0, 0, 0) > camp_value(mk(7), 0, 0, 0))
+check("camp: never radioactive, a hatch, the river or impassable",
+      all(camp_value(mk(t), 0, 0, 0) is None for t in (1, 6, 10, 11, 12, 13)))
+check("camp: an existing shelter is worth walking to",
+      camp_value(Cell(terrain=0, footprints=0, shelter=2, poi=False, tire_track=False,
+                      resource=0, variant=0), 0, 0, 3) > camp_value(mk(0), 0, 0, 0))
+
+_so = _sobs()
+_so.map.grid[10][12] = mk(3)                    # a Marsh two steps east
+_sp = pmod.make("sentinel", random.Random(5))
+_a = _sp.decide(_so)
+check("picks the Marsh and walks to it", _sp.camp == (12, 10) and _a.kind == "move")
+
+_so.players[2].q = 12                           # arrive
+_a1 = _sp.decide(_so)
+_a2 = _sp.decide(_so)
+check("in camp with 2 scrap it builds a shelter", _is(_a1, config.ACT_SHELTER))
+check("and does not re-send it while the map catches up",
+      not _is(_a2, config.ACT_SHELTER))
+_so.apply({"t": "ev", "k": "act", "pid": 2, "a": config.ACT_SHELTER, "out": 1, "cnd": 2})
+check("state.py applies the act event's shelter level to the map",
+      _so.map[(12, 10)].shelter == 2)
+_so.players[2].inv = [1, 3, 0, 0, 0]
+check("in camp and short of water it draws it from the Marsh",
+      _is(_sp.decide(_so), config.ACT_WATER))
+_so.players[2].inv = [5, 3, 0, 0, 0]
+_a = _sp.decide(_so)
+check("stocked and sheltered, it stays put", _a.kind == "noop" and "camp" in _a.why)
+_so.players[2].mp = 0
+_so.players[2].valid_moves = 0
+check("out of MP early in the day it stays awake", not _is(_sp.decide(_so), config.ACT_REST))
+_sp._dawn_tick = _so.tick - _sp.rest_at_ticks   # late in a day it watched begin
+_a = _sp.decide(_so)
+check("late in the day it rests, in camp", _is(_a, config.ACT_REST)
+      and _sp.camp_stats["rests_in_camp"] == 1)
+
+_so.apply({"t": "ev", "k": "quake", "cells": [{"q": 12, "r": 10}],
+           "destroyed": [{"q": 12, "r": 10}], "converted": []})
+check("state.py: a quake knocks the shelter down", _so.map[(12, 10)].shelter == 0)
+_so.apply({"t": "ev", "k": "settle", "removed": [], "q": 12, "r": 10})
+check("state.py: a settlement founding changes the terrain", _so.map[(12, 10)].terrain == 9)
+_so.apply({"t": "ev", "k": "quake", "destroyed": [{"r": 3}], "converted": []})
+check("state.py: an event without coordinates touches nothing",
+      _so.map[(74, 3)].shelter == 0 and _so.map[(74, 56)].terrain == 0)
+
+_sc = _sobs(q=30, r=30, mp=2, inv=(5, 3, 0, 0, 1))
+_sp2 = pmod.make("sentinel", random.Random(6))
+_sp2._day = _sc.day                             # a day it watched begin...
+_sp2.camp = (40, 40)                            # ...with camp far away
+_sp2._dawn_tick = _sc.tick - _sp2.rest_at_ticks
+check("caught out at bedtime on exposed ground, it shelters where it stands",
+      _is(_sp2.decide(_sc), config.ACT_SHELTER))
+_sc.apply({"t": "ev", "k": "act", "pid": 2, "a": config.ACT_SHELTER, "out": 1, "cnd": 1})
+check("then goes to sleep", _is(_sp2.decide(_sc), config.ACT_REST))
+
+print("config drift (firmware source is the authority)")
+_fw_src = _ino + "".join((_FW / f).read_text(encoding="utf-8")
+                         for f in ("tunnels.hpp",))
+
+
+def _fw_value(name):
+    m = re.search(r"\b" + name + r"\s*(?:\[[^\]]*\])?\s*=\s*(\{[^}]*\}|-?\d+)", _fw_src)
+    if not m:
+        return None
+    v = m.group(1)
+    if v.startswith("{"):
+        return tuple(int(x) for x in re.findall(r"-?\d+", v))
+    return int(v)
+
+
+_mirrored = ["MAP_COLS", "MAP_ROWS", "MAX_PLAYERS", "TICK_MS", "DAY_TICKS",
+             "NUM_TERRAIN", "INV_SLOTS_MAX", "EQUIP_SLOTS", "TUN_COLS", "TUN_ROWS",
+             "MAX_HATCHES", "VENT_ASCEND_MP", "ITEM_BILE_FLARE", "TUNNEL_REST_LL_PCT",
+             "DQ", "DR", "TERRAIN_MC", "TERRAIN_SV", "TERRAIN_FORAGE_DN",
+             "TERRAIN_SALVAGE_DN", "TERRAIN_HAS_WATER", "TERRAIN_IS_RUINS", "TERRAIN_IS_RAD",
+             "ACT_FORAGE", "ACT_WATER", "ACT_TREAT", "ACT_SCAV", "ACT_SHELTER",
+             "ACT_CRAFT", "ACT_SURVEY", "ACT_REST",
+             "WEATHER_CLEAR", "WEATHER_RAIN", "WEATHER_STORM", "WEATHER_CHEM",
+             "WEATHER_FOG", "WEATHER_MIST"]
+_drift = []
+for _n in _mirrored:
+    _fv = _fw_value(_n)
+    _pv = getattr(config, _n)
+    _pv = tuple(_pv) if isinstance(_pv, (list, tuple)) else _pv
+    if _fv is None:
+        _drift.append((_n, "not found in firmware"))
+    elif _fv != _pv:
+        _drift.append((_n, f"firmware {_fv} != config.py {_pv}"))
+check(f"config.py matches the firmware on {len(_mirrored)} constants {_drift}", not _drift)
+
+print("soak report")
+import soak as soakmod
+check("heap slope is per minute", round(soakmod.slope_per_min(
+    [(0, 1000), (60, 900), (120, 800)]), 1) == -100.0)
+_srows = [{"ts": 0.0, "ch": "run", "arch": -1, "d": {}}]
+for _d in range(1, 8):
+    _srows.append({"ts": _d * 300.0, "ch": "rx", "arch": 0,
+                   "d": {"t": "ev", "k": "dawn", "pid": 0, "day": _d, "sq": _d}})
+for _m in range(0, 36):
+    _srows.append({"ts": _m * 60.0, "ch": "telemetry", "arch": -1,
+                   "d": {"heap": 150000 - _m * 1000, "minHeap": 90000,
+                         "maxTickMs": 120, "evtDrops": 0}})
+_srows.append({"ts": 400.0, "ch": "rx", "arch": 0,
+               "d": {"t": "ev", "k": "dmg", "pid": 0, "amt": 1, "cause": "chem storm", "sq": 50}})
+_sfl = FindingLog()
+_rep = soakmod.soak_report(_srows, _sfl, out=io.StringIO())
+check("soak reads full-length days", _rep["mean_day_min"] == 5.0 and _rep["short_days"] == 0)
+check("soak counts real-clock hazards", _rep["hazards"].get("chem storm") == 1)
+check("a steady heap decline over a long soak is a leak finding",
+      ("heap_trend",) in _sfl.counts)
+
+print("chaos")
+import chaos as chaosmod
+check("chaos scenarios are registered",
+      {"reconnect_storm", "seat_race", "abort_request", "abort_encounter",
+       "trade_then_leave", "stalled_reader"} == set(chaosmod.SCENARIOS))
 
 print(f"\n{ok} checks passed")

@@ -234,6 +234,7 @@ static bool useItem(int pid, uint8_t slotIdx) {
 
 
   // Apply stat modifiers — food/water via threshold-aware steps to propagate LL events
+  const uint8_t llBefore = p.ll;
   int llDelta = 0;
   if (def->statMods[STAT_FOOD]) {
     int steps = (int)def->statMods[STAT_FOOD];
@@ -245,6 +246,15 @@ static bool useItem(int pid, uint8_t slotIdx) {
   }
   llDelta += (int)def->statMods[STAT_LL];
   if (llDelta != 0) p.ll = (uint8_t)constrain((int)p.ll + llDelta, 0, (int)effectiveMaxLL(pid));
+  // items.cfg allows a harmful consumable (signed ll, food, water). Every other
+  // LL-to-zero path queues EVT_DOWNED; without this one the survivor would sit
+  // at LL 0 never downed -- no respawn, no seat freed, no death on the wire.
+  if (llBefore > 0 && p.ll == 0) {   // never a second EVT_DOWNED for one death
+    p.movesLeft = 0;
+    GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+    dev.res = DC_ACTION;
+    dev.evWsId = p.wsClientId; enqEvt(dev);
+  }
   if (def->statMods[STAT_RAD]) p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD], 0, 10);
   if (def->statMods[STAT_MP])  p.movesLeft = (int8_t)max(0, (int)p.movesLeft + def->statMods[STAT_MP]);
 

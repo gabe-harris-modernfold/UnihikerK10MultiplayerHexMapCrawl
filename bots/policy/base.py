@@ -98,5 +98,11 @@ class Policy:
         to accumulate history (e.g. tracking which POIs a rival has taken)."""
         pass
 
+    def on_reply(self, cmd: str, ok: bool, why: str | None) -> None:
+        """Optional hook: the board's verdict on one of our own requests
+        (protocol 2+ only -- see docs/bot-testing.md "Replies").  `why` is
+        the nack code, e.g. "no_mp", "resting", "in_enc"; None on an ack."""
+        pass
+
     def __repr__(self):
         return f"<{type(self).__name__} {self.name}>"

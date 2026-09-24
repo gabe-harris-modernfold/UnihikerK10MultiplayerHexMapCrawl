@@ -7,26 +7,32 @@
 
 static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* qp = strstr(data, "\"q\""); if (!qp) return;
-  const char* qv = strchr(qp + 3, ':');  if (!qv) return;
-  const char* rp = strstr(data, "\"r\""); if (!rp) return;
-  const char* rv = strchr(rp + 3, ':');  if (!rv) return;
+  // The q/r check is the one docs/bot-testing.md calls out: {"t":"enc_start"}
+  // alone used to be discarded here with no reply at all.
+  const char* qp = strstr(data, "\"q\""); if (!qp) { wsNack(client, "parse"); return; }
+  const char* qv = strchr(qp + 3, ':');  if (!qv) { wsNack(client, "parse"); return; }
+  const char* rp = strstr(data, "\"r\""); if (!rp) { wsNack(client, "parse"); return; }
+  const char* rv = strchr(rp + 3, ':');  if (!rv) { wsNack(client, "parse"); return; }
   int hq = atoi(qv + 1), hr = atoi(rv + 1);
   // Bounds are checked against whichever board the player is on, below --
   // the tunnel board is 16x10, not 75x57. Reject obvious garbage here.
-  if (hq < 0 || hr < 0) return;
+  if (hq < 0 || hr < 0) { wsNack(client, "bad_arg"); return; }
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"mutex_timeout\"}");
+    wsNack(client, "busy");
     return;
   }
   int pid = findSlot(client->id());
   if (pid < 0) {
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"no_slot\"}");
+    wsNack(client, "not_seated");
   } else if (encounters[pid].active) {
     client->text("{\"t\":\"err\",\"msg\":\"Already in an encounter — abort first\"}");
+    wsNack(client, "in_enc");
   } else if (G.players[pid].ll == 0) {
     client->text("{\"t\":\"err\",\"msg\":\"Cannot enter — you are downed\"}");
+    wsNack(client, "downed");
   } else {
     Player&  p    = G.players[pid];
     bool     below = (p.depth != 0);
@@ -34,6 +40,7 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
                               : (hq < MAP_COLS && hr < MAP_ROWS);
     if (!inBounds) {
       client->text("{\"t\":\"err\",\"msg\":\"No such hex\"}");
+      wsNack(client, "bad_arg");
       xSemaphoreGive(G.mutex);
       return;
     }
@@ -50,17 +57,22 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
     int myR = below ? (int)p.tr : (int)p.r;
     if (myQ != hq || myR != hr) {
       client->text("{\"t\":\"err\",\"msg\":\"Not at that hex\"}");
+      wsNack(client, "not_here");
     } else if (cell.poi == 0) {
       client->text("{\"t\":\"err\",\"msg\":\"Already looted\"}");
+      wsNack(client, "no_poi");
     } else if (claimed) {
       client->text("{\"t\":\"err\",\"msg\":\"Another survivor is already inside\"}");
+      wsNack(client, "claimed");
     } else if (terrain >= NUM_TERRAIN || encPools[terrain].count == 0) {
       client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
+      wsNack(client, "no_pool");
     } else {
       uint8_t idx = cell.poi;
       const char* json = encLoadFile(terrain, idx);
       if (!json) {
         client->text("{\"t\":\"err\",\"msg\":\"The way in is blocked\"}");
+        wsNack(client, "load_failed");
       } else {
         cell.poi = 0;  // consume POI; restored if the encounter ends involuntarily
         if (G.threatClock < 20) G.threatClock++;
@@ -109,14 +121,18 @@ static void grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
 static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   // {"t":"enc_choice","ci":N}
-  const char* cp = strstr(data, "\"ci\""); if (!cp) return;
-  const char* cv = strchr(cp + 4, ':');   if (!cv) return;
+  const char* cp = strstr(data, "\"ci\""); if (!cp) { wsNack(client, "parse"); return; }
+  const char* cv = strchr(cp + 4, ':');   if (!cv) { wsNack(client, "parse"); return; }
   int ci = atoi(cv + 1);
-  if (ci < 0 || ci > 15) return;
+  if (ci < 0 || ci > 15) { wsNack(client, "bad_arg"); return; }
 
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   int pid = findSlot(client->id());
-  if (pid < 0 || !encounters[pid].active || G.players[pid].ll == 0) { xSemaphoreGive(G.mutex); return; }
+  if (pid < 0 || !encounters[pid].active || G.players[pid].ll == 0) {
+    xSemaphoreGive(G.mutex);
+    wsNack(client, pid < 0 ? "not_seated" : !encounters[pid].active ? "no_enc" : "downed");
+    return;
+  }
   Player&          p   = G.players[pid];
   ActiveEncounter& enc = encounters[pid];
 
@@ -125,6 +141,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   if (!json || !encResolveChoice(json, enc.nodeKey, ci, ch)) {
     Log.warning("enc_choice pid=%d node=%s ci=%d: not found", pid, enc.nodeKey, ci);
     client->text("{\"t\":\"err\",\"msg\":\"That choice is not open to you\"}");
+    wsNack(client, "no_choice");
     xSemaphoreGive(G.mutex); return;
   }
 
@@ -133,6 +150,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
                    (p.inv[4] >= ch.costScrap) && (p.inv[3] >= ch.costMed);
   if (!canAfford) {
     client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
+    wsNack(client, "no_res");
     xSemaphoreGive(G.mutex); return;
   }
   // Deduct costs (a negative cost is a gain; LL gains respect the ceiling)
@@ -142,6 +160,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   p.inv[0]    = (uint8_t)constrain((int)p.inv[0] - ch.costWat,   0, 99);
   p.inv[4]    = (uint8_t)constrain((int)p.inv[4] - ch.costScrap, 0, 99);
   p.inv[3]    = (uint8_t)constrain((int)p.inv[3] - ch.costMed,   0, 99);
+  const bool costKilled = (p.ll == 0);   // the price of the choice took the last LL
 
   uint8_t dn = computeEncounterDN(pid, (uint8_t)ch.baseRisk, ch.skill);
   CheckResult cr = resolveCheck(pid, ch.skill, dn, 0);
@@ -226,6 +245,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   if (encounterEnded) {
     if (p.ll == 0) {
       GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+      devt.res = (costKilled || cr.success) ? DC_ENC_COST : DC_ENC_HAZARD;
       enqEvt(devt);
     }
     endEncounter(pid, (p.ll == 0) ? ENC_END_DOWNED : ENC_END_HAZARD, /*restorePoi=*/false);
@@ -260,15 +280,18 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       }
     }
   }
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   bool banked = false;
   int pid = findSlot(client->id());
+  if (pid < 0)                         wsNack(client, "not_seated");
+  else if (!encounters[pid].active)    wsNack(client, "no_enc");
   if (pid >= 0 && encounters[pid].active) {
     Player& p = G.players[pid];
     ActiveEncounter& enc = encounters[pid];
     bool fullClear = (enc.active & (1 << 7)) != 0;
     if (!fullClear && !enc.canBank) {
       client->text("{\"t\":\"err\",\"msg\":\"You can't carry loot out from here\"}");
+      wsNack(client, "cannot_bank");
     } else {
       int totalRes = 0;
       for (int i = 0; i < 5; i++) {
@@ -322,11 +345,13 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
 
 static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   int pid = findSlot(client->id());
   if (pid >= 0 && encounters[pid].active) {
     if (G.threatClock < 20) G.threatClock++;
     endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);  // walking away closes the place for good
+  } else {
+    wsNack(client, pid < 0 ? "not_seated" : "no_enc");
   }
   xSemaphoreGive(G.mutex);
 }

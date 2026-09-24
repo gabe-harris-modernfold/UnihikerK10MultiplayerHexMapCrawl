@@ -328,9 +328,20 @@ static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
 static void setupWiFiAndServer() {
   Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
+  WiFi.setHostname(MDNS_HOST);   // DHCP hostname; must precede WiFi.mode()
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);
   Log.notice("AP start SSID=%s maxClients=%d", AP_SSID, AP_MAX_CLIENTS);
+  // http://k10.local/ -- the DHCP lease moves on every reboot, and a crash
+  // mid-run used to mean a subnet sweep to find the board again. The
+  // responder picks up each interface (softAP now, STA once it joins, and the
+  // AP-only fallback) from the IP events itself.
+  if (MDNS.begin(MDNS_HOST)) {
+    MDNS.addService("http", "tcp", 80);
+    Log.notice("mDNS responder up host=%s.local", MDNS_HOST);
+  } else {
+    Log.warning("mDNS responder failed to start");
+  }
   wifiStoreLoad();
   {
     // Fast path first: the ESP32's own one-slot credential is whatever network
@@ -417,6 +428,28 @@ static void setupWiFiAndServer() {
       j += ",\"weather\":";     j += G.weatherPhase;
       j += ",\"connected\":";   j += G.connectedCount;
       j += ",\"evtQueue\":";    j += pendingCount;
+      // Event loss: evSeq is the last "sq" handed out, evtDrops how many of
+      // those never made it onto the wire because the queue was full.
+      j += ",\"evSeq\":";       j += g_evSeq;
+      j += ",\"evtDrops\":";    j += g_evtDrops;
+      j += ",\"pv\":";          j += PROTO_VERSION;
+      // Why the board last booted, and the last crash it recorded (if any).
+      // reset PANIC / *WDT with a small uptimeMs = it fell over mid-run.
+      j += ",\"boot\":{\"reset\":\""; j += g_resetReason;
+      j += "\",\"host\":\"";            j += MDNS_HOST; j += ".local\"";
+      if (g_crash.valid) {
+        char cb[200];
+        int cn = snprintf(cb, sizeof(cb),
+          ",\"crash\":{\"task\":\"%s\",\"pc\":\"0x%08lx\",\"cause\":%lu,"
+          "\"vaddr\":\"0x%08lx\",\"elf\":\"%s\",\"bt\":[",
+          g_crash.task, (unsigned long)g_crash.pc, (unsigned long)g_crash.cause,
+          (unsigned long)g_crash.vaddr, g_crash.elf);
+        for (int i = 0; i < g_crash.depth && cn < (int)sizeof(cb) - 16; i++)
+          cn += snprintf(cb + cn, sizeof(cb) - cn, "%s\"0x%08lx\"",
+                         i ? "," : "", (unsigned long)g_crash.bt[i]);
+        j += cb; j += "]}";
+      }
+      j += "}";
       // Memory telemetry — lets a browser poll heap trend without a serial
       // monitor (see docs/dev-loop.md "Diagnosing HTTP stalls").
       j += ",\"mem\":{\"heap\":";    j += (uint32_t)ESP.getFreeHeap();

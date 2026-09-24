@@ -57,6 +57,7 @@ static void duskCheck() {
       if (p.ll == 0) {
         p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+        devt.res = DC_RADIATION;
         enqEvt(devt);
       }
       ev.actLLD   = -1;
@@ -117,6 +118,7 @@ static void dawnUpkeep() {
     } else {
       applyFStep(p, -1, llDelta);
     }
+    const int foodLL = llDelta;   // for the cause of death, if this dawn kills
 
     // ── Water (§4.2): consume 2 tokens ───────────────────────────────────────
     {
@@ -128,6 +130,7 @@ static void dawnUpkeep() {
       for (int i = 0; i < miss; i++) applyWStep(p, -1, llDelta);
       if (qmCamp && use >= 2) applyWStep(p, +1, llDelta);
     }
+    const int waterLL = llDelta - foodLL;
 
     // ── Exposure (§7.3): no built shelter + terrain SV < 2 → LL−EXPOSURE_BITE
     //
@@ -298,6 +301,12 @@ static void dawnUpkeep() {
 
     if (downed) {
       GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
+      // Exposure never kills (above), so it is one of the losses applied in
+      // the loop: food, then water, then bad air. The last of those that
+      // actually took LL took the last point.
+      devt.res = (airDelta < 0) ? DC_BAD_AIR
+               : (waterLL  < 0) ? DC_THIRST
+               : (foodLL   < 0) ? DC_HUNGER : DC_UNKNOWN;
       enqEvt(devt);
     }
     int8_t actualDelta = (int8_t)((int)p.ll - (int)prevLL); // true LL change (clamped)
@@ -489,20 +498,20 @@ static uint8_t computeValidMoves(int pid) {
 //
 // p.q/p.r are NOT touched: they stay pinned to the hatch this player descended
 // through. See the invariant note at the top of tunnels.hpp.
-static void moveTunnel(int pid, int dir) {
-  if (dir < 0 || dir > 5) return;
+static const char* moveTunnel(int pid, int dir) {
+  if (dir < 0 || dir > 5) return "bad_dir";
   Player& p = G.players[pid];
-  if (p.ll == 0) return;               // downed -- the downed path surfaces them
-  if (encounters[pid].active) return;  // locked during an active encounter
-  if (p.resting) return;
+  if (p.ll == 0) return "downed";               // downed -- the downed path surfaces them
+  if (encounters[pid].active) return "in_enc";  // locked during an active encounter
+  if (p.resting) return "resting";
 
   int nq = p.tq + DQ[dir];
   int nr = p.tr + DR[dir];
-  if (!tunIn(nq, nr)) return;          // the tunnel board does not wrap: that is a wall
+  if (!tunIn(nq, nr)) return "wall";   // the tunnel board does not wrap: that is a wall
 
   uint8_t destTerrain = G.tunnel[nr][nq].terrain;
   uint8_t mc          = 0;
-  if (!canEnterTerrain(pid, destTerrain, &mc)) return;  // Collapsed Tunnel (15) is MC 255
+  if (!canEnterTerrain(pid, destTerrain, &mc)) return "terrain";  // Collapsed Tunnel (15) is MC 255
 
   // Guide trait (archetype 0), same as the surface: a companion moving onto the
   // hex a Guide occupies follows their line and pays MC-1. Compares depth as
@@ -519,11 +528,11 @@ static void moveTunnel(int pid, int dir) {
     }
   }
 
-  if (p.movesLeft == 0) return;
+  if (p.movesLeft == 0) return "no_mp";
 
   uint32_t cd  = (uint32_t)MOVE_CD_MS * mc;
   uint32_t now = millis();
-  if (now - p.lastMoveMs < cd) return;   // cooldown -- silent, same as the surface
+  if (now - p.lastMoveMs < cd) return "cooldown";   // same as the surface
   p.lastMoveMs = now;
 
   p.tq = (int16_t)nq;
@@ -549,22 +558,25 @@ static void moveTunnel(int pid, int dir) {
   // Landing on a shaft climbs out (tunnels.hpp).  After the pickup, so the
   // last thing you grab on the way past still lands in the pack.
   tunnelStepUp(pid);
+  return nullptr;
 }
 
 // ── Player move ───────────────────────────────────────────────────────────────
-static void movePlayer(int pid, int dir) {
-  if (dir < 0 || dir > 5) return;
+// Returns nullptr when the step was taken, else why not (a nack code -- see
+// network-reply.hpp). None of these refusals change anything.
+static const char* movePlayer(int pid, int dir) {
+  if (dir < 0 || dir > 5) return "bad_dir";
   Player& p  = G.players[pid];
-  if (p.depth) { moveTunnel(pid, dir); return; }  // underground: different board, different rules
-  if (p.ll == 0) return;  // downed — waiting for slot reset
-  if (encounters[pid].active)  return;  // locked during active encounter
-  if (p.resting) return;
+  if (p.depth) return moveTunnel(pid, dir);  // underground: different board, different rules
+  if (p.ll == 0) return "downed";  // downed — waiting for slot reset
+  if (encounters[pid].active)  return "in_enc";  // locked during active encounter
+  if (p.resting) return "resting";
   int     nq = wrapQ(p.q + DQ[dir]);
   int     nr = wrapR(p.r + DR[dir]);
 
   uint8_t destTerrain = G.map[nr][nq].terrain;
   uint8_t mc          = 0;
-  if (!canEnterTerrain(pid, destTerrain, &mc)) return;
+  if (!canEnterTerrain(pid, destTerrain, &mc)) return "terrain";
 
   // ── Weather movement penalty ─────────────────────────────────────────────
   mc = (uint8_t)min(255, (int)mc + (int)WEATHER_MOVE_PENALTY[G.weatherPhase] + floodMovePenalty(nq, nr));
@@ -585,12 +597,12 @@ static void movePlayer(int pid, int dir) {
 
   // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
   if (p.movesLeft == 0) {
-    return;
+    return "no_mp";
   }
 
   uint32_t cd  = (uint32_t)MOVE_CD_MS * mc;
   uint32_t now = millis();
-  if (now - p.lastMoveMs < cd) return;  // cooldown — silent, normal behaviour
+  if (now - p.lastMoveMs < cd) return "cooldown";  // normal behaviour, not an error
   p.lastMoveMs = now;
 
   p.q = (int16_t)nq;
@@ -641,9 +653,12 @@ static void movePlayer(int pid, int dir) {
         p.ll--;
         ledFlash(0, 100, 0);
         k10Play(MOTIF_ACID_DRIP);
+        { GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
+          dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg); }
         if (p.ll == 0) {
           p.movesLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.res = DC_CHEM;
           dev.evWsId = p.wsClientId; enqEvt(dev);
         }
       }
@@ -677,4 +692,5 @@ static void movePlayer(int pid, int dir) {
   // (tunnels.hpp).  Last, so the surface EVT_MOVE reaches clients before the
   // EVT_TUNNEL_ENTER that follows it.
   tunnelStepDown(pid);
+  return nullptr;
 }

@@ -6,9 +6,15 @@ rather than by moving a global dial.
 
 ## How a cause is recovered
 
-Nothing on the wire says "cause of death" -- `EVT_DOWNED` carries a pid and
-nothing else.  Every LL loss in the firmware does, however, leave a distinct
-signature, so each death is matched against the damage record nearest to it:
+**Protocol 2+ firmware says so.**  `downed` (and the `left` that follows it)
+carries `"cause"`, set at the site that took the last LL, in the same names
+this module reports; chem storm and Strangle Fog losses arrive as `dmg`
+events.  A death with a wire cause is taken at its word (`via == "wire"`).
+
+Everything below is the fallback for recordings from older firmware, where
+`EVT_DOWNED` carried a pid and nothing else.  Every LL loss in the firmware
+does, however, leave a distinct signature, so each death is matched against
+the damage record nearest to it:
 
 | Cause | Firmware site | Wire signature |
 |---|---|---|
@@ -22,10 +28,10 @@ signature, so each death is matched against the damage record nearest to it:
 | encounter hazard | `handleMsg_enc_choice` fail branch | `enc_res` `out == 0`, `penLL < 0` |
 | encounter cost | `handleMsg_enc_choice` `ch.costLL` | `enc_res` `out == 1` then a death (see below) |
 | action | `handleMsg_act` | `act` with `lld < 0` |
-| chem storm | `tickGame` chem hazard | **nothing** |
-| strangle fog | `tickGame` fog hazard | **nothing** |
+| chem storm | `tickGame` chem hazard | `dmg` `cause == "chem storm"` (protocol 2+; nothing before) |
+| strangle fog | `tickGame` fog hazard | `dmg` `cause == "strangle fog"` (protocol 2+; nothing before) |
 
-The last two emit no event at all -- the LL simply drops.  They are inferred:
+On older firmware the last two emit no event at all -- the LL simply drops.  They are inferred:
 a death with no damage record nearby, while the sampled weather phase was
 chem or fog, is attributed to that weather; anything else left over is
 reported honestly as `unattributed` rather than folded into a neighbour.
@@ -68,9 +74,12 @@ SILENT_WEATHER = {3: "chem storm", 4: "strangle fog"}
 def _dedupe(rows, kinds=None):
     """One copy of each broadcast event, in time order.
 
-    Keyed on the payload plus a coarse time bucket rather than an exact
-    timestamp: every bot records its own copy at its own receive time, and
-    those differ by a millisecond or two.
+    Protocol 2+ stamps every queued event with its sequence number "sq",
+    which is exact: one game event, one sq, however many sockets saw it.  (One
+    event can produce two messages -- downed and left -- so the key includes
+    the kind.)  Older recordings fall back to the payload plus a coarse time
+    bucket: every bot records its own copy at its own receive time, and those
+    differ by a millisecond or two.
     """
     seen, out = {}, []
     for r in rows:
@@ -82,6 +91,13 @@ def _dedupe(rows, kinds=None):
         k = d.get("k")
         if kinds and k not in kinds:
             continue
+        if "sq" in d:
+            key = ("sq", d["sq"], k)
+            if key in seen:
+                continue
+            seen[key] = r["ts"]
+            out.append((r["ts"], d))
+            continue
         key = json.dumps(d, sort_keys=True)
         last = seen.get(key)
         if last is not None and r["ts"] - last < 0.5:
@@ -91,6 +107,12 @@ def _dedupe(rows, kinds=None):
         out.append((r["ts"], d))
     out.sort(key=lambda tv: tv[0])
     return out
+
+
+def _rank(cause):
+    """Position in CAUSE_ORDER; a name it does not know sorts last rather than
+    raising.  smoke.py checks that the firmware's DC_NAME list is covered."""
+    return CAUSE_ORDER.index(cause) if cause in CAUSE_ORDER else len(CAUSE_ORDER)
 
 
 def _bits(mask):
@@ -205,6 +227,10 @@ class DamageLedger:
             elif k == "act":
                 if d.get("lld", 0) < 0:
                     causes = {"action": -d["lld"]}
+            elif k == "dmg":
+                # Protocol 2+: the hazards that used to take LL silently.
+                if d.get("amt", 0) > 0:
+                    causes = {d.get("cause", "unattributed"): d["amt"]}
 
             if causes:
                 self.records.append({"ts": ts, "pid": pid, "causes": causes,
@@ -221,7 +247,14 @@ class DamageLedger:
             if d.get("t") != "ev" or d.get("k") != "downed":
                 continue
             ts, pid = r["ts"], d.get("pid")
-            out.append(self._explain(ts, pid))
+            wire = d.get("cause")
+            if wire:
+                # Named by the firmware at the site that took the last LL.
+                out.append({"ts": ts, "pid": pid, "cause": wire,
+                            "mix": {wire: 1.0}, "via": "wire",
+                            "weather": self.weather_at(ts)})
+            else:
+                out.append(self._explain(ts, pid))
         return out
 
     def _explain(self, ts, pid, back=WINDOW_BACK, fwd=WINDOW_FWD):
@@ -252,7 +285,7 @@ class DamageLedger:
             mix = {"encounter cost": 1.0}
         # The primary cause is the largest component; ties break toward the
         # earlier entry in CAUSE_ORDER, which puts the supply grind first.
-        primary = max(mix, key=lambda c: (mix[c], -CAUSE_ORDER.index(c)))
+        primary = max(mix, key=lambda c: (mix[c], -_rank(c)))
         return {"ts": ts, "pid": pid, "cause": primary, "mix": dict(mix),
                 "via": best["k"], "weather": self.weather_at(ts)}
 

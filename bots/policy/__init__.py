@@ -7,6 +7,7 @@ from .coward import CowardPolicy
 from .rival import RivalPolicy
 from .subterranean import SubterraneanPolicy, TunnelPolicy
 from .tunnelrunner import TunnelRunnerPolicy
+from .sentinel import SentinelPolicy
 
 REGISTRY = {
     "drunk": DrunkPolicy,
@@ -18,6 +19,9 @@ REGISTRY = {
     # purpose; every other policy treats a hatch as a hole to fall into.
     "subterranean": SubterraneanPolicy,
     "tunnelrunner": TunnelRunnerPolicy,
+    # Never rests, so days run their full 5 real minutes and the real-clock
+    # hazards get sampled. The soak bot's policy (soak.py); realtime only.
+    "sentinel": SentinelPolicy,
 }
 
 # The encounter library is ~100 JSON files; parse it once and share the
@@ -47,5 +51,5 @@ def make(name: str, rng, **kw) -> Policy:
 
 __all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
            "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
-           "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy",
+           "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy", "SentinelPolicy",
            "REGISTRY", "make", "shared_library"]

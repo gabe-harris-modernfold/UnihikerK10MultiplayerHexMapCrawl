@@ -9,9 +9,25 @@ knows about the game it learns through the same WebSocket a browser uses.
 
 ## For AI coding agents (read first, ≤ 1 min)
 
-- **Self-test, no board:** `cd bots && python smoke.py` (245 checks). Run this
+- **Self-test, no board:** `cd bots && python smoke.py` (359 checks). Run this
   before every live run; it catches a broken parser in 2 s instead of wasting
-  10 minutes of hardware time.
+  10 minutes of hardware time. It also reads the firmware source and fails on
+  drift: 36 constants mirrored in `config.py`, the dispatch table, and the
+  cause-of-death names.
+- **Every bot is a tester now.** Each connection carries a `WireOracle` and
+  the `/state` poller a `StateOracle` (`oracles.py`); anything the firmware
+  promises and breaks becomes a *finding* (`findings.py`), printed at the end
+  of every run and readable later with `python findings.py <log>`. See
+  "Finding problems" below.
+- **Three probes look for problems on purpose:** `fuzz.py` (malformed and
+  out-of-order messages), `chaos.py` (disconnects, races, stalled sockets),
+  `soak.py` (long realtime runs with a `sentinel` that camps, shelters, and
+  rests only late in each day so the days run nearly full length). All need
+  protocol 2 firmware and refuse to run without it.
+- **Protocol 2 firmware answers every request** that carries a `rid` with one
+  `ack` or `nack` — see "Replies" below. The client sends `rid` on everything;
+  the per-bot `replies:` line at the end of a run is the first place to look
+  when a policy is stuck.
 - **Run an arena:** `python arena.py --host 192.168.4.234 --bots 5
   --policies scoremax,contentmax,coward,rival,scoremax --target 1000`
 - **Analyse:** `python metrics.py` (newest run) or `python metrics.py runs/run-*.jsonl`
@@ -39,12 +55,18 @@ knows about the game it learns through the same WebSocket a browser uses.
 
 | File | Role |
 |---|---|
-| `config.py` | Constants mirrored from the firmware. **No drift detection — update by hand.** |
+| `config.py` | Constants mirrored from the firmware. Updated by hand; `smoke.py` fails if any of 36 of them drift from the firmware source. |
 | `mapdec.py` | Port of `data/map-decoder.js`. Full map + vis-disk decode. |
 | `state.py` | Message → `Observation`. Deliberately tolerant of unknown/missing keys. |
 | `navigate.py` | Dijkstra over the fogged torus using `TERRAIN_MC`. |
 | `encounters.py` | Encounter JSON from local disk; ports `computeEncounterDN` + the 2d6 table. |
-| `client.py` | One bot: transport, rate limiting, slot claiming, connection lifecycle. |
+| `client.py` | One bot: transport, rate limiting, slot claiming, connection lifecycle. Carries a `WireOracle`. |
+| `wire.py` | `ReplyTracker` (rid / ack / nack bookkeeping, shared) and `ProbeClient` (a scriptable connection: `request()`, `send_raw()`, `wait_for()`, `abort()`). |
+| `oracles.py` | The invariants every connection and every `/state` read is checked against. |
+| `findings.py` | The one output format for "found a problem"; also the CLI that reads them back. |
+| `fuzz.py`, `fuzz_cases.py` | Protocol fuzzer and its corpus (data, checked offline by `smoke.py`). |
+| `chaos.py` | Scenarios real players cause and policies never do. |
+| `soak.py` | Long realtime arena preset + the soak report (day length, weather, hazards per minute, heap trend). |
 | `policy/` | `decide(obs) -> Action`. Swappable. `subterranean.py` also owns the shared tunnel machinery. |
 | `arena.py` | Supervisor: reset, spawn, run to target, loop. |
 | `telemetry.py` | Polls `/state` for board health alongside the game log. |
@@ -63,6 +85,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `rival` | Races for contested POIs to deny them; grabs ground items; makes lopsided trade offers. |
 | `subterranean` | **Subterranean Explorer.** Lives in the bunker tunnels: maps the corridors, works them for water and scrap, sleeps below, surfaces only for food. |
 | `tunnelrunner` | **Subterranean Explorer.** Uses the tunnels as transport: dives, walks to the shaft that surfaces furthest away, climbs out and works the fresh ground. |
+| `sentinel` | The soak bot. **Makes camp** (water, forage, an existing shelter or a Settlement; never radioactive or a hatch), **builds a shelter** there (improved when it has 2 scrap, upgrades later, rebuilds after a quake), harvests in place, and stays awake until 90% of each day has passed, **then rests in the shelter** — so days run ~4.5 of 5 minutes and it heals every night. Realtime only — arena refuses it in sprint mode. |
 
 All non-`drunk` policies share `SurvivorPolicy`, which owns the survival floor
 (eat/drink/rest, emergency staple hunting) and encounter handling. Subclasses
@@ -79,7 +102,7 @@ the other five when they fall down a hatch.
 ```
 --bots N            1-6. Leave a slot free if you want to watch in a browser.
 --policies a,b,c    cycled across slots
---target N          score that ends the run
+--target N          score that ends the run; 0 = run on --max-minutes alone
 --mode sprint|realtime
 --runs N            auto-loop with a cap
 --seed N            whole run is reproducible from this
@@ -102,19 +125,150 @@ bot out rather than sending faster.
 
 **The board's address moves.** It takes a DHCP lease, so a crash-reboot can
 land it on a new IP and every `--host 192.168.4.234` in this doc goes stale.
-A TCP-connect sweep of port 80 across the subnet finds it again in about a
-minute.
+Protocol 2 firmware answers mDNS as **`k10.local`** (`--host k10.local`), and
+`/state` → `boot.reset` says whether the last restart was a crash. Without
+mDNS on the client machine, a TCP-connect sweep of port 80 across the subnet
+still finds it in about a minute.
 
 ---
 
+## Finding problems
+
+Balance runs answer "is the game fun"; this answers "is the game *right*". It
+is layered so every kind of run gets it:
+
+```
+ReplyTracker (wire.py)          rid -> exactly one ack/nack; unmatched or silent = finding
+WireOracle   (oracles.py)       every tick, event and reply, per connection
+StateOracle  (oracles.py)       every /state read (telemetry, fuzz, chaos)
+FindingLog   (findings.py)      one per run, shared by every bot: signature -> count + repro
+  BotClient -> arena.py / soak.py         balance and soak runs: bugs found in passing
+  ProbeClient -> fuzz.py / chaos.py       probes: bugs looked for on purpose
+```
+
+A finding has a `check` (stable id), a severity (critical / major / minor), a
+signature (check + key, e.g. the pid), a count, and the last messages that
+connection sent. Only the first three occurrences of a signature are written
+in full; the run-end `findings` row has the totals.
+
+```bash
+python findings.py                       # newest log in runs/
+python findings.py runs/fuzz-*.jsonl runs/chaos-*.jsonl
+```
+
+`metrics.py` prints a run's findings under its report, and `--aggregate`
+warns when a pooled run had a critical one — a reboot or a corrupted seat
+count mid-run means its balance numbers stand on a board that misbehaved.
+
+**What the oracles check** (all derived from the firmware source; the full
+list with file references is `oracles.py`'s docstring): LL within `llCap`,
+food/water in [1, 6], radiation in [0, 10], a downed survivor at 0 MP, no
+move mask while unable to move, steps and tick never going backwards, `sq`
+never repeating or going backwards on a socket, at most one death per life
+(the double-`EVT_DOWNED` seat-count bug), an acked `m` producing an `mv`, an
+acked `act` producing its event, a nacked `act`'s event carrying the same
+`bw`, `not_seated` never arriving while seated, and on `/state`:
+`connected` equal to the seated players, no reboot, no dropped events, heap
+above the pre-crash level.
+
+### Probes
+
+All three need protocol 2 (they judge by ack/nack) and a free seat or two.
+**None has been run on hardware yet.**
+
+**`fuzz.py`** sends the 217-case corpus in `fuzz_cases.py` — every prefix of
+every command, framing (not JSON, binary, fragmented, empty), rid mangling,
+out-of-range and missing fields for every handler, out-of-order encounter
+and trade messages, oversized names — and checks each verdict and that the
+board survives. It **refuses a protocol 1 board**, where `{"t":"e"}` runs
+`eraseslot`. The corpus never contains a well-formed `regen`/`eraseslot`, a
+`wifi` with an `ssid` (the board would try to join it and drop off the LAN),
+or a drop of anything the probe carries; `smoke.py` asserts that. Two
+`parse:` cases (`nested-t`, `nested-field`) expect what a standard JSON
+parser would do and are expected to fail on current firmware: `handleMessage` and every handler take the
+first occurrence of a key anywhere in the raw text, nested or not. `--burst
+N` adds an unthrottled burst; off by default for the reason under "Useful
+flags".
+
+```bash
+python fuzz.py --host k10.local
+python fuzz.py --host k10.local --only enc_ -v
+```
+
+**`chaos.py`** runs `reconnect_storm`, `seat_race`, `abort_request`,
+`abort_encounter`, `trade_then_leave` and `stalled_reader` (a raw WebSocket
+that never reads — a backgrounded tab), each followed by a `/state` check.
+Scenarios that cannot get what they need (a reachable POI, two free seats)
+are skipped, not failed.
+
+**`soak.py`** is an arena preset: realtime, `--target 0` (time only),
+`sentinel,scoremax,coward` (the sentinel camps under a shelter and rests
+late; its `camp:` line at the end says whether it managed), then a report of
+day length, weather phases,
+real-clock hazards per real minute and a least-squares heap trend (a steady
+decline over 20+ minutes is a `heap_trend` finding).
+
+```bash
+python chaos.py --host k10.local
+python soak.py --host k10.local --minutes 60
+```
+
+## Replies (protocol 2)
+
+Firmware at `PROTO_VERSION` 2 (`sync` → `pv`, `/state` → `pv`) answers every
+message that carries `"rid":N` with exactly one reply
+([network-reply.hpp](../network-reply.hpp)):
+
+```
+{"t":"ack","rid":N,"cmd":"m"}                   applied
+{"t":"nack","rid":N,"cmd":"m","why":"no_mp"}    refused -- nothing changed
+```
+
+Without `rid` nothing changes, so the browser is unaffected. A failed skill
+check is an **ack**: MP was spent and the outcome rides the usual event. A
+nack means the request was refused before it did anything.
+
+| `why` | Means |
+|---|---|
+| `parse`, `bad_arg`, `bad_act`, `unknown_cmd` | malformed, out of range, or no such `t` |
+| `not_seated`, `not_in_lobby`, `slot_taken` | seat state: act before pick, pick twice, pick a taken slot |
+| `busy` | `G.mutex` timeout — safe to retry |
+| `downed`, `in_enc`, `resting`, `underground` | player state forbids it |
+| `bad_dir`, `terrain`, `wall`, `no_mp`, `cooldown` | move refusals (`movePlayer` / `moveTunnel`) |
+| `pack_full`, `no_res`, `not_needed`, `archetype`, `craft` | action refusals (`ABW_*`, also on the `act` event as `bw`) |
+| `not_here`, `no_poi`, `claimed`, `no_pool`, `load_failed`, `no_enc`, `no_choice`, `cannot_bank` | encounter refusals |
+| `self`, `no_target`, `not_same_hex`, `dup_offer`, `no_offer`, `stale_offer`, `empty`, `no_caravan`, `caravan_short`, `water` | trade refusals |
+| `refused` | an item function said no; it returns a bare bool, so this is as specific as it gets |
+
+`client.py` counts them per command and reason, writes each nack as a `nack`
+row, hands them to `Policy.on_reply()`, and closes and re-picks at once on a
+nacked `pick` rather than waiting out the sync watchdog. A request unanswered
+after 10 s is counted as `unanswered` — but only once `sync` has said the
+board speaks protocol 2, since the mock and older firmware never reply.
+
+Protocol 2 also:
+
+- stamps every `ev` built from the event queue with **`sq`**, its sequence
+  number. One game event, one `sq`, however many bots saw it — `causes.py`
+  dedupes on it exactly — and on any one socket it only ever rises. A gap is
+  **not** by itself a drop: unicast and vision-culled events (`downed`,
+  `col_fail`, `fire_spread`, `flood_washout`, `tun_taunt`) spend a number
+  too. Drops are counted exactly in `/state` → `evtDrops`.
+- carries **`rt`** (resting) in every tick broadcast.
+- names the **`cause`** on `downed` and on the `left` that follows a death.
+- sends **`dmg`** (`pid`, `amt`, `cause`, `ll`) for the chem storm and
+  Strangle Fog losses that used to emit nothing.
+
 ## Protocol rules
 
-Each of these is silent when violated — no error, no nack, just nothing
-happening. All were found the expensive way.
+On firmware before protocol 2 each of these is silent when violated — no
+error, no nack, just nothing happening. All were found the expensive way.
+Protocol 2 nacks every one of them, but the rules themselves still hold.
 
 **1. The archetype index IS the player slot.** `handleMsg_pick` does
-`Player& p = G.players[arch]` and returns silently if that slot is already
-connected. `SlotBroker` stops two bots claiming one slot.
+`Player& p = G.players[arch]` and refuses if that slot is already connected
+(it re-sends `lobby`; protocol 2 also nacks `slot_taken`). `SlotBroker` stops
+two bots claiming one slot.
 
 **2. Receiving state is not evidence of having joined.** `broadcastState()`
 uses `ws.textAll()`, so a client stuck in the lobby receives the full per-tick
@@ -148,9 +302,10 @@ connected client. Policies filter on their own `pid`; `metrics.py` dedupes on
 
 **Also worth knowing:**
 
-- **No `rt` in the periodic broadcast.** Only `sync` carries the resting flag,
-  so "resting" and "simply out of MP" are indistinguishable from `s` alone.
-  REST is therefore retried on a cooldown, never latched — see "Deadlocks".
+- **`rt` is in the periodic broadcast from protocol 2 on.** Before that only
+  `sync` carried the resting flag, so "resting" and "simply out of MP" were
+  indistinguishable from `s` alone. REST is still retried on a cooldown, never
+  latched — see "Deadlocks" — and a refused REST now comes back as a nack.
 - **The board can drop a player slot while the socket stays open.** The
   broadcast's own `on` flag is the only signal. The client watches it and
   reconnects. See "Known issues".
@@ -347,9 +502,9 @@ because `tickGame()` only ends the day early when **every** connected player is
 resting, one bot stuck like that freezes the whole fleet. Five bots sat frozen
 at day 16 this way. Retry on a ~4 s cooldown instead.
 
-**Stale POI bits.** A consumed POI makes `enc_start` a silent no-op while the
-cached map still shows the bit set. Cap attempts per hex and fall through to
-movement.
+**Stale POI bits.** A consumed POI makes `enc_start` fail while the cached map
+still shows the bit set (`err "Already looted"`, and a `no_poi` nack on
+protocol 2). Cap attempts per hex and fall through to movement.
 
 ---
 
@@ -372,8 +527,19 @@ budget each bot only gets four or five *messages* per day. The bots then play
 every day on a third of their action budget, which makes survival look far
 harder than it is. Use sprint to find breaking points, not balance numbers.
 
-For true 5-minute days (weather, fire, flood, Creeping Doom all tick on their
-own clocks) you would need a policy that deliberately stays awake. Not built.
+For near-5-minute days (weather, fire, flood, Creeping Doom all tick on their
+own clocks) put a `sentinel` in the fleet. `tickGame()` starts a new day at
+`DAY_TICKS` *or* when every connected player is resting, so one player awake
+holds the day open — and a player who never rests never heals, so the
+sentinel stays awake for 90% of each day (timed off the tick id since the
+dawn it last saw) and then rests in its shelter. `soak.py` does exactly that
+and reports whether the days really ran long.
+
+**The bots now see shelters change without moving.** An action gets no vis
+disk, so until this the local map said "no shelter" after a SHELTER until the
+next step, and never learned about quakes or new settlements at all.
+`state.py` now applies the `act` event's `cnd` (the hex's shelter level
+afterwards — what the browser uses), and the `quake` and `settle` events.
 
 ---
 
@@ -491,11 +657,17 @@ cannot: 6 brushes against a target of 4 is one number, but "5 of them were
 exposure" and "they were spread across five systems" call for completely
 different fixes.
 
-Nothing on the wire says cause of death — `EVT_DOWNED` carries a pid and
-nothing else. Every LL loss does leave a distinct signature though, so each
-death is matched to the damage record nearest it. The table of signatures is
-in `causes.py`'s docstring. Three things about it are worth knowing before
-reading a number off the report:
+**Protocol 2 puts the cause on the wire.** Every `EVT_DOWNED` site sets a
+`DC_*` code (`Esp32HexMapCrawl.ino`), and `downed` / `left` carry it as
+`cause` in the names below; those deaths report `via == "wire"`. The dawn
+death is named for the last loss applied — bad air, then thirst, then hunger —
+since exposure is floored and never takes the last point.
+
+On older recordings nothing on the wire says cause of death — `EVT_DOWNED`
+carries a pid and nothing else. Every LL loss does leave a distinct signature
+though, so each death is matched to the damage record nearest it. The table of
+signatures is in `causes.py`'s docstring. Three things about the inference are
+worth knowing before reading a number off an old report:
 
 - **The killing `dawn` arrives *after* its own `downed`.** `dawnUpkeep`
   enqueues `EVT_DOWNED` inside the LL-loss loop and `EVT_DAWN` only at the end
@@ -754,8 +926,9 @@ landed exactly one kill in 152 bot-minutes, which projects to ~0.8 per session
 each with a CI far too wide to act on.
 
 **Measuring the real-clock hazards properly needs a policy that deliberately
-stays awake**, so days run their full 5 minutes. That is still not built, and
-it is now the single biggest gap in the method.
+stays awake**, so days run their full 5 minutes. That now exists — the
+`sentinel` policy, run by `soak.py` — but **has not been run on hardware
+yet**, so the figures above are still the under-sampled ones.
 
 ---
 
@@ -810,4 +983,13 @@ it is now the single biggest gap in the method.
   TREAT. Partly a policy limitation, but no score-driven policy has had a
   reason to want them either.
 - **No recipes learned** across 12 banked encounters.
-- `config.py` mirrors firmware constants by hand. Nothing detects drift.
+- `config.py` mirrors firmware constants by hand. `smoke.py` now checks the
+  dispatch table and the cause names against the firmware source, but the
+  numeric constants are still unchecked.
+- **Fixed in protocol 2, found while engineering for bots:** the dispatcher
+  matched any *prefix* of a command name (`{"t":"e"}` ran `eraseslot`,
+  `{"t":"r"}` ran `regen`); `drop_item` crashed on `"qty"` with no `:`;
+  `regen` announced a new world even when it had not made one; the event queue
+  dropped overflow with no count; and every connecting client was sent the
+  saved Wi-Fi password in plain text. A harmful consumable could also leave a
+  survivor at LL 0 without ever being downed.

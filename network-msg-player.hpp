@@ -3,10 +3,10 @@
 
 static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* ap = strstr(data, "\"arch\""); if (!ap) return;
-  const char* av = strchr(ap + 6, ':');      if (!av) return;
+  const char* ap = strstr(data, "\"arch\""); if (!ap) { wsNack(client, "parse"); return; }
+  const char* av = strchr(ap + 6, ':');      if (!av) { wsNack(client, "parse"); return; }
   int arch = atoi(av + 1);
-  if (arch < 0 || arch >= NUM_ARCHETYPES) return;
+  if (arch < 0 || arch >= NUM_ARCHETYPES) { wsNack(client, "bad_arg"); return; }
 
   bool inLobby = false;
   taskENTER_CRITICAL(&evtMux);
@@ -15,14 +15,18 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
   }
   taskEXIT_CRITICAL(&evtMux);
   if (!inLobby) {
+    // Already seated (or not a lobby socket at all): picking again is refused.
+    wsNack(client, "not_in_lobby");
     sendLobbyMsg(client);
     return;
   }
 
   bool assigned = false;
+  const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
     Player& p = G.players[arch];
+    refused = p.connected ? "slot_taken" : nullptr;
     if (!p.connected) {
       p.connected  = true;
       p.wsClientId = client->id();
@@ -81,14 +85,15 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
     sendSync(client, arch);
     broadcastLobbyUpdate();
   } else {
+    wsNack(client, refused ? refused : "busy");
     sendLobbyMsg(client);
   }
 }
 
 static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* dp = strstr(data, "\"d\""); if (!dp) return;
-  const char* dv = strchr(dp + 3, ':');  if (!dv) return;
+  const char* dp = strstr(data, "\"d\""); if (!dp) { wsNack(client, "parse"); return; }
+  const char* dv = strchr(dp + 3, ':');  if (!dv) { wsNack(client, "parse"); return; }
   int dir = atoi(dv + 1);
 
   PSRAM_STATIC(char, visBuf, [1100]);
@@ -96,17 +101,22 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   int vr = VISION_R; bool mr = false;
   int slot = -1;
   uint8_t depBefore = 0, depAfter = 0;
+  const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
+    refused = (slot < 0) ? "not_seated" : nullptr;
     if (slot >= 0) {
       if (encounters[slot].active) {
         xSemaphoreGive(G.mutex);
+        wsNack(client, "in_enc");
         client->text("{\"t\":\"err\",\"msg\":\"Cannot move during encounter\"}");
         return;
       }
       depBefore = G.players[slot].depth;
-      movePlayer(slot, dir);          // may cross boards -- see tunnelStepDown/Up
+      // A refused step still gets its vis disk below -- the browser relies on
+      // that -- so the nack is the only way to tell the two apart.
+      refused   = movePlayer(slot, dir);   // may cross boards -- see tunnelStepDown/Up
       depAfter  = G.players[slot].depth;
       playerVisParams(slot, &vr, &mr);
       // Underground the disk must be built from tq/tr against G.tunnel. p.q/p.r
@@ -131,14 +141,15 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   if (visLen > 0) {
     client->text(visBuf, (size_t)visLen);
   }
+  if (refused) wsNack(client, refused);
   if (slot >= 0 && depAfter != depBefore) k10Play(MOTIF_SEWER_ECHO);
 }
 
 static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* np = strstr(data, "\"name\""); if (!np) return;
-  const char* nv = strchr(np + 6, '"');      if (!nv) return; nv++;
-  const char* ne = strchr(nv, '"');          if (!ne) return;
+  const char* np = strstr(data, "\"name\""); if (!np) { wsNack(client, "parse"); return; }
+  const char* nv = strchr(np + 6, '"');      if (!nv) { wsNack(client, "parse"); return; } nv++;
+  const char* ne = strchr(nv, '"');          if (!ne) { wsNack(client, "parse"); return; }
 
   char oldName[12] = {0};
   char newName[12] = {0};
@@ -153,8 +164,12 @@ static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len)
       G.players[slot].name[nl] = 0;
       sanitizeName(G.players[slot].name, 11);
       memcpy(newName, G.players[slot].name, 12);
+    } else {
+      wsNack(client, "not_seated");
     }
     xSemaphoreGive(G.mutex);
+  } else {
+    wsNack(client, "busy");
   }
   if (slot >= 0) {
     char nameBuf[56];
@@ -166,9 +181,9 @@ static void handleMsg_name(AsyncWebSocketClient* client, char* data, size_t len)
 
 static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* sp = strstr(data, "\"ssid\""); if (!sp) return;
-  const char* sv = strchr(sp + 6, '"');      if (!sv) return; sv++;
-  const char* se = strchr(sv, '"');          if (!se) return;
+  const char* sp = strstr(data, "\"ssid\""); if (!sp) { wsNack(client, "parse"); return; }
+  const char* sv = strchr(sp + 6, '"');      if (!sv) { wsNack(client, "parse"); return; } sv++;
+  const char* se = strchr(sv, '"');          if (!se) { wsNack(client, "parse"); return; }
 
   const char* pp = strstr(data, "\"pass\"");
   const char* pv = pp ? strchr(pp + 6, '"') : nullptr;
@@ -178,11 +193,12 @@ static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len)
   if (wifiConnecting || bootWifiPending) {
     const char* busy = "{\"t\":\"wifi\",\"status\":\"busy\"}";
     client->text(busy, strlen(busy));
+    wsNack(client, "busy");
     return;
   }
 
   WifiTaskCtx* ctx = (WifiTaskCtx*)malloc(sizeof(WifiTaskCtx));
-  if (!ctx) return;
+  if (!ctx) { wsNack(client, "oom"); return; }
 
   int sl = (int)(se - sv); if (sl > 32) sl = 32;
   strncpy(ctx->ssid, sv, sl); ctx->ssid[sl] = 0;
@@ -203,9 +219,9 @@ static void handleMsg_wifi(AsyncWebSocketClient* client, char* data, size_t len)
 // which networks the board goes looking for next time.
 static void handleMsg_wifi_forget(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* sp = strstr(data, "\"ssid\""); if (!sp) return;
-  const char* sv = strchr(sp + 6, '"');      if (!sv) return; sv++;
-  const char* se = strchr(sv, '"');          if (!se) return;
+  const char* sp = strstr(data, "\"ssid\""); if (!sp) { wsNack(client, "parse"); return; }
+  const char* sv = strchr(sp + 6, '"');      if (!sv) { wsNack(client, "parse"); return; } sv++;
+  const char* se = strchr(sv, '"');          if (!se) { wsNack(client, "parse"); return; }
 
   char ssid[33];
   int sl = (int)(se - sv); if (sl > 32) sl = 32;
@@ -213,6 +229,7 @@ static void handleMsg_wifi_forget(AsyncWebSocketClient* client, char* data, size
 
   if (!wifiStoreForget(ssid)) {
     LOG_VERBOSE("wifi_forget: ssid=%s not in store", ssid);
+    wsNack(client, "not_found");
     return;
   }
   // Tell clients to drop their cached copy too, otherwise the next reconnect
@@ -225,13 +242,13 @@ static void handleMsg_wifi_forget(AsyncWebSocketClient* client, char* data, size
 
 static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* skp = strstr(data, "\"sk\""); if (!skp) return;
-  const char* skv = strchr(skp + 4, ':');   if (!skv) return;
+  const char* skp = strstr(data, "\"sk\""); if (!skp) { wsNack(client, "parse"); return; }
+  const char* skv = strchr(skp + 4, ':');   if (!skv) { wsNack(client, "parse"); return; }
   int sk = atoi(skv + 1);
-  if (sk < 0 || sk >= NUM_SKILLS) return;
+  if (sk < 0 || sk >= NUM_SKILLS) { wsNack(client, "bad_arg"); return; }
 
-  const char* dnp = strstr(data, "\"dn\""); if (!dnp) return;
-  const char* dnv = strchr(dnp + 4, ':');   if (!dnv) return;
+  const char* dnp = strstr(data, "\"dn\""); if (!dnp) { wsNack(client, "parse"); return; }
+  const char* dnv = strchr(dnp + 4, ':');   if (!dnv) { wsNack(client, "parse"); return; }
   int dn = atoi(dnv + 1);
   if (dn < 2) dn = 2; if (dn > 14) dn = 14;
 
@@ -248,8 +265,12 @@ static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len
     slot = findSlot(client->id());
     if (slot >= 0) {
       res = resolveCheck(slot, (uint8_t)sk, (uint8_t)dn, (uint8_t)bonus);
+    } else {
+      wsNack(client, "not_seated");
     }
     xSemaphoreGive(G.mutex);
+  } else {
+    wsNack(client, "busy");
   }
   if (slot >= 0) {
     broadcastCheck(slot, (uint8_t)sk, res);
@@ -258,7 +279,19 @@ static void handleMsg_check(AsyncWebSocketClient* client, char* data, size_t len
 
 static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+  // A few tries: tickGame() holds G.mutex for a whole tick, and a single 50 ms
+  // wait lost that race often enough to make resets flaky.
+  bool locked = false;
+  for (int tries = 0; tries < 4 && !locked; tries++)
+    locked = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) == pdTRUE);
+  if (!locked) {
+    // This used to fall through and enqueue EVT_REGEN anyway, so every client
+    // was told "new world" and re-synced onto the old one.
+    Log.warning("Regen: G.mutex timeout - world NOT regenerated");
+    wsNack(client, "busy");
+    return;
+  }
+  {
     Log.notice("Regen: removing %s and %s", SAVE_MAP_F, SAVE_PLY_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
@@ -285,16 +318,16 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
       G.map[pl.r][pl.q].footprints |= (1 << i);
     }
     xSemaphoreGive(G.mutex);
+    GameEvent ev = {}; ev.type = EVT_REGEN; enqEvt(ev);
   }
-  { GameEvent ev = {}; ev.type = EVT_REGEN; enqEvt(ev); }
 }
 
 static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* ap = strstr(data, "\"arch\""); if (!ap) return;
-  const char* av = strchr(ap + 6, ':');      if (!av) return;
+  const char* ap = strstr(data, "\"arch\""); if (!ap) { wsNack(client, "parse"); return; }
+  const char* av = strchr(ap + 6, ':');      if (!av) { wsNack(client, "parse"); return; }
   int arch = atoi(av + 1);
-  if (arch < 0 || arch >= NUM_ARCHETYPES) return;
+  if (arch < 0 || arch >= NUM_ARCHETYPES) { wsNack(client, "bad_arg"); return; }
 
   uint32_t evictId  = 0;
   bool     wasConn  = false;
@@ -319,6 +352,10 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
     p.score = 0; p.steps = 0; p.encCount = 0;
     p.movesLeft = 0;
     xSemaphoreGive(G.mutex);
+  } else {
+    // Nothing was erased, but the left/lobby broadcasts below still go out
+    // as they always have; the nack is what says the slot is untouched.
+    wsNack(client, "busy");
   }
 
   {
@@ -346,10 +383,10 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
 
 static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* ap = strstr(data, "\"a\""); if (!ap) return;
-  const char* av = strchr(ap + 3, ':');   if (!av) return;
+  const char* ap = strstr(data, "\"a\""); if (!ap) { wsNack(client, "parse"); return; }
+  const char* av = strchr(ap + 3, ':');   if (!av) { wsNack(client, "parse"); return; }
   int actType = atoi(av + 1);
-  if (actType < 0 || actType > 7) return;
+  if (actType < 0 || actType > 7) { wsNack(client, "bad_act"); return; }
 
   int mpParam = 1;
   const char* mpp = strstr(data, "\"mp\"");
@@ -373,17 +410,21 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   PSRAM_STATIC(char, craftAck, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   craftAck[0] = '\0';
   const char* craftWhy = nullptr;  // why ACT_CRAFT was refused (static string), toasted back below
+  const char* refused  = "busy";   // G.mutex timeout unless the take below succeeds
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
+    refused = (slot < 0) ? "not_seated" : nullptr;
     if (slot >= 0) {
       if (encounters[slot].active) {
         xSemaphoreGive(G.mutex);
+        wsNack(client, "in_enc");
         client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
         return;
       }
       actOk = handleAction(slot, (uint8_t)actType, mpParam, (uint8_t)recipeId,
-                            survBuf, sizeof(survBuf), &survLen, settleResult, &craftWhy);
+                            survBuf, sizeof(survBuf), &survLen, settleResult, &craftWhy,
+                            &refused);
       if (actType == ACT_CRAFT && actOk) {
         Player& pl = G.players[slot];
         int ap = appendFmt(craftAck, sizeof(craftAck), 0,
@@ -416,6 +457,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   }
   if (settleResult.fired)
     broadcastSettle(settleResult);
+  if (refused) wsNack(client, refused);
 }
 
 static void handleMsg_settings(AsyncWebSocketClient* client, char* data, size_t len) {

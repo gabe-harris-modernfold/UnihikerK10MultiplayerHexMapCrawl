@@ -35,20 +35,51 @@ static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
   if (visLen > 0) client->text(visBuf);
 }
 
+// ground_update: every ground item on the map. Stops at the last whole entry
+// that fits -- it used to write the separator with upd[upos++] unchecked, and
+// 32 items with wide coordinates is within a few bytes of the 1280 buffer.
+static void buildGroundUpdate(char* upd, size_t cap, int16_t q, int16_t r) {
+  int upos = snprintf(upd, cap, "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,\"gi\":[",
+                      (int)q, (int)r);
+  bool first = true;
+  for (int g = 0; g < MAX_GROUND; g++) {
+    if (!groundItems[g].itemType) continue;
+    char one[64];
+    int n = snprintf(one, sizeof(one), "%s{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d}",
+                     first ? "" : ",", g, groundItems[g].q, groundItems[g].r,
+                     groundItems[g].itemType, groundItems[g].qty);
+    if (upos + n + 3 > (int)cap) break;   // leave room for "]}" and the NUL
+    memcpy(upd + upos, one, (size_t)n);
+    upos += n;
+    first = false;
+  }
+  snprintf(upd + upos, cap - (size_t)upos, "]}");
+}
+
+// Common tail of the item handlers' refusal paths. The item functions return
+// a bare bool, so "refused" is as specific as it gets without changing them.
+static void nackItem(AsyncWebSocketClient* client, bool locked, int mySlot, bool ok) {
+  if (!locked)          wsNack(client, "busy");
+  else if (mySlot < 0)  wsNack(client, "not_seated");
+  else if (!ok)         wsNack(client, "refused");
+}
+
 static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
-  if (!sp) return;
-  const char* sv = strchr(sp + 6, ':'); if (!sv) return;
+  if (!sp) { wsNack(client, "parse"); return; }
+  const char* sv = strchr(sp + 6, ':'); if (!sv) { wsNack(client, "parse"); return; }
   int slotIdx = atoi(sv + 1);
-  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
+  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int capturedSlot = -1;
   uint8_t revealParam = 0;
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       Player& pl = G.players[mySlot];
       uint8_t narParam = 0;
@@ -78,22 +109,25 @@ static void handleMsg_use_item(AsyncWebSocketClient* client, char* data, size_t 
   if (ack[0]) client->text(ack);
   // EFX_REVEAL_FOG items: send a fresh vis disk so the client sees newly revealed cells
   if (ok && capturedSlot >= 0 && revealParam >= 2) pushVisDisk(client, capturedSlot);
+  nackItem(client, locked, mySlot, ok);
 }
 
 static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
-  if (!sp) return;
-  const char* sv = strchr(sp + 6, ':'); if (!sv) return;
+  if (!sp) { wsNack(client, "parse"); return; }
+  const char* sv = strchr(sp + 6, ':'); if (!sv) { wsNack(client, "parse"); return; }
   int slotIdx = atoi(sv + 1);
-  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return;
+  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int  capturedSlot = -1;
   bool visChanged   = false;
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       // A swap can change vision through EITHER item, so diff the bonus
       // rather than inspecting the one being put on.
@@ -114,22 +148,25 @@ static void handleMsg_equip_item(AsyncWebSocketClient* client, char* data, size_
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
   if (visChanged) pushVisDisk(client, capturedSlot);
+  nackItem(client, locked, mySlot, ok);
 }
 
 static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* ep = strstr(data, "\"eslot\"");
-  if (!ep) return;
-  const char* ev = strchr(ep + 7, ':'); if (!ev) return;
+  if (!ep) { wsNack(client, "parse"); return; }
+  const char* ev = strchr(ep + 7, ':'); if (!ev) { wsNack(client, "parse"); return; }
   int eslot = atoi(ev + 1);
-  if (eslot < 0 || eslot >= EQUIP_SLOTS) return;
+  if (eslot < 0 || eslot >= EQUIP_SLOTS) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   bool ok = false;
   int  capturedSlot = -1;
   bool visChanged   = false;
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       int visBefore = equipVisionBonus(mySlot);
       ok = unequipItem(mySlot, (uint8_t)eslot);
@@ -148,43 +185,34 @@ static void handleMsg_unequip_item(AsyncWebSocketClient* client, char* data, siz
   if (ok) saveGame();
   if (ack[0]) client->text(ack);
   if (visChanged) pushVisDisk(client, capturedSlot);
+  nackItem(client, locked, mySlot, ok);
 }
 
 static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* sp = strstr(data, "\"slot\"");
-  if (!sp) return;
-  const char* sv = strchr(sp + 6, ':'); if (!sv) return;
+  if (!sp) { wsNack(client, "parse"); return; }
+  const char* sv = strchr(sp + 6, ':'); if (!sv) { wsNack(client, "parse"); return; }
   int slotIdx = atoi(sv + 1);
   const char* qp = strstr(data, "\"qty\"");
-  int qty = qp ? atoi(strchr(qp + 5, ':') + 1) : 1;
-  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) return;
+  // "qty" with no ':' after it used to be atoi(strchr(...) + 1) on a null
+  // pointer -- a crash from one malformed message. Same guard as drop_res.
+  const char* qv = qp ? strchr(qp + 5, ':') : nullptr;
+  int qty = qv ? atoi(qv + 1) : 1;
+  if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       ok = dropItem(mySlot, (uint8_t)slotIdx, (uint8_t)qty);
       Player& p = G.players[mySlot];
-      if (ok) {
-        int upos = snprintf(upd, sizeof(upd),
-          "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,\"gi\":[",
-          (int)p.q, (int)p.r);
-        bool firstGi = true;
-        for (int g = 0; g < MAX_GROUND; g++) {
-          if (!groundItems[g].itemType) continue;
-          if (!firstGi) upd[upos++] = ',';
-          upos += snprintf(upd + upos, sizeof(upd) - upos,
-            "{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d}",
-            g, groundItems[g].q, groundItems[g].r,
-            groundItems[g].itemType, groundItems[g].qty);
-          firstGi = false;
-        }
-        snprintf(upd + upos, sizeof(upd) - upos, "]}");
-      }
+      if (ok) buildGroundUpdate(upd, sizeof(upd), p.q, p.r);
       Player& pl = p;
       int ap = appendFmt(ack, sizeof(ack), 0,
         "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"drop\",\"slot\":%d,\"pid\":%d,",
@@ -200,6 +228,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
     if (upd[0]) ws.textAll(upd);
   }
   if (ack[0]) client->text(ack);
+  nackItem(client, locked, mySlot, ok);
 }
 
 // Dump resource tokens (Water/Food/Fuel/Med/Scrap) out of the pack — the
@@ -210,21 +239,23 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
 static void handleMsg_drop_res(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* rp = strstr(data, "\"res\"");
-  if (!rp) return;
-  const char* rv = strchr(rp + 5, ':'); if (!rv) return;
+  if (!rp) { wsNack(client, "parse"); return; }
+  const char* rv = strchr(rp + 5, ':'); if (!rv) { wsNack(client, "parse"); return; }
   int res = atoi(rv + 1);
   const char* qp = strstr(data, "\"qty\"");
   const char* qv = qp ? strchr(qp + 5, ':') : nullptr;   // "qty" without a ':' would crash strchr()+1
   int qty = qv ? atoi(qv + 1) : 1;
-  if (res < 1 || res > 5 || qty <= 0) return;
+  if (res < 1 || res > 5 || qty <= 0) { wsNack(client, "bad_arg"); return; }
   if (qty > 99) qty = 99;
   PSRAM_STATIC(char, ack, [256]);
   static char upd[96];
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
   uint8_t dropped = 0;
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       bool    onGround = false;
       uint8_t rem      = 0;
@@ -250,41 +281,29 @@ static void handleMsg_drop_res(AsyncWebSocketClient* client, char* data, size_t 
     if (upd[0]) ws.textAll(upd);
   }
   if (ack[0]) client->text(ack);
+  nackItem(client, locked, mySlot, dropped != 0);
 }
 
 static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   const char* gp = strstr(data, "\"gslot\"");
-  if (!gp) return;
-  const char* gv = strchr(gp + 7, ':'); if (!gv) return;
+  if (!gp) { wsNack(client, "parse"); return; }
+  const char* gv = strchr(gp + 7, ':'); if (!gv) { wsNack(client, "parse"); return; }
   int gslot = atoi(gv + 1);
-  if (gslot < 0 || gslot >= MAX_GROUND) return;
+  if (gslot < 0 || gslot >= MAX_GROUND) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
   ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
   upd[0] = '\0';
+  bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int mySlot = findSlot(client->id());
+    locked = true;
+    mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       ok = pickupGroundItem(mySlot, (uint8_t)gslot);
       Player& p2 = G.players[mySlot];
-      if (ok) {
-        int upos = snprintf(upd, sizeof(upd),
-          "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,\"gi\":[",
-          (int)p2.q, (int)p2.r);
-        bool firstGi = true;
-        for (int g = 0; g < MAX_GROUND; g++) {
-          if (!groundItems[g].itemType) continue;
-          if (!firstGi) upd[upos++] = ',';
-          upos += snprintf(upd + upos, sizeof(upd) - upos,
-            "{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d}",
-            g, groundItems[g].q, groundItems[g].r,
-            groundItems[g].itemType, groundItems[g].qty);
-          firstGi = false;
-        }
-        snprintf(upd + upos, sizeof(upd) - upos, "]}");
-      }
+      if (ok) buildGroundUpdate(upd, sizeof(upd), p2.q, p2.r);
       Player& pl2 = p2;
       int ap = appendFmt(ack, sizeof(ack), 0,
         "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"pickup\",\"gslot\":%d,\"pid\":%d,",
@@ -300,4 +319,5 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
     if (upd[0]) ws.textAll(upd);
   }
   if (ack[0]) client->text(ack);
+  nackItem(client, locked, mySlot, ok);
 }

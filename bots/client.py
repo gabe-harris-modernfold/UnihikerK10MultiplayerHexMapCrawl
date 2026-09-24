@@ -19,6 +19,21 @@ A blind pick looks exactly like a successful one until you notice tx=1.
 Note broadcastState() uses ws.textAll(), so even a client stuck in the lobby
 receives the full per-tick broadcast.  Receiving state is NOT evidence of
 having joined.
+
+**Replies (protocol 2+).** Every send carries a "rid", and firmware at
+PROTO_VERSION 2 answers each with exactly one ack or nack (network-reply.hpp).
+A nack names why -- "slot_taken", "no_mp", "in_enc" -- so a refused pick is
+retried at once instead of after the sync watchdog, and every refusal lands
+in the run log.  Older firmware and the mock ignore "rid" and never reply;
+nothing here depends on a reply arriving, and unanswered requests are only
+counted once sync has said the board speaks protocol 2.  The bookkeeping is
+wire.ReplyTracker, shared with the probes.
+
+**Every bot is a tester.**  Each connection carries a WireOracle
+(oracles.py) that checks every tick, event and reply against what the
+firmware promises, and reports into the run's FindingLog (findings.py).  A
+balance run that trips over a bug says so at the end instead of leaving it
+to be inferred from a strange metric.
 """
 import asyncio
 import json
@@ -28,7 +43,10 @@ import time
 import websockets
 
 from config import ARCHETYPE_NAME, MAX_PLAYERS
+from findings import Finding, FindingLog, ReproBuffer
+from oracles import WireOracle
 from state import Observation
+from wire import ReplyTracker
 
 # How often to re-log a persisting noop reason. A stalled fleet should be
 # obvious in the log within seconds, without a line every decide cycle.
@@ -88,7 +106,7 @@ class BotClient:
     def __init__(self, host, preferred_arch, policy, recorder, rng,
                  limiter, global_limiter, broker, decide_interval=0.35,
                  connect_timeout=10.0, sync_timeout=12.0,
-                 respawn_after=15.0):
+                 respawn_after=15.0, findings: FindingLog | None = None):
         self.host = host
         self.preferred_arch = preferred_arch
         self.arch = -1                  # assigned once a pick is confirmed
@@ -135,6 +153,26 @@ class BotClient:
         self._close_reason = None
         self._pending_slot = None
         self._synced_evt = asyncio.Event()
+        # Shared with every other bot in the run, so one defect two bots hit
+        # is one signature with a count of two.
+        self.findings = findings if findings is not None else FindingLog(recorder)
+        self.repro = ReproBuffer()
+        self.oracle = WireOracle(self.findings, f"bot{preferred_arch}:{policy.name}",
+                                 self.repro)
+        self.replies = ReplyTracker(self.oracle)
+
+    # Reply counters, read by summary() and arena's report.
+    @property
+    def acks(self) -> int:
+        return self.replies.acks
+
+    @property
+    def nacks(self) -> dict:
+        return self.replies.nacks
+
+    @property
+    def unanswered(self) -> int:
+        return self.replies.unanswered
 
     @property
     def label(self):
@@ -157,9 +195,35 @@ class BotClient:
         await self.limiter.acquire()
         if self.ws is None:
             return
+        for rid, cmd in self.replies.expire(self.obs.proto):
+            self.recorder.write("unanswered", self._log_arch(),
+                                {"rid": rid, "cmd": cmd})
+        msg, _ = self.replies.stamp(msg)
+        self.oracle.on_tx(msg)
         await self.ws.send(json.dumps(msg, separators=(",", ":")))
         self.sent += 1
         self.recorder.write("tx", self._log_arch(), msg)
+
+    async def _on_reply(self, msg: dict) -> None:
+        r = self.replies.resolve(msg)
+        if r is None:
+            return                  # unmatched: the tracker has flagged it
+        cmd, ok, why = r
+        if not ok:
+            self.recorder.write("nack", self._log_arch(),
+                                {"rid": msg.get("rid"), "cmd": cmd, "why": why})
+        self.oracle.on_reply(ok, cmd, why, seated=self.joined())
+        self.policy.on_reply(cmd, ok, why)
+        # A refused pick used to be indistinguishable from a slow one, so the
+        # watchdog waited out sync_timeout.  Now the board says so: give the
+        # slot back and reconnect for a fresh lobby list straight away.
+        if not ok and cmd == "pick" and self._pending_slot is not None:
+            self.pick_failures += 1
+            self._close_reason = f"pick_nack:{why}"
+            await self.broker.release(self._pending_slot)
+            self._pending_slot = None
+            if self.ws is not None:
+                await self.ws.close()
 
     async def run(self) -> None:
         backoff = 1.0
@@ -176,6 +240,7 @@ class BotClient:
                     self.ws = ws
                     backoff = 1.0
                     self.connects += 1
+                    self.oracle.new_socket()
                     self.recorder.write("conn", self._log_arch(),
                                         {"url": self.url, "n": self.connects})
                     await self._session()
@@ -195,6 +260,7 @@ class BotClient:
                 await self.broker.release(self._pending_slot)
                 await self.broker.release(self.arch)
                 self._pending_slot = None
+                self.replies.clear()        # a new socket has no replies coming
                 self.arch = -1
                 self.obs.synced = False
                 self._downed_since = None
@@ -252,6 +318,9 @@ class BotClient:
 
     async def _on_message(self, msg: dict) -> None:
         t = msg.get("t")
+        if t in ("ack", "nack"):
+            await self._on_reply(msg)
+            return
         if t == "full":
             self.refused_full += 1
             self._close_reason = "board_full"
@@ -276,6 +345,7 @@ class BotClient:
 
         was_synced = self.obs.synced
         self.obs.apply(msg)
+        self.oracle.on_rx(msg, self.obs)
 
         # sendSync() only unicasts after a pick succeeds -- that is our ack.
         if not was_synced and self.obs.synced and self._pending_slot is not None:
@@ -367,6 +437,14 @@ class BotClient:
         if not me.connected:
             self.seats_lost += 1
             self._close_reason = "seat_lost"
+            # The stale-slot reap unseats a live player without closing the
+            # socket (docs/bot-testing.md "Known issues"). It is a firmware
+            # defect, not a harness event, so it is a finding.
+            self.findings.add(Finding(
+                check="seat_lost", severity="major",
+                summary="the board unseated a live player; socket stayed open",
+                source=self.oracle.source, repro=self.repro.snapshot(),
+                detail={"tick": self.obs.tick, "score": me.score}))
             self.recorder.write("seat_lost", self.arch,
                                 {"tick": self.obs.tick, "score": me.score})
             await self.ws.close()
@@ -406,6 +484,7 @@ class BotClient:
     async def _decide_loop(self) -> None:
         while not self.stop.is_set():
             await asyncio.sleep(self.decide_interval)
+            self.oracle.poll()
             # arch < 0 means the pick has not been confirmed; acting now would
             # just be shouting into the lobby.
             if self.arch < 0 or not self.obs.synced or self.ws is None:
@@ -459,6 +538,8 @@ class BotClient:
                "refused_full": self.refused_full,
                "pick_failures": self.pick_failures,
                "seats_lost": self.seats_lost, "respawns": self.respawns,
+               "acks": self.acks, "nacks": self.nacks,
+               "unanswered": self.unanswered,
                "connection": self.connection_report()}
         out["pts_per_step"] = round(me.score / me.steps, 2) if me.steps else None
         # ContentMax is judged on this rather than score, so it has to reach

@@ -432,10 +432,15 @@ static void tickGame() {
       if (G.map[p.r][p.q].shelter >= 1) continue;   // any cover is full cover
       float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * CHEM_TICK_RATE;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
-        if (p.ll > 0) { p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP); }
+        if (p.ll > 0) {
+          p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP);
+          GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
+          dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg);
+        }
         if (p.ll == 0) {
           p.movesLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.res = DC_CHEM;
           dev.evWsId = p.wsClientId; enqEvt(dev);
         }
       }
@@ -473,10 +478,15 @@ static void tickGame() {
         p.movesLeft--;
       }
       if (esp_random() < (uint32_t)(llProb * 0xFFFFFFFFul)) {
-        if (p.ll > 0) { p.ll--; ledFlash(30, 55, 40); k10Play(MOTIF_CREEPING_RUST); }
+        if (p.ll > 0) {
+          p.ll--; ledFlash(30, 55, 40); k10Play(MOTIF_CREEPING_RUST);
+          GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
+          dmg.amt = 1; dmg.res = DC_FOG; dmg.actNewLL = p.ll; enqEvt(dmg);
+        }
         if (p.ll == 0) {
           p.movesLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+          dev.res = DC_FOG;
           dev.evWsId = p.wsClientId; enqEvt(dev);
         }
       }
@@ -536,7 +546,8 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   // scrap could starve a survivor through a button that did nothing and said
   // nothing -- the bot harness livelocked on exactly that.  SCAVENGE, which
   // is loot rather than survival, does keep the cap.
-  if (!dn || p.movesLeft < 2) return;
+  if (!dn)              { ev.actWhy = ABW_TERRAIN; return; }
+  if (p.movesLeft < 2)  { ev.actWhy = ABW_NO_MP;   return; }
   spendMP(p, 2);
   CheckResult cr = resolveCheck(pid, SK_FORAGE, dn, 0);
   ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
@@ -565,7 +576,8 @@ static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
   Player& p = G.players[pid];
   // Uncapped for the same reason as FORAGE: drinking is survival, and the
   // overflow is paid for in encumbrance, not refused.
-  if (!TERRAIN_HAS_WATER[terr] || p.movesLeft < 1) return;
+  if (!TERRAIN_HAS_WATER[terr]) { ev.actWhy = ABW_TERRAIN; return; }
+  if (p.movesLeft < 1)          { ev.actWhy = ABW_NO_MP;   return; }
   int spend = max(1, min(3, min(mpParam, (int)p.movesLeft)));
   spendMP(p, spend);
   p.inv[0]     = (uint8_t)min((int)p.inv[0] + spend, 99);
@@ -577,7 +589,8 @@ static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
 static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   Player& p  = G.players[pid];
   uint8_t dn = TERRAIN_SALVAGE_DN[terr];
-  if (!dn || p.movesLeft < 2) return;
+  if (!dn)             { ev.actWhy = ABW_TERRAIN; return; }
+  if (p.movesLeft < 2) { ev.actWhy = ABW_NO_MP;   return; }
   // Salvage is loot, not survival, so this one IS bound by the pack size --
   // and says so, because "my pack is full of scrap" is not visible from the
   // SCAVENGE button the way "there is nothing to salvage here" is.
@@ -615,9 +628,10 @@ static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
   Player& p = G.players[pid];
   bool isMedic      = (p.archetype == 2);
   bool inSettlement = (terr == 9);
-  if (!isMedic && !inSettlement) return;   // AO_BLOCKED
-  if (p.wounds[WOUND_MAJOR] == 0)    return;
-  if (p.inv[3] == 0 || p.movesLeft < 2) return;
+  if (!isMedic && !inSettlement)  { ev.actWhy = ABW_ARCHETYPE;  return; }
+  if (p.wounds[WOUND_MAJOR] == 0)  { ev.actWhy = ABW_NOT_NEEDED; return; }
+  if (p.inv[3] == 0)               { ev.actWhy = ABW_NO_RES;     return; }
+  if (p.movesLeft < 2)             { ev.actWhy = ABW_NO_MP;      return; }
   spendMP(p, 2);
   p.inv[3]--;
   ev.actMedD = -1;
@@ -703,12 +717,12 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
   Player&  p       = G.players[pid];
   uint8_t  current = G.map[p.r][p.q].shelter;
   settle.fired = false;
-  if (current >= 2) return;                       // AO_BLOCKED: already improved
-  if (p.inv[4] == 0) return;                      // AO_BLOCKED: no scrap
+  if (current >= 2) { ev.actWhy = ABW_NOT_NEEDED; return; }  // already improved
+  if (p.inv[4] == 0) { ev.actWhy = ABW_NO_RES;     return; }  // no scrap
   uint8_t shelterType = (p.inv[4] >= 2 && p.movesLeft >= 2) ? 2 : 1;
-  if (current == 1 && shelterType < 2) return;    // AO_BLOCKED: can't afford the upgrade
+  if (current == 1 && shelterType < 2) { ev.actWhy = ABW_NO_RES; return; }  // can't afford the upgrade
   uint8_t mpCost = shelterType;
-  if (p.movesLeft < (int8_t)mpCost) return;
+  if (p.movesLeft < (int8_t)mpCost)    { ev.actWhy = ABW_NO_MP;  return; }
   spendMP(p, mpCost);
   p.inv[4]                 = (uint8_t)max(0, (int)p.inv[4] - shelterType);
   G.map[p.r][p.q].shelter  = shelterType;
@@ -777,8 +791,8 @@ static void broadcastSettle(const SettleResult& s) {
 static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* survLen) {
   Player& p      = G.players[pid];
   bool    isScout = (p.archetype == 4);  // Scout: Survey costs 0 MP
-  if (p.resting) return;
-  if (!isScout && p.movesLeft < 1) return;
+  if (p.resting)                   { ev.actWhy = ABW_RESTING; return; }
+  if (!isScout && p.movesLeft < 1) { ev.actWhy = ABW_NO_MP;   return; }
   if (!isScout) {
     spendMP(p, 1);
   }
@@ -804,7 +818,7 @@ static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* su
 // the new level so the client can redraw the hex).
 static void doRest(int pid, GameEvent& ev) {
   Player& p = G.players[pid];
-  if (p.resting) return;  // already resting; prevent duplicate REST commands
+  if (p.resting) { ev.actWhy = ABW_RESTING; return; }  // already resting; prevent duplicate REST commands
   p.resting = true;  // mark as resting; if all players rest, day ends early
   // Fire Starter banks up the shelter you bed down in -- surface only. q/r are
   // pinned to the hatch while underground (tunnels.hpp), so without the depth
@@ -853,9 +867,13 @@ static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev, cons
 // blockWhy: out-param naming why ACT_CRAFT was refused (static string; left
 // untouched on success and for every other action) — handleMsg_act toasts it
 // to the acting client.
+// refuse: out-param set to a nack code (network-reply.hpp) when the action was
+// refused outright, and left nullptr when it was carried out -- including a
+// failed skill check, which spent MP and is not a refusal.
 static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId,
                          char* survBuf, int survCap, int* survLen,
-                         SettleResult& settleOut, const char** blockWhy) {
+                         SettleResult& settleOut, const char** blockWhy,
+                         const char** refuse) {
   Player& p    = G.players[pid];
   // Read the hex off whichever board this survivor is standing on.
   uint8_t terr;
@@ -865,8 +883,8 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
     terr = (p.r < MAP_ROWS && p.q < MAP_COLS) ? G.map[p.r][p.q].terrain : 0;
   }
   if (terr >= NUM_TERRAIN) terr = 0;
-  if (p.ll == 0) return false;  // downed — no actions until respawn
-  if (encounters[pid].active)  return false;  // locked during active encounter
+  if (p.ll == 0) { *refuse = "downed"; return false; }  // no actions until respawn
+  if (encounters[pid].active) { *refuse = "in_enc"; return false; }  // locked during active encounter
   // Underground, only the resource actions and REST make sense.
   // FORAGE self-blocks (TERRAIN_FORAGE_DN[14] is 0) and TREAT self-gates to
   // Medics, so those need no entry here. The three below must be refused
@@ -882,7 +900,7 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
   // the server never set p.resting, and the day would not end.
   // data/game-data.js actAvailable() mirrors this so the menu agrees.
   if (p.depth && (actType == ACT_SHELTER || actType == ACT_CRAFT ||
-                  actType == ACT_SURVEY)) return false;
+                  actType == ACT_SURVEY)) { *refuse = "underground"; return false; }
 
   GameEvent ev = {};
   ev.type    = EVT_ACTION;
@@ -900,7 +918,11 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
     case ACT_CRAFT:   doCraft  (pid, terr, recipeId, ev, blockWhy);  break;
     case ACT_SURVEY:  doSurvey (pid, ev, survBuf, survCap, survLen); break;
     case ACT_REST:    doRest   (pid, ev);                            break;
-    default: break;
+    default:          ev.actWhy = ABW_BAD_ACT;                       break;
+  }
+  if (ev.actOut == AO_BLOCKED) {
+    if (actType == ACT_CRAFT && ev.actWhy == ABW_NONE) ev.actWhy = ABW_CRAFT;
+    *refuse = abwName(ev.actWhy);
   }
 
   ev.actNewLL  = p.ll;

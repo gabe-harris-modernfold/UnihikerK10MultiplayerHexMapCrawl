@@ -64,6 +64,9 @@ TERRAIN_FORAGE_DN = (7, 0, 6, 8, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0)
 # therefore has to come from collected piles, not the WATER action.
 TERRAIN_HAS_WATER = (0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0)
 TERRAIN_IS_RUINS  = (0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+# Entering these rolls Endure DN6 or +1 radiation (movePlayer), and they keep
+# the day from being "clean" for the dawn R-1 -- Ash Dunes, Glass, Crater.
+TERRAIN_IS_RAD    = (0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0)
 # Shelter value (Esp32HexMapCrawl.ino:430).  dawnUpkeep's §7.3 exposure check
 # costs 1 LL per dawn wherever SV < 2 and nothing is built -- which is every
 # terrain except Flooded, Mountain, Settlement and Bunker, i.e. under 4% of a

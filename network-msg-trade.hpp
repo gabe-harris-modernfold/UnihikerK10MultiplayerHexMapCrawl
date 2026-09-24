@@ -3,8 +3,8 @@
 
 static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* top = strstr(data, "\"to\""); if (!top) return;
-  const char* tov = strchr(top + 4, ':');  if (!tov) return;
+  const char* top = strstr(data, "\"to\""); if (!top) { wsNack(client, "parse"); return; }
+  const char* tov = strchr(top + 4, ':');  if (!tov) { wsNack(client, "parse"); return; }
   int toPid = atoi(tov + 1);
 
   uint8_t give[5] = {0}, want[5] = {0};
@@ -27,17 +27,25 @@ static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size
 
   int total = 0;
   for (int i = 0; i < 5; i++) total += give[i] + want[i];
-  if (total == 0) return;
-  if (toPid < 0 || toPid >= MAX_PLAYERS) return;
+  if (total == 0) { wsNack(client, "empty"); return; }
+  if (toPid < 0 || toPid >= MAX_PLAYERS) { wsNack(client, "bad_arg"); return; }
 
   bool valid = false;
+  const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int fromSlot = findSlot(client->id());
     if (fromSlot >= 0 && (encounters[fromSlot].active || encounters[toPid].active)) {
       xSemaphoreGive(G.mutex);
+      wsNack(client, "in_enc");
       client->text("{\"t\":\"err\",\"msg\":\"Cannot trade during encounter\"}");
       return;
     }
+    refused = (fromSlot < 0)                    ? "not_seated"
+            : (fromSlot == toPid)               ? "self"
+            : !G.players[toPid].connected       ? "no_target"
+            : !samehex(fromSlot, toPid)         ? "not_same_hex"
+            : !hasResources(fromSlot, give)     ? "no_res"
+            : "dup_offer";                      // cleared below unless the dup scan hits
     if (fromSlot >= 0 && fromSlot != toPid &&
         G.players[toPid].connected &&
         samehex(fromSlot, toPid) &&
@@ -76,21 +84,25 @@ static void handleMsg_trade_offer(AsyncWebSocketClient* client, char* data, size
     char fb[48];
     int fl = snprintf(fb, sizeof(fb), "{\"t\":\"trade_fail\"}");
     client->text(fb, (size_t)fl);
+    wsNack(client, refused);
   }
 }
 
 static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* fp = strstr(data, "\"from\""); if (!fp) return;
-  const char* fv = strchr(fp + 6, ':');      if (!fv) return;
+  const char* fp = strstr(data, "\"from\""); if (!fp) { wsNack(client, "parse"); return; }
+  const char* fv = strchr(fp + 6, ':');      if (!fv) { wsNack(client, "parse"); return; }
   int fromPid = atoi(fv + 1);
-  if (fromPid < 0 || fromPid >= MAX_PLAYERS) return;
+  if (fromPid < 0 || fromPid >= MAX_PLAYERS) { wsNack(client, "bad_arg"); return; }
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
-    if (mySlot < 0) { xSemaphoreGive(G.mutex); return; }  // not a seated player — nothing to accept with
+    if (mySlot < 0) {   // not a seated player — nothing to accept with
+      xSemaphoreGive(G.mutex); wsNack(client, "not_seated"); return;
+    }
     if (encounters[mySlot].active || encounters[fromPid].active) {
       xSemaphoreGive(G.mutex);
+      wsNack(client, "in_enc");
       client->text("{\"t\":\"err\",\"msg\":\"Cannot trade during encounter\"}");
       return;
     }
@@ -98,6 +110,7 @@ static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, siz
     // broadcast a misleading result for an offer that never existed.
     if (!tradeOffers[fromPid].active || tradeOffers[fromPid].toPid != (uint8_t)mySlot) {
       xSemaphoreGive(G.mutex);
+      wsNack(client, "no_offer");
       return;
     }
     GameEvent tev = {};
@@ -114,19 +127,22 @@ static void handleMsg_trade_accept(AsyncWebSocketClient* client, char* data, siz
       // Offer existed but conditions no longer hold (moved off-hex, resources
       // spent, expired) — distinct from an explicit decline (see trade_decline).
       tev.tradeResult = 4;
+      wsNack(client, "stale_offer");
     }
     tradeOffers[fromPid].active = false;
     enqEvt(tev);
     xSemaphoreGive(G.mutex);
+  } else {
+    wsNack(client, "busy");
   }
 }
 
 static void handleMsg_trade_decline(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* fp = strstr(data, "\"from\""); if (!fp) return;
-  const char* fv = strchr(fp + 6, ':');      if (!fv) return;
+  const char* fp = strstr(data, "\"from\""); if (!fp) { wsNack(client, "parse"); return; }
+  const char* fv = strchr(fp + 6, ':');      if (!fv) { wsNack(client, "parse"); return; }
   int fromPid = atoi(fv + 1);
-  if (fromPid < 0 || fromPid >= MAX_PLAYERS) return;
+  if (fromPid < 0 || fromPid >= MAX_PLAYERS) { wsNack(client, "bad_arg"); return; }
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int mySlot = findSlot(client->id());
@@ -140,8 +156,12 @@ static void handleMsg_trade_decline(AsyncWebSocketClient* client, char* data, si
       tev.tradeTo     = (uint8_t)mySlot;
       tev.tradeResult = 2;
       enqEvt(tev);
+    } else {
+      wsNack(client, mySlot < 0 ? "not_seated" : "no_offer");
     }
     xSemaphoreGive(G.mutex);
+  } else {
+    wsNack(client, "busy");
   }
 }
 
@@ -172,11 +192,19 @@ static void handleMsg_caravan_trade(AsyncWebSocketClient* client, char* data, si
 
   int total = 0;
   for (int i = 0; i < 5; i++) total += give[i] + want[i];
-  if (total == 0) return;
+  if (total == 0) { wsNack(client, "empty"); return; }
 
   bool valid = false;
+  const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int slot = findSlot(client->id());
+    refused = (slot < 0)                    ? "not_seated"
+            : encounters[slot].active       ? "in_enc"
+            : (!W.caravan.active ||
+               G.players[slot].q != W.caravan.q ||
+               G.players[slot].r != W.caravan.r) ? "no_caravan"
+            : !hasResources(slot, give)     ? "no_res"
+            : "caravan_short";              // the caravan lacks what was asked for
     if (slot >= 0 && !encounters[slot].active && W.caravan.active &&
         G.players[slot].q == W.caravan.q && G.players[slot].r == W.caravan.r &&
         hasResources(slot, give)) {
@@ -203,6 +231,7 @@ static void handleMsg_caravan_trade(AsyncWebSocketClient* client, char* data, si
     char fb[48];
     int fl = snprintf(fb, sizeof(fb), "{\"t\":\"trade_fail\"}");
     client->text(fb, (size_t)fl);
+    wsNack(client, refused);
   }
 }
 
@@ -222,14 +251,14 @@ static void handleMsg_caravan_trade(AsyncWebSocketClient* client, char* data, si
 // 2 can't pay, 3 pack full, 4 tried to pay with water.
 static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
-  const char* ip = strstr(data, "\"item\""); if (!ip) return;
-  const char* iv = strchr(ip + 6, ':');      if (!iv) return;
+  const char* ip = strstr(data, "\"item\""); if (!ip) { wsNack(client, "parse"); return; }
+  const char* iv = strchr(ip + 6, ':');      if (!iv) { wsNack(client, "parse"); return; }
   int itemId = atoi(iv + 1);
-  if (itemId <= 0 || itemId > 254) return;
+  if (itemId <= 0 || itemId > 254) { wsNack(client, "bad_arg"); return; }
   int n = 1;
   const char* np = strstr(data, "\"n\"");
   if (np) { const char* nv = strchr(np + 3, ':'); if (nv) n = atoi(nv + 1); }
-  if (n < 1 || n > (int)CARAVAN_STOCK_MAX) return;
+  if (n < 1 || n > (int)CARAVAN_STOCK_MAX) { wsNack(client, "bad_arg"); return; }
   uint8_t give[5] = {0};
   const char* gp = strstr(data, "\"give\"");
   if (gp) { const char* gb = strchr(gp + 6, '['); if (gb) { gb++;
@@ -244,7 +273,9 @@ static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) ack
   int why = 1;
+  bool locked = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    locked = true;
     int slot = findSlot(client->id());
     const ItemDef* def = getItemDef((uint8_t)itemId);
     int ss = caravanStockSlot((uint8_t)itemId);
@@ -291,5 +322,7 @@ static void handleMsg_caravan_buy(AsyncWebSocketClient* client, char* data, size
     char fb[48];
     int fl = snprintf(fb, sizeof(fb), "{\"t\":\"trade_fail\",\"why\":%d}", why);
     client->text(fb, (size_t)fl);
+    static const char* const WHY[5] = {"", "no_caravan", "no_res", "pack_full", "water"};
+    wsNack(client, !locked ? "busy" : (why >= 1 && why <= 4) ? WHY[why] : "refused");
   }
 }

@@ -40,6 +40,17 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   serves `data/` on `http://localhost:8765/` and accepts the same `/upload`
   POSTs (drop on disk under `mock-server/uploads/`). Use this before flashing
   whenever the change is in `data/*.{html,js,css}`.
+- **Finding the board:** it answers mDNS as `k10.local` (and DHCP hostname
+  `k10`), so the address no longer has to be re-found after every reboot.
+  `/state` → `boot.reset` says why it last started (`PANIC` / `*WDT` = it
+  crashed), and `boot.crash` carries the task, PC and backtrace from the core
+  dump if one is in flash.
+- **WS replies for tooling:** any message with `"rid":N` gets exactly one
+  `ack` / `nack` back ([network-reply.hpp](../network-reply.hpp)). Adding a
+  handler? Every refusal path must call `wsNack(client, "<why>")` or it acks a
+  request that did nothing. Codes are listed in
+  [bot-testing.md](bot-testing.md) "Replies". Bump `PROTO_VERSION` in the
+  `.ino` when a message changes shape.
 - **Pointers:** `/upload` handler [game-server.hpp:729](../game-server.hpp:729),
   USB-MSC entry [Esp32HexMapCrawl.ino:1261](../Esp32HexMapCrawl.ino:1261),
   upload screen [ui-upload.hpp](../ui-upload.hpp), LCD refresh switch around
@@ -370,6 +381,7 @@ Verifying on hardware (board on the LAN):
 curl.exe -sI -H "Accept-Encoding: gzip" http://192.168.4.72/app.bundle.js   # expect Content-Encoding: gzip + ETag
 curl.exe -s http://192.168.4.72/assets.json                                   # version must match data/assets.json
 curl.exe -s http://192.168.4.72/state | ConvertFrom-Json | Select -Expand mem  # heap / minHeap / maxBlock / psram
+curl.exe -s http://k10.local/state | ConvertFrom-Json | Select pv, evSeq, evtDrops, boot   # protocol, event loss, last reset / crash
 ```
 
 ### Diagnosing HTTP stalls

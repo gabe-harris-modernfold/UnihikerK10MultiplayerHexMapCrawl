@@ -33,6 +33,7 @@ import websockets
 import policy as policy_mod
 from client import BotClient, RateLimiter, SlotBroker
 from config import MAX_PLAYERS, ARCHETYPE_NAME
+from findings import FindingLog
 from policy.base import Action, Policy
 from policy.survivor import REST_RETRY_S
 from record import Recorder
@@ -94,6 +95,9 @@ class SprintPolicy(Policy):
 
     def on_event(self, ev):
         self.inner.on_event(ev)
+
+    def on_reply(self, cmd, ok, why):
+        self.inner.on_reply(cmd, ok, why)
 
     def set_pid(self, pid):
         self.pid = pid
@@ -205,6 +209,9 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
 
         global_limiter = RateLimiter(args.global_interval, rng, jitter=0.25)
         broker = SlotBroker()
+        # One log for the whole run: every bot's WireOracle and the /state
+        # poller report into it, so a defect two bots hit is counted once.
+        findings = FindingLog(rec)
         names = args.policies.split(",")
         bots = []
         for i in range(args.bots):
@@ -221,10 +228,11 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                 host=args.host, preferred_arch=i, policy=pol, recorder=rec,
                 rng=bot_rng, limiter=RateLimiter(args.min_interval, bot_rng),
                 global_limiter=global_limiter, broker=broker,
-                decide_interval=args.decide_interval,
+                decide_interval=args.decide_interval, findings=findings,
             ))
 
-        tele = TelemetryPoller(args.host, rec, interval=args.telemetry_interval)
+        tele = TelemetryPoller(args.host, rec, interval=args.telemetry_interval,
+                               findings=findings)
         tasks = [asyncio.create_task(b.run()) for b in bots]
         tasks.append(asyncio.create_task(tele.run()))
 
@@ -250,7 +258,8 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                 elapsed = now - t_start
                 if joined:
                     last_seated = now
-                if max(scores, default=0) >= args.target:
+                # --target 0 runs on the clock alone (soak.py).
+                if args.target and max(scores, default=0) >= args.target:
                     reason = "target"
                     break
                 if now > deadline:
@@ -282,8 +291,10 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
             "day": bots[0].obs.day if bots else 0,
             "bots": [b.summary() for b in bots],
             "board": tele.summary(),
+            "findings": findings.summary(),
             "log": str(path),
         }
+        findings.flush()
         rec.write("run", -1, summary)
         print(f"  end: {reason} after {summary['elapsed_s']}s, day {summary['day']}")
         for b in summary["bots"]:
@@ -292,12 +303,29 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
             print(f"    {b['label']:<30} score={b['score']:<5} steps={b['steps']:<4} "
                   f"pts/step={pps if pps is not None else '-':<5} ll={b['ll']} "
                   f"tx={b['sent']} err={b['errors']}{seat}")
+            if b.get("acks") or b.get("nacks"):
+                # Refusals by command, most common reason first. A policy
+                # that keeps asking for something the board keeps refusing
+                # shows up here long before it shows up in the score.
+                parts = []
+                for cmd, whys in sorted(b["nacks"].items()):
+                    top = sorted(whys.items(), key=lambda kv: -kv[1])
+                    parts.append(f"{cmd}(" + ",".join(f"{w}:{n}" for w, n in top) + ")")
+                print(f"       replies: ack={b['acks']} "
+                      f"nack={sum(sum(w.values()) for w in b['nacks'].values())} "
+                      f"unanswered={b['unanswered']} {' '.join(parts)}")
             c = b.get("content")
             if c:
                 print(f"       content: opened={c['encounters_opened']} "
                       f"banked={c['encounters_banked']} aborted={c['encounters_aborted']} "
                       f"nodes={c['nodes_seen']} rolls={c['rolls_won']}/{c['rolls']} "
                       f"recipes={c['recipes']} downed={c['downed']}")
+            camp = (c or {}).get("camp")
+            if camp:
+                # The Sentinel's camp: did it get one, cover it, and sleep in it?
+                print(f"       camp: at={camp['at']} sites={camp['camps']} "
+                      f"built={camp['shelters']} upgraded={camp['upgrades']} "
+                      f"rests={camp['rests']} (in camp {camp['rests_in_camp']})")
             # Only the tunnel policies carry these. mp_per_surface_hex is the
             # headline: underground MP spent per surface hex actually crossed,
             # against a surface average MC of ~1.6.
@@ -316,7 +344,14 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                 # against 2) since dawnUpkeep stopped reading the surface hex.
         bd = summary["board"]
         print(f"    board: worst maxTickMs={bd['worst_maxTickMs']} "
-              f"minHeap={bd['min_heap']} pollFail={bd['poll_failures']}")
+              f"minHeap={bd['min_heap']} pollFail={bd['poll_failures']} "
+              f"evtDrops={bd['evt_drops'] if bd['evt_drops'] is not None else '-'}")
+        for rb in bd["reboots"]:
+            cr = rb.get("crash") or {}
+            print(f"    board REBOOTED mid-run: reset={rb.get('reset')} "
+                  f"after {rb['uptimeMs_before'] / 1000:.0f}s up"
+                  + (f", crash task={cr.get('task')} pc={cr.get('pc')}" if cr else ""))
+        findings.print_summary()
         return summary
 
 
@@ -350,7 +385,8 @@ def parse_args(argv=None):
                    help="1-6; 5 leaves a slot free so you can watch in a browser")
     p.add_argument("--policies", default="drunk",
                    help="comma-separated, cycled across slots (e.g. drunk,drunk)")
-    p.add_argument("--target", type=int, default=1000, help="score that ends a run")
+    p.add_argument("--target", type=int, default=1000,
+                   help="score that ends a run; 0 = run on --max-minutes alone")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--mode", choices=("sprint", "realtime"), default="sprint")
     p.add_argument("--seed", type=int, default=1)
@@ -375,6 +411,11 @@ def parse_args(argv=None):
     args = p.parse_args(argv)
     if not 1 <= args.bots <= MAX_PLAYERS:
         p.error(f"--bots must be 1..{MAX_PLAYERS}")
+    if args.mode == "sprint" and "sentinel" in args.policies.split(","):
+        # SprintPolicy forces REST the moment MP runs out, which collapses the
+        # day the Sentinel exists to hold open.
+        p.error("sentinel holds days open and rests only late in each one; "
+                "run it with --mode realtime (or use soak.py)")
     return args
 
 
