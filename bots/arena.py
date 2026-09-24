@@ -233,8 +233,14 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
 
         tele = TelemetryPoller(args.host, rec, interval=args.telemetry_interval,
                                findings=findings)
-        tasks = [asyncio.create_task(b.run()) for b in bots]
-        tasks.append(asyncio.create_task(tele.run()))
+        tasks = [asyncio.create_task(tele.run())]
+        # Each join costs the board a full sendSync(); five at once took free
+        # internal heap to 42 KB (largest block 7.6 KB) and wedged it 25 s in
+        # on 2026-09-23.  --join-stagger spaces them out; 0 keeps the old burst.
+        for i, b in enumerate(bots):
+            if i and args.join_stagger > 0:
+                await asyncio.sleep(args.join_stagger)
+            tasks.append(asyncio.create_task(b.run()))
 
         reason, t_start = "unknown", time.monotonic()
         deadline = t_start + args.max_minutes * 60
@@ -319,7 +325,10 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                 print(f"       content: opened={c['encounters_opened']} "
                       f"banked={c['encounters_banked']} aborted={c['encounters_aborted']} "
                       f"nodes={c['nodes_seen']} rolls={c['rolls_won']}/{c['rolls']} "
-                      f"recipes={c['recipes']} downed={c['downed']}")
+                      f"recipes={c['recipes']} downed={c['downed']} "
+                      # Death drops: loots sent at graves, steps walked back
+                      # to our own -- whether a fall still costs the canteen.
+                      f"loots={c.get('loots', 0)} recover={c.get('recover_moves', 0)}")
             camp = (c or {}).get("camp")
             if camp:
                 # The Sentinel's camp: did it get one, cover it, and sleep in it?
@@ -401,6 +410,8 @@ def parse_args(argv=None):
                    dest="telemetry_interval")
     p.add_argument("--max-minutes", type=float, default=30.0, dest="max_minutes",
                    help="safety timeout per run")
+    p.add_argument("--join-stagger", type=float, default=0.0, dest="join_stagger",
+                   help="seconds between bot connects (spreads the sendSync load)")
     p.add_argument("--no-reset", action="store_true",
                    help="skip eraseslot+regen (keeps the current world/save)")
     p.add_argument("--shelter", action="store_true",

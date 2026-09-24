@@ -19,12 +19,15 @@ so most water has to come from walking onto piles.
 """
 import time
 
-from config import (ACT_FORAGE, ACT_REST, ACT_SHELTER, ACT_WATER, EQUIPMENT,
+from config import (ACT_CRAFT, ACT_FORAGE, ACT_REST, ACT_SCAV, ACT_SHELTER,
+                    ACT_WATER, can_salvage,
+                    CANTEEN_ITEM, CANTEEN_RECIPE, EQUIPMENT, RECIPES,
+                    TERR_SETTLEMENT, recipe_known,
                     EQUIP_STATS, INV_SLOTS_MAX, NAR_COLD_IMMUNE,
                     NAR_FIRE_STARTER, NAR_LAND_FORAGE, NAR_RIVER_FORAGE,
                     NAR_SCAV_DOUBLE, RES_FOOD, RES_SCRAP, RES_WATER,
-                    ascend_cost, can_forage, gear_score, has_water,
-                    is_exposed, is_hatch_terrain)
+                    ascend_cost, can_forage, gear_score, ground_days_left,
+                    has_water, is_exposed, is_hatch_terrain)
 from encounters import EncounterLibrary, EncounterRun, success_chance
 from navigate import best_target
 from .base import Policy, Action
@@ -47,21 +50,62 @@ STAPLE_SEARCH_COST = 60
 # landed. Short enough to unstick a dropped REST within one dawn, long
 # enough that it is nothing like the old per-cycle spam.
 REST_RETRY_S = 4.0
+# How far a survivor will walk to a Settlement to craft its canteen.  The
+# errand runs only once the survival floor is quiet, and there are ~29
+# Settlements on the 4275-hex map, so this is roughly "the nearest one we
+# have seen, if it is not across the world".
+CRAFT_SEARCH_COST = 40
+# Seconds to stop asking after a craft that did not land.  doCraft() refuses
+# with an err toast and no state change, so without this a refusal the bot
+# did not predict (a full item grid, a recipe the board does not have) would
+# repeat once a cycle forever -- the same shape as the stale-POI loop.
+CRAFT_RETRY_S = 20.0
+# Seconds before re-sending an identical equip_item.  equipItem() can refuse
+# silently, and a socket the board has stopped servicing swallows it; with no
+# cooldown gear_action() re-sent one swap 60 times in 25 s on 2026-09-23.
+EQUIP_RETRY_S = 5.0
+# The same guard for the two ground messages.  pickupGroundItem() and
+# lootRemains() both refuse without changing anything -- a pile someone lifted
+# a moment ago, tokens a rival looted first -- and until the ground_update that
+# corrects our view arrives, the decision that sent them comes straight back.
+PICKUP_RETRY_S = 5.0
+LOOT_RETRY_S = 5.0
+# Death drops (dropRemains): a fall leaves the whole pack on the hex, and the
+# survivor who comes back for it is a fresh one.  How far it will walk: the
+# same reach as the canteen errand, since the canteen it would otherwise
+# rebuild from three scrap is usually lying on the grave.
+RECOVER_SEARCH_COST = 40
+# MP a day of walking is assumed to cover when asking whether a grave will
+# still be there on arrival.  effectiveMP() is 6 + (ll+1)/2 -- about 10 fresh --
+# so this errs short, which errs toward not setting off for a grave that ages
+# out on the way.
+RECOVER_MP_PER_DAY = 8
+# Scrap-errand values: a pile is collected just by stepping on it; salvage
+# terrain needs a 2 MP SCAV and a check, so it is worth less per MP.
+SCRAP_PILE_VALUE = 100.0
+SALVAGE_VALUE = 60.0
 # How far to look for a way out when a surface policy falls down a hatch.
 # The whole tunnel board is 16x10 and a corridor step costs 2 MP, so this
 # reaches across all of it.
 TUNNEL_ESCAPE_COST = 80
 
 
-def token_room(me) -> int:
+def token_room(me, res: int = -1) -> int:
     """Spare resource-token capacity — mirrors tokenRoomFor() in the firmware.
+
+    `res` is the inv[] index being added.  Water also gets whatever canteen
+    space is still empty: that sits outside the pack, so it is room even in a
+    full or overfull one.  me.carried() is already tokenLoad().
 
     Only SCAVENGE is gated by this: FORAGE and WATER may overfill and pay the
     encumbrance penalty instead. Gating all three is what livelocked the first
     hardware run — four of five bots sat at room 0 asking for water they could
     not hold, 376 refused actions a minute, no MP spent and no way to tell.
     """
-    return max(0, me.inv_slots - sum(me.inv))
+    room = max(0, me.inv_slots - me.carried())
+    if res == RES_WATER:
+        room += max(0, me.water_cap - me.inv[RES_WATER])
+    return room
 
 
 def ends_journey(cell, q, r) -> bool:
@@ -101,6 +145,13 @@ class SurvivorPolicy(Policy):
     # lost on exposure, which no policy had any answer to -- measuring that
     # without this arm measures the bot's blind spot, not the game's balance.
     shelter_when_exposed = False
+    # Every survivor gets a canteen and keeps it on: gather the scrap, craft
+    # it at a Settlement, wear it, and never swap it back out.  Thirst was
+    # every single death in the realtime runs of 2026-09-23, and the canteen
+    # is the one piece of kit that answers it that anyone can make.  It
+    # deliberately overrides gear_weights -- a policy that prefers the
+    # Backpack's slots gives them up for the water.
+    craft_canteen = True
 
     def __init__(self, rng, library: EncounterLibrary | None = None):
         super().__init__(rng)
@@ -120,7 +171,16 @@ class SurvivorPolicy(Policy):
         # since it will structurally lose a score race.
         self.stats = {"encounters_opened": 0, "encounters_banked": 0,
                       "encounters_aborted": 0, "rolls": 0, "rolls_won": 0,
-                      "nodes_seen": set(), "recipes": 0, "downed": 0}
+                      "nodes_seen": set(), "recipes": 0, "downed": 0,
+                      "crafted": 0,
+                      # Death drops, as decided (not as acked): loot messages
+                      # sent, and steps taken walking back to a grave of ours.
+                      "loots": 0, "recover_moves": 0}
+        self._craft_sent = 0.0      # monotonic time of the last CRAFT we sent
+        self._equip_sent: dict[tuple[int, int], float] = {}   # (slot, item) -> t
+        self._pickup_sent: dict[tuple[int, int], float] = {}  # (gslot, item) -> t
+        self._loot_sent: dict[tuple[int, int], float] = {}    # (q, r) -> t
+        self._had_canteen = False
 
     # --- event plumbing -------------------------------------------------
     def on_event(self, ev):
@@ -161,8 +221,36 @@ class SurvivorPolicy(Policy):
         if not me.connected or me.ll == 0:
             return Action("noop", why="downed or disconnected")
 
+        # Count a canteen the moment it appears.  Here rather than in
+        # craft_action(), which gear_action() pre-empts on the very cycle
+        # the crafted item lands in the pack.
+        have = self.owns(me, CANTEEN_ITEM)
+        if have and not self._had_canteen and self._craft_sent:
+            self.stats["crafted"] += 1
+        self._had_canteen = have
+
         if obs.encounter is not None:
             return self.decide_encounter(obs)
+
+        # Stood on a grave: what is on it is free (no MP, no check) and ours
+        # for the taking, so take it before any errand walks us off the hex.
+        act = self.remains_action(obs)
+        if act is not None:
+            return act
+
+        # A canteen within today's MP outranks topping up the pack.  The top-up
+        # floor is often above what the economy sustains, so on hardware it
+        # ate every MP of every day and a survivor sat on a pond 4 hexes from a
+        # Settlement for ~100 s holding the scrap (2026-09-23).  Emergencies
+        # still win -- this only pre-empts the routine harvest.  A grave of our
+        # own within today's MP goes first: the canteen is usually lying on it.
+        if not self.in_emergency(obs):
+            act = self.recover_action(obs, max_cost=obs.me.mp)
+            if act is not None:
+                return act
+            act = self.craft_action(obs, max_cost=obs.me.mp)
+            if act is not None:
+                return act
 
         act = self.survival_action(obs)
         if act is not None:
@@ -171,6 +259,20 @@ class SurvivorPolicy(Policy):
         # Put on anything useful we are carrying.  Costs no MP and no time, so
         # it sits above every goal-directed branch.
         act = self.gear_action(obs)
+        if act is not None:
+            return act
+
+        # The walk back for our own pack, once the survival floor is quiet.
+        # Ahead of the canteen errand, which stands down while this has a
+        # grave to go to (see craft_action).
+        act = self.recover_action(obs)
+        if act is not None:
+            return act
+
+        # The canteen errand: after the survival floor (never walk off to
+        # craft while dying of thirst) and after gear (a crafted canteen is
+        # equipped by gear_action on the very next cycle).
+        act = self.craft_action(obs)
         if act is not None:
             return act
 
@@ -202,11 +304,19 @@ class SurvivorPolicy(Policy):
     # alive first, then the mobility to go fix a problem.
     gear_weights = {
         "ll": 3.0, "rad": 1.5, "mp": 1.5, "slots": 1.0,
-        "vision": 1.0, "threat": 0.5, "terrain": 0.5,
+        "vision": 1.0, "threat": 0.5, "terrain": 0.5, "water_cap": 3.0,
         "nar": {NAR_COLD_IMMUNE: 4.0, NAR_FIRE_STARTER: 2.0,
                 NAR_LAND_FORAGE: 1.5, NAR_RIVER_FORAGE: 0.5,
                 NAR_SCAV_DOUBLE: 1.0},
     }
+
+    # Put an item in an empty slot even when gear_score() says it is not
+    # worth wearing. Off by default -- a survival policy should leave a
+    # net-negative item in the pack -- but a policy built to measure whether
+    # penalties are actually applied has to be willing to wear one, or the
+    # penalty is never observed. Only affects EMPTY slots; a swap still has
+    # to justify itself.
+    equip_anything = False
 
     def gear_swap_ok(self, obs, worn_id, cand_id) -> bool:
         """Would equipItem() actually accept this swap?
@@ -251,18 +361,25 @@ class SurvivorPolicy(Policy):
         if me.in_encounter:
             return None
 
-        # Equipment lying on this hex, and room to take it. pickupGroundItem()
-        # refuses a different hex and a pack with no space, so check both here
-        # rather than firing a message that can only be refused.
-        carried = sum(1 for t in me.inv_type if t)
-        if carried < me.inv_slots:
-            for gi in obs.ground_items:
-                if gi.get("id") not in EQUIPMENT:
-                    continue
-                if (gi.get("q"), gi.get("r")) != (me.q, me.r) or me.depth:
-                    continue
-                return Action("pickup_item", gslot=gi.get("g", 0),
-                              why=f"pick up gear {gi['id']} underfoot")
+        act = self.pickup_gear(obs)
+        if act is not None:
+            return act
+
+        # The canteen goes on first, over whatever holds the body slot, and
+        # is pinned there: the loop below never proposes a swap out of it.
+        # Without the pin a Backpack-preferring policy would take it straight
+        # back off, and equipItem() returning the displaced item to the pack
+        # would make the pair trade places once a cycle forever.
+        ceslot = EQUIPMENT.get(CANTEEN_ITEM) if CANTEEN_ITEM else None
+        if (self.craft_canteen and ceslot is not None
+                and me.equip[ceslot] != CANTEEN_ITEM
+                and CANTEEN_ITEM in me.inv_type):
+            slot = me.inv_type.index(CANTEEN_ITEM)
+            worn = me.equip[ceslot]
+            if not worn or self.gear_swap_ok(obs, worn, CANTEEN_ITEM):
+                verb = f"swap {worn} for" if worn else "equip"
+                return self._equip(slot, CANTEEN_ITEM,
+                                   f"{verb} canteen -> slot {ceslot}")
 
         # Best carried candidate per equip slot, against whatever is worn.
         # Strictly greater, so equal-scoring items never trade places -- a tie
@@ -276,8 +393,10 @@ class SurvivorPolicy(Policy):
             if eslot is None:
                 continue
             worn = me.equip[eslot]
+            if self.craft_canteen and worn and worn == CANTEEN_ITEM:
+                continue                    # pinned
             gain = gear_score(item_id, self.gear_weights) - gear_score(worn, self.gear_weights)
-            if gain <= 0:
+            if gain <= 0 and not (self.equip_anything and not worn):
                 continue
             if worn and not self.gear_swap_ok(obs, worn, item_id):
                 continue
@@ -287,8 +406,306 @@ class SurvivorPolicy(Policy):
             return None
         _, slot, item_id, eslot, worn = best
         verb = f"swap {worn} for" if worn else "equip"
-        return Action("equip_item", slot=slot,
-                      why=f"{verb} item {item_id} -> slot {eslot}")
+        return self._equip(slot, item_id, f"{verb} item {item_id} -> slot {eslot}")
+
+    @staticmethod
+    def pack_has_slot(me) -> bool:
+        """A free typed slot -- what pickupGroundItem() needs for an item that
+        does not stack onto one already carried."""
+        return sum(1 for t in me.inv_type if t) < me.inv_slots
+
+    def pickup_gear(self, obs, why="pick up gear {id} underfoot") -> Action | None:
+        """Equipment lying on this hex, and room to take it.
+
+        pickupGroundItem() refuses a different hex, a pack with no space, and
+        (like every ground pile) a survivor underground, whose q/r are pinned
+        to the hatch overhead -- so check all three here rather than firing a
+        message that can only be refused.  Non-equipment is left where it is:
+        only RivalPolicy wants litter.
+        """
+        me = obs.me
+        if me.depth or not self.pack_has_slot(me):
+            return None
+        for gi in obs.ground_items:
+            if gi.get("id") not in EQUIPMENT:
+                continue
+            if (gi.get("q"), gi.get("r")) != (me.q, me.r):
+                continue
+            act = self._pickup(gi, why.format(id=gi["id"]))
+            if act is not None:
+                return act
+        return None
+
+    def _pickup(self, gi, why) -> Action | None:
+        """pickup_item for ground pile `gi`, at most once per PICKUP_RETRY_S
+        for the same (gslot, item) -- see PICKUP_RETRY_S."""
+        key = (gi.get("g", 0), gi.get("id"))
+        now = time.monotonic()
+        if now - self._pickup_sent.get(key, -PICKUP_RETRY_S) < PICKUP_RETRY_S:
+            return None
+        self._pickup_sent[key] = now
+        return Action("pickup_item", gslot=gi.get("g", 0), why=why)
+
+    def _equip(self, slot, item_id, why) -> Action | None:
+        """equip_item, at most once per EQUIP_RETRY_S for the same (slot,
+        item).  A refusal or a dead socket leaves the pack unchanged, so the
+        same decision comes back every cycle; this is what stops it being
+        re-sent every cycle."""
+        now = time.monotonic()
+        key = (slot, item_id)
+        if now - self._equip_sent.get(key, -EQUIP_RETRY_S) < EQUIP_RETRY_S:
+            return None
+        self._equip_sent[key] = now
+        return Action("equip_item", slot=slot, why=why)
+
+    # --- crafting -------------------------------------------------------
+    @staticmethod
+    def owns(me, item_id) -> bool:
+        return bool(item_id) and (item_id in me.equip or item_id in me.inv_type)
+
+    def wants_canteen(self, obs) -> bool:
+        """Known and not already owned.  Not weighed against the body slot:
+        every policy wears one (see craft_canteen)."""
+        me = obs.me
+        if not self.craft_canteen or CANTEEN_RECIPE is None:
+            return False
+        if not recipe_known(me.known_recipes, CANTEEN_RECIPE):
+            return False
+        return not self.owns(me, CANTEEN_ITEM)
+
+    @staticmethod
+    def can_afford(me, rid) -> bool:
+        rec = RECIPES.get(rid)
+        if rec is None:
+            return False
+        if any(me.inv[i] < c for i, c in enumerate(rec["cost"])):
+            return False
+        for item, qty in rec["mats"]:
+            if sum(q for t, q in zip(me.inv_type, me.inv_qty) if t == item) < qty:
+                return False
+        return True
+
+    def in_emergency(self, obs) -> bool:
+        """The states the staple hunt and the critical-LL rest exist for."""
+        me = obs.me
+        return (me.inv[RES_WATER] <= EMERGENCY_WATER
+                or me.inv[RES_FOOD] <= EMERGENCY_FOOD
+                or me.ll <= self.rest_below_ll)
+
+    def craft_action(self, obs, max_cost=CRAFT_SEARCH_COST) -> Action | None:
+        """Walk to a Settlement and craft the canteen.
+
+        `max_cost` bounds the walk: decide() calls this with today's MP ahead
+        of the survival floor, and with CRAFT_SEARCH_COST after it.
+
+        doCraft(): Settlement terrain, 1 MP, the recipe bit, the tokens, and
+        item room for the result -- and refused underground outright.  The
+        crafted item lands in the pack; gear_action() puts it on.
+        """
+        me = obs.me
+        if obs.underground or me.mp < 1 or not self.wants_canteen(obs):
+            return None
+        # The canteen we would craft is lying on a grave of ours that we can
+        # still reach: walk back for it (recover_action) rather than spend
+        # three scrap on a second one.  Only when the grave holds one -- a
+        # grave of tokens alone does not make crafting pointless.
+        if self.recovery_target(obs, canteen_only=True) is not None:
+            return None
+        if not self.can_afford(me, CANTEEN_RECIPE):
+            return self.scrap_errand(obs, max_cost)
+        # A free item slot for the result (applyRecipe's invRoomFor check).
+        if sum(1 for t in me.inv_type[:me.inv_slots] if t) >= me.inv_slots:
+            return None
+        if time.monotonic() - self._craft_sent < CRAFT_RETRY_S:
+            return None
+        cell = obs.here()
+        if cell is not None and cell.terrain == TERR_SETTLEMENT:
+            self._craft_sent = time.monotonic()
+            return Action("act", a=ACT_CRAFT, recipe=CANTEEN_RECIPE,
+                          why=f"craft canteen ({me.inv[RES_SCRAP]} scrap)")
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+
+        def value(c, q, r, cost):
+            if cost <= 0 or c is None or c.terrain != TERR_SETTLEMENT:
+                return None
+            return 100.0 / cost
+
+        target = best_target(obs.map, me.q, me.r, value,
+                             max_cost=max_cost, stop_at=ends_journey)
+        if target is None or target[2] not in legal:
+            return None
+        q, r, d, cost, _ = target
+        return Action("move", d=d, why=f"canteen: to settlement ({q},{r}) c={cost}")
+
+    def scrap_errand(self, obs, max_cost) -> Action | None:
+        """Short of the canteen's scrap: salvage here, or walk to a scrap pile
+        or salvageable ground.  A pile pays on contact; salvage costs 2 MP and
+        a check (and a threat tick on ruins).  Both need token room --
+        collectResource() and doScav() refuse a full pack."""
+        me = obs.me
+        if token_room(me, RES_SCRAP) <= 0:
+            return None
+        cell = obs.here()
+        if cell is not None and can_salvage(cell.terrain) and me.mp >= 2:
+            return Action("act", a=ACT_SCAV, mp=2,
+                          why=f"canteen: salvaging scrap ({me.inv[RES_SCRAP]} held)")
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+
+        def value(c, q, r, cost):
+            if cost <= 0 or c is None:
+                return None
+            if c.resource == RES_SCRAP + 1:
+                return SCRAP_PILE_VALUE / cost
+            if can_salvage(c.terrain):
+                return SALVAGE_VALUE / cost
+            return None
+
+        target = best_target(obs.map, me.q, me.r, value,
+                             max_cost=max_cost, stop_at=ends_journey)
+        if target is None or target[2] not in legal:
+            return None
+        q, r, d, cost, _ = target
+        return Action("move", d=d, why=f"canteen: scrap -> ({q},{r}) c={cost}")
+
+    # --- death drops ----------------------------------------------------
+    # A downed survivor leaves everything it carried on the hex where it fell
+    # (dropRemains, inventory_items.hpp): pack and worn gear as ordinary
+    # ground piles, resource tokens in a remains record ("rm").  It is anyone's
+    # for GROUND_AGE_DAYS.  Before this the bots lost their canteen to every
+    # death -- respawn is a fresh survivor -- and had to scrape together the
+    # scrap for another; now it waits on the grave.
+    @staticmethod
+    def room_for_remains(me, rm) -> bool:
+        """Some kind of token on the record that the pack could take.
+        lootRemains() caps each kind at tokenRoomFor(), so without room a loot
+        is refused and changes nothing."""
+        res = (rm.get("res") or [])[:5]
+        return any(n > 0 and token_room(me, k) > 0 for k, n in enumerate(res))
+
+    @staticmethod
+    def is_my_grave(obs, rm) -> bool:
+        """Our seat's record, or one a "fell" of ours created -- a respawn
+        can land in another seat, and the old pid then names someone else."""
+        return (rm.get("pid") == obs.pid
+                or (rm.get("q"), rm.get("r")) in obs.my_graves)
+
+    def worth_recovering(self, obs, rm) -> bool:
+        """Is there anything on this grave we could actually take?
+
+        Only what the two pickups will lift counts: tokens we have room for,
+        and equipment with a free slot to put it in.  Litter the policy would
+        leave there anyway is not worth the walk -- counting it would bounce
+        a bot between the grave and wherever pursuit wanted it next.
+        """
+        me = obs.me
+        if self.room_for_remains(me, rm):
+            return True
+        if not self.pack_has_slot(me):
+            return False
+        at = (rm.get("q"), rm.get("r"))
+        return any(gi.get("id") in EQUIPMENT and (gi.get("q"), gi.get("r")) == at
+                   for gi in obs.ground_items)
+
+    def remains_action(self, obs) -> Action | None:
+        """Stood on a grave: take what is on it before anything moves us off.
+
+        Both halves are free -- no MP, no check -- which is why this runs
+        ahead of every errand.  It has to: the canteen errand would otherwise
+        walk a respawned survivor off its own grave to hunt scrap for a NEW
+        canteen before gear_action() got round to lifting the old one, and
+        recover_action() would then walk it straight back.
+
+        Any grave, ours or a rival's.  Tokens first (a bare loot takes what
+        fits, in inv[] order, so water first), then equipment.  Never below:
+        remains are surface coordinates, and underground me.q/me.r are the
+        hatch overhead -- which is exactly where a fall below leaves its grave.
+        """
+        me = obs.me
+        if me.depth or me.in_encounter:
+            return None
+        rm = obs.remains_at(me.q, me.r)
+        if rm is None:
+            return None
+        if self.room_for_remains(me, rm):
+            key = (me.q, me.r)
+            now = time.monotonic()
+            if now - self._loot_sent.get(key, -LOOT_RETRY_S) >= LOOT_RETRY_S:
+                self._loot_sent[key] = now
+                self.stats["loots"] += 1
+                whose = "our own" if self.is_my_grave(obs, rm) else f"{rm.get('nm') or 'someone'}'s"
+                return Action("loot", why=f"loot {whose} remains {rm.get('res')}")
+        return self.pickup_gear(obs, why="recover gear {id} from the grave")
+
+    def recovery_target(self, obs, max_cost=RECOVER_SEARCH_COST,
+                        canteen_only=False):
+        """The grave of ours worth walking back to, as best_target()'s
+        (q, r, dir, cost, value), or None.
+
+        A grave counts while it holds something we can take
+        (worth_recovering) and will still be there when we arrive: it goes at
+        the dawn that makes it GROUND_AGE_DAYS old, and a walk longer than
+        today's MP arrives RECOVER_MP_PER_DAY at a time.  Never one on a
+        hatch -- stepping onto a hatch IS the descent, so a surface grave on
+        one cannot be reached on foot (a fall underground leaves it there).
+        `canteen_only` narrows it to graves with the canteen on them.
+        """
+        me = obs.me
+        if me.depth or me.mp < 1 or not obs.remains:
+            return None
+        graves = {}
+        for rm in obs.remains:
+            at = (rm.get("q"), rm.get("r"))
+            if None in at or at == (me.q, me.r):
+                continue                # malformed, or remains_action's job
+            if not self.is_my_grave(obs, rm) or not self.worth_recovering(obs, rm):
+                continue
+            if canteen_only and not any(
+                    gi.get("id") == CANTEEN_ITEM and (gi.get("q"), gi.get("r")) == at
+                    for gi in obs.ground_items):
+                continue
+            cell = obs.map[at]
+            if cell is not None and is_hatch_terrain(cell.terrain):
+                continue
+            graves[at] = rm
+        if not graves:
+            return None
+        mp_today = me.mp
+
+        def value(cell, q, r, cost):
+            rm = graves.get((q, r))
+            if rm is None or cost <= 0:
+                return None
+            left = ground_days_left(obs.day, rm.get("d", obs.day))
+            if cost <= mp_today:
+                if left < 1:
+                    return None
+            else:
+                days = -(-(cost - mp_today) // RECOVER_MP_PER_DAY)
+                if left <= days + 1:    # a day of slack: MP is an estimate
+                    return None
+            return 100.0 / cost
+
+        return best_target(obs.map, me.q, me.r, value,
+                           max_cost=max_cost, stop_at=ends_journey)
+
+    def recover_action(self, obs, max_cost=RECOVER_SEARCH_COST) -> Action | None:
+        """Walk back toward a grave of ours (recovery_target).
+
+        decide() calls this twice, the way it calls craft_action(): with
+        today's MP ahead of the survival floor, and with RECOVER_SEARCH_COST
+        once the floor is quiet.  Arriving is the whole errand --
+        remains_action() takes it from there.
+        """
+        target = self.recovery_target(obs, max_cost)
+        if target is None or target[2] not in obs.me.legal_dirs():
+            return None
+        q, r, d, cost, _ = target
+        self.stats["recover_moves"] += 1
+        return Action("move", d=d, why=f"recover: our grave at ({q},{r}) c={cost}")
 
     # --- survival floor -------------------------------------------------
     def survival_action(self, obs) -> Action | None:
@@ -299,10 +716,18 @@ class SurvivorPolicy(Policy):
         cell = obs.here()
         terr = cell.terrain if cell else 0
 
-        # Harvest right here first -- always cheaper than walking.
-        if me.inv[RES_WATER] < self.water_floor and has_water(terr) and me.mp >= 1:
-            return Action("act", a=ACT_WATER, mp=min(2, me.mp),
-                          why=f"water {me.inv[RES_WATER]} low")
+        # Harvest right here first -- always cheaper than walking.  A worn
+        # canteen raises the target by its capacity, but only while there is
+        # room to put the water: canteen space is outside the pack, and it is
+        # the whole reason to carry one -- stood on a pond with it empty is
+        # the moment it pays for itself.
+        water_goal = self.water_floor
+        if me.water_cap and token_room(me, RES_WATER) > 0:
+            water_goal += me.water_cap
+        if me.inv[RES_WATER] < water_goal and has_water(terr) and me.mp >= 1:
+            why = (f"water {me.inv[RES_WATER]} low" if me.inv[RES_WATER] < self.water_floor
+                   else f"filling the canteen ({me.inv[RES_WATER]}/{water_goal})")
+            return Action("act", a=ACT_WATER, mp=min(2, me.mp), why=why)
         if me.inv[RES_FOOD] < self.food_floor and can_forage(terr) and me.mp >= 2:
             return Action("act", a=ACT_FORAGE,
                           why=f"food {me.inv[RES_FOOD]} low")
@@ -418,6 +843,7 @@ class SurvivorPolicy(Policy):
                     v += 80.0
                 if can_forage(cell.terrain):
                     v += 40.0
+            v += self.staple_value(obs, cell, dry, starving)
             return None if v <= 0 else v / cost
 
         # Hunt on whichever board we are on.  Underground that means Tunnel
@@ -425,13 +851,20 @@ class SurvivorPolicy(Policy):
         # 0, so there is no food down there at all, which is exactly why the
         # tunnel policies have to surface for it.
         my_q, my_r = obs.pos()
+        # stop_at: a route *through* a hatch does not exist (it ends on the
+        # other board), so an emergency walk must never be planned across one.
         target = best_target(obs.board, my_q, my_r, value,
-                             max_cost=STAPLE_SEARCH_COST)
+                             max_cost=STAPLE_SEARCH_COST, stop_at=ends_journey)
         if target is None or target[2] not in legal:
             return None
         q, r, d, cost, val = target
         need = "water" if dry else "food"
         return Action("move", d=d, why=f"EMERGENCY {need} -> ({q},{r}) c={cost}")
+
+    def staple_value(self, obs, cell, dry: bool, starving: bool) -> float:
+        """Subclass hook: extra worth of `cell` to an emergency staple hunt.
+        The tunnel policies count a hatch as water."""
+        return 0.0
 
     def rest_once(self, obs, why: str) -> Action | None:
         """REST, with a cooldown rather than a once-per-day latch.

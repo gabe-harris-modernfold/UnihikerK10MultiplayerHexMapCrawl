@@ -146,7 +146,14 @@ function initEncounterOverlay() {
   }
 
   const keptTokens  = () => keepLoot.reduce((a, b) => a + b, 0);
-  const heldTokens  = () => { const p = me(); return p ? (p.inv ?? []).reduce((a, b) => a + b, 0) : 0; };
+  // Token load once the kept haul lands — per type, so canteen water is
+  // priced the way the server's tokenLoad() will price it.
+  const loadAfterHaul = () => {
+    const p = me();
+    if (!p) return keptTokens();
+    const inv = p.inv ?? [];
+    return tokenLoadOf(p, keepLoot.map((v, i) => (inv[i] || 0) + v));
+  };
   const haulTrimmed = () => pendingLoot.some((v, i) => keepLoot[i] < v);
 
   // Pack size = archetype base (server `is`) + equipment slot bonuses, capped at
@@ -260,9 +267,9 @@ function initEncounterOverlay() {
       any = true;
       const def  = typeof getItemById === 'function' ? getItemById(it.id) : null;
       const chip = el('span', 'enc-haul-chip enc-haul-item');
-      if (def?.icon) {
+      if (def) {
         const img = document.createElement('img');
-        img.src = def.icon; img.alt = ''; img.width = 14; img.height = 14;
+        img.src = getItemIcon(it.id, 14); img.alt = ''; img.width = 14; img.height = 14;
         chip.appendChild(img);
       }
       chip.appendChild(el('span', 'enc-haul-qty', it.qty > 1 ? `${it.qty}×` : ''));
@@ -291,7 +298,7 @@ function initEncounterOverlay() {
     haulCarry.innerHTML = '';
     if (!kept && !haulTrimmed()) { haulCarry.hidden = true; return; }
     haulCarry.hidden = false;
-    const after = heldTokens() + kept;
+    const after = loadAfterHaul();
     const cap   = packSlots();
     const over  = after > cap;
     haulCarry.appendChild(el('span', null, 'TOKENS '));

@@ -5,6 +5,7 @@ from .scoremax import ScoreMaxPolicy
 from .contentmax import ContentMaxPolicy
 from .coward import CowardPolicy
 from .rival import RivalPolicy
+from .gearmax import GearMaxPolicy
 from .subterranean import SubterraneanPolicy, TunnelPolicy
 from .tunnelrunner import TunnelRunnerPolicy
 from .sentinel import SentinelPolicy
@@ -22,6 +23,9 @@ REGISTRY = {
     # Never rests, so days run their full 5 real minutes and the real-clock
     # hazards get sampled. The soak bot's policy (soak.py); realtime only.
     "sentinel": SentinelPolicy,
+    # Collects and wears everything it can find, good or bad, so that
+    # gearcheck.py has something to audit and rank.
+    "gearmax": GearMaxPolicy,
 }
 
 # The encounter library is ~100 JSON files; parse it once and share the
@@ -52,4 +56,5 @@ def make(name: str, rng, **kw) -> Policy:
 __all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
            "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
            "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy", "SentinelPolicy",
+           "GearMaxPolicy",
            "REGISTRY", "make", "shared_library"]

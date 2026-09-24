@@ -1,9 +1,13 @@
 #pragma once
 // 23 post-apocalyptic tone motifs.
 // ToneStep format: {freq, beat} | {neg, 0} = silence | {0, 0} = terminator
-// toneTaskFn calls vTaskDelay(beat) after every playTone so each note
-// plays its full duration before the next fires.
-// No trailing silences — task exits immediately after the last note.
+//
+// These were the whole of the K10's sound when it was one sine voice. They
+// are now the pitch material for the sound engine: k10Play(MOTIF_X) looks the
+// motif up in ui-audio.hpp and plays its orchestrated version from
+// snd-sfx.hpp (same contour, real instruments, layers). A motif with no score
+// there still plays, on the music box, from the data below. The palette notes
+// that follow still describe the language those scores keep.
 //
 // Tonal palette (dark / ancient-tech-from-the-70s, monophonic sine only):
 //   tritone      — the "devil's interval", used for every plunge into danger
@@ -96,9 +100,16 @@ static const ToneStep MOTIF_ROTTEN_CHORD[] = {
   {208, 40}, {220, 40}, {233, 40}, {147, 280}, {0, 0}
 };
 
-// 16. Charge Up — player join: D-minor arpeggio rising and quickening (D3-F3-A3-D4), lands a clean octave — a build, not a drop
+// 16. Charge Up — tunnel descent/ascent + flood sweep (was the join cue before RADIO_BLIP): D-minor arpeggio rising and quickening (D3-F3-A3-D4), lands a clean octave — a build, not a drop
 static const ToneStep MOTIF_SEWER_ECHO[] = {
   {147, 100}, {175, 80}, {220, 60}, {294, 280}, {0, 0}
+};
+
+// 16b. Radio Blip — player join: two-tone "incoming transmission" chirp, a fifth
+// down (A4 -> D4) with a hairline gap so it reads as two keyed blips. Kept low
+// for a radio receive tone; 90 ms at D4 is ~26 cycles, well clear of the click floor.
+static const ToneStep MOTIF_RADIO_BLIP[] = {
+  {440, 60}, {-20, 0}, {294, 90}, {0, 0}
 };
 
 // 17. Weird Anomaly — full clear bonus: whole-tone run A4-B4-C#5, lands on the tritone-related D#5

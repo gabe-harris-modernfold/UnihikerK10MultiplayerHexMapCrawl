@@ -23,6 +23,13 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   `data/web-assets.json` (that list is the load order), sync. **No firmware
   change** — the K10 auto-discovers every file in the SD `/data` root at boot
   and the browser loader reads the manifest. See "Web asset pipeline" below.
+- **Exception — `data/observer*` is NOT in `web-assets.json` and must not
+  be.** The observer screen is a standalone page with its own `<script>` tags
+  ([docs/observer-screen-spec.md](observer-screen-spec.md)); `web-assets.json`
+  is the *game client's* bundle order, so listing it there would load a
+  spectator screen into every player's browser. It still deploys, because
+  `sync_data.ps1` walks `data/` recursively and the board registers a route
+  per discovered file. See "Observer screen" below.
 - **Two upload modes coexist; do not add a third toggle:**
   - **Hold Button A at boot** → SD card mounts as USB-MSC (`usb_drive.h`,
     entered from [Esp32HexMapCrawl.ino:1261](../Esp32HexMapCrawl.ino:1261)).
@@ -36,6 +43,21 @@ PowerShell + arduino-cli + a K10 attached to a USB-C port.
   joined ([wifi-store.hpp](../wifi-store.hpp), NVS namespace `wifinets`) and
   rejoins whichever one is in range — carry it to another house and it finds
   that house's network by itself. See "Wi-Fi: known networks and roaming".
+- **Sound preview (no flash):** `python scripts/sndsim/sndsim.py [scene]`
+  compiles the real `snd-*.hpp` engine with MSVC and writes WAVs (plus a
+  K10-speaker simulation, spectrograms, piano rolls) to
+  `scripts/sndsim/out/`. Speech vocabulary: `python scripts/lpc/gen_vocab.py`.
+  Design, the story→sound map and tuning knobs:
+  [sound-engine.md](sound-engine.md).
+- **Sound tuning on the board (no flash):** `http://<board>/sound.html`, the
+  sound desk ([data/sound.html](../data/sound.html)): every live knob, every
+  effect / line / music style / story beat as a button, scripted listening
+  tests, and SAVE TO BOARD (NVS, survives reboots). Standalone like the
+  observer — **not** in `web-assets.json`. Routes `/sndinfo`, `/snddbg`,
+  `/sndplay` in game-server.hpp; the mock-server fakes all three.
+- **LCD FX preview (no flash):** `python scripts/fxsim/fxsim.py [scene]`
+  compiles the real `ui-fx.hpp` with MSVC and writes GIFs to
+  `scripts/fxsim/out/`. See "Previewing the LCD FX on the desktop" below.
 - **Offline UI work:** `cd mock-server && npm install && npm run dev` →
   serves `data/` on `http://localhost:8765/` and accepts the same `/upload`
   POSTs (drop on disk under `mock-server/uploads/`). Use this before flashing
@@ -214,6 +236,100 @@ The "FILE UPLOAD" screen takes precedence over the gameplay screens — it
 suppresses the screen rotation while uploads are streaming so a partial sync
 is unmistakable.
 
+### LCD FX: comic cut-ins and the failing terminal ([ui-fx.hpp](../ui-fx.hpp))
+
+The screens still render into `canvas` exactly as before; `fxPresent()`
+composes canvas into a second PSRAM sprite (`fxOut`) and pushes that. Don't
+draw FX into `canvas`, and don't push `canvas` directly from new gameplay code —
+the upload screen and the FX-off switch transition are the only raw pushes.
+
+- **Cues:** `fxCue(FXK_*, pid, chronicleLine)` from `drainEvents()` (plus
+  `broadcastQuake()` and the threat-clock chime). Spinlocked, safe from any
+  task. The style table `FX_STYLE` decides the SFX word, band fill, shake,
+  flash, extras (cracks/bolt/fire/splatter/drips) and a per-kind cooldown.
+- **Madness:** folded from `g_dread` each loop pass (`fxWantsFrame`); it drives
+  tears, the hum bar, row shiver, static, the two-frame whispers and the eyes.
+- **Pacing:** the loop sleeps 100 ms when nothing moves (no pushes at all) and
+  one frame period (40–90 ms) while something does. `updateLEDs()` and
+  `checkScoreAudio()` stay on their own 10 Hz tick — the lamp shapes count
+  loop ticks. Serial prints `LCD FX: n frames/30s compose avg=… push avg=…`
+  every 30 s while anything animated: that is the real frame budget.
+- **Button A** (free after the boot USB check) cycles MADNESS → RESTRAINED →
+  OFF, toasted on screen, saved as `fx` in the `k10` NVS namespace. OFF is the
+  pre-FX behaviour exactly, including the old tube-dropout switch.
+- **Memory:** ~430 KB PSRAM (two sprites, sticker pool, SDF scratch), ~4.5 KB
+  internal `.bss`. `fxBegin()` forces OFF if any allocation fails.
+- **The observer mirrors it:** `/state` carries `fx` (the last six cues, with
+  a sequence number) and `doom` (`aw`, `cl`); `data/observer-fx.js` plays the
+  same panels on the TV. See the observer section.
+- **Cut scenes** are kinds whose fill is `FXF_NEST` or later (`fxIsScene()`):
+  they hold the panel for seconds, draw no band, and sink the whole screen
+  into screentone from the edges. Nothing cuts in over one except a
+  catastrophe (prio 3), which ends it at once. The TV plays all three too
+  (`observer-fx.js` sections 12-13): the nest and the crawl re-laid for a
+  wide screen, the commendation as a landscape certificate.
+
+  | Kind | Cued from | What | Length / cooldown |
+  |---|---|---|---|
+  | `FXK_BELOW` | `EVT_TUNNEL_ENTER` | the nest (section 12): fly, web, giant legs, skitterers, the widow on its thread, eight eyes | 7.1 s / 3 min |
+  | `FXK_CRAFTED` | `EVT_ACTION`, CRAFT success | the commendation (section 13): guilloche certificate, order star, typed citation, rubber stamp | 6.2 s / 2 min |
+  | `FXK_CRAWL` | `EVT_TUNNEL_EXIT` | one small spider walks across the live screen (not a scene: an `FXE_NOBAND` overlay that takes no turn in the queue) | ~4.5 s / 1 min |
+
+  `FXK_CRAFTED` is the one cue whose `cap` is not the chronicle's sentence:
+  it is the recipe's **name**, which the certificate cites. `FxStyleDef::coolMs`
+  is `uint32_t` now; the old `uint16_t` capped every cooldown at 65 s.
+
+#### Previewing the LCD FX on the desktop (MSVC, no flash)
+
+MSVC is on this machine (Visual Studio 2019 Build Tools:
+`C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat`),
+so the FX layer is previewed by compiling the **actual** `ui-fx.hpp` natively
+and rendering GIFs straight from it — nothing is ported to Python, so what you
+look at is what gets flashed:
+
+```powershell
+python scripts/fxsim/fxsim.py                 # every scene
+python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
+python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
+```
+
+Output lands in `scripts/fxsim/out/` (gitignored): `<scene>.gif` at 2x with
+the board's own frame pacing (`fxFramePeriod()`, 100 ms when idle) and
+`<scene>_sheet.png`, ten frames side by side. It rebuilds `fxsim.exe` only when
+`fxsim.cpp` or `ui-fx.hpp` changed; a full run is a few seconds. Scenes are the
+`run(...)` calls in `main()` of `scripts/fxsim/fxsim.cpp` — add one there. Base
+screens are `scripts/fxsim/fixtures/*.png` (240x320, drawn by the offline PIL
+previewers that port `ui-screens.hpp`); any 240x320 PNG works.
+
+How it compiles unchanged: `ui-fx.hpp` builds under `FX_NATIVE`, and the
+harness supplies the hooks its section 0 otherwise takes from the board —
+`c16()`, the three font tables, `FX_LOCK`/`FX_UNLOCK` (no-ops), `fxAlloc`
+(calloc), `fxNowMs` (a scripted clock) and `fxNameOf`. The two facts it had to
+get right, both checked against LovyanGFX 1.2.20:
+
+- **Font struct layouts.** `lgfx::GFXglyph` is `{uint32 bitmapOffset; uint8
+  width, height, xAdvance; int8 xOffset, yOffset}` and `lgfx::GFXfont` is
+  `{uint8* bitmap; GFXglyph* glyph; uint16 first, last; uint8 yAdvance}` after
+  an `IFont` vtable base. A GFX glyph's bits are packed **continuously**,
+  MSB-first, with no per-row padding (bit `y*width + x`). The headers
+  (`src/lgfx/Fonts/GFXFF/*.h`) are plain C; the harness `#define`s
+  `PROGMEM` empty and `GFXglyph`/`GFXfont` to field-identical shim structs
+  around the include. Font0 (`glcdfont.h`, `font[]`) is 5 bytes per char,
+  column-major, bit 0 = top row; Font2 (`Font16.h`) is rows of `(w+6)>>3`
+  bytes MSB-first holding `w-1` real pixels (its width table has the +1
+  margin baked in). On the board the same tables are reached through
+  `fonts::Font0.chartbl`, `fonts::Font2.void_chartbl` / `.widthtbl` and
+  `fonts::FreeSansBoldOblique24pt7b`.
+- **Buffer byte order.** A 16-bpp `LGFX_Sprite` stores `swap565`: RGB565 with
+  its two bytes swapped, i.e. big-endian in memory, so `getBuffer()` hands
+  back `uint16_t`s that must be byte-swapped before the channels can be read.
+  `ui-fx.hpp` works in that format end to end (`FX_PAL` is precomputed as
+  `fxSwap(c16(rgb))`) and the harness's raw frames are the same bytes, which
+  is why fixtures are written, and GIFs read, as big-endian RGB565.
+
+What it cannot tell you is **speed**: an x64 desktop says nothing about the
+ESP32-S3. The frame budget comes from the board's `LCD FX:` serial line.
+
 ## Wi-Fi: known networks and roaming
 
 The ESP32 itself stores exactly **one** STA credential, which is why the board
@@ -362,7 +478,13 @@ GET assets.json → styles → scripts, in manifest order, through ONE queue:
    • engine.js createImageWithLoadTracking() → AssetLoader.image() so terrain /
      shelter / pawn art goes through the same queue (blob → img.src;
      img.dataset.src keeps the path). The settings "Asset viewer" too.
+   • boot screen then HOLDS (AssetLoader.holdBoot, registered in network.js)
+     until the first lobby/sync arrives and every image it queued has loaded
+     or failed (engine.js artSettled) — a visit or refresh never reaches the
+     character picker with art still missing. Mid-session reconnects skip it.
    • fires document event 'assets:ready'; sw.js is registered after that
+   • observer.html has its own boot screen: scripts, then the tile atlas pages
+     (Art.preload) before it fades out
 ```
 
 Adding a client file: put it in `data/`, add it to `web-assets.json` at the
@@ -488,9 +610,25 @@ npm run dev
 
 The mock serves `data/` statically (with `Cache-Control: no-store`, so a plain
 reload picks up edits), fakes `/ws` (lobby + map + player movement +
-encounters), serves `GET /enc?biome=X&id=Y` from `data/encounters/`, and
-accepts `POST /upload?dest=/data/...` writing to `mock-server/uploads/<dest>`
-(gitignored).
+encounters), serves `GET /enc?biome=X&id=Y` from `data/encounters/`, serves
+`GET /state`, and accepts `POST /upload?dest=/data/...` writing to
+`mock-server/uploads/<dest>` (gitignored).
+
+`GET /state` mirrors the firmware's route in `game-server.hpp` field for
+field, including `?pid=N` (that player's vision disk under `view`) and
+`encBiome`/`encId` on an active encounter. `?sd=1` is accepted and ignored.
+It exists because the observer screen polls it instead of taking a `/ws`
+seat — every `/ws` client is a *player* and there are only six.
+
+Two deliberate infidelities, both load-bearing:
+
+- `TNAME_FULL` is 12 names wide for 16 terrains, reproducing the firmware's
+  out-of-range read, so terrain 12-15 serialise with an empty `terrainName`
+  offline as well as on hardware. Take terrain names from `TERRAIN[]`
+  client-side.
+- The mock **deletes** a player on disconnect, so the slot reports
+  `connectMs: 0`; the firmware keeps the stale value until someone re-picks.
+  Anything keyed on `pid` + `connectMs` has to survive both.
 
 `GET /assets.json` is **synthesised** from `data/web-assets.json` in dev mode,
 so the browser loads every source file individually (real filenames and line
@@ -547,6 +685,8 @@ send({ t: 'dbg_flood' });                         // force-flood the sender's he
 send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill MP (tunnel-system-spec.md)
 send({ t: 'dbg_tunnel', h: 2, below: 1, mp: 0 }); // ...underground on that shaft instead, with a pinned MP budget
 send({ t: 'dbg_collapse', d: 0 });                // cave in the tunnel hex in direction d from the sender
+send({ t: 'dbg_die' });                           // the sender's survivor goes down on the spot (death drops, below)
+send({ t: 'dbg_age', days: 29 });                 // age every ground pile + remains by N days, then run the dawn sweep
 ```
 
 Encounter JSON `skill` ids use the firmware's 5-skill enum — 0 NAVIGATE,
@@ -557,6 +697,117 @@ Sept 2026. Don't reintroduce id 5.)
 Client module: [data/ui-encounter.js](../data/ui-encounter.js). Markup lives in
 `index.html` under `#enc-overlay`; styles under "Encounter overlay" in
 `style.css`.
+
+### Death drops (remains)
+
+A survivor who goes down leaves everything they carried on the hex where they
+fell, for anyone to take — including the same player, walking back as whoever
+they respawn as. Logic: the "Ground piles and remains" block in
+[inventory_items.hpp](../inventory_items.hpp); mock mirror under "Ground
+items" in `mock-server/server.js`.
+
+- **Items** — every pack stack and every worn item becomes an ordinary ground
+  pile (`groundItems[]`, `MAX_GROUND` now 64), taken with `pickup_item`.
+- **Resource tokens** go into a `Remains` record (`remainsTable[12]`), because
+  a `HexCell` holds one resource type and a survivor carries five. Taken with
+  `{t:'loot',res:1-5}` or `{t:'loot'}` for everything that fits, capped by
+  `tokenRoomFor()` like SCAVENGE. **No score** — the fallen survivor already
+  scored them and score survives a fall, so paying again would make dying and
+  walking back a score pump. Answered with
+  `{t:'loot_result',ok,why,got[5],inv[5]}` (`why`: 0 ok, 1 nothing here,
+  2 pack full).
+- The record doubles as the grave marker (`renderRemains()` in renderer.js),
+  drawn whatever the fog like the caravan and the Doom, and lives until its
+  tokens are taken *and* the last pile on its hex is gone.
+- **Everything on the ground ages out `GROUND_AGE_DAYS` = 30 game-days after it
+  was last added to** — dropped items and encounter overflow included, because
+  a pile is one stack whoever left each part of it. Swept at dawn by
+  `groundAgeOut()`; a full table also reclaims its oldest pile early rather
+  than silently losing the new one.
+- **Wire:** sync and every `ground_update` carry both halves: `gi` (piles, now
+  with `d`, the day each was last added to) and `rm` (`{q,r,pid,nm,d,res[5]}`). `ground_update` has
+  `why:"fell"` + `pid` for a death and `why:"aged"` for the dawn sweep; one
+  helper, `broadcastGroundUpdate()`, builds them all. Every path that puts
+  something on the ground now sends one — `enc_bank`'s overflow never did.
+- **Surface only.** Piles and remains have no depth; a fall underground lands
+  on the hatch above (q/r stay pinned there), and `pickupGroundItem()` /
+  `loot` refuse at depth 1.
+- **Save:** ages and remains ride `/save/ground.bin`, a file of their own, so
+  `SAVE_VERSION` did not move. A save without it loads with every pile dated
+  to the load day and no remains. `regen` deletes it with the other two.
+- The single funnel is the `EVT_DOWNED` handler (`network-events.hpp`); a
+  downed seat's re-pick runs `dropRemains()` again as a backstop (a no-op once
+  the pack is empty). In the mock the funnel is `downPlayer()`, which also
+  fixed two old mock-only bugs: `downed` was *broadcast* (every open tab went
+  to the death screen) and the dead seat stayed "on" forever.
+
+## Observer screen (`data/observer.html`)
+
+A full-screen page for a TV that watches a live game over `/state` and
+narrates it. Design and rationale:
+[docs/observer-screen-spec.md](observer-screen-spec.md).
+
+```
+http://<board>/observer.html                 live, served from the board
+http://<board>/observer.html?feed=fake       scripted run, no game needed
+http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
+```
+
+- **It never opens a WebSocket.** `handleConnect()`
+  ([network-session.hpp:54](../network-session.hpp:54)) hands every `/ws`
+  client a player slot and there are six. A spectator on the socket eats a
+  seat and draws itself on everyone's map. It polls `GET /state` at 1 Hz with
+  one `AbortController` in flight and 2.5-8 s backoff on error.
+- **`/enc` is fetched once per encounter file, ever, and cached.** That route
+  takes `G.mutex` (500 ms) and reads SD. Never poll it. `OBS.Scene.fetches`
+  in the console is the running count.
+- **Seven files, none of them in `web-assets.json`:** `observer.html`,
+  `observer.css`, `observer.js`, `observer-scene.js`, `observer-lines.js`,
+  `observer-feed.js`, `observer-fx.js`. `observer.html` also loads
+  `game-data.js` for `ADMIRED`/`TERRAIN`/`WEATHER_PHASE_NAMES`. Deploy with the
+  normal `.\scripts\sync_data.ps1 <board-ip>`.
+- **`observer-fx.js` is the LCD's FX engine ported to a canvas overlay**
+  (same hash, noise, halftone, SFX glyphs — embedded from LovyanGFX by
+  `python scripts/gen_observer_fx_fonts.py`). With firmware that publishes
+  `/state` `fx` it cuts in on exactly the LCD's beats; without it (the mock,
+  `?feed=fake`) it derives panels from the observer's own diff events, and
+  the tunnel scenes from each player's `/state` `dp` (0 surface, 1 below):
+  up-then-down is the nest, down-then-up the crawl. A craft cannot be seen
+  in `/state`, so the commendation only ever comes off the ring. To look at
+  one on the desktop, `OBS.FX.cue('BELOW', 'Mox', 'goes down into the dark.')`
+  (or `'CRAFTED', name, 'Sock Puppet Bandage'`, or `'CRAWL', name`) in the
+  console. `?fx=reel` plays every panel in turn, `?fx=0|1|2` sets the level,
+  `?fxmad=N` pins the madness. It is paced by `setTimeout`, not
+  `requestAnimationFrame` — the desktop app's browser pane never ticks rAF.
+- **Budget check before adding more:** the board caches one PSRAM entry and
+  registers one HTTP route per file in the SD `/data` ROOT, capped at
+  `MAX_WEB_FILES = 48` ([Esp32HexMapCrawl.ino:1046](../Esp32HexMapCrawl.ino:1046)).
+  These six take the root to 36 files / ~132 KB. There is headroom, but it is
+  no longer generous — a seventh observer file is a real cost, which is part
+  of why the synthetic feed is one file and not three.
+- **`?feed=fake`** replaces `fetch` with a scripted six-player run that walks
+  a real encounter file three different ways and kills everybody by a
+  different cause. Use it to tune line banks with no hardware; `?t=N` jumps
+  to a beat.
+- **Console handles:** `OBS.ST` (snapshot, poll counters), `OBS.Roster`
+  (samples, debt ledger, obituaries), `OBS.Director` (subject, phase, cuts),
+  `OBS.Narrator`, and `OBS.handle(raw)` to step the whole pipeline a frame at
+  a time without waiting out the poll interval.
+- **Two firmware dependencies**, both already in:
+  - `encBiome` + `encId` on the `/state` player block
+    ([game-server.hpp:582](../game-server.hpp:582)). Without them a scene is
+    anonymous and the prose, choices and hazards are all unreachable.
+  - `variant` on each `view.cells[]` entry, plus top-level `vc`/`sv` counts.
+    Without them the vision disk can only draw flat `TERRAIN[]` colours; with
+    them it draws the same `/img/hex<Name><N>.png` tiles the players see.
+    A terrain with no art (River Channel) still falls back to flat colour.
+
+**Gotcha this screen is uniquely exposed to:** the ways a bot run fails
+silently. [bot-testing.md](bot-testing.md) warns that a `pick` can be refused
+and an `enc_start` dropped when `q`/`r` are missing — on the observer both
+look like a scene that simply never opens, with no error anywhere.
+
+---
 
 ## Troubleshooting
 
@@ -619,6 +870,14 @@ Client module: [data/ui-encounter.js](../data/ui-encounter.js). Markup lives in
   (item fallback icons, `img/ui_glyphs.png` sprite strip) are hand-drawn ASCII
   in `scripts/gen_pixel_glyphs.py` — edit the grids there and re-run it rather
   than adding one PNG per glyph.
+- **Item badges are not images at all.** `data/item-icons.js` draws each of
+  the 65 items from distance-field shapes and writes its own tiny indexed PNG
+  as a `data:` URL, at the size and device-pixel ratio the slot needs (so
+  there is nothing under `data/img/items/` to add, sync or cache per item).
+  `getItemIcon(id, px)` is the one entry point. Iterate on a drawing with
+  `node scripts/item_icon_sheet.js --ids 5,16 --zoom 5` — a PNG contact sheet
+  of every size the UI uses, no browser. Don't swap its encoder back to
+  `canvas.toDataURL`: that is ~5 ms an icon, ten times the drawing.
 - **`sw.js` caches `/img/*` cache-first forever.** If you change an image
   in place (same filename), bump the `CACHE` name in `data/sw.js` or clients
   keep the old bytes.

@@ -218,7 +218,12 @@ import policy as pmod
 
 check("registry has every policy", set(pmod.REGISTRY) ==
       {"drunk", "scoremax", "contentmax", "coward", "rival",
-       "subterranean", "tunnelrunner", "sentinel"})
+       "subterranean", "tunnelrunner", "sentinel", "gearmax"})
+# GearMax is the only policy that will wear a net-negative item, which is
+# what makes its runs usable for auditing whether penalties land at all.
+check("only gearmax wears junk on purpose",
+      pmod.make("gearmax", random.Random(1)).equip_anything
+      and not pmod.make("scoremax", random.Random(1)).equip_anything)
 
 o3 = Observation()
 o3.apply(sync)
@@ -944,6 +949,62 @@ sub7 = pmod.make("subterranean", random.Random(3))
 sub7.set_pid(2)
 check("and it will not set off with no MP to walk on",
       "diving" not in sub7.decide(os3).why)
+
+# Dry with a pond 7 hexes off and a hatch 3: the survival floor runs before
+# pursue(), so if the emergency hunt does not count the hatch as water the
+# dive gate is never reached. On hardware that was 531 of 933 decisions.
+os4 = surface_obs(food=3, water=0)
+os4.map.grid[10][17] = mk(3)                    # Marsh: has_water
+sub8 = pmod.make("subterranean", random.Random(3))
+sub8.set_pid(2)
+a = sub8.decide(os4)
+check("dry, a tunnel bot takes the hatch as its water",
+      a.kind == "move" and "EMERGENCY water" in a.why
+      and ("(13,10)" in a.why or "(7,10)" in a.why))
+sc8 = pmod.make("scoremax", random.Random(3))
+sc8.set_pid(2)
+a = sc8.decide(os4)
+check("a surface bot still walks to the pond", "(17,10)" in a.why)
+os5 = surface_obs(food=0, water=0)
+os5.map.grid[10][17] = mk(3)                    # Marsh: has_water
+sub9 = pmod.make("subterranean", random.Random(3))
+sub9.set_pid(2)
+check("but not while starving -- there is no food below",
+      "(13,10)" not in sub9.decide(os5).why)
+
+# Stocked but no hatch known: explore for one rather than resupply forever.
+os6 = surface_obs()
+os6.map.grid[10][13] = mk()
+os6.map.grid[10][7] = mk()
+for qq in range(20, 40):
+    for rr in range(5, 15):
+        os6.map.grid[rr][qq] = None
+sub10 = pmod.make("subterranean", random.Random(3))
+sub10.set_pid(2)
+check("no hatch in the map -> go looking for one",
+      "seeking a hatch" in sub10.decide(os6).why)
+# Over the token cap, a pile next door cannot be picked up -- it must not
+# out-bid the search (the 3-hex livelock from the 2026-09-23 realtime run).
+os7 = surface_obs(food=5, water=4)
+os7.map.grid[10][13] = mk()
+os7.map.grid[10][7] = mk()
+os7.map.grid[10][11] = mk(resource=config.RES_FOOD + 1)
+for qq in range(20, 40):
+    for rr in range(5, 15):
+        os7.map.grid[rr][qq] = None
+sub11 = pmod.make("subterranean", random.Random(3))
+sub11.set_pid(2)
+a = sub11.decide(os7)
+check("a full pack ignores the pile it cannot lift",
+      "seeking a hatch" in a.why and "(11,10)" not in a.why)
+
+# A reconnect's sync carries only the vision disk; it must not erase the map.
+o6 = Observation()
+o6.apply(sync)
+o6.apply({"t": "vis", "vr": 2, "q": 10, "r": 5, "cells": "0A05020009"})
+o6.apply(sync)
+check("a reconnect sync keeps what we had already seen",
+      o6.map[(10, 5)] is not None and o6.map[(10, 5)].terrain == 2)
 
 # Both tunnel policies must survive a long run of decisions on either board
 # without raising or emitting something the wire cannot carry.
@@ -1880,5 +1941,472 @@ import chaos as chaosmod
 check("chaos scenarios are registered",
       {"reconnect_storm", "seat_race", "abort_request", "abort_encounter",
        "trade_then_leave", "stalled_reader"} == set(chaosmod.SCENARIOS))
+
+print("gear audit (gearcheck.py -- the tool that checks the items)")
+# An audit that cannot fail is not an audit. These feed it one item whose
+# declared mod lands and one whose does not, and require it to tell them
+# apart -- plus the case that matters most in practice, an item that was
+# worn but whose mod nothing on the wire can speak to.
+import gearcheck
+
+LL_ITEM = next((i for i, st in config.EQUIP_STATS.items() if st["ll"]), None)
+SLOT_ITEM = next((i for i, st in config.EQUIP_STATS.items() if st["slots"]), None)
+OPAQUE_ITEM = next((i for i, st in config.EQUIP_STATS.items()
+                    if st["terrain"] and not st["ll"] and not st["slots"]
+                    and not st["vision"]), None)
+check("items.cfg has an LL item to test with", LL_ITEM is not None)
+
+
+def _log(tmp, rows):
+    p = Path(tmp) / "g.jsonl"
+    with Recorder(p, {"synthetic": True}) as rec:
+        for ch, arch, d in rows:
+            rec.write(ch, arch, d)
+    return p
+
+
+def _audit(rows):
+    with tempfile.TemporaryDirectory() as td:
+        a = gearcheck.GearAudit()
+        a.add_run(_log(td, rows))
+        return a
+
+
+def _pack(eq, **kw):
+    d = {"t": "item_result", "act": "equip", "eq": list(eq),
+         "is": kw.get("is", 8), "llCap": kw.get("llCap", 7)}
+    return d
+
+
+bare = ("rx", 0, _pack([0, 0, 0, 0, 0]))
+slot_of = config.EQUIPMENT[LL_ITEM]
+worn = [0] * 5
+worn[slot_of] = LL_ITEM
+bump = config.EQUIP_STATS[LL_ITEM]["ll"]
+
+a = _audit([bare, ("rx", 0, _pack(worn, llCap=7 + bump))])
+check("a correctly applied LL mod reads VERIFIED",
+      a.ev[(LL_ITEM, "ll")]["pass"] == 1 and a.ev[(LL_ITEM, "ll")]["fail"] == 0)
+
+a = _audit([bare, ("rx", 0, _pack(worn, llCap=7))])
+check("an LL mod that never lands is caught",
+      a.ev[(LL_ITEM, "ll")]["fail"] == 1)
+check("and the failure says what it saw",
+      "declared" in a.ev[(LL_ITEM, "ll")]["cases"][0])
+
+a = _audit([bare, ("rx", 0, _pack(worn, llCap=7 + bump + 1))])
+check("an LL mod applied TWICE is caught too",
+      a.ev[(LL_ITEM, "ll")]["fail"] == 1)
+
+if SLOT_ITEM is not None:
+    sslot = config.EQUIPMENT[SLOT_ITEM]
+    sworn = [0] * 5
+    sworn[sslot] = SLOT_ITEM
+    sbump = config.EQUIP_STATS[SLOT_ITEM]["slots"]
+    a = _audit([bare, ("rx", 0, _pack(sworn, **{"is": 8 + sbump}))])
+    check("a pack-slot mod is verified off `is`",
+          a.ev[(SLOT_ITEM, "slots")]["pass"] == 1)
+    # invSlots is clamped at INV_SLOTS_MAX, so a bonus that would overflow
+    # lands short and that is correct, not a bug.
+    a = _audit([("rx", 0, _pack([0, 0, 0, 0, 0], **{"is": config.INV_SLOTS_MAX})),
+                ("rx", 0, _pack(sworn, **{"is": config.INV_SLOTS_MAX}))])
+    check("the INV_SLOTS_MAX clamp is not reported as a mismatch",
+          a.ev[(SLOT_ITEM, "slots")]["fail"] == 0)
+
+# Vision rides a fresh vis disk that pushVisDisk() sends right after the ack.
+VIS_ITEM = next((i for i, st in config.EQUIP_STATS.items() if st["vision"]), None)
+if VIS_ITEM is not None:
+    vslot = config.EQUIPMENT[VIS_ITEM]
+    vworn = [0] * 5
+    vworn[vslot] = VIS_ITEM
+    a = _audit([("rx", 0, {"t": "vis", "vr": 3, "cells": ""}),
+                ("rx", 0, _pack([0, 0, 0, 0, 0])),
+                ("rx", 0, _pack(vworn)),
+                ("rx", 0, {"t": "vis", "vr": 4, "cells": ""})])
+    check("a vision mod is verified off the vis disk",
+          a.ev[(VIS_ITEM, "vision")]["pass"] == 1)
+    a = _audit([("rx", 0, {"t": "vis", "vr": 3, "cells": ""}),
+                ("rx", 0, _pack([0, 0, 0, 0, 0])),
+                ("rx", 0, _pack(vworn)),
+                ("rx", 0, {"t": "vis", "vr": 3, "cells": ""})])
+    check("a vision mod that never lands is caught",
+          a.ev[(VIS_ITEM, "vision")]["fail"] == 1)
+    # A step between the equip and the disk changes vision through terrain
+    # and weather, so that disk is no longer evidence either way.
+    a = _audit([("rx", 0, {"t": "vis", "vr": 3, "cells": ""}),
+                ("rx", 0, _pack([0, 0, 0, 0, 0])),
+                ("rx", 0, _pack(vworn)),
+                ("rx", 0, {"t": "ev", "k": "mv", "pid": 0, "q": 1, "r": 1}),
+                ("rx", 0, {"t": "vis", "vr": 9, "cells": ""})])
+    check("a vis disk after a move is not used as evidence",
+          a.ev[(VIS_ITEM, "vision")]["pass"] == 0
+          and a.ev[(VIS_ITEM, "vision")]["fail"] == 0)
+
+if OPAQUE_ITEM is not None:
+    oslot = config.EQUIPMENT[OPAQUE_ITEM]
+    oworn = [0] * 5
+    oworn[oslot] = OPAQUE_ITEM
+    a = _audit([bare, ("rx", 0, _pack(oworn))])
+    check("an item worn with only opaque mods is reported, not passed",
+          OPAQUE_ITEM in a.worn_ever
+          and not any(k[0] == OPAQUE_ITEM and v["pass"]
+                      for k, v in a.ev.items()))
+    rendered = a.render()
+    check("and the report calls it UNTESTED", "UNTESTED" in rendered)
+
+# Survival attribution: a dawn's LL loss lands on whatever was worn at it.
+a = _audit([bare,
+            ("rx", 0, {"t": "ev", "k": "dawn", "pid": 0, "day": 2, "dll": -2}),
+            ("rx", 0, _pack(worn, llCap=7 + bump)),
+            ("rx", 0, {"t": "ev", "k": "dawn", "pid": 0, "day": 3, "dll": -1}),
+            ("rx", 0, {"t": "ev", "k": "dawn", "pid": 0, "day": 4, "dll": 0})])
+check("bare dawns form the baseline", a.baseline_dawns == 1 and a.baseline_ll == 2)
+check("worn dawns are attributed to the item",
+      a.days_worn[LL_ITEM] == 2 and a.ll_lost[LL_ITEM] == 1)
+check("another player's dawn is not ours",
+      _audit([bare, ("rx", 0, {"t": "ev", "k": "dawn", "pid": 3, "dll": -5})]
+             ).baseline_dawns == 0)
+
+print("canteen (the craftable answer to thirst)")
+check("the canteen recipe is found by what it does",
+      config.CANTEEN_RECIPE is not None
+      and config.EQUIP_STATS[config.CANTEEN_ITEM]["water_cap"] > 0
+      and config.RECIPES[config.CANTEEN_RECIPE]["cost"][config.RES_SCRAP] > 0)
+check("recipe bits are (id-1)", config.recipe_known(1 << 18, 19)
+      and not config.recipe_known(1 << 18, 18))
+
+# tokenLoad(): canteen water is outside the pack, and tokenRoomFor(0) adds
+# the canteen's empty space on top.
+_me = __import__("state").PlayerState(inv=[5, 2, 0, 0, 1], inv_slots=8, water_cap=3)
+check("canteen water does not count against the pack", _me.carried() == 5)
+check("water room includes the empty canteen", _room(_me, config.RES_WATER) == 3)
+_me.inv = [2, 3, 0, 0, 3]
+check("a part-full canteen only offers what is left",
+      _room(_me, config.RES_WATER) == 3 and _room(_me) == 2)
+_st = Observation()
+_st.apply(sync)
+_st.pid = 2
+_st.apply({"t": "item_result", "ok": True, "wc": 3, "kr": 1 << 18,
+           "eq": [0, config.CANTEEN_ITEM, 0, 0, 0]})
+check("wc and kr ride an item_result",
+      _st.me.water_cap == 3 and _st.me.known_recipes == 1 << 18)
+
+
+def canteen_obs(scrap=4, terrain=config.TERR_SETTLEMENT, kr=1 << 18,
+                equip=None, water=5, food=4):
+    o = Observation()
+    o.apply(sync)
+    o.pid = 2
+    w = WorldMap()
+    for rr in range(config.MAP_ROWS):
+        for qq in range(config.MAP_COLS):
+            w.grid[rr][qq] = mk()
+    w.grid[10][10] = mk(terrain)
+    o.map = w
+    me = o.players[2]
+    me.q, me.r, me.depth = 10, 10, 0
+    me.inv = [water, food, 0, 0, scrap]
+    me.mp, me.ll, me.inv_slots, me.valid_moves = 8, 6, 8, 0b111111
+    me.known_recipes = kr
+    me.inv_type = [0] * config.INV_SLOTS_MAX
+    me.equip = list(equip or [0] * 5)
+    return o
+
+
+_c = pmod.make("coward", random.Random(1)); _c.set_pid(2)
+a = _c.decide(canteen_obs())
+check("at a Settlement with the scrap, it crafts the canteen",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_CRAFT
+      and a.to_msg()["r"] == config.CANTEEN_RECIPE)
+_c2 = pmod.make("coward", random.Random(1)); _c2.set_pid(2)
+_cost = config.RECIPES[config.CANTEEN_RECIPE]["cost"][config.RES_SCRAP]
+check("not without the scrap",
+      "craft" not in _c2.decide(canteen_obs(scrap=_cost - 1)).why)
+_c3 = pmod.make("coward", random.Random(1)); _c3.set_pid(2)
+check("not without the recipe", "craft" not in _c3.decide(canteen_obs(kr=0)).why)
+_c4 = pmod.make("coward", random.Random(1)); _c4.set_pid(2)
+_o = canteen_obs(terrain=0)
+_o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
+a = _c4.decide(_o)
+check("away from one, it walks to the nearest Settlement",
+      a.kind == "move" and "canteen: to settlement (13,10)" in a.why)
+_c5 = pmod.make("coward", random.Random(1)); _c5.set_pid(2)
+_o = canteen_obs()
+_c5.decide(_o)                               # sends the CRAFT
+_o.me.inv_type[0] = config.CANTEEN_ITEM      # ...and the item_result lands
+a = _c5.decide(_o)
+check("a crafted canteen is equipped, not crafted again",
+      a.kind == "equip_item" and a.slot == 0)
+check("and the craft is counted", _c5.stats["crafted"] == 1)
+_c6 = pmod.make("coward", random.Random(1)); _c6.set_pid(2)
+_o = canteen_obs()
+_c6.decide(_o)
+check("a refused craft is not re-sent every cycle",
+      "craft" not in _c6.decide(_o).why)
+# On a pond, short of its food floor, a Settlement 3 hexes off: the routine
+# top-up must not eat the day (the ~100 s park at (48,28) on 2026-09-23).
+_o = canteen_obs(terrain=3, water=4, food=1, scrap=_cost)
+_o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
+_sub = pmod.make("subterranean", random.Random(1)); _sub.set_pid(2)
+a = _sub.decide(_o)
+check("a Settlement within today's MP beats topping up",
+      a.kind == "move" and "canteen: to settlement (13,10)" in a.why)
+_o = canteen_obs(terrain=3, water=1, food=1, scrap=_cost)
+_o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
+_sub = pmod.make("subterranean", random.Random(1)); _sub.set_pid(2)
+check("but an emergency still comes first", "canteen" not in _sub.decide(_o).why)
+# Every policy wants one -- even wearing a Backpack in the shared body slot.
+_CS = config.EQUIPMENT[config.CANTEEN_ITEM]
+_bp = [0] * 5
+_bp[_CS] = 64
+_all = [n for n in pmod.REGISTRY if n != "drunk"]
+check("every survivor policy wants a canteen, Backpack or not",
+      all(pmod.make(n, random.Random(1)).wants_canteen(canteen_obs(equip=_bp))
+          for n in _all))
+# ...puts it on over the Backpack...
+_sm = pmod.make("scoremax", random.Random(1)); _sm.set_pid(2)
+_o = canteen_obs(terrain=0, equip=_bp)
+_o.me.inv_type[3] = config.CANTEEN_ITEM
+a = _sm.decide(_o)
+check("scoremax swaps its Backpack out for the canteen",
+      a.kind == "equip_item" and a.slot == 3 and "canteen" in a.why)
+# ...and never swaps it back, however much its weights like the Backpack.
+_o = canteen_obs(terrain=0)
+_o.me.equip[_CS] = config.CANTEEN_ITEM
+_o.me.inv_type[0] = 64
+_sm2 = pmod.make("scoremax", random.Random(1)); _sm2.set_pid(2)
+check("a worn canteen is pinned: no swap back to the Backpack",
+      _sm2.decide(_o).kind != "equip_item")
+# An equip that does not land is not re-sent every cycle.
+_o = canteen_obs(terrain=0)
+_o.me.inv_type[3] = config.CANTEEN_ITEM
+_eq = pmod.make("coward", random.Random(1)); _eq.set_pid(2)
+_first = _eq.decide(_o)
+check("an unacknowledged equip is not re-sent every cycle",
+      _first.kind == "equip_item" and _eq.decide(_o).kind != "equip_item")
+# Short of scrap: go and get it -- a pile, or salvage where it stands.
+_o = canteen_obs(terrain=0, scrap=0, water=4, food=3)
+_o.map.grid[10][12] = mk(resource=config.RES_SCRAP + 1)
+_sc = pmod.make("contentmax", random.Random(1)); _sc.set_pid(2)
+a = _sc.decide(_o)
+check("short of scrap, it walks to a scrap pile",
+      a.kind == "move" and "canteen: scrap -> (12,10)" in a.why)
+_o = canteen_obs(terrain=4, scrap=0, water=4, food=3)  # Urban: salvageable
+_sc2 = pmod.make("contentmax", random.Random(1)); _sc2.set_pid(2)
+a = _sc2.decide(_o)
+check("standing on salvage, it scavenges for it",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_SCAV)
+# Stood on water with a canteen worn: fill it past the ordinary floor.
+_f = pmod.make("scoremax", random.Random(1)); _f.set_pid(2)
+_o = canteen_obs(terrain=3, water=4, food=2, scrap=0)
+_o.me.water_cap = 3
+_o.me.equip[config.EQUIPMENT[config.CANTEEN_ITEM]] = config.CANTEEN_ITEM
+a = _f.decide(_o)
+check("on a pond, a worn canteen gets filled",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_WATER and "canteen" in a.why)
+
+print("death drops (the canteen a respawn used to lose)")
+# dropRemains(): a fall leaves the pack and worn gear as ground piles and the
+# tokens in a remains record ("rm"), on the hex, for GROUND_AGE_DAYS.
+_grave = {"q": 12, "r": 10, "pid": 2, "nm": "Medic", "d": 11, "res": [2, 1, 0, 0, 3]}
+_od = Observation()
+_od.apply(dict(sync, rm=[_grave]))
+check("sync parses the remains records", _od.remains == [_grave])
+check("remains_at finds a grave by its hex",
+      _od.remains_at(12, 10) is _od.remains[0] and _od.remains_at(10, 10) is None)
+_od.apply({"t": "ground_update", "q": 12, "r": 10, "gi": []})
+check("a ground_update without rm keeps what we had", len(_od.remains) == 1)
+_od.apply({"t": "ground_update", "q": 12, "r": 10, "gi": [], "rm": []})
+check("a ground_update with rm replaces it", _od.remains == [])
+_mine = {"q": 20, "r": 5, "pid": 2, "nm": "Medic", "d": 11, "res": [1, 0, 0, 0, 0]}
+_theirs = {"q": 30, "r": 6, "pid": 4, "nm": "Scout", "d": 11, "res": [0, 1, 0, 0, 0]}
+_od.apply({"t": "ground_update", "q": 20, "r": 5, "why": "fell", "pid": 2,
+           "gi": [], "rm": [_mine]})
+check("our own fall is remembered as our grave", (20, 5) in _od.my_graves)
+_od.apply({"t": "ground_update", "q": 30, "r": 6, "why": "fell", "pid": 4,
+           "gi": [], "rm": [_mine, _theirs]})
+check("somebody else's fall is not",
+      (30, 6) not in _od.my_graves and (20, 5) in _od.my_graves)
+_od.apply({"t": "ground_update", "q": 20, "r": 5, "gi": [], "rm": [_theirs]})
+check("a grave of ours that is gone is forgotten", not _od.my_graves)
+_od.apply({"t": "ground_update", "q": 20, "r": 5, "why": "fell", "pid": 2,
+           "gi": [{"g": 0, "q": 20, "r": 5, "id": 65, "n": 1, "d": 11}], "rm": [_mine]})
+_od.apply({"t": "ev", "k": "regen"})
+check("regen forgets graves, remains and piles",
+      not _od.remains and not _od.my_graves and not _od.ground_items)
+_od.apply(sync)
+_od.apply({"t": "loot_result", "ok": True, "why": 0, "pid": 2,
+           "got": [2, 0, 0, 0, 0], "inv": [9, 1, 0, 0, 0]})
+check("loot_result applies the fresh token counts", _od.me.inv == [9, 1, 0, 0, 0])
+check("a grave lasts GROUND_AGE_DAYS",
+      config.ground_days_left(11, 11) == config.GROUND_AGE_DAYS)
+check("and goes at the dawn that makes it that old",
+      config.ground_days_left(11 + config.GROUND_AGE_DAYS, 11) == 0)
+check("the day wraps like the board's uint16",
+      config.ground_days_left(3, 65534) == config.GROUND_AGE_DAYS - 5)
+
+check("a bare loot takes everything that fits", Action("loot").to_msg() == {"t": "loot"})
+check("a loot can name one resource",
+      Action("loot", res=5).to_msg() == {"t": "loot", "res": 5})
+try:
+    Action("loot", res=6).to_msg()
+    check("an out-of-range loot res is refused", False)
+except ValueError:
+    check("an out-of-range loot res is refused", True)
+
+
+def grave_obs(res=(2, 1, 0, 0, 1), at=(10, 10), pid=2, nm="Medic", d=11, day=11,
+              gi=(), base=None, **kw):
+    """A grave at `at` holding `res`, with ground piles `gi`.  Built on
+    surface_obs() unless `base` is given (canteen_obs() for the craft cases).
+    food 2 / water 3 by default: 5 tokens in an 8-slot pack, so there is room
+    to loot and nothing counts as an emergency."""
+    kw.setdefault("food", 2)
+    kw.setdefault("water", 3)
+    o = base if base is not None else surface_obs(**kw)
+    o.day = day
+    o.remains = [{"q": at[0], "r": at[1], "pid": pid, "nm": nm, "d": d, "res": list(res)}]
+    o.ground_items = [dict(g) for g in gi]
+    o.players[2].inv_type = [0] * config.INV_SLOTS_MAX
+    o.players[2].equip = [0] * config.EQUIP_SLOTS
+    return o
+
+
+_CANTEEN_PILE = {"g": 7, "q": 10, "r": 10, "id": config.CANTEEN_ITEM, "n": 1, "d": 11}
+_lp = pmod.make("scoremax", random.Random(2)); _lp.set_pid(2)
+_o = grave_obs()
+a = _lp.decide(_o)
+check("stood on a grave with room, it loots", a.kind == "loot" and a.to_msg() == {"t": "loot"})
+check("and says whose it was", "our own" in a.why)
+check("an unacknowledged loot is not re-sent every cycle", _lp.decide(_o).kind != "loot")
+check("the loot is counted", _lp.stats["loots"] == 1)
+_lp2 = pmod.make("coward", random.Random(2)); _lp2.set_pid(2)
+a = _lp2.decide(grave_obs(pid=4, nm="Scout"))
+check("a rival's grave is looted just the same", a.kind == "loot" and "Scout's" in a.why)
+_lp3 = pmod.make("scoremax", random.Random(2)); _lp3.set_pid(2)
+_o = grave_obs(food=4, water=4)                # 8 of 8: nothing fits
+check("a full pack does not send a loot that can only be refused",
+      _lp3.decide(_o).kind != "loot")
+_o = grave_obs(res=(0, 0, 0, 0, 2), food=4, water=4)
+_o.players[2].inv = [4, 3, 0, 0, 0]            # 7 of 8: room for one
+check("one token of room is room", _lp3.decide(_o).kind == "loot")
+_o = grave_obs()
+_o.players[2].depth = 1                        # q/r pinned to the hatch overhead
+check("never from below -- underground q/r are the hatch, not the grave",
+      _lp3.remains_action(_o) is None)
+# The canteen on its own grave is picked up before the canteen errand can
+# walk the respawned survivor off to hunt scrap for a new one.
+_cn = canteen_obs(terrain=0, scrap=0, water=3, food=2)
+_cn.map.grid[10][12] = mk(resource=config.RES_SCRAP + 1)
+_o = grave_obs(res=(0, 0, 0, 0, 0), gi=[_CANTEEN_PILE], base=_cn)
+_cg = pmod.make("contentmax", random.Random(1)); _cg.set_pid(2)
+a = _cg.decide(_o)
+check("its canteen on the grave is lifted before any errand",
+      a.kind == "pickup_item" and a.gslot == 7 and "grave" in a.why)
+check("and a lifted pile is not asked for again every cycle",
+      _cg.decide(_o).kind != "pickup_item")
+_o = grave_obs(res=(0, 0, 0, 0, 0), gi=[dict(_CANTEEN_PILE, id=21)])
+check("litter on a grave stays where it is", _lp3.remains_action(_o) is None)
+
+
+def recover_obs(at=(14, 10), pid=2, d=11, day=11, gi=None, res=(0, 0, 0, 0, 0),
+                water=3, food=2, scrap=0):
+    """canteen_obs(): the canteen recipe known, 8 MP, scrap short -- with a
+    scrap pile two hexes WEST to tempt the canteen errand, and a grave to the
+    east holding the canteen."""
+    base = canteen_obs(terrain=0, scrap=scrap, water=water, food=food)
+    base.map.grid[10][8] = mk(resource=config.RES_SCRAP + 1)
+    pile = dict(_CANTEEN_PILE, q=at[0], r=at[1]) if gi is None else gi
+    return grave_obs(res=res, at=at, pid=pid, d=d, day=day,
+                     gi=[pile] if pile else [], base=base)
+
+
+_rp = pmod.make("contentmax", random.Random(1)); _rp.set_pid(2)
+_o = recover_obs()
+a = _rp.decide(_o)
+check("a grave of ours within today's MP: walk back for the canteen",
+      a.kind == "move" and a.d == 0 and "recover: our grave at (14,10)" in a.why)
+check("and the canteen errand stands down while it does",
+      _rp.craft_action(_o) is None)
+check("the walk is counted", _rp.stats["recover_moves"] == 1)
+_rp2 = pmod.make("contentmax", random.Random(1)); _rp2.set_pid(2)
+a = _rp2.decide(recover_obs(at=(25, 10)))
+check("beyond today's MP it still goes, once the floor is quiet",
+      a.kind == "move" and "recover: our grave at (25,10)" in a.why)
+_rp3 = pmod.make("contentmax", random.Random(1)); _rp3.set_pid(2)
+a = _rp3.decide(recover_obs(at=(25, 10), day=40, d=12))     # 2 dawns left, 2 days away
+check("but not for a grave that ages out on the way", "recover" not in a.why)
+_rp4 = pmod.make("contentmax", random.Random(1)); _rp4.set_pid(2)
+a = _rp4.decide(recover_obs(day=40, d=11))                   # goes at the next dawn, 4 MP off
+check("a grave going at dawn is still worth a walk that ends today",
+      "recover: our grave at (14,10)" in a.why)
+_rp5 = pmod.make("contentmax", random.Random(1)); _rp5.set_pid(2)
+a = _rp5.decide(recover_obs(pid=4))
+check("somebody else's grave is not ours to walk back to", "recover" not in a.why)
+_o = recover_obs(pid=3)
+_o.my_graves.add((14, 10))
+_rp6 = pmod.make("contentmax", random.Random(1)); _rp6.set_pid(2)
+check("a grave from before a respawn into another seat is still ours",
+      "recover: our grave at (14,10)" in _rp6.decide(_o).why)
+_o = recover_obs()
+_o.map.grid[10][14] = mk(TERR_BUNKER)
+_rp7 = pmod.make("contentmax", random.Random(1)); _rp7.set_pid(2)
+check("a grave on a hatch is not walked to -- stepping on it is the descent",
+      "recover" not in _rp7.decide(_o).why)
+_rp8 = pmod.make("contentmax", random.Random(1)); _rp8.set_pid(2)
+check("a grave with nothing we could take is not worth the walk",
+      "recover" not in _rp8.decide(recover_obs(gi=dict(_CANTEEN_PILE, q=14, id=21))).why)
+_rp9 = pmod.make("contentmax", random.Random(1)); _rp9.set_pid(2)
+a = _rp9.decide(recover_obs(gi={}, res=(3, 0, 0, 0, 0)))     # tokens only, no canteen
+check("a grave of tokens alone is still worth walking to",
+      "recover: our grave at (14,10)" in a.why)
+check("but it does not stop the canteen errand",
+      _rp9.recovery_target(recover_obs(gi={}, res=(3, 0, 0, 0, 0)),
+                           canteen_only=True) is None)
+_o = recover_obs(water=1)
+_o.map.grid[10][11] = mk(resource=config.RES_WATER + 1)
+_rp10 = pmod.make("contentmax", random.Random(1)); _rp10.set_pid(2)
+check("an emergency still comes first", "EMERGENCY water" in _rp10.decide(_o).why)
+
+# The Rival's pickup used to be a placeholder noop -- which parked it on any
+# pile forever. Graves full of consumables made that a freeze.
+_rv = pmod.make("rival", random.Random(1)); _rv.set_pid(2)
+_o = surface_obs(food=2, water=3)
+_o.ground_items = [{"g": 5, "q": 10, "r": 10, "id": 21, "n": 3, "d": 11}]
+a = _rv.decide(_o)
+check("the rival lifts litter underfoot", a.kind == "pickup_item" and a.gslot == 5)
+_o.players[2].inv_type = [21] * config.INV_SLOTS_MAX
+_rv2 = pmod.make("rival", random.Random(1)); _rv2.set_pid(2)
+check("and with no free slot it moves on instead of freezing",
+      _rv2.decide(_o).kind == "move")
+# GearMax only walks to piles it will lift; a consumable pile used to pull it
+# back and forth forever.
+_gm = pmod.make("gearmax", random.Random(1)); _gm.set_pid(2)
+_o = surface_obs(food=2, water=3)
+_o.ground_items = [{"g": 3, "q": 11, "r": 10, "id": 21, "n": 1, "d": 11}]
+a = _gm.pursue(_o)
+check("gearmax does not chase a pile it will not pick up",
+      float(a.why.split("v=")[1]) < 10)
+_o.ground_items = [{"g": 3, "q": 11, "r": 10, "id": 64, "n": 1, "d": 11}]
+check("but still chases gear", "(11,10)" in _gm.pursue(_o).why)
+_o.players[2].inv_type = [21] * config.INV_SLOTS_MAX
+check("unless there is no slot to put it in",
+      float(_gm.pursue(_o).why.split("v=")[1]) < 10)
+
+# Every survivor policy, dropped on a grave with tokens and gear on it, must
+# keep producing actions the wire can carry.
+for _name in (n for n in pmod.REGISTRY if n != "drunk"):
+    _pol = pmod.make(_name, random.Random(5)); _pol.set_pid(2)
+    _o = grave_obs(gi=[_CANTEEN_PILE, dict(_CANTEEN_PILE, g=8, id=21)])
+    _kinds = set()
+    for _ in range(40):
+        _act = _pol.decide(_o)
+        _kinds.add(_act.kind)
+        _m = _act.to_msg()
+        if _m is not None:
+            json.dumps(_m)
+    check(f"{_name} on a grave yields valid actions",
+          _kinds and _kinds <= {"move", "act", "noop", "loot", "pickup_item",
+                                "equip_item", "enc_start", "trade_offer"})
 
 print(f"\n{ok} checks passed")

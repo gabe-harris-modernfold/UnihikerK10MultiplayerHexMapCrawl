@@ -251,21 +251,12 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
       encounters[i].active ? 1 : 0,
       (int)p.depth, (int)p.tq, (int)p.tr);
   }
-  // Ground items visible to this player
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"gi\":[");
-  bool firstGi = true;
-  for (int g = 0; g < MAX_GROUND; g++) {
-    if (!groundItems[g].itemType) continue;
-    if (!firstGi) buf[pos++] = ',';
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d}",
-      g, groundItems[g].q, groundItems[g].r,
-      groundItems[g].itemType, groundItems[g].qty);
-    firstGi = false;
-  }
+  // Everything lying on the ground: piles ("gi") and remains ("rm")
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "],");
+  pos = appendGroundArrays(buf, sizeof(buf), pos);
   // Shared game-state object + variant counts
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
+    ",\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
     "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d],\"stock\":[",
     G.threatClock, G.dayCount, (int)G.weatherPhase,
     (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,

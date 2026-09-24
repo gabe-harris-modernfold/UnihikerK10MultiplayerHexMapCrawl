@@ -1,0 +1,116 @@
+# K10 speech vocabulary -> snd-vocab.h (scripts/lpc/gen_vocab.py).
+#
+#   ID | text
+#
+# ID becomes the enum VOC_<ID>. Keep IDs stable: firmware refers to them by
+# name. Order matters in two places and is load-bearing:
+#   * N1..N19, N20..N90 -- sndSayNumber() indexes them arithmetically.
+#   * DOOM00..DOOM32    -- DOOM_TAUNTS in data/game-data.js, tier*3 + idx, so
+#                          the K10 speaks exactly the line each phone shows.
+#   * TC1..TC4, WX0..WX5 -- indexed by threat band / weather phase.
+# Lines are lower case on purpose; the TTS reads punctuation as pauses.
+
+# ── numbers (day count) ──────────────────────────────────────────────────
+N1  | one
+N2  | two
+N3  | three
+N4  | four
+N5  | five
+N6  | six
+N7  | seven
+N8  | eight
+N9  | nine
+N10 | ten
+N11 | eleven
+N12 | twelve
+N13 | thirteen
+N14 | fourteen
+N15 | fifteen
+N16 | sixteen
+N17 | seventeen
+N18 | eighteen
+N19 | nineteen
+N20 | twenty
+N30 | thirty
+N40 | forty
+N50 | fifty
+N60 | sixty
+N70 | seventy
+N80 | eighty
+N90 | ninety
+N100 | hundred
+
+# ── the chronicler: days and nights ──────────────────────────────────────
+DAY        | day
+DAWN_GREY  | comes up grey over the waste.
+DAWN_THIN  | thin light. and we are still here.
+DAWN_SUN   | another sun.
+NIGHT      | night falls.
+NIGHT2     | the dark comes down.
+
+# ── the threat clock (TC_LINE, ui-audio.hpp) ──────────────────────────────
+TC1      | the clock turns. something out there woke up.
+TC2      | the clock turns again. the waste is paying attention.
+TC3      | the clock turns. nothing out here is sleeping now.
+TC4      | the clock has run out of patience with us.
+TOO_LATE | too late.
+WARNING  | warning.
+
+# ── survivors (slot order = ARCHETYPE_NAME) ──────────────────────────────
+GUIDE         | the guide
+QUARTERMASTER | the quartermaster
+MEDIC         | the medic
+MULE          | the mule
+SCOUT         | the scout
+ENDURER       | the endurer
+JOINS         | takes up the road with us.
+LEAVES        | walks out, and does not look back.
+DOWN          | goes down. and does not get up.
+NO_ONE        | no one is left.
+
+# ── weather (WX_PROSE, network-events.hpp) ───────────────────────────────
+WX0   | the sky clears. small mercy, and brief.
+WX1   | rain comes in thin and cold.
+WX2   | a storm walks in off the flats.
+WX3   | the rain turns wrong. chem burn.
+WX4   | strangle fog settles in the low ground.
+WX5   | fog closes the world to arm's length.
+QUAKE | the ground heaves.
+FIRE  | fire.
+FLOOD | flash flood.
+
+# ── encounters ───────────────────────────────────────────────────────────
+DARK      | steps off the map, and into the dark.
+CORRECT   | that is correct.
+INCORRECT | that is incorrect.
+LIGHT     | back into the light.
+CLEARED   | picked clean. every last piece.
+
+# ── the caravan: a carnival barker ───────────────────────────────────────
+STEP_UP | step right up. step right up.
+CARAVAN | the caravan is here.
+BARGAIN | a bargain, for the brave.
+
+# ── the doom (DOOM_TAUNTS, data/game-data.js; tier*3 + idx) ──────────────
+DOOM00 | the weight behind you lifts. it has lost the thread.
+DOOM01 | whatever was following has turned away.
+DOOM02 | the air goes quiet. for now.
+DOOM10 | something out there has your scent.
+DOOM11 | the wind changed. it knows which way you went.
+DOOM12 | you left too much of yourself on that ground.
+DOOM20 | everything you gather, it unmakes.
+DOOM21 | it is eating the ground behind you.
+DOOM22 | your work rots as fast as you can do it.
+DOOM30 | it has stopped looking. it is coming.
+DOOM31 | there is no track to follow now. only you.
+DOOM32 | it knows the shape of you.
+
+# ── the doom's own voice (short, spoken over the music at the hunt) ─────
+RUN       | run.
+I_SEE_YOU | i see you.
+MINE      | mine.
+COME_HERE | come here.
+
+# ── the terminal ─────────────────────────────────────────────────────────
+WASTELAND | welcome to the wasteland.
+SURVIVORS | survivors remain.

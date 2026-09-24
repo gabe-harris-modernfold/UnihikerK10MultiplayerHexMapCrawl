@@ -225,6 +225,7 @@ static void broadcastQuake(const QuakeResult& q) {
   else
     snprintf(lb, sizeof(lb), "The earth heaves. Nothing stays put.");
   k10LogAdd(lb, -1, TONE_ILL, GLY_QUAKE);
+  fxCue(FXK_QUAKE, -1, lb);   // KRRAKK, and the glass cracks (ui-fx.hpp)
   k10Play(MOTIF_DISTANT_THUD);
 }
 
@@ -330,6 +331,20 @@ static void publishDread() {
   }
 
   memcpy((void*)&g_dread, &d, sizeof(d));
+
+  // The carnival follows the caravan: how close it is to the nearest survivor
+  // on the surface, for the sound engine's composer (ui-audio.hpp). Six hexes
+  // out it is a rumour on the wind; on the same hex the band is in your face.
+  int carBest = 99;
+  if (W.caravan.active) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+      const Player& p = G.players[i];
+      if (!p.connected || p.depth) continue;
+      int dist = hexDistWrap(p.q, p.r, W.caravan.q, W.caravan.r);
+      if (dist < carBest) carBest = dist;
+    }
+  }
+  g_sndCaravanNear = (carBest <= 6) ? (uint8_t)(255 - carBest * 36) : 0;
 }
 
 static void tickGame() {
@@ -354,6 +369,7 @@ static void tickGame() {
   }
 
   bool dawnOccurred = false;
+  bool groundAged   = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
     G.dayTick = 0;
     G.dayCount++;
@@ -371,6 +387,8 @@ static void tickGame() {
     if (G.threatClock > 0) G.threatClock--;
     dawnUpkeep();   // modifies player state, enqueues EVT_DAWN per connected player
     // Note: shelters are now permanent and persist across days
+    // Piles and remains GROUND_AGE_DAYS old go back to the dust (inventory_items.hpp).
+    groundAged = groundAgeOut();
   }
 
   // ── Resource respawn ────────────────────────────────────────────────────────
@@ -530,6 +548,7 @@ static void tickGame() {
   publishDread();   // refresh the LED dread snapshot while we still hold the mutex
 
   xSemaphoreGive(G.mutex);
+  if (groundAged) broadcastGroundUpdate(-1, -1, "aged");  // takes the mutex itself
   if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
   if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
 }

@@ -61,6 +61,39 @@ function boardDist(q1, r1, q2, r2) {
   return hexDist(q1, r1, q2, r2);
 }
 
+// ── Where I am, on the board I am on ──────────────────────────────
+// me.q/r stay pinned to the entrance hatch while below, so anything asking
+// "what am I standing on" or "who is here with me" goes through these rather
+// than gameMap[me.r][me.q] -- underground that is the hatch hex up on the
+// surface, not the corridor under your feet. Keyed on myDepth (the board being
+// shown), not me.dp, so the panels always agree with what is drawn.
+function myBoardPos() {
+  const me = players[myId];
+  if (!me) return null;
+  return myDepth ? { q: me.tq | 0, r: me.tr | 0 } : { q: me.q, r: me.r };
+}
+
+function myBoardCell() {
+  const pos = myBoardPos();
+  return pos ? boardCells()[pos.r]?.[pos.q] ?? null : null;
+}
+
+// Same hex AND the same board -- the client mirror of samehex()
+// (inventory_items.hpp), which is what the server checks a trade against.
+function sharesMyHex(p) {
+  const me = players[myId];
+  if (!p || !me || (p.dp | 0) !== myDepth) return false;
+  return myDepth ? ((p.tq | 0) === (me.tq | 0) && (p.tr | 0) === (me.tr | 0))
+                 : (p.q === me.q && p.r === me.r);
+}
+
+// The caravan drives the surface only; parked on your hatch is not "here".
+function caravanSharesMyHex() {
+  const me = players[myId];
+  const c  = worldState.caravan;
+  return !!(me && !myDepth && c?.active && c.q === me.q && c.r === me.r);
+}
+
 // ── Where to draw a player ────────────────────────────────────────
 // null = they are on the other board and should not be drawn at all.
 function playerViewPos(i) {
@@ -88,6 +121,12 @@ function setMyDepth(d) {
   myDepth = nd;
   if (typeof surveyedCells !== 'undefined') surveyedCells.clear();
   if (typeof uiDepth !== 'undefined') uiDepth.val = myDepth;
+  // Particles and bolts live in screen space, so anything in flight when you
+  // cross would keep falling over the other board: a fog puff outlives a
+  // step by seconds. Fire flames go too -- fire only burns on the surface
+  // (renderer.js skips the fire field underground), so none are respawned.
+  if (typeof weatherParticles !== 'undefined' && weatherParticles) weatherParticles.particles = [];
+  if (typeof lightningSystem  !== 'undefined' && lightningSystem)  lightningSystem.bolts = [];
   return true;
 }
 

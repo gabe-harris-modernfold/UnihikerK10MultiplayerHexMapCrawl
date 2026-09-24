@@ -101,21 +101,14 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
 
 // Place a typed item into the player's pack via addItemToInv() (stacks first,
 // then empty slots — the same rule pickups and crafting use); overflow goes
-// to the ground at the player's hex.  Caller holds G.mutex.
-static void grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
-  if (!itemId || !qty) return;
+// to the ground at the player's hex via groundPut().  Returns true when some
+// of it landed on the ground, so the caller can tell the clients.  Caller
+// holds G.mutex.
+static bool grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
+  if (!itemId || !qty) return false;
   qty = (uint8_t)(qty - addItemToInv(p, itemId, qty));
-  if (!qty) return;
-  // Pack full — drop the remainder where the player stands
-  int gslot = -1;
-  for (int g = 0; g < MAX_GROUND; g++) {
-    if (groundItems[g].itemType == itemId && groundItems[g].q == p.q && groundItems[g].r == p.r) { gslot = g; break; }
-  }
-  if (gslot < 0) for (int g = 0; g < MAX_GROUND; g++) if (!groundItems[g].itemType) { gslot = g; break; }
-  if (gslot < 0) { Log.warning("grantItemOrDrop: ground full, item %d x%d lost", (int)itemId, (int)qty); return; }
-  groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
-  groundItems[gslot].itemType = itemId;
-  groundItems[gslot].qty = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
+  if (!qty) return false;
+  return groundPut(p.q, p.r, itemId, qty);   // pack full — the rest lands where they stand
 }
 
 static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -282,6 +275,8 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
   }
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   bool banked = false;
+  bool spilled = false;          // pack full -- some of the haul went on the ground
+  int  spillQ = 0, spillR = 0;
   int pid = findSlot(client->id());
   if (pid < 0)                         wsNack(client, "not_seated");
   else if (!encounters[pid].active)    wsNack(client, "no_enc");
@@ -306,7 +301,8 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
         totalRes += take;
       }
       for (int j = 0; j < enc.pendingItemCount; j++)
-        grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
+        spilled |= grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
+      spillQ = p.q; spillR = p.r;
       p.knownRecipes |= enc.pendingRecipes;
       // grantItemOrDrop() just mutated invType[]/invQty[], which — like
       // use_item/equip_item/craft — is private state never carried by the
@@ -341,6 +337,8 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
   // the one-time recipes that were just banked from it.
   if (banked) saveGame();
   if (itemAck[0]) client->text(itemAck);
+  // The overflow pile used to reach clients only with the next full sync.
+  if (spilled) broadcastGroundUpdate(spillQ, spillR);
 }
 
 static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t len) {

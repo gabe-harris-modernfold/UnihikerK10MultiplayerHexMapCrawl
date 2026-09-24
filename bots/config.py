@@ -143,14 +143,32 @@ EQUIP_SLOTS = 5
 # is why slot-granting gear did nothing for that archetype.
 INV_SLOTS_MAX = 18
 
+# -- Death drops (GROUND_AGE_DAYS in the .ino; groundAgeOut() and dropRemains()
+#    in inventory_items.hpp) -------------------------------------------------
+# A downed survivor's pack and worn gear become ground piles and its resource
+# tokens a remains record ("rm" on sync / ground_update), on the hex where it
+# fell.  Everything on the ground -- those, and any other pile -- is reclaimed
+# at the dawn that makes it this many game-days old.  A pile's age restarts
+# whenever anything is added to it.
+GROUND_AGE_DAYS = 30
+
+
+def ground_days_left(day_now: int, day_left: int) -> int:
+    """Dawns before the sweep takes something stamped `day_left`: at 1 it goes
+    at the next dawn.  dayCount is a uint16 on the board, so the age wraps."""
+    return max(0, GROUND_AGE_DAYS - ((day_now - day_left) & 0xFFFF))
+
 
 def _parse_items(path=None):
-    """Every category=equipment entry in items.cfg, as (slot, stats) pairs."""
+    """Every category=equipment entry in items.cfg, as (slot, stats) pairs,
+    plus a name/category table for EVERY item so reports can say "Wheeze
+    Filter" instead of "#13"."""
     import os
     if path is None:
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", "items.cfg")
     slots, stats, blocks, cur = {}, {}, [], None
+    names, cats = {}, {}
     try:
         with open(path, encoding="utf-8") as fh:
             for raw_line in fh:
@@ -166,7 +184,7 @@ def _parse_items(path=None):
                 k, v = (x.strip() for x in line.split("=", 1))
                 cur[k] = v
     except OSError:
-        return {}, {}          # detached from the repo: bots simply never equip
+        return {}, {}, {}, {}  # detached from the repo: bots simply never equip
 
     def sbyte(v):
         """items.cfg writes negative effect params as unsigned (253 = -3)."""
@@ -174,7 +192,11 @@ def _parse_items(path=None):
         return n - 256 if n > 127 else n
 
     for d in blocks:
-        if d.get("category") != "equipment" or "id" not in d:
+        if "id" not in d:
+            continue
+        names[int(d["id"])] = d.get("name", "?")
+        cats[int(d["id"])] = d.get("category", "?")
+        if d.get("category") != "equipment":
             continue
         slot = EQUIP_SLOT_BY_NAME.get(d.get("slot", ""), -1)
         if slot < 0:
@@ -191,6 +213,8 @@ def _parse_items(path=None):
             "threat":  sum(sbyte(p) for e, p in fx if e == "threat_mod" and p),
             "vision":  sum(1 for e, p in fx if e == "reveal_fog" and p and int(p) == 1),
             "terrain": int(d.get("terrain", 0)),
+            # Water tokens carried OUTSIDE the pack cap (canteenCap()).
+            "water_cap": int(d.get("water_cap", 0)),
             "narrative": {int(p) for e, p in fx if e == "narrative" and p},
             # A *_cost item's mp only lands on a dawn where the cost was paid
             # (applyDawnItemCosts), so it is worth strictly less than the same
@@ -200,10 +224,86 @@ def _parse_items(path=None):
                             "med_cost", "scrap_cost")),
         }
         stats[iid] = st
-    return slots, stats
+    return slots, stats, names, cats
 
 
-EQUIPMENT, EQUIP_STATS = _parse_items()
+EQUIPMENT, EQUIP_STATS, ITEM_NAME, ITEM_CATEGORY = _parse_items()
+
+
+def _parse_recipes(path=None):
+    """data/recipes.cfg as {id: recipe}.  Parsed, not hardcoded, for the same
+    reason items.cfg is: the file is edit-and-reboot on the board, and a bot
+    that carried its own copy would silently craft against stale costs.
+
+    Each recipe: name, output (item id), qty, cost (5 tokens in RES_* order --
+    the cfg's water/food/fuel/med/scrap_cost keys are that order), mats
+    [(item id, qty)], starter (known from spawn: starterRecipeMask())."""
+    import os
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "data", "recipes.cfg")
+    blocks, cur = [], None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.split("#")[0].strip()
+                if not line:
+                    continue
+                if line == "[recipe]":
+                    cur = {}
+                    blocks.append(cur)
+                    continue
+                if cur is None or "=" not in line:
+                    continue
+                k, v = (x.strip() for x in line.split("=", 1))
+                cur[k] = v
+    except OSError:
+        return {}
+    out = {}
+    for d in blocks:
+        try:
+            rid = int(d["id"])
+            item = int(d.get("output_item", 0))
+        except (KeyError, ValueError):
+            continue
+        if not item:
+            continue
+        mats = []
+        for n in (1, 2, 3):
+            if d.get(f"mat{n}"):
+                mats.append((int(d[f"mat{n}"]), int(d.get(f"matqty{n}", 1))))
+        out[rid] = {
+            "name": d.get("name", "?"),
+            "output": item,
+            "qty": int(d.get("output_qty", 1)),
+            "cost": [int(d.get(k, 0)) for k in
+                     ("water_cost", "food_cost", "fuel_cost", "med_cost", "scrap_cost")],
+            "mats": mats,
+            "starter": d.get("starter", "").lower().startswith(("y", "1")),
+        }
+    return out
+
+
+RECIPES = _parse_recipes()
+
+
+def recipe_known(known_mask: int, rid: int) -> bool:
+    """knownRecipes is bit (id-1) per recipe -- doCraft() tests exactly this."""
+    return 1 <= rid <= 32 and bool(known_mask & (1 << (rid - 1)))
+
+
+def water_cap_recipe():
+    """(recipe id, item id) for the craftable water carrier, or (None, None).
+
+    Found by what it DOES -- an equippable output with water_cap > 0 -- not by
+    the name "Canteen", so re-numbering the registry cannot break it."""
+    for rid, rec in sorted(RECIPES.items()):
+        if EQUIP_STATS.get(rec["output"], {}).get("water_cap", 0) > 0:
+            return rid, rec["output"]
+    return None, None
+
+
+CANTEEN_RECIPE, CANTEEN_ITEM = water_cap_recipe()
 
 # NAR_* params worth weighting (items.cfg "narrative").
 NAR_FIRE_STARTER, NAR_COLD_IMMUNE = 20, 21
@@ -233,7 +333,8 @@ def gear_score(item_id, weights):
              + weights.get("vision", 0.0) * st["vision"]
              # rad and threat are good when negative, so flip them.
              + weights.get("rad", 0.0)    * -st["rad"]
-             + weights.get("threat", 0.0) * -st["threat"])
+             + weights.get("threat", 0.0) * -st["threat"]
+             + weights.get("water_cap", 0.0) * st.get("water_cap", 0))
     if st["terrain"]:
         score += weights.get("terrain", 0.0)
     for nar in st["narrative"]:

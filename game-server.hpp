@@ -64,7 +64,32 @@ static void gameLoopTask(void* param) {
 // shelterVariantCount[], and forrageAnimalCount by scanning cached filenames.
 static void setupVariantCounts() {
   Log.notice("Variant scan start: imgCacheCount=%d", (int)imgCacheCount);
-  for (int i = 0; i < imgCacheCount; i++) {
+  // /img/tiles.json (scripts/tilegen/build_tiles.py) packs every terrain tile
+  // into a couple of atlas pages and carries the pool sizes as one
+  // "counts":[...] array. When it is on the card it wins; the per-file
+  // hex<Name><N>.png scan below is the fallback for a card without it.
+  bool fromAtlas = false;
+  for (int i = 0; i < imgCacheCount && !fromAtlas; i++) {
+    if (strcmp(imgCache[i].name, "tiles.json") != 0) continue;
+    const char* s = (const char*)imgCache[i].buf;
+    const size_t n = imgCache[i].len;
+    static const char KEY[] = "\"counts\":[";
+    const size_t kl = sizeof(KEY) - 1;
+    for (size_t p = 0; p + kl <= n && !fromAtlas; p++) {
+      if (memcmp(s + p, KEY, kl) != 0) continue;
+      size_t q = p + kl;
+      for (int t = 0; t < NUM_TERRAIN && q < n; t++) {
+        int v = 0;
+        while (q < n && s[q] >= '0' && s[q] <= '9') { v = v * 10 + (s[q] - '0'); q++; }
+        terrainVariantCount[t] = (uint8_t)min(v, 16);   // cell.variant is 4 bits on the wire
+        while (q < n && (s[q] == ',' || s[q] == ' ')) q++;
+        if (q >= n || s[q] == ']') break;
+      }
+      fromAtlas = true;
+    }
+  }
+  if (fromAtlas) Log.notice("Variant counts: terrain pools from tiles.json (atlas)");
+  for (int i = 0; !fromAtlas && i < imgCacheCount; i++) {
     String fname = String(imgCache[i].name);
     for (int t = 0; t < NUM_TERRAIN; t++) {
       String pfx = String("hex") + TERRAIN_IMG_NAME[t];
@@ -409,6 +434,78 @@ static void setupWiFiAndServer() {
   server.on("/fwlink",                    HTTP_GET, toGame);
 
   // /state — full game-state JSON endpoint
+  // The speaker measurement: the audio task plays a fixed 25 s sequence of
+  // exact digital levels (snd-engine.hpp sndCalBlock) for a microphone in
+  // front of the board. scripts/sndsim/k10measure.py triggers it and records.
+  // Read-only as far as the game goes; it only borrows the speaker.
+  // ?fmt=N first reinstalls I2S in format N (ui-audio.hpp SND_FMT) for an A/B;
+  // ?seq=1 plays real content through the mix instead of test tones; ?rec=1
+  // records the board's own mics meanwhile, for GET /sndrec.wav.
+  server.on("/sndtest", HTTP_GET, [](AsyncWebServerRequest* req) {
+    int fmt = req->hasParam("fmt") ? req->getParam("fmt")->value().toInt() : -1;
+    int seq = req->hasParam("seq") ? req->getParam("seq")->value().toInt() : 0;
+    bool rec = req->hasParam("rec");
+    if (fmt >= 0 && fmt < (int)SND_FMT_N) sndFmtReq = (uint8_t)(fmt + 1);
+    if (seq < 0 || seq > 2) seq = 0;
+    if (rec) sndRecReq = (seq == 1) ? 22.0f : (seq == 2) ? 11.5f : 26.5f;
+    sndStory(SS_CALIBRATE, (uint8_t)seq);
+    Log.notice("HTTP /sndtest fmt=%d seq=%d rec=%d", fmt, seq, (int)rec);
+    req->send(200, "text/plain", seq == 1 ? "sndtest: content sequence (21 s)\n"
+                               : seq == 2 ? "sndtest: engine tones, then the narrator (10.5 s)\n"
+                                          : "sndtest: tone sequence (25 s)\n");
+  });
+  // The last capture, as a 16 kHz stereo WAV straight out of PSRAM.
+  server.on("/sndrec.wav", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (sndRecState != 2 || !sndRecBuf) {
+      char m[80];
+      snprintf(m, sizeof(m), "not ready: state=%u frames=%u\n", (unsigned)sndRecState, (unsigned)sndRecFrames);
+      req->send(409, "text/plain", m);
+      return;
+    }
+    req->send(req->beginResponse(200, "audio/wav", (const uint8_t*)sndRecBuf, 44 + sndRecFrames * 4));
+  });
+  // Live sound knobs (ui-audio.hpp SND_KNOB, which the sound desk data/sound.html
+  // drives): /snddbg?key=value[&key=value...]; &save=1 stores the mix on the
+  // board, &reset=1 restores the compiled one. Replies with every knob's value.
+  // amp=0/1 drives eAmp_Gain (debug only: 1 mutes the speaker).
+  server.on("/snddbg", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (req->hasParam("reset")) sndKnobReset();
+    for (int k = 0; k < SNDK_COUNT; k++)
+      if (req->hasParam(SND_KNOB[k].key)) sndKnobSet(k, req->getParam(SND_KNOB[k].key)->value().toFloat());
+    if (req->hasParam("amp")) sndAmpReq = (int8_t)(req->getParam("amp")->value().toInt() ? 1 : 0);
+    if (req->hasParam("save")) sndKnobSave();
+    req->send(200, "application/json", sndKnobJson());
+  });
+  // The sound desk's catalogue: knob ranges and defaults, and every effect,
+  // vocabulary line, speaking style, music style and story beat by name.
+  server.on("/sndinfo", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "application/json", sndInfoJson());
+  });
+  // Sound desk playback, through the same thread-safe queue as the game:
+  // sfx=N | say=N[&style=S] | story=K[&a=A&b=B] | seq=1|2 | stop=1.
+  // Nothing plays while the volume is 0 (the muted audio task drops cues).
+  server.on("/sndplay", HTTP_GET, [](AsyncWebServerRequest* req) {
+    auto num = [req](const char* k, int def) { return req->hasParam(k) ? (int)req->getParam(k)->value().toInt() : def; };
+    if (req->hasParam("stop")) sndStory(SS_STOP);
+    if (req->hasParam("sfx")) {
+      int n = num("sfx", 0);
+      if (n > SFX_NONE && n < SFX_COUNT) sndStory(SS_SFX, (uint8_t)n);
+    }
+    if (req->hasParam("say")) {
+      int n = num("say", 0), s = num("style", SAY_NARRATOR);
+      if (n >= 0 && n < VOC_COUNT && s >= 0 && s < SAY_STYLE_COUNT) sndStory(SS_SAY, (uint8_t)n, (uint8_t)s);
+    }
+    if (req->hasParam("story")) {
+      int k = num("story", 0);
+      if (k > SS_NONE && k < SS_COUNT && k != SS_CALIBRATE) sndStory((uint8_t)k, (uint8_t)num("a", 0), (uint8_t)num("b", 0));
+    }
+    if (req->hasParam("seq")) {
+      int s = num("seq", 1);
+      if (s == 1 || s == 2) sndStory(SS_CALIBRATE, (uint8_t)s);
+    }
+    req->send(200, "application/json", s_audioVol == 0 ? "{\"ok\":true,\"muted\":true}" : "{\"ok\":true,\"muted\":false}");
+  });
+
   server.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
     static const char* TNAME_FULL[NUM_TERRAIN] = {
       "Open Scrub","Ash Dunes","Rust Forest","Marsh","Broken Urban",
@@ -517,6 +614,15 @@ static void setupWiFiAndServer() {
         j += "}";
       }
       j += "]}";
+      // Per-terrain art variant counts -- the same "vc" array sendLobbyMsg()
+      // and syncMsg() put on the socket. /state had no equivalent, so an
+      // HTTP-only client could not tell how many hex<Name><N>.png files exist
+      // and had no safe way to wrap a variant it does not have art for.
+      j += ",\"vc\":[";
+      for (int t = 0; t < NUM_TERRAIN; t++) { if (t) j += ","; j += terrainVariantCount[t]; }
+      j += "],\"sv\":[";
+      for (int sIdx = 0; sIdx < 2; sIdx++) { if (sIdx) j += ","; j += shelterVariantCount[sIdx]; }
+      j += "]";
 
       if (req->hasParam("pid")) {
         int vpid = req->getParam("pid")->value().toInt();
@@ -554,6 +660,12 @@ static void setupWiFiAndServer() {
               j += ",\"amount\":"; j += cell.amount;
               j += ",\"footprints\":"; j += cell.footprints;
               j += ",\"tireTrack\":";  j += cell.tireTrack ? "true" : "false";
+              // Which of /img/hex<Name><N>.png this hex is wearing. The game
+              // client gets this in the packed map encoding; a spectator on
+              // /state got nothing and had to draw flat colours. Also carries
+              // the pinned landmark variants (hex-map.hpp Phase 5.5), which
+              // is how POI_ART finds its one fixed image.
+              j += ",\"variant\":";    j += cell.variant;
               j += ",\"poi\":";        j += cell.poi ? "true" : "false";
               j += "}";
             }
@@ -607,12 +719,26 @@ static void setupWiFiAndServer() {
         j += "]";
         j += ",\"score\":";       j += p.score;
         j += ",\"steps\":";       j += p.steps;
+        j += ",\"dp\":";          j += p.depth;   // 1 = in the tunnels (observer-fx.js, without the fx ring)
         j += ",\"llCap\":";       j += effectiveMaxLL(i);
         j += ",\"encActive\":";   j += encounters[i].active ? "true" : "false";
         if (encounters[i].active) {
           j += ",\"encQ\":";      j += encounters[i].hexQ;
           j += ",\"encR\":";      j += encounters[i].hexR;
           j += ",\"encNode\":\""; j += encounters[i].nodeKey; j += "\"";
+          // Which scene this is, as the /enc route addresses it:
+          // GET /enc?biome=<encBiome>&id=<encId>.  encNode alone says where in
+          // a file the player stands but not which file, so without these two
+          // a spectator can see that someone is in an encounter and nothing
+          // about what it is -- no title, no prose, no choices, no hazards.
+          // See docs/observer-screen-spec.md.
+          {
+            uint8_t et = encounters[i].terrain;
+            j += ",\"encId\":";     j += encounters[i].encIdx;
+            j += ",\"encBiome\":\"";
+            if (et < NUM_TERRAIN) j += encPools[et].path;
+            j += "\"";
+          }
           j += ",\"encCanBank\":"; j += encounters[i].canBank ? "true" : "false";
           j += ",\"encLoot\":[";
           for (int s = 0; s < 5; s++) { if (s) j += ","; j += encounters[i].pendingLoot[s]; }
@@ -621,6 +747,9 @@ static void setupWiFiAndServer() {
         j += "}";
       }
       j += "]";
+      // The panels the LCD cut in, and how close the Doom is, so the observer
+      // screen can cut in on the same beats (ui-fx.hpp, data/observer-fx.js).
+      fxCueLogJson(j);
       j += "}";
       xSemaphoreGive(G.mutex);
     } else {
@@ -725,12 +854,20 @@ static void setupWiFiAndServer() {
           if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
               filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
             mimeType = "image/jpeg";
+          else if (filename.endsWith(".webp"))
+            mimeType = "image/webp";
+          else if (filename.endsWith(".json"))
+            mimeType = "application/json";
+          // tiles.json names the current atlas build, so it revalidates
+          // (cheap: 304 on the ETag); everything else is requested
+          // versioned or never changes, and stays pinned for a year.
+          const char* cc = filename.endsWith(".json") ? "no-cache" : "public, max-age=31536000, immutable";
           if (req->hasHeader("If-None-Match") &&
               req->getHeader("If-None-Match")->value() == imgCache[i].etag) {
             LOG_VERBOSE("HTTP 304 /img/%s", filename.c_str());
             AsyncWebServerResponse* r = req->beginResponse(304);
             r->addHeader("ETag", imgCache[i].etag);
-            r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+            r->addHeader("Cache-Control", cc);
             req->send(r);
             return;
           }
@@ -739,7 +876,7 @@ static void setupWiFiAndServer() {
           AsyncWebServerResponse* resp = req->beginResponse(
               200, mimeType, imgCache[i].buf, imgCache[i].len);
           resp->addHeader("ETag", imgCache[i].etag);
-          resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+          resp->addHeader("Cache-Control", cc);
           req->send(resp);
           return;
         }

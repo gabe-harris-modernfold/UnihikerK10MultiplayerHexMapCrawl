@@ -471,8 +471,16 @@ class BotClient:
 
     def _digest(self) -> dict:
         me = self.obs.me
+        # eq/is/llCap ride along because equipment is only otherwise visible
+        # in the item_result ack for the mutation itself. Without a periodic
+        # sample there is no way to say what a survivor was WEARING at a given
+        # dawn, which is what gearcheck.py ranks items by. `is` and `llCap`
+        # are the EFFECTIVE values (base + equipment), straight from
+        # appendPackArrays() -- never re-add the bonuses client-side.
         return {"tk": self.obs.tick, "day": self.obs.day, "wp": self.obs.weather,
                 "sc": me.score, "sp": me.steps, "ll": me.ll, "mp": me.mp,
+                "eq": list(me.equip), "is": me.inv_slots, "llCap": me.ll_cap,
+                "wnd": list(me.wounds), "it": list(me.inv_type),
                 "food": me.food, "water": me.water, "rad": me.rad,
                 "q": me.q, "r": me.r, "inv": me.inv, "vm": me.valid_moves,
                 # Gear state per tick. Without these a run records that a bot

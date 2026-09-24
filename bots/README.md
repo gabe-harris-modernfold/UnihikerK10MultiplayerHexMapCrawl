@@ -10,7 +10,7 @@ Read it before drawing conclusions from a run. This file is just the quick
 start.
 
 ```bash
-python smoke.py                        # 359 offline checks, no board needed
+python smoke.py                        # 456 offline checks, no board needed
 python arena.py --host 192.168.4.234 --bots 5 \
     --policies scoremax,contentmax,coward,rival,scoremax --target 1000
 
@@ -59,6 +59,7 @@ Deps: Python 3.12 + `websockets`.
 | `telemetry.py` | Polls `/state` for board health. |
 | `causes.py` | Attributes every LL loss, and every death, to a cause. |
 | `metrics.py` | Post-run analysis: tension vs target, death causes, `--aggregate`. |
+| `gearcheck.py` | Equipment audit: every declared mod vs the effective values on the wire, then items ranked by LL lost per day worn. |
 | `record.py` | JSONL per run into `runs/` (gitignored). |
 
 ## Five things that will silently waste a run

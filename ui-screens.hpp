@@ -1772,3 +1772,22 @@ static void checkGestureSwitch() {
   }
   k10BtnBLast = btnB;
 }
+
+// ── K10 button A: how mad the screen is allowed to get ─────────────────────
+// Button A is only read at boot (hold it for the USB drive), so in play it is
+// free. Each press steps the LCD FX level down -- MADNESS, RESTRAINED, OFF,
+// and round again -- and says which in a toast over the screen. Saved with
+// the other K10 prefs. See the top of ui-fx.hpp for what each level keeps.
+static void checkFxButton(uint32_t now) {
+  bool a = k10.buttonA && k10.buttonA->isPressed();
+  if (a && !fxBtnALast && fxReady) {
+    s_fxLevel     = (s_fxLevel == 0) ? 2 : (uint8_t)(s_fxLevel - 1);
+    FX.level      = s_fxLevel;
+    FX.toastUntil = now + 1600;
+    if (FX.level == 0) { fxCut.on = false; FX.sw = false; FX.trauma = 0; FX.flashN = 0; }
+    saveK10Prefs();
+    k10Play(MOTIF_SCREEN_CLICK);
+    k10Dirty = true;
+  }
+  fxBtnALast = a;
+}

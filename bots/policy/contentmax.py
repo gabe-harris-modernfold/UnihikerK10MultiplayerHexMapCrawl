@@ -34,7 +34,7 @@ class ContentMaxPolicy(SurvivorPolicy):
     # makes the content this bot exists to reach harder to survive.
     gear_weights = {
         "vision": 4.0, "mp": 3.0, "threat": 2.5, "ll": 2.0,
-        "slots": 1.0, "rad": 1.0, "terrain": 1.5,
+        "slots": 1.0, "rad": 1.0, "terrain": 1.5, "water_cap": 2.0,
         "nar": {NAR_COLD_IMMUNE: 3.0, NAR_FIRE_STARTER: 1.0,
                 NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
                 NAR_SCAV_DOUBLE: 0.5},

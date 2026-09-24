@@ -55,19 +55,44 @@ static uint8_t effectiveInvSlots(const Player& p) {
   return (uint8_t)constrain(slots, 1, (int)INV_SLOTS_MAX);
 }
 
+// Water tokens that ride outside the pack cap: STAT_WATER_CAP summed over
+// equipment (the Canteen's +3).  Water only -- a canteen holds nothing else.
+static int canteenCap(const Player& p) {
+  int cap = 0;
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    if (!p.equip[s]) continue;
+    const ItemDef* def = getItemDef(p.equip[s]);
+    if (def) cap += (int)def->statMods[STAT_WATER_CAP];
+  }
+  return max(0, cap);
+}
+
+// Resource tokens that count against effectiveInvSlots(): everything carried,
+// less the water sitting in a canteen.  This is the ONE token total every
+// carry-cap check and the encumbrance penalty must use -- a raw sum of inv[]
+// would charge the canteen's water against the pack it is meant to spare.
+static int tokenLoad(const Player& p) {
+  int used = 0;
+  for (int k = 0; k < 5; k++) used += (int)p.inv[k];
+  return used - min((int)p.inv[0], canteenCap(p));
+}
+
 // ── tokenRoomFor ──────────────────────────────────────────────────────────
-// Spare resource-token capacity: the pack size in effect minus everything
-// already carried, floored at 0.  FORAGE / WATER / SCAVENGE used to add their
+// Spare resource-token capacity: the pack size in effect minus the token load,
+// floored at 0.  FORAGE / WATER / SCAVENGE used to add their
 // yield under nothing but a `min(..., 99)` guard, so the pack size bound
 // collectResource() and the encumbrance penalty but not the three actions that
 // produce the most tokens in the game -- which is most of why slot-granting
 // gear felt like it did nothing.  Deliberately NOT applied to enc_bank: the
 // haul tray is the player's own trim, and clamping it a second time would
-// silently contradict what they just set.  Must hold G.mutex.
-static int tokenRoomFor(const Player& p) {
-  int used = 0;
-  for (int k = 0; k < 5; k++) used += (int)p.inv[k];
-  return max(0, (int)effectiveInvSlots(p) - used);
+// silently contradict what they just set.  `resIdx` is the inv[] index being
+// added; water (0) also gets whatever canteen space is still empty, which
+// sits outside the pack and so is room even in a full or overfull one.
+// Must hold G.mutex.
+static int tokenRoomFor(const Player& p, int resIdx = -1) {
+  int room = max(0, (int)effectiveInvSlots(p) - tokenLoad(p));
+  if (resIdx == 0) room += max(0, canteenCap(p) - (int)p.inv[0]);
+  return room;
 }
 
 // ── Effect dispatch table ─────────────────────────────────────────────────
@@ -383,6 +408,90 @@ static bool unequipItem(int pid, uint8_t eslot) {
   return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ── Ground piles and remains ─────────────────────────────────────────────────
+// Everything that leaves an item on the ground goes through groundPut():
+// dropItem(), grantItemOrDrop()'s overflow and dropRemains().  Resource tokens
+// a survivor was carrying when they fell go to a Remains record instead (a
+// HexCell holds one resource type; a survivor carries five).  Both are surface
+// coordinates only and both age out GROUND_AGE_DAYS after they were last added
+// to (groundAgeOut()).  Everything here must hold G.mutex.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Age in game-days of something stamped on `day`.  G.dayCount is a uint16 and
+// wraps, so ages are compared, never raw days.
+static uint16_t groundAge(uint16_t day) { return (uint16_t)(G.dayCount - day); }
+
+static bool groundHasAt(int16_t q, int16_t r) {
+  for (int g = 0; g < MAX_GROUND; g++)
+    if (groundItems[g].itemType && groundItems[g].q == q && groundItems[g].r == r) return true;
+  return false;
+}
+
+static int remainsIndexAt(int16_t q, int16_t r) {
+  for (int i = 0; i < MAX_REMAINS; i++)
+    if (remainsTable[i].used && remainsTable[i].q == q && remainsTable[i].r == r) return i;
+  return -1;
+}
+
+// A remains record ends when there is nothing left to mark: every token taken
+// and every pile on its hex gone.  Call after anything that empties either.
+static void remainsPrune(int16_t q, int16_t r) {
+  int i = remainsIndexAt(q, r);
+  if (i < 0) return;
+  for (int k = 0; k < 5; k++) if (remainsTable[i].res[k]) return;
+  if (groundHasAt(q, r)) return;
+  remainsTable[i].used = false;
+}
+
+// The slot to put itemId in at (q,r): the pile of that item already there,
+// else a free slot, else the oldest pile elsewhere on the map is reclaimed
+// early.  That last step arrived with death drops -- one fall can leave
+// twenty-odd piles, and a table that simply filled up would make every later
+// drop, an encounter's overflow loot included, vanish without a word.  Never
+// reclaims on (q,r) itself, so it cannot eat a pile it is about to join.
+static int groundSlotFor(int16_t q, int16_t r, uint8_t itemId) {
+  int freeSlot = -1, oldest = -1;
+  for (int g = 0; g < MAX_GROUND; g++) {
+    const GroundItem& gi = groundItems[g];
+    if (!gi.itemType) { if (freeSlot < 0) freeSlot = g; continue; }
+    if (gi.q == q && gi.r == r) {
+      if (gi.itemType == itemId) return g;   // stack onto the existing pile
+      continue;
+    }
+    if (oldest < 0 || groundAge(gi.day) > groundAge(groundItems[oldest].day)) oldest = g;
+  }
+  if (freeSlot >= 0) return freeSlot;
+  if (oldest < 0) return -1;                 // every slot is on this very hex
+  GroundItem& gone = groundItems[oldest];
+  Log.warning("ground full: reclaimed item %d x%d at (%d,%d) from day %u",
+              (int)gone.itemType, (int)gone.qty, (int)gone.q, (int)gone.r, (unsigned)gone.day);
+  int16_t gq = gone.q, gr = gone.r;
+  memset(&gone, 0, sizeof(gone));
+  remainsPrune(gq, gr);
+  return oldest;
+}
+
+// Put qty of itemId on the ground at (q,r).  Adding to a pile restarts its
+// GROUND_AGE_DAYS clock -- a pile is one stack whoever left each part of it,
+// so there is no per-unit age to keep.  Returns false only when the whole
+// table is on this one hex.
+static bool groundPut(int16_t q, int16_t r, uint8_t itemId, uint8_t qty) {
+  if (!itemId || !qty) return false;
+  int g = groundSlotFor(q, r, itemId);
+  if (g < 0) {
+    Log.warning("groundPut: no slot at (%d,%d), item %d x%d lost",
+                (int)q, (int)r, (int)itemId, (int)qty);
+    return false;
+  }
+  GroundItem& gi = groundItems[g];
+  if (gi.itemType != itemId) gi.qty = 0;     // a free or reclaimed slot
+  gi.q = q; gi.r = r; gi.itemType = itemId;
+  gi.qty = (uint8_t)min(255, (int)gi.qty + (int)qty);
+  gi.day = G.dayCount;
+  return true;
+}
+
 // ── dropItem ──────────────────────────────────────────────────────────────
 // Drop qty of item from inventory slot slotIdx at the player's current hex.
 // Creates/extends a GroundItem entry. Returns true on success.
@@ -392,36 +501,148 @@ static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
   Player& p = G.players[pid];
   if (!p.invType[slotIdx]) return false;
   if (p.invQty[slotIdx] < qty) return false;
-  uint8_t itemId = p.invType[slotIdx];
-
-  // Find or create a GroundItem slot at this hex
-  int gslot = -1;
-  for (int g = 0; g < MAX_GROUND; g++) {
-    if (groundItems[g].itemType == itemId &&
-        groundItems[g].q == p.q && groundItems[g].r == p.r) {
-      gslot = g; break; // stack onto existing pile
-    }
-  }
-  if (gslot < 0) {
-    for (int g = 0; g < MAX_GROUND; g++) {
-      if (!groundItems[g].itemType) { gslot = g; break; }
-    }
-  }
-  if (gslot < 0) {
-    return false;
-  }
-
-  // Remove from inventory
+  if (!groundPut(p.q, p.r, p.invType[slotIdx], qty)) return false;
   p.invQty[slotIdx] -= qty;
   if (!p.invQty[slotIdx]) { p.invType[slotIdx] = 0; }
-
-  // Place on ground
-  groundItems[gslot].q        = p.q;
-  groundItems[gslot].r        = p.r;
-  groundItems[gslot].itemType = itemId;
-  groundItems[gslot].qty      = (uint8_t)min(255, (int)groundItems[gslot].qty + (int)qty);
-
   return true;
+}
+
+// The record for (q,r): the one already there (a second fall on the same hex
+// joins it), else a free record, else the oldest is reclaimed early -- its
+// tokens are lost, its piles stay behind as unmarked ground items.
+static Remains* remainsFor(int16_t q, int16_t r) {
+  int i = remainsIndexAt(q, r);
+  if (i >= 0) return &remainsTable[i];
+  int slot = -1;
+  for (int k = 0; k < MAX_REMAINS; k++) {
+    if (!remainsTable[k].used) { slot = k; break; }
+    if (slot < 0 || groundAge(remainsTable[k].day) > groundAge(remainsTable[slot].day)) slot = k;
+  }
+  if (remainsTable[slot].used)
+    Log.warning("remains full: reclaimed %s's at (%d,%d) from day %u", remainsTable[slot].name,
+                (int)remainsTable[slot].q, (int)remainsTable[slot].r, (unsigned)remainsTable[slot].day);
+  memset(&remainsTable[slot], 0, sizeof(Remains));
+  remainsTable[slot].used = true;
+  remainsTable[slot].q = q;
+  remainsTable[slot].r = r;
+  return &remainsTable[slot];
+}
+
+// ── dropRemains ───────────────────────────────────────────────────────────
+// A downed survivor leaves everything on the hex where they fell: every pack
+// stack and every worn item as a ground pile (pickup_item), every resource
+// token in the remains record (loot).  Anyone may take any of it -- another
+// survivor, or the same player walking back as whoever they respawn as.
+//
+// (p.q, p.r) is always a surface hex: below ground it stays pinned to the
+// hatch the survivor came down, which is where tickGame()'s downed sweep
+// hauls the body anyway.  Called from the EVT_DOWNED handler, and again from
+// handleMsg_pick before a downed seat is reset (a backstop for a mutex miss in
+// that handler, and for a save that predates this).  Idempotent: the second
+// call finds an empty pack.  Returns true if anything was left behind.
+static bool dropRemains(int pid) {
+  Player& p = G.players[pid];
+  bool piles = false;
+  for (int s = 0; s < INV_SLOTS_MAX; s++) {
+    if (!p.invType[s]) continue;
+    groundPut(p.q, p.r, p.invType[s], p.invQty[s] ? p.invQty[s] : 1);
+    p.invType[s] = 0; p.invQty[s] = 0;
+    piles = true;
+  }
+  for (int e = 0; e < EQUIP_SLOTS; e++) {
+    if (!p.equip[e]) continue;
+    groundPut(p.q, p.r, p.equip[e], 1);
+    p.equip[e] = 0;
+    piles = true;
+  }
+  int tokens = 0;
+  for (int k = 0; k < 5; k++) tokens += p.inv[k];
+  if (!piles && !tokens) return false;
+
+  // The record goes last, after the piles: reclaiming a full table's oldest
+  // pile prunes remains, and this one must not be pruned before it has any.
+  Remains* rm = remainsFor(p.q, p.r);
+  rm->pid = (uint8_t)pid;
+  rm->day = G.dayCount;
+  // JSON-safe: this goes out inside quotes, and sanitizeName() only strips
+  // non-printables.
+  size_t n = 0;
+  for (; n + 1 < sizeof(rm->name) && p.name[n]; n++) {
+    char c = p.name[n];
+    rm->name[n] = (c < 0x20 || c > 0x7E || c == '"' || c == '\\') ? '_' : c;
+  }
+  rm->name[n] = '\0';
+  if (!n) snprintf(rm->name, sizeof(rm->name), "Walker %d", pid + 1);
+  for (int k = 0; k < 5; k++) {
+    rm->res[k] = (uint8_t)min(99, (int)rm->res[k] + (int)p.inv[k]);
+    p.inv[k] = 0;
+  }
+  Log.notice("remains pid=%d at (%d,%d) tokens=%d piles=%d day=%u",
+             pid, (int)p.q, (int)p.r, tokens, piles ? 1 : 0, (unsigned)G.dayCount);
+  return true;
+}
+
+// ── lootRemains ───────────────────────────────────────────────────────────
+static constexpr uint8_t LOOT_OK = 0, LOOT_NONE = 1, LOOT_FULL = 2;
+
+// Take tokens from the remains on the survivor's own hex into inv[]: one
+// resource (res 1-5) or everything that fits (res 0), in inv[] order.  Capped
+// by tokenRoomFor() like SCAVENGE -- this is loot, not FORAGE/WATER, which may
+// overfill -- and water can still go into empty canteen space.  No score: the
+// fallen survivor scored these when they first pulled them out of the ground,
+// and score survives a fall, so paying again would make dying and walking back
+// a score pump.  Surface only, like the piles.  got[] is what was taken.
+static uint8_t lootRemains(int pid, int res, uint8_t got[5]) {
+  memset(got, 0, 5);
+  Player& p = G.players[pid];
+  if (p.depth) return LOOT_NONE;
+  int i = remainsIndexAt(p.q, p.r);
+  if (i < 0) return LOOT_NONE;
+  Remains& rm = remainsTable[i];
+  bool any = false, blocked = false;
+  for (int k = 0; k < 5; k++) {
+    if (res && k != res - 1) continue;
+    if (!rm.res[k]) continue;
+    int take = min((int)rm.res[k], min(tokenRoomFor(p, k), 99 - (int)p.inv[k]));
+    if (take <= 0) { blocked = true; continue; }
+    p.inv[k]  = (uint8_t)(p.inv[k] + take);
+    rm.res[k] = (uint8_t)(rm.res[k] - take);
+    got[k]    = (uint8_t)take;
+    any = true;
+  }
+  if (!any) return blocked ? LOOT_FULL : LOOT_NONE;
+  remainsPrune(p.q, p.r);
+  return LOOT_OK;
+}
+
+// ── groundAgeOut ──────────────────────────────────────────────────────────
+// The dawn sweep: every pile and remains record GROUND_AGE_DAYS old is gone.
+// Returns true when anything went, so tickGame() can tell the clients.
+static bool groundAgeOut() {
+  bool changed = false;
+  for (int g = 0; g < MAX_GROUND; g++) {
+    GroundItem& gi = groundItems[g];
+    if (!gi.itemType || groundAge(gi.day) < GROUND_AGE_DAYS) continue;
+    Log.notice("ground aged out: item %d x%d at (%d,%d) from day %u",
+               (int)gi.itemType, (int)gi.qty, (int)gi.q, (int)gi.r, (unsigned)gi.day);
+    memset(&gi, 0, sizeof(gi));
+    changed = true;
+  }
+  for (int i = 0; i < MAX_REMAINS; i++) {
+    Remains& rm = remainsTable[i];
+    if (!rm.used) continue;
+    if (groundAge(rm.day) >= GROUND_AGE_DAYS) {
+      Log.notice("remains aged out: %s at (%d,%d) from day %u",
+                 rm.name, (int)rm.q, (int)rm.r, (unsigned)rm.day);
+      rm.used = false;
+      changed = true;
+      continue;
+    }
+    // Its tokens are gone and its last pile may just have aged out above.
+    remainsPrune(rm.q, rm.r);
+    if (!rm.used) changed = true;
+  }
+  return changed;
 }
 
 // ── invRoomFor ────────────────────────────────────────────────────────────
@@ -481,13 +702,22 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   Player& p = G.players[pid];
   GroundItem& gi = groundItems[gslot];
   if (!gi.itemType) return false;
+  // Piles are surface-only (GroundItem has no depth) and q/r stay pinned to
+  // the hatch while below, so without this a survivor underground could lift
+  // whatever lies on their hatch -- which is exactly where anyone who dies
+  // down there leaves their pack.
+  if (p.depth) return false;
   if (gi.q != p.q || gi.r != p.r) return false; // wrong hex
 
   uint8_t canTake = addItemToInv(p, gi.itemType, gi.qty);
   if (!canTake) return false;
 
   gi.qty -= canTake;
-  if (!gi.qty) { gi.itemType = 0; gi.q = 0; gi.r = 0; }
+  if (!gi.qty) {
+    int16_t q = gi.q, r = gi.r;
+    memset(&gi, 0, sizeof(gi));
+    remainsPrune(q, r);   // that may have been the last thing on a grave
+  }
 
   return true;
 }
@@ -627,9 +857,8 @@ static int effectiveMP(int pid) {
   int     mp = 6 + ((int)p.ll + 1) / 2;
   mp -= (int)p.wounds[WOUND_MAJOR];        // each major wound costs 1 MP/day
   // Encumbrance: resource tokens carried above the pack size cost 1 MP
-  int used = 0;
-  for (int k = 0; k < 5; k++) used += (int)p.inv[k];
-  if (used > (int)effectiveInvSlots(p)) mp--;
+  // (canteen water excluded -- see tokenLoad())
+  if (tokenLoad(p) > (int)effectiveInvSlots(p)) mp--;
   // Add free (no opCost) STAT_MP bonuses from equipped items
   for (int s = 0; s < EQUIP_SLOTS; s++) {
     if (!p.equip[s]) continue;
@@ -690,7 +919,8 @@ static int appendFmt(char* buf, size_t cap, int pos, const char* fmt, ...) {
 // pack grid from it, and equipping a Backpack has to move that number in the
 // same message that reports the equip.  `llCap` rides along for the same
 // reason -- the LIFE LEVEL track is drawn to it, and nothing else tells the
-// client the ceiling moved.  Must hold G.mutex.
+// client the ceiling moved.  `wc` is canteenCap(), so the client can price
+// its token total the way tokenLoad() does.  Must hold G.mutex.
 static int appendPackArrays(char* buf, size_t cap, int pos, int pid) {
   const Player& p = G.players[pid];
   pos = appendFmt(buf, cap, pos, "\"it\":[");
@@ -702,8 +932,70 @@ static int appendPackArrays(char* buf, size_t cap, int pos, int pid) {
   pos = appendFmt(buf, cap, pos, "],\"eq\":[");
   for (int i = 0; i < EQUIP_SLOTS; i++)
     pos = appendFmt(buf, cap, pos, i ? ",%d" : "%d", (int)p.equip[i]);
-  return appendFmt(buf, cap, pos, "],\"is\":%d,\"llCap\":%d",
-                   (int)effectiveInvSlots(p), (int)effectiveMaxLL(pid));
+  return appendFmt(buf, cap, pos, "],\"is\":%d,\"llCap\":%d,\"wc\":%d",
+                   (int)effectiveInvSlots(p), (int)effectiveMaxLL(pid), canteenCap(p));
+}
+
+// ── appendGroundArrays ────────────────────────────────────────────────────
+// Writes  "gi":[...],"rm":[...]  at buf+pos -- the piles and the remains, the
+// two halves of what is lying on the ground -- and returns the new offset.
+// The one emitter for sync and ground_update, the way appendPackArrays() is
+// for the pack.  "d" is the day each was left, so the client can say how long
+// before the wasteland takes it.  Worst case ~3.2 KB of gi (MAX_GROUND x 50)
+// plus ~0.9 KB of rm.  Must hold G.mutex.
+static int appendGroundArrays(char* buf, size_t cap, int pos) {
+  pos = appendFmt(buf, cap, pos, "\"gi\":[");
+  bool first = true;
+  for (int g = 0; g < MAX_GROUND; g++) {
+    const GroundItem& gi = groundItems[g];
+    if (!gi.itemType) continue;
+    pos = appendFmt(buf, cap, pos, "%s{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d,\"d\":%u}",
+                    first ? "" : ",", g, (int)gi.q, (int)gi.r,
+                    (int)gi.itemType, (int)gi.qty, (unsigned)gi.day);
+    first = false;
+  }
+  pos = appendFmt(buf, cap, pos, "],\"rm\":[");
+  first = true;
+  for (int i = 0; i < MAX_REMAINS; i++) {
+    const Remains& rm = remainsTable[i];
+    if (!rm.used) continue;
+    pos = appendFmt(buf, cap, pos,
+      "%s{\"q\":%d,\"r\":%d,\"pid\":%d,\"nm\":\"%s\",\"d\":%u,\"res\":[%d,%d,%d,%d,%d]}",
+      first ? "" : ",", (int)rm.q, (int)rm.r, (int)rm.pid, rm.name, (unsigned)rm.day,
+      rm.res[0], rm.res[1], rm.res[2], rm.res[3], rm.res[4]);
+    first = false;
+  }
+  return appendFmt(buf, cap, pos, "]");
+}
+
+// {"t":"ground_update","q":Q,"r":R,["why":W,"pid":P,]"gi":[...],"rm":[...]}
+// q/r is the hex that changed (-1,-1 for a map-wide change); `why` marks the
+// updates worth a line in the log: "fell" (pid's survivor went down there)
+// and "aged" (the dawn sweep reclaimed something).
+static constexpr size_t GROUND_UPD_CAP = 4608;
+static int buildGroundUpdate(char* buf, size_t cap, int q, int r, const char* why, int pid) {
+  int pos = appendFmt(buf, cap, 0, "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,", q, r);
+  if (why) pos = appendFmt(buf, cap, pos, "\"why\":\"%s\",\"pid\":%d,", why, pid);
+  pos = appendGroundArrays(buf, cap, pos);
+  return appendFmt(buf, cap, pos, "}");
+}
+
+// Build and broadcast a ground_update.  Takes G.mutex itself -- call it with
+// the mutex released.  The buffer is per call, not static, because this runs
+// from the AsyncTCP task (drop/pickup/loot/pick/enc_bank) and from the game
+// task (a fall, the dawn age-out) alike; textAll() keeps its own copy.
+static void broadcastGroundUpdate(int q, int r, const char* why = nullptr, int pid = -1) {
+  char* buf = (char*)ps_malloc(GROUND_UPD_CAP);
+  if (!buf) { Log.error("broadcastGroundUpdate: ps_malloc(%u) failed", (unsigned)GROUND_UPD_CAP); return; }
+  int len = 0;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    len = buildGroundUpdate(buf, GROUND_UPD_CAP, q, r, why, pid);
+    xSemaphoreGive(G.mutex);
+  } else {
+    Log.warning("broadcastGroundUpdate: G.mutex timeout");
+  }
+  if (len > 0) ws.textAll(buf, (size_t)len);
+  free(buf);
 }
 
 // ── Trade helpers (call while holding G.mutex) ────────────────────────────────

@@ -37,7 +37,7 @@ class ScoreMaxPolicy(SurvivorPolicy):
     # FORAGE/WATER/SCAV as well. LL only matters as far as staying upright.
     gear_weights = {
         "mp": 4.0, "slots": 3.5, "vision": 1.5, "ll": 1.0,
-        "rad": 0.5, "threat": 0.25, "terrain": 1.0,
+        "rad": 0.5, "threat": 0.25, "terrain": 1.0, "water_cap": 2.0,
         "nar": {NAR_SCAV_DOUBLE: 2.0, NAR_LAND_FORAGE: 1.5,
                 NAR_RIVER_FORAGE: 0.5, NAR_COLD_IMMUNE: 2.0,
                 NAR_FIRE_STARTER: 1.0},

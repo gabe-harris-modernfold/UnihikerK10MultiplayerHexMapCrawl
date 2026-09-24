@@ -653,7 +653,9 @@ window.AssetLoader = (function () {
       .then(b => { img.src = URL.createObjectURL(b); })
       .catch(e => {
         console.warn('[assets] image failed: %s — %s', url, e.message);
-        if (typeof img.onerror === 'function') img.onerror(e);
+        // A real event, so addEventListener('error') hears it too (engine.js
+        // counts settled images for the boot screen) — and onerror still runs.
+        img.dispatchEvent(new Event('error'));
       });
     return img;
   }
@@ -682,6 +684,17 @@ window.AssetLoader = (function () {
                        styles: src.styles, scripts: src.scripts });
   }
 
+  // ── Boot holds ─────────────────────────────────────────────────────────
+  // The scripts can keep the boot screen up past their own load: network.js
+  // holds it until the K10's first lobby has arrived and every image that
+  // lobby asked for has settled, so a fresh visit or a refresh always passes
+  // through this screen before the character picker. A hold is called with
+  // the screen's ui (status/hint/progress) and returns a promise. Register
+  // during script execution; later calls are ignored (the screen is gone).
+  const holds = [];
+  let   booted = false;
+  function holdBoot(fn) { if (!booted) holds.push(fn); }
+
   // ── Boot screen ────────────────────────────────────────────────────────
   function bootUi() {
     const root = document.getElementById('boot-loader');
@@ -692,6 +705,7 @@ window.AssetLoader = (function () {
     if (btn) btn.onclick = () => location.reload();
     return {
       status:   t => { if (st) st.textContent = t; },
+      bar:      f => { if (fill) fill.style.width = (f * 100).toFixed(0) + '%'; },
       hint:     t => { if (hint) hint.textContent = t; },
       progress: (n, total, name) => {
         if (fill) fill.style.width = (n / total * 100).toFixed(0) + '%';
@@ -732,19 +746,24 @@ window.AssetLoader = (function () {
           document.head.appendChild(el);   // executes synchronously
         }
       }
-      console.info('[assets] ready: %s mode, version %s, %d files, %d requests (%d retries) in %d ms',
+      console.info('[assets] scripts ready: %s mode, version %s, %d files, %d requests (%d retries) in %d ms',
                    m.mode, version, items.length, stats.requests, stats.retries, (performance.now() - t0) | 0);
+      ui.bar(0);   // the holds report their own progress from here
+      await Promise.all(holds.map(fn => fn(ui)));
+      console.info('[assets] ready: %d requests (%d retries, %d failed) in %d ms',
+                   stats.requests, stats.retries, stats.failures, (performance.now() - t0) | 0);
     } catch (e) {
       console.error('[assets] boot failed:', e);
       ui.fail('Could not load ' + (e && e.message ? e.message : e) + '. The K10 may be busy or rebooting.');
       ui.hint('Retries exhausted (' + stats.requests + ' requests). Power-cycle the board if this persists, then RETRY.');
       return;
     }
+    booted = true;
     ui.done();
     document.dispatchEvent(new CustomEvent('assets:ready', { detail: { version, stats } }));
   }
 
-  return { boot, fetch: request, text, blob, image, url: versioned,
+  return { boot, holdBoot, fetch: request, text, blob, image, url: versioned,
            get version() { return version; }, stats };
 })();
 

@@ -7,7 +7,7 @@ new field would take the whole arena down for a purely additive firmware change.
 
 Outbound types seen from the server:
   lobby full sync s vis ev err asgn enc_path enc_dbg ground_update
-  item_result res_result trade_fail tsync wifi
+  item_result res_result loot_result trade_fail tsync wifi
 Event kinds (ev.k):
   act car_avail col col_fail dawn doom_act doom_warn downed dusk enc_bank
   enc_end enc_res enc_start fire_dmg fire_spread flood_dmg flood_washout
@@ -48,6 +48,7 @@ class PlayerState:
     # Effective values the server computes (base + equipment); appendPackArrays.
     inv_slots: int = 8            # is:    pack size in effect
     ll_cap: int = 7               # llCap: LL ceiling in effect
+    water_cap: int = 0            # wc:    canteenCap(), water riding outside the pack
     in_encounter: bool = False
     depth: int = 0                # 0 surface, 1 bunker tunnel
     tq: int = 0
@@ -66,7 +67,9 @@ class PlayerState:
         return [d for d in range(6) if self.valid_moves & (1 << d)]
 
     def carried(self):
-        return sum(self.inv)
+        """Tokens counted against the pack -- tokenLoad(), not the raw sum:
+        water sitting in a canteen is outside the cap it is meant to spare."""
+        return sum(self.inv) - min(self.inv[0], self.water_cap)
 
     def update(self, d):
         """Merge a player object from either sync or s."""
@@ -88,6 +91,7 @@ class PlayerState:
         if "wth"   in d: self.w_thresh      = d["wth"]
         if "is"    in d: self.inv_slots     = int(d["is"])
         if "llCap" in d: self.ll_cap        = int(d["llCap"])
+        if "wc"    in d: self.water_cap     = int(d["wc"])
         if "it"    in d: self.inv_type      = list(d["it"])
         if "iq"    in d: self.inv_qty       = list(d["iq"])
         if "eq"    in d: self.equip         = list(d["eq"])
@@ -185,6 +189,16 @@ class Observation:
         self.players = [PlayerState(pid=i) for i in range(MAX_PLAYERS)]
         self.world = WorldState()
         self.ground_items = []
+        # Where survivors fell and the resource tokens they left there:
+        # [{q, r, pid, nm, d, res[5]}] from sync / ground_update "rm".  Their
+        # items are ordinary ground_items piles on the same hex, and the record
+        # lasts while either half does (dropRemains / remainsPrune).
+        self.remains = []
+        # Graves THIS bot's survivors left, as (q, r): a ground_update "fell"
+        # that named our seat.  Matching on pid later is not enough -- a
+        # respawn can land in a different seat -- so it is remembered here,
+        # where it survives the reconnect (the client keeps this object).
+        self.my_graves = set()
         self.synced = False
         # Set while an encounter overlay is open.  Both m and act are refused
         # by the server in this state, so policies must answer with
@@ -250,6 +264,14 @@ class Observation:
         return [(q, r, c) for q, r, c in self.tunnel.known_cells()
                 if is_hatch_terrain(c.terrain)]
 
+    def remains_at(self, q: int, r: int):
+        """The remains record on surface hex (q, r), or None.  Surface only:
+        underground me.q/me.r name the hatch overhead, not where we stand."""
+        for rm in self.remains:
+            if rm.get("q") == q and rm.get("r") == r:
+                return rm
+        return None
+
     def hatch_for_shaft(self, tq: int, tr: int):
         """The Hatch record for the shaft at (tq, tr), if we have paired it."""
         for h in self.hatches.values():
@@ -272,7 +294,15 @@ class Observation:
             self.tick     = msg.get("tk", self.tick)
             self.vision_r = msg.get("vr", self.vision_r)
             if "map" in msg:
-                self.map.load_full(msg["map"])
+                # Merged, like tsync.  sendSync() encodes only the current
+                # vision disk (encodeMapFog around me.q/me.r), so replacing
+                # the map wiped everything outside it on every reconnect --
+                # and seat loss reconnects a bot 6-13 times a run.  Measured
+                # 2026-09-23: known cells fell 177 -> 35 -> 7 over a realtime
+                # run and neither tunnel bot ever held a hatch in its map
+                # long enough to dive.  Nothing from another world survives
+                # the merge: the `regen` event replaces both boards outright.
+                self.map.load_full(msg["map"], merge=True)
             for i, pd in enumerate(msg.get("p", [])):
                 if i < MAX_PLAYERS:
                     self.players[i].update(pd)
@@ -280,6 +310,8 @@ class Observation:
             if "world" in msg:
                 self.world.update(msg["world"])
             self.ground_items = list(msg.get("gi", []))
+            self.remains = list(msg.get("rm", []))
+            self._prune_graves()
             self.synced = True
             self._sync_tunnel_pos()
         elif t == "s":
@@ -331,7 +363,9 @@ class Observation:
             self._apply_event(msg)
         elif t == "err":
             self.last_error = msg.get("msg")
-        elif t in ("item_result", "res_result"):
+        elif t in ("item_result", "res_result", "loot_result"):
+            # loot_result carries only inv (and got/why); the ground_update
+            # that follows it is what shrinks the remains record.
             me = self.me
             if "it"  in msg: me.inv_type = list(msg["it"])
             if "iq"  in msg: me.inv_qty  = list(msg["iq"])
@@ -343,11 +377,32 @@ class Observation:
             if "eq"    in msg: me.equip      = list(msg["eq"])
             if "is"    in msg: me.inv_slots  = int(msg["is"])
             if "llCap" in msg: me.ll_cap     = int(msg["llCap"])
+            # wc moves with an equip exactly as is/llCap do; kr rides a
+            # craft ack (a crafted recipe is never consumed, but the server
+            # resends the mask and it is the only copy outside a sync).
+            if "wc"    in msg: me.water_cap  = int(msg["wc"])
+            if "kr"    in msg: me.known_recipes = int(msg["kr"])
         elif t == "ground_update":
             self.ground_items = list(msg.get("gi", self.ground_items))
+            self.remains = list(msg.get("rm", self.remains))
+            # "fell" is sent while our pid still names the seat that fell --
+            # downed, left and this all go out in one drainEvents() pass,
+            # ahead of the broadcast that shows the seat empty.
+            if (msg.get("why") == "fell" and self.pid >= 0
+                    and msg.get("pid") == self.pid
+                    and "q" in msg and "r" in msg):
+                self.my_graves.add((msg["q"], msg["r"]))
+            self._prune_graves()
         elif t == "enc_path":
             self.encounter = msg
         return t
+
+    def _prune_graves(self):
+        """A grave of ours only means anything while its record is there.
+        Once the last pile is lifted or it ages out, somebody else falling on
+        the same hex later must not read as ours."""
+        live = {(rm.get("q"), rm.get("r")) for rm in self.remains}
+        self.my_graves &= live
 
     def _sync_tunnel_pos(self):
         """Keep tunnel_pos honest against the broadcast.
@@ -434,6 +489,11 @@ class Observation:
             self.tunnel_pos = None
             self.hatches = {}
             self._pending_hatch = None
+            # regen empties groundItems[] and remainsTable[]; the sync that
+            # follows refreshes both lists, but nothing refreshes my_graves.
+            self.ground_items = []
+            self.remains = []
+            self.my_graves = set()
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:

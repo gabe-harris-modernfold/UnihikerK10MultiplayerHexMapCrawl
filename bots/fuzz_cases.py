@@ -37,7 +37,7 @@ from typing import Any
 COMMANDS = ("pick", "m", "n", "wifi", "wifi_forget", "check", "regen",
             "eraseslot", "act", "trade_offer", "trade_accept", "trade_decline",
             "car_trade", "car_buy", "use_item", "equip_item", "unequip_item",
-            "drop_item", "drop_res", "pickup_item", "settings", "enc_start",
+            "drop_item", "drop_res", "pickup_item", "loot", "settings", "enc_start",
             "enc_choice", "enc_bank", "enc_abort")
 
 # Commands whose well-formed use is destructive or takes the board off the
@@ -234,6 +234,7 @@ CASES: list[Case] = [
     Case("drop_res:qty-neg", {"t": "drop_res", "res": 1, "qty": -5}, "nack:bad_arg"),
     Case("pickup_item:no-gslot", {"t": "pickup_item"}, "nack:parse"),
     Case("pickup_item:gslot-99", {"t": "pickup_item", "gslot": 99}, "nack:bad_arg"),
+    Case("loot:res-9", {"t": "loot", "res": 9}, "nack:bad_arg"),
 
     # -- encounters, out of order ---------------------------------------------------------
     Case("enc_start:no-q", {"t": "enc_start", "r": 0}, "nack:parse"),

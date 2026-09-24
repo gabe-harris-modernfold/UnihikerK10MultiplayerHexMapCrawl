@@ -81,9 +81,20 @@ static void cacheWebFile(File& f, const String& fname) {
 // Web files: every web-typed file in the /data ROOT → webFiles (see the
 // WebFile comment in Esp32HexMapCrawl.ino). Order of discovery doesn't
 // matter; gz-vs-plain preference is resolved in cacheWebFile().
+// A per-file terrain tile (hex<Name><N>.png) or landmark (poi_*.png) that the
+// tile atlas replaced. An SD synced before the atlas still has ~70 of them;
+// with tiles.json on the card they would only burn PSRAM and cache slots.
+static bool isLegacyTileFile(const char* name) {
+  const size_t n = strlen(name);
+  if (n < 5 || strcasecmp(name + n - 4, ".png") != 0) return false;
+  return strncmp(name, "hex", 3) == 0 || strncmp(name, "poi_", 4) == 0;
+}
+
 static void loadWebFilesToRAM() {
   File dir = SD.open("/data");
   if (!dir) { Log.error("SD OPEN FAIL: /data"); return; }
+  const bool atlas = SD.exists("/data/img/tiles.json");
+  int legacySkipped = 0;
   File f = dir.openNextFile();
   while (f) {
     String fname = String(f.name());
@@ -115,6 +126,8 @@ static void loadWebFilesToRAM() {
             subFile.close();
             subFile = imgFile.openNextFile();
           }
+        } else if (atlas && isLegacyTileFile(imgFile.name())) {
+          legacySkipped++;
         } else {
           size_t sz = imgFile.size();
           uint8_t* buf = (uint8_t*)ps_malloc(sz);
@@ -140,6 +153,9 @@ static void loadWebFilesToRAM() {
     f = dir.openNextFile();
   }
   dir.close();
+  if (legacySkipped)
+    Log.notice("IMG cache: tile atlas present, skipped %d superseded per-file tiles (safe to delete from SD)",
+               legacySkipped);
 }
 
 // ── Item registry parser ──────────────────────────────────────────────────────
@@ -261,6 +277,7 @@ static void loadItemRegistry() {
     else if (strcmp(key, "rad")      == 0) cur.statMods[STAT_RAD]     = (int8_t)atoi(val);
     else if (strcmp(key, "mp")       == 0) cur.statMods[STAT_MP]      = (int8_t)atoi(val);
     else if (strcmp(key, "slots")    == 0) cur.statMods[STAT_SLOTS]   = (int8_t)atoi(val);
+    else if (strcmp(key, "water_cap") == 0) cur.statMods[STAT_WATER_CAP] = (int8_t)atoi(val);
     else if (strcmp(key, "water_cost") == 0) cur.opCost[0] = (uint8_t)atoi(val);
     else if (strcmp(key, "food_cost")  == 0) cur.opCost[1] = (uint8_t)atoi(val);
     else if (strcmp(key, "fuel_cost")  == 0) cur.opCost[2] = (uint8_t)atoi(val);

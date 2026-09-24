@@ -185,6 +185,15 @@ function createImageWithLoadTracking(src) {
   const img = window.AssetLoader ? AssetLoader.image(src) : new Image();
   img.loaded = false;
   if (!img.dataset.src) img.dataset.src = src;
+  // Listeners, not onload/onerror: callers overwrite those (the atlas pages do).
+  // Settle on a later task: this listener runs BEFORE the onload handler that
+  // sets img.loaded (and builds the atlas mips), and promise reactions run
+  // between listeners, so settling here would release the boot screen early.
+  artLoads.push(new Promise(res => {
+    const settle = () => setTimeout(() => { artSettledCount++; res(); });
+    img.addEventListener('load', settle, { once: true });
+    img.addEventListener('error', settle, { once: true });
+  }));
   if (!window.AssetLoader) img.src = src;
   img.onload = () => { img.loaded = true; };
   img.onerror = () => {
@@ -193,47 +202,166 @@ function createImageWithLoadTracking(src) {
   return img;
 }
 
+// ── Boot art gate ─────────────────────────────────────────────────
+// index.html's boot screen holds until every image asked for so far has
+// loaded or failed, so the character picker never opens onto blank pawns and
+// flat hexes. One promise per createImageWithLoadTracking() call.
+const artLoads = [];
+let artSettledCount = 0;
+let tilesQueued = Promise.resolve();   // tiles.json -> atlas pages is async; see loadTerrainVariants
+
+async function artSettled(onProgress) {
+  await tilesQueued;
+  if (onProgress) onProgress(artSettledCount, artLoads.length);
+  const tick = onProgress ? setInterval(() => onProgress(artSettledCount, artLoads.length), 150) : 0;
+  try {
+    // A load can queue another (tiles.json -> pages), so re-check the length.
+    for (let n = -1; n !== artLoads.length;) {
+      n = artLoads.length;
+      await Promise.all(artLoads.slice());
+    }
+  } finally {
+    clearInterval(tick);
+  }
+  if (onProgress) onProgress(artSettledCount, artLoads.length);
+}
+
 // ── UI glyph sprite strip (terrain/resource/overlay pixel glyphs) ──
 const glyphImg = createImageWithLoadTracking('/' + GLYPH_SHEET);
 
-// ── Terrain hex images ────────────────────────────────────────────
-// Naming: /img/hex<Name><N>.png  (e.g. hexOpenScrub0.png, hexOpenScrub1.png)
-// terrainImgVariants[terrain][variant] → Image object (or undefined if missing).
-// Populated by loadTerrainVariants(vc) when the sync message arrives.
+// ── Terrain tiles ─────────────────────────────────────────────────
+// scripts/tilegen/build_tiles.py bakes every hex tile into a couple of atlas
+// pages (/img/tiles<N>.webp) plus /img/tiles.json, which says where each
+// terrain's variants and each pinned landmark sit. Two requests instead of
+// ~70, and two PSRAM cache slots on the K10 instead of ~70 -- the firmware
+// reads the same manifest's `counts` to size pickVariant().
+//
+// Tiles are 3/4 dioramas: a cell is taller than its hex, the hex sits at the
+// bottom, and the headroom above holds whatever stands up into the hex behind
+// (a peak, a water tower, a tail fin). renderHexTerrain() draws rows back to
+// front, so an overhang lands on a neighbour that is already there. The hex
+// edge line is baked into each tile, which is why the grid pass skips them.
+//
+// No manifest (an older board, or a failed fetch) falls back to the per-file
+// /img/hex<Name><N>.png tiles the board counted into `vc`.
 const TERRAIN_IMG_NAMES = [
   'OpenScrub', 'AshDunes', 'RustForest', 'Marsh',
   'BrokenUrban', 'FloodedDistrict', 'GlassFields',
   'Ridge', 'Mountain', 'Settlement', 'NukeCrater', 'RiverChannel',
   'BunkerEntrance', 'VentShaft', 'TunnelFloor', 'TunnelCollapsed',
 ];
-const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);
+const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);   // legacy per-file tiles
+// state: idle -> loading -> atlas | legacy. cell/anchor/radius are atlas px.
+const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {} };
 
 function loadTerrainVariants(vc) {
-  // Counts are static for the whole session (fixed at boot from the SD card
-  // scan) — now arrives on both 'lobby' (on connect) and 'sync' (on pick), so
-  // guard against rebuilding every array and re-fetching every image twice.
-  if (terrainImgVariants.some(a => a.length)) return;
-  for (let t = 0; t < NUM_TERRAIN; t++) {
-    const name = TERRAIN_IMG_NAMES[t];
-    const count = vc?.[t] || 0;
-    terrainImgVariants[t] = Array.from(
-      { length: count },
-      (_, v) => createImageWithLoadTracking(`/img/hex${name}${v}.png`)
-    );
+  // Counts are static for the whole session (fixed at boot from the SD card)
+  // and arrive on both 'lobby' (on connect) and 'sync' (on pick), so only
+  // the first call does anything.
+  if (tileAtlas.state !== 'idle') return;
+  tileAtlas.state = 'loading';
+  const req = window.AssetLoader
+    ? AssetLoader.fetch('/img/tiles.json', { cache: 'no-cache', attempts: 3 })
+    : fetch('/img/tiles.json', { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r; });
+  tilesQueued = req.then(r => r.json()).then(m => {
+    if (!m || !Array.isArray(m.pages) || !m.pages.length) throw new Error('tiles.json lists no pages');
+    Object.assign(tileAtlas, { cell: m.cell, anchor: m.anchor, radius: m.radius, tiles: m.tiles || [], poi: m.poi || {} });
+    tileAtlas.pages = m.pages.map(p => {
+      // ?v= is the atlas hash: /img/* is cached forever (sw.js, and the
+      // board's immutable Cache-Control), so a rebuilt atlas is a new URL.
+      const img = createImageWithLoadTracking(`/img/${p}?v=${encodeURIComponent(m.version || '')}`);
+      img.onload = () => { img.loaded = true; buildTileMips(img); };
+      return img;
+    });
+    tileAtlas.state = 'atlas';
+  }).catch(e => {
+    console.warn('[tiles] no atlas (%s) — loading per-file tiles', e && e.message);
+    tileAtlas.state = 'legacy';
+    for (let t = 0; t < NUM_TERRAIN; t++) {
+      const name = TERRAIN_IMG_NAMES[t];
+      terrainImgVariants[t] = Array.from(
+        { length: vc?.[t] || 0 },
+        (_, v) => createImageWithLoadTracking(`/img/hex${name}${v}.png`)
+      );
+    }
+    POI_ART['0_10'] = createImageWithLoadTracking('/img/poi_jacks_chopper.png');  // Jack's Chopper — scrub/19.json
+  });
+}
+
+// Half- and quarter-size copies of each atlas page, made once on decode.
+// Canvas drawImage shrinks with a 2x2 bilinear tap, so a 224 px tile
+// squeezed into a 50 px hex shimmers; sampling a pre-shrunk page doesn't.
+function buildTileMips(img) {
+  const mips = [];
+  let src = img, w = img.naturalWidth, h = img.naturalHeight;
+  for (let i = 0; i < 2 && w > 64; i++) {
+    w = Math.max(1, w >> 1);
+    h = Math.max(1, h >> 1);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(src, 0, 0, w, h);
+    mips.push(c);
+    src = c;
   }
+  img.mips = mips;
 }
 
 // ── Point-of-interest landmark art ─────────────────────────────────
 // Named art for a specific guaranteed-encounter hex, keyed by the
 // "terrain_variant" the firmware pins on that hex (see hex-map.hpp Phase
-// 5.5). Loaded directly by filename, independent of the per-terrain
-// variant pool above — each entry is one fixed image for one fixed
-// landmark, not a randomly-chosen variant.
-const POI_ART = {
-  '0_10': createImageWithLoadTracking('/img/poi_jacks_chopper.png'),  // Jack's Chopper — scrub/19.json
-};
+// 5.5). In the atlas these are tiles.json `poi` entries; this table is only
+// filled on the per-file fallback.
+const POI_ART = {};
 function poiArtFor(terrain, variant) {
   return POI_ART[`${terrain}_${variant}`];
+}
+
+// The tile to draw for a cell, or null (no art, or not decoded yet: the
+// caller draws the flat fallback). Atlas tiles are { page, sx, sy }; the
+// per-file fallback is { img }.
+function terrainTile(terrain, variant) {
+  if (tileAtlas.state === 'atlas') {
+    const pool = tileAtlas.tiles[terrain];
+    // Wrap like the old pool did: a pinned variant with no entry of its own
+    // degrades to an ordinary tile of its terrain.
+    const at = tileAtlas.poi[`${terrain}_${variant}`] ||
+               (pool?.length ? pool[((variant % pool.length) + pool.length) % pool.length] : null);
+    const page = at && tileAtlas.pages[at[0]];
+    return page?.loaded ? { page, sx: at[1], sy: at[2] } : null;
+  }
+  const _tv = terrainImgVariants[terrain];
+  const img = poiArtFor(terrain, variant) ||
+              (_tv?.length > 0 ? (_tv[variant % _tv.length] || _tv[0]) : null);
+  return img?.loaded ? { img } : null;
+}
+
+// Top-left and size of a tile's box for the hex at (cx, cy), radius `size`.
+function tileBox(cx, cy, size) {
+  const k = size / tileAtlas.radius;
+  return { x: cx - tileAtlas.anchor[0] * k, y: cy - tileAtlas.anchor[1] * k,
+           w: tileAtlas.cell[0] * k, h: tileAtlas.cell[1] * k };
+}
+
+function drawTerrainTile(g, tile, cx, cy, size) {
+  if (tile.img) {                      // per-file tile: a 2*size square, as ever
+    g.drawImage(tile.img, cx - size, cy - size, size * 2, size * 2);
+    return;
+  }
+  const [cw, ch] = tileAtlas.cell;
+  const b = tileBox(cx, cy, size);
+  const px = (b.w / cw) * (window.devicePixelRatio || 1);   // atlas px per device px
+  const mips = tile.page.mips;
+  if (mips?.length && px < 0.5) {
+    const lvl = (px < 0.25 && mips[1]) ? 1 : 0;
+    const f = 2 << lvl;
+    g.drawImage(mips[lvl], tile.sx / f, tile.sy / f, cw / f, ch / f, b.x, b.y, b.w, b.h);
+    return;
+  }
+  g.drawImage(tile.page, tile.sx, tile.sy, cw, ch, b.x, b.y, b.w, b.h);
 }
 
 // ── Survivor pawn portrait images ────────────────────────────────
@@ -304,6 +432,9 @@ let gameState = { tc: 0, dc: 0, wp: 0 };
 let worldState = { caravan: null, doom: null, fire: [] };
 // Ground items from latest sync/ground_update
 let groundItems = [];
+// Remains -- where survivors fell and the tokens they left -- from the same
+// messages ("rm"). Their items are ordinary groundItems piles on that hex.
+let remains = [];
 
 // ── Agent state snapshot ─────────────────────────────────────────
 // Updated after every WS message. Read via: window.__gameState

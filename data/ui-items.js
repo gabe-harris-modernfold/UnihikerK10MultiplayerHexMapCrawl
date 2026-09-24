@@ -6,9 +6,9 @@ function resetLastEqKey() { _lastEqKey = ''; }
 const CAT_NAMES = ['Gulpable', 'Bolt-On', 'Salvage', 'Relic'];
 const CAT_CLASSES = ['cat-consumable', 'cat-equipment', 'cat-material', 'cat-key'];
 
-function _itemIcon(id) {
-  const item = getItemById?.(id);
-  return item?.icon || ITEM_ICON_PLACEHOLDER;
+// Badge src for an item, drawn at the size the <img> shows it (item-icons.js).
+function _itemIcon(id, px) {
+  return getItemIcon?.(id, px) || ITEM_ICON_PLACEHOLDER;
 }
 
 // Inline onerror for item <img>s: swap to the category fallback icon once.
@@ -41,7 +41,7 @@ function renderInventory() {
       const item = getItemById?.(typeId);
       const catClass = CAT_CLASSES[item?.category ?? 0] ?? 'cat-consumable';
       div.innerHTML =
-        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId))}" alt="" width="26" height="26" onerror="${_iconOnError(typeId)}">` +
+        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId, 26))}" alt="" width="26" height="26" onerror="${_iconOnError(typeId)}">` +
         `<span class="item-slot-qty">${qty > 1 ? qty : ''}</span>` +
         `<span class="item-slot-name">${escHtml(item?.name ?? '?')}</span>` +
         `<span class="item-cat-badge ${catClass}">${CAT_NAMES[item?.category ?? 0]?.slice(0, 4) ?? '?'}</span>`;
@@ -62,6 +62,7 @@ function _formatMods(m) {
   if (m.mp)        parts.push(`MP ${sign(m.mp)}`);
   if (m.ll)        parts.push(`LL ${sign(m.ll)}`);
   if (m.slots)     parts.push(`SLOTS ${sign(m.slots)}`);
+  if (m.waterCap)  parts.push(`WATER CAP ${sign(m.waterCap)}`);
   if (m.vision)    parts.push(`VIS ${sign(m.vision)}`);
   if (m.rad)       parts.push(`RAD ${sign(m.rad)}/dawn`);
   if (m.fuelCost)  parts.push(`-${m.fuelCost} FUEL/dawn`);
@@ -81,6 +82,16 @@ function packSlotsOf(player) {
   return Math.max(1, Math.min(INV_SLOTS_MAX, n));
 }
 
+// Resource tokens that count against packSlotsOf(): everything in `inv` less
+// the water riding in a canteen. `wc` is the server's canteenCap() — mirrors
+// tokenLoad() in inventory_items.hpp. Pass `inv` to price a pack that isn't
+// held yet (the encounter haul tray).
+function tokenLoadOf(player, inv = player?.inv) {
+  if (!Array.isArray(inv)) return 0;
+  const total = inv.reduce((a, b) => a + (b || 0), 0);
+  return total - Math.min(inv[0] || 0, player?.wc || 0);
+}
+
 // Does this item's MP bonus depend on paying a daily resource cost?
 // applyDawnItemCosts() only grants such a bonus on a dawn where the cost was
 // actually paid, so the panel must not promise it unconditionally.
@@ -89,7 +100,7 @@ function _isCostGated(m) {
 }
 
 function computeEquipBonuses(player) {
-  const tot = { mp:0, ll:0, slots:0, vision:0, rad:0,
+  const tot = { mp:0, ll:0, slots:0, waterCap:0, vision:0, rad:0,
                 fuelCost:0, waterCost:0, foodCost:0, medCost:0, scrapCost:0 };
   const notes = [];
   const dormant = [];   // cost-gated items that went unpaid at the last dawn
@@ -139,7 +150,7 @@ function renderEquipment() {
       const noteLine = mods?.note ? escHtml(mods.note) : '';
       div.innerHTML =
         `<span class="equip-slot-name">${SLOT_LABELS[s]}</span>` +
-        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId))}" alt="" width="28" height="28" onerror="${_iconOnError(itemId)}">` +
+        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId, 28))}" alt="" width="28" height="28" onerror="${_iconOnError(itemId)}">` +
         `<span class="equip-slot-label">${escHtml(item?.name ?? '?')}</span>` +
         (modsLine ? `<span class="equip-slot-bonus" style="display:block;font-size:10px;color:var(--gold,#ffd700);margin-top:2px;letter-spacing:0.5px">${escHtml(modsLine)}</span>` : '') +
         (noteLine ? `<span class="equip-slot-note" style="display:block;font-size:9px;color:var(--txt-dim,#888);font-style:italic;margin-top:1px">${noteLine}</span>` : '');
@@ -204,7 +215,7 @@ function openItemMenu(slotIdx, isEquipped) {
 
   const menuIcon = document.getElementById('item-menu-icon');
   menuIcon.onerror = () => { menuIcon.onerror = null; menuIcon.src = getItemIconFallback?.(itemId) ?? ITEM_ICON_PLACEHOLDER; };
-  menuIcon.src = _itemIcon(itemId);
+  menuIcon.src = _itemIcon(itemId, 32);
   document.getElementById('item-menu-name').textContent = name;
 
   const storyEl = document.getElementById('item-menu-story');
@@ -274,29 +285,106 @@ function closeItemMenu() {
   document.getElementById('item-menu-backdrop')?.classList.remove('open');
 }
 
+// ── Remains ───────────────────────────────────────────────────────
+// Where a survivor fell: `remains` (engine.js) holds {q,r,pid,nm,d,res[5]}
+// per grave, from sync / ground_update "rm". The tokens are taken with
+// {t:'loot',res} (0 = everything that fits); the fallen survivor's items are
+// ordinary ground piles on the same hex and use pickup_item like any other.
+
+// The label players actually see on the map (renderHexLabels), not q/r.
+function hexNameOf(q, r) {
+  return (typeof hexLabel !== 'undefined') ? `hex ${hexLabel[r * MAP_COLS + q]}` : `(${q},${r})`;
+}
+
+function remainsAt(q, r) {
+  return (typeof remains === 'undefined' ? [] : remains).find(rm => rm.q === q && rm.r === r) ?? null;
+}
+
+// Game-days before the dawn sweep takes something stamped day `d` --
+// groundAgeOut() clears it at the dawn that makes it GROUND_AGE_DAYS old.
+// dayCount is a uint16 on the board, hence the mask.
+function groundDaysLeft(d) {
+  return Math.max(0, GROUND_AGE_DAYS - (((gameState?.dc ?? 0) - (d ?? 0)) & 0xFFFF));
+}
+function groundDaysLabel(d) {
+  const left = groundDaysLeft(d);
+  return left <= 1 ? 'gone at dawn' : `${left} days left`;
+}
+
+// Arriving on a hex with remains says so once: the grave marker is easy to
+// read from a distance but the pickup chips live in the hex panel.
+let _remainsNotedKey = '';
+function noteRemainsUnderfoot(q, r) {
+  const key = `${q}_${r}`;
+  const rm  = myDepth ? null : remainsAt(q, r);
+  if (!rm) { _remainsNotedKey = ''; return; }
+  if (key === _remainsNotedKey) return;
+  _remainsNotedKey = key;
+  const tokens = rm.res.reduce((a, b) => a + b, 0);
+  const piles  = (groundItems ?? []).filter(gi => gi.q === q && gi.r === r && gi.id > 0).length;
+  const what   = [tokens ? `${tokens} supplies` : '', piles ? `${piles} item${piles > 1 ? 's' : ''}` : '']
+    .filter(Boolean).join(' and ');
+  showToast(`☠ ${rm.nm || 'Someone'}'s remains — ${what || 'picked clean'}. Open the hex panel to take them.`);
+}
+
 // Ground items for the hex info panel
 function renderHexGroundItems(q, r) {
   const row  = document.getElementById('hi-ground-row');
   const list = document.getElementById('hi-ground-list');
   if (!list || !row) return;
-  const here = (typeof groundItems === 'undefined' ? [] : groundItems)
+  // GroundItem has no depth -- the table is surface coordinates only, so
+  // underground a q/r match would list whatever lies on some surface hex.
+  // Remains are the same: a fall below lands on the hatch above.
+  const here = (typeof groundItems === 'undefined' || myDepth ? [] : groundItems)
     .filter(gi => gi.q === q && gi.r === r && gi.id > 0);
-  console.log('[INV] renderHexGroundItems', `q=${q} r=${r} itemsFound=${here.length}`);
-  if (here.length === 0) {
+  const rm = myDepth ? null : remainsAt(q, r);
+  console.log('[INV] renderHexGroundItems', `q=${q} r=${r} itemsFound=${here.length} remains=${!!rm}`);
+  if (here.length === 0 && !rm) {
     row.style.display = 'none';
     list.innerHTML = '';
     return;
   }
   row.style.display = '';
   list.innerHTML = '';
+  if (rm) {
+    const head = document.createElement('div');
+    head.className = 'hi-remains-head';
+    head.innerHTML = `☠ <span class="hi-remains-who">${escHtml(rm.nm || 'Someone')}</span> fell here · ${groundDaysLabel(rm.d)}`;
+    list.appendChild(head);
+    const kinds = [];
+    (rm.res ?? []).forEach((n, k) => { if (n > 0) kinds.push({ n, k }); });
+    kinds.forEach(({ n, k }) => {
+      const name = RES_NAMES[k + 1];
+      const span = document.createElement('span');
+      span.className = 'hi-ground-pickup';
+      span.title = `Take ${name}`;
+      span.innerHTML = `<span class="dot ${RES_DOT_CLASSES[k]}"></span>${escHtml(name)} ×${n} <span class="gp-plus">+</span>`;
+      span.addEventListener('click', () => {
+        console.log('%c[INV] loot', 'color:#fc0;font-weight:bold', `res=${k + 1} have=${n}`);
+        send({ t: 'loot', res: k + 1 });
+      });
+      list.appendChild(span);
+    });
+    if (kinds.length > 1) {
+      const all = document.createElement('span');
+      all.className = 'hi-ground-pickup hi-remains-all';
+      all.title = 'Take every supply that fits';
+      all.innerHTML = `TAKE ALL <span class="gp-plus">+</span>`;
+      all.addEventListener('click', () => {
+        console.log('%c[INV] loot', 'color:#fc0;font-weight:bold', 'res=all');
+        send({ t: 'loot' });
+      });
+      list.appendChild(all);
+    }
+  }
   here.forEach(gi => {
     const item = getItemById?.(gi.id);
     const name = item?.name ?? ('Item #' + gi.id);
     const span = document.createElement('span');
     span.className = 'hi-ground-pickup';
-    span.title = `Pick up ${name}`;
+    span.title = `Pick up ${name}` + (gi.d !== undefined ? ` · ${groundDaysLabel(gi.d)}` : '');
     span.innerHTML =
-      `<img class="item-icon-img" src="${escHtml(_itemIcon(gi.id))}" alt="" width="16" height="16" onerror="${_iconOnError(gi.id)}">` +
+      `<img class="item-icon-img" src="${escHtml(_itemIcon(gi.id, 16))}" alt="" width="16" height="16" onerror="${_iconOnError(gi.id)}">` +
       `${escHtml(name)}` +
       (gi.n > 1 ? ` \u00d7${gi.n}` : '') +
       ` <span class="gp-plus">+</span>`;

@@ -524,6 +524,8 @@ static void updateLEDs() {
   bool bolt = stormBolt(snapWeather, now);
   if (bolt && !d.allUnder) {
     k10.rgb->write(-1, 235, 240, 255);
+    fxAmbientBolt();   // and the LCD lights up on the same tick (ui-fx.hpp)
+    sndStory(SS_THUNDER);   // and a second or so later, the thunder (snd-engine.hpp)
     return;
   }
 

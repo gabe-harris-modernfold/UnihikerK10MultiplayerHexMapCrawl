@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Wasteland Observer</title>
+<!--
+  ── The observer screen ──────────────────────────────────────────
+  Load this on a TV and leave it running. It watches a live game over
+  GET /state, picks whose story to tell, and narrates it in the house voice.
+  See docs/observer-screen-spec.md.
+
+  STANDALONE BY DESIGN. None of these files are listed in
+  data/web-assets.json — that file is the game SPA's bundle order and
+  build_web.ps1 concatenates exactly what it names, so adding the observer
+  there would load a spectator screen into every player's client. They deploy
+  anyway, because sync_data.ps1 walks data/ recursively and the firmware
+  registers one HTTP route per discovered file (game-server.hpp).
+
+  Served from the board, so host = location.origin and the TV never needs an
+  IP typed into it with a remote control:
+
+      http://<board>/observer.html            live
+      http://<board>/observer.html?feed=fake  the scripted run, no board needed
+      http://localhost:8765/observer.html?host=192.168.1.42   desktop dev
+
+  IT NEVER OPENS A WEBSOCKET. handleConnect() hands every /ws client a player
+  slot and there are six; a spectator on the socket would eat a seat and draw
+  itself on everyone's map.
+-->
+<!-- Boot screen. observer.css arrives through the loader below, so this is
+     self-styled. observer.js keeps it up (re-attaching it after
+     buildSkeleton() wipes <body>) until the tile atlas is in, then calls
+     OBS_BOOT.done(). -->
+<style id="obs-boot-style">
+#obs-boot{position:fixed;top:0;right:0;bottom:0;left:0;z-index:99999;background:#000;color:#c80;font:22px/1.5 ui-monospace,Consolas,monospace;font:clamp(16px,2.2vw,30px)/1.5 ui-monospace,Consolas,monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8em;text-align:center;padding:1em;box-sizing:border-box;transition:opacity .4s}
+#obs-boot h1{margin:0;font-size:1.6em;letter-spacing:.25em;color:#fb3}
+#obs-boot .bar{width:80vw;width:min(30em,80vw);height:.5em;border:1px solid #640;background:#110a00}
+#obs-boot .fill{height:100%;width:0;background:#c80;transition:width .15s}
+#obs-boot .status{min-height:1.5em;color:#a70;max-width:90vw;word-break:break-word}
+#obs-boot .status.err{color:#e64}
+#obs-boot.gone{opacity:0}
+</style>
+</head>
+<body>
+<div id="obs-boot" role="status" aria-live="polite">
+  <h1>&#9762; OBSERVER</h1>
+  <div class="bar"><div class="fill" id="obs-boot-fill"></div></div>
+  <div class="status" id="obs-boot-status">Contacting the K10&hellip;</div>
+</div>
+<!-- observer.js builds the whole document; this is only what it needs to exist. -->
+<script>
+// The boot screen's handle, shared with observer.js.
+window.OBS_BOOT = (function () {
+  const el = (id) => document.getElementById(id);
+  return {
+    status(t) { const s = el('obs-boot-status'); if (s) s.textContent = t; },
+    progress(n, total, what) {
+      const f = el('obs-boot-fill');
+      if (f) f.style.width = (total ? n / total * 100 : 100).toFixed(0) + '%';
+      this.status('Loaded ' + n + '/' + total + '  ' + what);
+    },
+    fail(t) { const s = el('obs-boot-status'); if (s) { s.textContent = t; s.classList.add('err'); } },
+    done() {
+      const b = el('obs-boot');
+      if (!b) return;
+      b.classList.add('gone');
+      setTimeout(() => b.remove(), 450);
+    },
+  };
+}());
+</script>
+<script>
+// ── Loader ─────────────────────────────────────────────────────────
+// Plain <script src> tags broke the TV twice over:
+//  * STALE FOREVER. The firmware serves every .js/.css as
+//    "public, max-age=31536000, immutable" (game-server.hpp cacheControlFor)
+//    and relies on the client to change the URL (?v=) when a file changes.
+//    These files are not in assets.json, so there is no version to append,
+//    and a TV that loaded the observer once kept that code for a year.
+//    cache:'no-cache' revalidates each file against its ETag instead: a 304
+//    when nothing changed, and only once per page load.
+//  * ONE 429 KILLS THE PAGE. The board serves at most 4 files at once and
+//    429s the rest; the browser opened ~8 at a time and never retried.
+// Same shape as index.html's AssetLoader: two at a time, retry 408/429/5xx
+// and timeouts with backoff, execute strictly in order.
+(function () {
+  'use strict';
+  const FILES = [
+    'observer.css',
+    'game-data.js',
+    'observer-lines.js',
+    'observer-scene.js',
+    'observer-feed.js',
+    'observer-fx.js',     // the LCD's comic cut-ins and amber madness, ported from ui-fx.hpp
+    'observer.js',
+  ];
+  const MAX_CONCURRENT = 2, ATTEMPTS = 6, TIMEOUT_MS = 20000, BACKOFF_MS = 500, BACKOFF_CAP_MS = 8000;
+  const queue = [];
+  let active = 0;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const retryable = (s) => s === 408 || s === 429 || s >= 500;
+
+  async function get(url) {
+    let err = null;
+    for (let n = 0; n < ATTEMPTS; n++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+      try {
+        const r = await fetch(url, { cache: 'no-cache', signal: ctrl.signal });
+        if (r.ok) {
+          const text = await r.text();
+          // A body cut off mid-stream is how the board fails when it is
+          // struggling -- running half a script is worse than retrying it.
+          // (A compressed response's length is not the text's, so skip it.)
+          const len = Number(r.headers.get('content-length'));
+          if (len > 0 && !r.headers.get('content-encoding') && new Blob([text]).size !== len) {
+            throw new Error('short body ' + url);
+          }
+          clearTimeout(timer);
+          return text;
+        }
+        err = new Error('HTTP ' + r.status + ' ' + url);
+        if (!retryable(r.status)) { clearTimeout(timer); throw Object.assign(err, { final: true }); }
+      } catch (e) {
+        if (e.final) throw e;
+        err = e.name === 'AbortError' ? new Error('timeout ' + url) : e;
+      }
+      clearTimeout(timer);
+      if (n + 1 < ATTEMPTS) {
+        const wait = Math.min(BACKOFF_CAP_MS, BACKOFF_MS * 2 ** n) + Math.random() * 250;
+        console.warn('[observer] retry %d/%d in %dms: %s', n + 1, ATTEMPTS - 1, wait | 0, err.message);
+        await sleep(wait);
+      }
+    }
+    throw err;
+  }
+
+  function pump() {
+    while (active < MAX_CONCURRENT && queue.length) {
+      const job = queue.shift();
+      active++;
+      get(job.url).then(job.resolve, job.reject).finally(() => { active--; pump(); });
+    }
+  }
+  const load = (url) => new Promise((resolve, reject) => { queue.push({ url, resolve, reject }); pump(); });
+
+  (async () => {
+    let got = 0;
+    const downloads = FILES.map((f) => load(f).then((code) => {
+      OBS_BOOT.progress(++got, FILES.length, f);
+      return code;
+    }));
+    downloads.forEach((p) => p.catch(() => {}));   // reported where awaited below
+    try {
+      for (let i = 0; i < FILES.length; i++) {
+        const code = await downloads[i];
+        const css = FILES[i].endsWith('.css');
+        const el = document.createElement(css ? 'style' : 'script');
+        el.textContent = css ? code : code + '\n//# sourceURL=' + location.origin + '/' + FILES[i];
+        (css ? document.head : document.body).appendChild(el);   // a script runs synchronously here
+      }
+    } catch (e) {
+      console.error('[observer] load failed:', e);
+      OBS_BOOT.fail('OBSERVER could not load (' + e.message + '). The K10 may be busy or rebooting -- retrying in 15 s.');
+      setTimeout(() => location.reload(), 15000);
+    }
+  })();
+}());
+</script>
+</body>
+</html>

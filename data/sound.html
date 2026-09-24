@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sound Desk</title>
+<!--
+  The K10 sound desk: every live knob of the sound engine, and every sound it
+  can make, on one page served by the board itself (GET /sound.html).
+  Talks to three routes in game-server.hpp: /sndinfo (the catalogue: knob
+  ranges and defaults, effect / line / voice / music / story names), /snddbg
+  (set knobs, ?save=1 keeps the mix on the board, ?reset=1 restores the
+  compiled one) and /sndplay (play something, or stop=1). Standalone on
+  purpose, like observer.html: NOT in web-assets.json.
+  One request in flight at a time: the board's HTTP server is a single ESP32
+  on AsyncTCP, and slider drags would otherwise be a request burst.
+-->
+<style>
+:root {
+  --bg: #080604; --bg-panel: #0B0804; --bg-card: #100E08; --bg-input: #130A03; --bg-deep: #050402;
+  --bdr: #221408; --bdr-mid: #3A2410; --bdr-hi: #5C3C16;
+  --txt: #A86820; --txt-dim: #6B4010; --gold: #C07818; --gold-hi: #E8A828;
+  --rust: #6A3008; --ash: #A07828; --blood: #4A1208;
+  --alarm: #E0522E; --alarm-bg: #2A0C05; --ok: #8FB03E;
+  --stencil: Impact, 'Arial Narrow', 'Arial Black', sans-serif;
+  --mono: 'Courier New', Courier, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--bg); }
+body {
+  background: var(--bg); color: var(--txt); font-family: var(--mono); font-size: 15px; line-height: 1.35;
+  padding: 0 16px 48px; min-height: 100vh;
+}
+button, input { font: inherit; color: inherit; }
+h1, h2 { font-family: var(--stencil); font-weight: normal; color: var(--gold-hi); }
+h1 { font-size: 26px; letter-spacing: 5px; }
+h2 { font-size: 17px; letter-spacing: 3px; margin-bottom: 10px; }
+h2 small { font-family: var(--mono); font-size: 12px; letter-spacing: 0; color: var(--txt-dim); margin-left: 8px; }
+
+/* ── The bar that never scrolls away: volume, STOP, save ───────────────── */
+#top {
+  position: sticky; top: 0; z-index: 10; margin: 0 -16px 16px; padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  background: linear-gradient(var(--bg-panel), var(--bg-panel)) padding-box;
+  border-bottom: 1px solid var(--bdr-hi);
+  display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 8px 18px; align-items: center;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.conn { font-size: 12px; color: var(--txt-dim); white-space: nowrap; }
+.conn::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--txt-dim); vertical-align: 0; }
+.conn.on::before { background: var(--ok); }
+.conn.off { color: var(--alarm); }
+.conn.off::before { background: var(--alarm); }
+.vol { display: grid; grid-template-columns: auto 1fr 5.5em; gap: 10px; align-items: center; }
+.vol label { font-family: var(--stencil); letter-spacing: 2px; color: var(--gold); }
+.vol output { font-weight: bold; color: var(--gold-hi); text-align: right; font-variant-numeric: tabular-nums; }
+body.muted .vol output { color: var(--alarm); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.status { grid-column: 1 / -1; font-size: 13px; color: var(--ash); min-height: 1.2em; }
+.status b { color: var(--gold-hi); font-weight: normal; }
+.status .warn { color: var(--alarm); }
+@media (max-width: 760px) {
+  #top { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  h1 { font-size: 22px; letter-spacing: 4px; }
+  .actions { justify-content: flex-start; flex-wrap: nowrap; }
+  .actions .btn { flex: 1; padding: 6px 8px; font-size: 14px; letter-spacing: 1px; }
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+.btn {
+  font-family: var(--stencil); letter-spacing: 2px; font-size: 15px; color: var(--gold-hi);
+  background: var(--bg-card); border: 1px solid var(--bdr-hi); padding: 7px 14px; cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--gold); }
+.btn:active { background: var(--rust); }
+.btn:focus-visible, .chip:focus-visible, .seg:focus-visible, .pad:focus-visible, .line:focus-visible, .rst:focus-visible,
+input:focus-visible { outline: 2px solid var(--gold-hi); outline-offset: 2px; }
+.btn.stop { color: #FFD7C4; background: var(--alarm-bg); border-color: #8A2A14; }
+.btn.stop:hover { border-color: var(--alarm); }
+.btn.arm { color: var(--bg-deep); background: var(--alarm); border-color: var(--alarm); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 16px; }
+.panel { background: var(--bg-panel); border: 1px solid var(--bdr); border-top: 2px solid var(--bdr-hi); padding: 14px 14px 12px; }
+.panel > p.note { font-size: 13px; color: var(--txt-dim); margin: -4px 0 10px; }
+
+.knobs { display: grid; gap: 12px; }
+.knob .kh { display: flex; align-items: baseline; gap: 10px; }
+.knob .kh label, .knob .kh .lbl { color: var(--gold); flex: 1; }
+.knob .kh output { color: var(--gold-hi); font-weight: bold; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.knob .help { font-size: 12px; color: var(--txt-dim); margin-top: 2px; }
+.rst {
+  background: none; border: 1px solid transparent; color: var(--txt-dim); cursor: pointer; padding: 0 6px;
+  visibility: hidden; font-size: 14px;
+}
+.knob.changed .rst { visibility: visible; }
+.knob.changed .kh label, .knob.changed .kh .lbl { color: var(--gold-hi); }
+.rst:hover { color: var(--gold-hi); border-color: var(--bdr-hi); }
+.rst.demo { visibility: visible; color: var(--gold); border-color: var(--bdr-mid); }
+.rst.demo.hit { background: var(--rust); color: var(--gold-hi); }
+
+input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: transparent; cursor: pointer;
+  --p: 50%;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 6px; border: 1px solid var(--bdr-hi);
+  background: linear-gradient(90deg, var(--gold) var(--p), var(--bg-deep) var(--p));
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 22px; margin-top: -9px;
+  background: var(--gold-hi); border: 2px solid var(--bg-deep); box-shadow: 0 0 0 1px var(--bdr-hi);
+}
+input[type=range]::-moz-range-track { height: 6px; background: var(--bg-deep); border: 1px solid var(--bdr-hi); }
+input[type=range]::-moz-range-progress { height: 6px; background: var(--gold); }
+input[type=range]::-moz-range-thumb { width: 12px; height: 20px; background: var(--gold-hi); border: 2px solid var(--bg-deep); border-radius: 0; }
+input[type=range]:disabled { opacity: .35; cursor: default; }
+
+.segs, .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.seg, .chip {
+  background: var(--bg-card); border: 1px solid var(--bdr-mid); color: var(--txt); padding: 4px 10px; cursor: pointer;
+  font-size: 13px;
+}
+.seg:hover, .chip:hover { border-color: var(--gold); color: var(--gold-hi); }
+.seg[aria-pressed=true], .chip[aria-pressed=true] { background: var(--gold); border-color: var(--gold); color: var(--bg-deep); }
+.chip.auto { font-family: var(--stencil); letter-spacing: 1px; }
+
+.now { margin-top: 10px; font-size: 13px; color: var(--txt-dim); }
+.now b { color: var(--gold-hi); font-family: var(--stencil); letter-spacing: 2px; font-weight: normal; font-size: 15px; }
+.row { display: grid; grid-template-columns: auto 1fr 4em; gap: 10px; align-items: center; margin-top: 10px; }
+.row label { color: var(--gold); }
+.row output { text-align: right; color: var(--gold-hi); font-variant-numeric: tabular-nums; }
+.check { display: inline-flex; gap: 6px; align-items: center; color: var(--ash); font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--gold); }
+
+.pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 6px; }
+.pad {
+  background: var(--bg-card); border: 1px solid var(--bdr-mid); color: var(--txt); padding: 8px 8px; cursor: pointer;
+  text-align: left; font-size: 13px; min-height: 36px; overflow-wrap: anywhere;
+}
+.pad:hover { border-color: var(--gold); color: var(--gold-hi); }
+.pad:active, .pad.hit { background: var(--rust); color: var(--gold-hi); }
+.pad small { display: block; color: var(--txt-dim); font-size: 11px; }
+
+.search { width: 100%; background: var(--bg-input); border: 1px solid var(--bdr-mid); padding: 6px 8px; margin: 10px 0 8px; color: var(--gold-hi); }
+.search::placeholder { color: var(--txt-dim); }
+.lines { max-height: 300px; overflow-y: auto; border: 1px solid var(--bdr); background: var(--bg-deep); }
+.line {
+  display: grid; grid-template-columns: 2.6em 1fr; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: 0; border-bottom: 1px solid var(--bdr); padding: 6px 8px; color: var(--txt);
+}
+.line:last-child { border-bottom: 0; }
+.line:hover { background: var(--bg-card); color: var(--gold-hi); }
+.line.hit { background: var(--rust); color: var(--gold-hi); }
+.line span:first-child { color: var(--txt-dim); font-variant-numeric: tabular-nums; }
+
+.beats { display: grid; gap: 10px; }
+.beat { display: grid; grid-template-columns: 9.5em 1fr; gap: 8px; align-items: start; }
+.beat > span { color: var(--gold); font-size: 13px; padding-top: 5px; }
+.beat .chips { margin-top: 0; }
+@media (max-width: 480px) { .beat { grid-template-columns: 1fr; } .beat > span { padding-top: 0; } }
+
+pre#export {
+  margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--ash);
+  background: var(--bg-deep); border: 1px solid var(--bdr); padding: 8px; user-select: all;
+}
+
+#banner { display: none; margin-bottom: 16px; padding: 10px 12px; border: 1px solid #8A2A14; background: var(--alarm-bg); color: #FFD7C4; }
+#banner.show { display: block; }
+#toast {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  max-width: min(92vw, 520px); padding: 9px 14px; background: var(--bg-card); border: 1px solid var(--gold);
+  color: var(--gold-hi); font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header id="top">
+  <div class="brand">
+    <h1>SOUND DESK</h1>
+    <span id="conn" class="conn">connecting…</span>
+  </div>
+  <div class="vol">
+    <label for="k-vol">VOLUME</label>
+    <input type="range" id="k-vol" min="0" max="9" step="1" value="0" aria-describedby="status">
+    <output id="o-vol" for="k-vol">–</output>
+  </div>
+  <div class="actions">
+    <button class="btn stop" id="stop" type="button" title="Stop every sound now (Esc)">■ STOP</button>
+    <button class="btn" id="save" type="button" title="Keep this mix on the board: it survives reboots">SAVE TO BOARD</button>
+    <button class="btn" id="reset" type="button" title="Back to the mix the firmware was built with">RESET</button>
+  </div>
+  <div class="status" id="status"></div>
+</header>
+
+<div id="banner" role="alert"></div>
+
+<main>
+  <div class="col" id="col-play">
+    <section class="panel" aria-labelledby="h-eval">
+      <h2 id="h-eval">EVALUATE <small>ready-made listening tests</small></h2>
+      <p class="note">Each test puts back whatever it changes when it ends, or when you hit STOP. Tune, run it again, save when it sounds right.</p>
+      <div class="pads" id="tests"></div>
+      <p class="now" id="test-now" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-music">
+      <h2 id="h-music">MUSIC <small>the composer, live</small></h2>
+      <div class="chips" id="music-chips" role="group" aria-label="Music style"></div>
+      <div class="row">
+        <label for="k-tension">Tension</label>
+        <input type="range" id="k-tension" min="0" max="1" step="0.01" value="0.3" disabled>
+        <output id="o-tension" for="k-tension">auto</output>
+      </div>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="tension-auto" checked> tension follows the game</label>
+      <p class="now">NOW PLAYING <b id="playing">–</b> · AUTO lets the game's world pick the style again</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-voice">
+      <h2 id="h-voice">VOICE <small>tap a line to hear it</small></h2>
+      <div class="chips" id="voice-chips" role="group" aria-label="Speaking style"></div>
+      <input class="search" id="line-search" type="search" placeholder="filter the lines…" aria-label="Filter voice lines">
+      <div class="lines" id="lines"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-sfx">
+      <h2 id="h-sfx">EFFECTS</h2>
+      <div class="pads" id="sfx"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-story">
+      <h2 id="h-story">STORY BEATS <small>what the game plays: effect + voice + music</small></h2>
+      <div class="beats" id="beats"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-reels">
+      <h2 id="h-reels">REELS</h2>
+      <div class="pads" id="reels"></div>
+    </section>
+  </div>
+
+  <div class="col" id="col-tune"></div>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+// ── Small helpers ───────────────────────────────────────────────────────────
+const $ = (s) => document.querySelector(s);
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids) if (c != null) e.append(c);
+  return e;
+}
+const fix = (v, n = 2) => Number(v).toFixed(n);
+function db(g) {
+  if (g <= 0.0001) return '−∞ dB';
+  const d = 20 * Math.log10(g);
+  return (d >= 0.05 ? '+' : d <= -0.05 ? '−' : '') + Math.abs(d).toFixed(1) + ' dB';
+}
+const hzOff = (v) => (v <= 0 ? 'off' : Math.round(v) + ' Hz');
+const gain = (v) => fix(v) + '  ' + db(v);
+const pretty = (s) => s.replace(/_/g, ' ');
+let toastT = 0;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600);
+}
+function flash(btn) { btn.classList.add('hit'); setTimeout(() => btn.classList.remove('hit'), 220); }
+
+// ── What each knob means (the board sends keys, ranges and defaults) ──────
+const UI = {
+  vol:     { label: 'Volume' },
+  mlvl:    { group: 'mix', label: 'Music level', fmt: (v) => (v == 0 ? 'off' : v + ' / 9'),
+             help: 'The K10 Music setting (the game’s settings slider too). 0 = no music or ambience.' },
+  mus:     { group: 'mix', label: 'Music', fmt: (v) => fix(v) + '  ' + db(v),
+             help: 'The music bus, at music level 9.' },
+  sfx:     { group: 'mix', label: 'Effects', fmt: (v) => fix(v) + '  ' + db(v),
+             help: 'The effect bus: one-shot sounds, and the instruments in the content reel.' },
+  vgain:   { group: 'mix', label: 'Voice', fmt: (v) => fix(v) + '  ' + db(v),
+             help: 'The speech bus: every Speak & Spell line.' },
+  duck:    { group: 'mix', label: 'Music dips under voice', fmt: (v) => 'to ' + Math.round((1 - v) * 100) + '%  ' + db(1 - v),
+             help: 'How far the music drops while the voice speaks.' },
+  lvl_narrator: { group: 'vlevels', label: 'Narrator', fmt: gain, demo: ['welcome to the wasteland.', 'narrator'],
+                  help: 'The chronicler: weather, the threat clock, deaths, dawn.' },
+  lvl_chant:    { group: 'vlevels', label: 'Chant', fmt: gain, demo: ['thin light. and we are still here.', 'chant'],
+                  help: 'The dawn roll call, sung on the key.' },
+  lvl_whisper:  { group: 'vlevels', label: 'Whisper', fmt: gain, demo: ['something out there has your scent.', 'whisper'],
+                  help: 'The waste whispering the Doom’s taunts. Breathy, with the heaviest reverb.' },
+  lvl_doom:     { group: 'vlevels', label: 'The Doom', fmt: gain, demo: ['i see you.', 'doom'],
+                  help: 'The Doom itself: a doubled monotone far below.' },
+  lvl_barker:   { group: 'vlevels', label: 'Barker', fmt: gain, demo: ['step right up. step right up.', 'barker'],
+                  help: 'The caravan’s showman.' },
+  lvl_radio:    { group: 'vlevels', label: 'Radio', fmt: gain, demo: ['that is correct.', 'radio'],
+                  help: 'Transmissions: encounter results.' },
+  rev:     { group: 'space', label: 'Reverb + echo', fmt: (v) => '×' + fix(v),
+             help: 'Scales the reverb and echo returns of everything.' },
+  noise:   { group: 'space', label: 'Noise in the instruments', fmt: (v) => '×' + fix(v),
+             help: 'Breath, bow and hat noise inside every instrument. 0 tells you whether a hiss is part of the music.' },
+  wind:    { group: 'space', label: 'Wind', fmt: (v) => '×' + fix(v),
+             help: 'The weather’s wind texture under the music.' },
+  lp:      { group: 'master', label: 'Treble roll-off', fmt: hzOff,
+             help: 'Master low-pass. Lower is darker and less fizzy; 0 = off.' },
+  hp:      { group: 'master', label: 'Bass cut', fmt: (v) => Math.round(v) + ' Hz',
+             help: 'Master high-pass, 4th order. The 2 W cone rattles on what it cannot move.' },
+  comp:    { group: 'master', label: 'Compressor threshold', fmt: (v) => fix(v, 1) + ' dBFS',
+             help: '2:1 above this level. Lower evens everything out and squashes the voice harder.' },
+  q:       { group: 'master', label: 'Output cut', seg: [[0, 'truncate'], [1, 'round'], [2, 'dither'], [3, 'dither + shape']],
+             help: 'How each sample is cut to 16 bits after the volume. Truncate is the old gritty cut.' },
+  vlp:     { group: 'voice', label: 'Voice band limit', fmt: hzOff,
+             help: 'A low-pass on the voice alone. Too low and it goes muffled; 0 = off.' },
+  vunv:    { group: 'voice', label: 'Hiss consonants', fmt: (v) => '×' + fix(v),
+             help: 'The unvoiced noise of s, sh, f, t.' },
+  vsoft:   { group: 'voice', label: 'Source softening', fmt: (v) => fix(v),
+             help: 'Smooths the chip’s click-like pitch pulse. 0 = the chip’s own.' },
+  vchirp:  { group: 'voice', label: 'Pitch pulse', seg: [[-1, 'chip'], [0, 'TMS5220'], [1, 'TMS5100']],
+             help: 'Which chip’s excitation pulse. The vocabulary was made for the TMS5220.' },
+  dac8:    { group: 'voice', label: '8-bit grit', seg: [[-1, 'per style'], [0, 'off'], [1, 'on']],
+             help: 'The chip’s 8-bit DAC. Per style = only the radio voice has it.' },
+  vmid:    { group: 'scale', label: 'Volume 5 — the middle', fmt: (v) => fix(v, 1) + ' dB',
+             help: 'How loud volume 5 is: your comfortable level. 1–4 step down 3 dB each from here.' },
+  vmax:    { group: 'scale', label: 'Volume 9 — the loudest', fmt: (v) => fix(v, 1) + ' dB',
+             help: 'How loud 9 is; 6–8 share the way up from 5. Play something loud at 9, raise this until it starts to clip, then back off a notch.' },
+  style:   { group: 'music' },
+  tension: { group: 'music' },
+};
+const GROUPS = [
+  ['mix', 'MIX', 'the balance — what you asked to fix'],
+  ['vlevels', 'VOICE LEVELS', 'each speaking style against the others — ▶ plays it'],
+  ['space', 'SPACE', 'reverb, noise, weather'],
+  ['master', 'MASTER', 'the whole speaker'],
+  ['scale', 'VOLUME SCALE', 'what the 0–9 steps mean'],
+  ['voice', 'VOICE CHARACTER', 'the Speak & Spell chip'],
+  ['other', 'OTHER', ''],
+];
+const SAVES = (k) => k !== 'vol' && k !== 'style' && k !== 'tension';
+
+// ── State ───────────────────────────────────────────────────────────────────
+const S = {
+  info: null, knobs: {},       // key -> {min,max,step,def}
+  val: {}, snap: {},           // current values; the values when last loaded/saved
+  saved: false, playing: '', fmt: '',
+  drag: null, sayStyle: 0, slot: 0, tier: 0,
+};
+const CTL = {};                // key -> { set(v) }
+
+// ── The one request queue: knobs first (coalesced), then jobs in order ─────
+const net = { knobs: {}, jobs: [], busy: false, online: null };
+async function getJSON(url, ms = 6000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    const r = await fetch(url, { cache: 'no-store', signal: ac.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+function setOnline(on) {
+  if (net.online === on) return;
+  net.online = on;
+  const c = $('#conn');
+  c.className = 'conn ' + (on ? 'on' : 'off');
+  c.textContent = on ? ('live · ' + (S.fmt || 'K10')) : 'board not answering';
+}
+function sendKnob(k, v) { net.knobs[k] = v; pump(); }
+function job(url, onReply) { net.jobs.push({ url, onReply }); pump(); }
+async function pump() {
+  if (net.busy) return;
+  let url, onReply = null, sent = null;
+  const ks = Object.keys(net.knobs);
+  if (ks.length) {
+    sent = net.knobs;
+    url = '/snddbg?' + ks.map((k) => k + '=' + encodeURIComponent(sent[k])).join('&');
+    net.knobs = {};
+    onReply = (j) => applyState(j);
+  } else if (net.jobs.length) {
+    ({ url, onReply } = net.jobs.shift());
+  } else return;
+  net.busy = true;
+  let ok = false;
+  try {
+    const j = await getJSON(url);
+    ok = true;
+    setOnline(true);
+    if (onReply) onReply(j);
+  } catch (e) {
+    setOnline(false);
+    // A knob change that did not land (the board rebooting, a dropped
+    // connection) goes back in the queue unless a newer value replaced it; a
+    // failed play is dropped -- a sound arriving late is worse than none.
+    if (sent) for (const k of Object.keys(sent)) if (!(k in net.knobs)) net.knobs[k] = sent[k];
+  } finally {
+    net.busy = false;
+    if (Object.keys(net.knobs).length || net.jobs.length) setTimeout(pump, ok ? 15 : 1500);
+  }
+}
+function play(qs, btn) {
+  if (btn) flash(btn);
+  if (S.val.vol === 0) toast('Volume is 0 — nothing plays while the board is muted.');
+  job('/sndplay?' + qs, (j) => { if (j && j.muted) toast('The board is muted (volume 0).'); });
+}
+
+// ── Knob changes and board state ────────────────────────────────────────────
+function change(k, v) {
+  S.val[k] = v;
+  if (CTL[k]) CTL[k].set(v);
+  sendKnob(k, v);
+  refreshStatus();
+}
+function applyState(j) {
+  if (!j || !j.k) return;
+  for (const [k, v] of Object.entries(j.k)) {
+    if (k === S.drag || k in net.knobs) continue;      // the user is holding this one
+    S.val[k] = v;
+    if (CTL[k]) CTL[k].set(v);
+  }
+  S.saved = !!j.saved;
+  S.playing = j.playing || '';
+  S.fmt = j.fmt || S.fmt;
+  $('#playing').textContent = S.playing ? S.playing.toUpperCase() : '–';
+  refreshStatus();
+}
+function dirtyKeys() {
+  return Object.keys(S.knobs).filter((k) => SAVES(k) && Math.abs((S.val[k] ?? 0) - (S.snap[k] ?? 0)) > 1e-6);
+}
+function takeSnapshot() { S.snap = { ...S.val }; }
+function refreshStatus() {
+  document.body.classList.toggle('muted', S.val.vol === 0);
+  const st = $('#status');
+  const d = dirtyKeys();
+  st.textContent = '';
+  if (S.val.vol === 0) st.append(el('span', { class: 'warn', text: 'MUTED — raise the volume to hear anything. ' }));
+  if (d.length) st.append(el('b', { text: '● ' + d.length + ' unsaved change' + (d.length > 1 ? 's' : '') }),
+                          ' — SAVE TO BOARD keeps them across reboots.');
+  else st.append(S.saved ? 'This mix is saved on the board.' : 'The firmware’s own mix — nothing saved on the board yet.');
+  $('#export').textContent = exportText();
+}
+
+// ── Building the page from /sndinfo ─────────────────────────────────────────
+function knobRow(k) {
+  const d = S.knobs[k], ui = UI[k] || { label: k };
+  const id = 'k-' + k;
+  const out = el('output', { id: 'o-' + k });
+  const row = el('div', { class: 'knob' });
+  const rst = el('button', { class: 'rst', type: 'button', text: '↺', title: 'Back to the default',
+                             'aria-label': 'Reset ' + (ui.label || k), onclick: () => change(k, d.def) });
+  const demo = ui.demo ? el('button', { class: 'rst demo', type: 'button', text: '▶', title: 'Hear this voice',
+    'aria-label': 'Hear ' + ui.label, onclick: () => {
+      const n = S.info.say.indexOf(ui.demo[0]), s = S.info.voices.indexOf(ui.demo[1]);
+      if (n >= 0 && s >= 0) play('say=' + n + '&style=' + s, demo);
+    } }) : null;
+  let setter, ctl;
+  if (ui.seg) {
+    ctl = el('div', { class: 'segs', role: 'group', 'aria-label': ui.label });
+    const btns = ui.seg.map(([v, t]) => {
+      const b = el('button', { class: 'seg', type: 'button', 'aria-pressed': 'false', text: t, onclick: () => change(k, v) });
+      b.dataset.v = v; ctl.append(b); return b;
+    });
+    setter = (v) => btns.forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === v)));
+  } else {
+    ctl = el('input', { type: 'range', id, min: d.min, max: d.max, step: d.step });
+    ctl.addEventListener('input', () => { S.drag = k; change(k, Number(ctl.value)); });
+    ctl.addEventListener('change', () => { S.drag = null; });
+    setter = (v) => {
+      ctl.value = v;
+      ctl.style.setProperty('--p', ((v - d.min) / (d.max - d.min || 1)) * 100 + '%');
+      out.textContent = (ui.fmt || String)(v);
+    };
+  }
+  row.append(el('div', { class: 'kh' }, ui.seg ? el('span', { class: 'lbl', text: ui.label }) : el('label', { for: id, text: ui.label || k }), out, demo, rst),
+             ctl, ui.help ? el('p', { class: 'help', text: ui.help }) : null);
+  CTL[k] = { set: (v) => { setter(v); row.classList.toggle('changed', Math.abs(v - d.def) > 1e-6); } };
+  return row;
+}
+
+function buildTune() {
+  const col = $('#col-tune');
+  for (const [g, title, sub] of GROUPS) {
+    const keys = Object.keys(S.knobs).filter((k) => (UI[k] ? UI[k].group === g : g === 'other') && k !== 'vol');
+    if (!keys.length) continue;
+    col.append(el('section', { class: 'panel' },
+      el('h2', {}, title, sub ? el('small', { text: sub }) : null),
+      el('div', { class: 'knobs' }, ...keys.map(knobRow))));
+  }
+  col.append(el('section', { class: 'panel' },
+    el('h2', {}, 'EXPORT', el('small', { text: 'the saved knobs, to hand back for the firmware defaults' })),
+    el('button', { class: 'btn', type: 'button', text: 'COPY', onclick: copyExport }),
+    el('pre', { id: 'export' })));
+}
+
+function buildVolume() {
+  const r = $('#k-vol'), out = $('#o-vol'), d = S.knobs.vol || { min: 0, max: 9, step: 1 };
+  r.min = d.min; r.max = d.max; r.step = d.step;
+  r.addEventListener('input', () => { S.drag = 'vol'; change('vol', Number(r.value)); });
+  r.addEventListener('change', () => { S.drag = null; });
+  CTL.vol = { set: (v) => {
+    r.value = v; r.style.setProperty('--p', (v / (d.max || 9)) * 100 + '%');
+    out.textContent = v === 0 ? 'MUTED' : v + ' / 9';
+  } };
+}
+
+function buildMusic() {
+  const box = $('#music-chips');
+  const chips = [];
+  const add = (v, text, cls) => {
+    const b = el('button', { class: 'chip' + (cls ? ' ' + cls : ''), type: 'button', 'aria-pressed': 'false', text,
+                             onclick: () => change('style', v) });
+    b.dataset.v = v; chips.push(b); box.append(b);
+  };
+  add(-1, 'AUTO', 'auto');
+  S.info.music.forEach((name, i) => { if (name !== 'silent') add(i, name); });
+  CTL.style = { set: (v) => chips.forEach((c) => c.setAttribute('aria-pressed', String(Number(c.dataset.v) === v))) };
+
+  const r = $('#k-tension'), out = $('#o-tension'), auto = $('#tension-auto');
+  const setT = (v) => {
+    const isAuto = v < 0;
+    auto.checked = isAuto; r.disabled = isAuto;
+    if (!isAuto) { r.value = v; }
+    r.style.setProperty('--p', (Number(r.value) * 100) + '%');
+    out.textContent = isAuto ? 'auto' : fix(v);
+  };
+  r.addEventListener('input', () => { S.drag = 'tension'; change('tension', Number(r.value)); });
+  r.addEventListener('change', () => { S.drag = null; });
+  auto.addEventListener('change', () => change('tension', auto.checked ? -1 : Number(r.value)));
+  CTL.tension = { set: setT };
+}
+
+function buildVoice() {
+  const chipsBox = $('#voice-chips');
+  const chips = S.info.voices.map((name, i) => {
+    const b = el('button', { class: 'chip', type: 'button', 'aria-pressed': String(i === S.sayStyle), text: name,
+                             onclick: () => { S.sayStyle = i; chips.forEach((c, j) => c.setAttribute('aria-pressed', String(j === i))); } });
+    chipsBox.append(b); return b;
+  });
+  const list = $('#lines');
+  const rows = S.info.say.map((text, i) => {
+    const b = el('button', { class: 'line', type: 'button', onclick: () => play('say=' + i + '&style=' + S.sayStyle, b) },
+                 el('span', { text: '#' + i }), el('span', { text }));
+    b.dataset.q = (i + ' ' + text).toLowerCase();
+    list.append(b); return b;
+  });
+  $('#line-search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    rows.forEach((r) => { r.hidden = q && !r.dataset.q.includes(q); });
+  });
+}
+
+function buildSfx() {
+  const box = $('#sfx');
+  S.info.sfx.forEach((name, i) => {
+    if (i === 0) return;                               // "none"
+    const b = el('button', { class: 'pad', type: 'button', text: pretty(name), onclick: () => play('sfx=' + i, b) });
+    box.append(b);
+  });
+}
+
+function buildBeats() {
+  const story = S.info.story;
+  const id = (n) => story.indexOf(n);
+  const beat = (name, a = 0, b = 0) => 'story=' + id(name) + '&a=' + a + '&b=' + b;
+  const box = $('#beats');
+  const line = (label, ...kids) => box.append(el('div', { class: 'beat' }, el('span', { text: label }), el('div', { class: 'chips' }, ...kids)));
+  const btn = (text, qsFn) => { const b = el('button', { class: 'chip', type: 'button', text, onclick: () => play(qsFn(), b) }); return b; };
+  const pick = (names, key) => {
+    const bs = names.map((n, i) => el('button', { class: 'chip', type: 'button', 'aria-pressed': String(i === S[key]), text: n,
+      onclick: () => { S[key] = i; bs.forEach((x, j) => x.setAttribute('aria-pressed', String(j === i))); } }));
+    return bs;
+  };
+  const SLOTS = ['Guide', 'Quartermaster', 'Medic', 'Mule', 'Scout', 'Endurer'];
+  const WX = ['clear', 'rain', 'storm', 'chem rain', 'strangle fog', 'mist'];
+
+  line('Time', btn('dawn · day 7', () => beat('dawn', 7)), btn('dusk', () => beat('dusk')), btn('boot', () => beat('boot')));
+  line('Threat clock', ...[1, 2, 3, 4].map((n) => btn('band ' + n, () => beat('threat', n))));
+  line('Weather', ...WX.map((w, i) => btn(w, () => beat('weather', i))));
+  line('World', btn('caravan', () => beat('caravan')), btn('quake', () => beat('quake')), btn('fire', () => beat('fire', 0, 0)),
+       btn('lightning strike', () => beat('fire', 0, 1)), btn('flood', () => beat('flood')), btn('thunder', () => beat('thunder')),
+       btn('geiger', () => beat('geiger')), btn('tunnel down', () => beat('tunnel', 1)), btn('tunnel up', () => beat('tunnel', 0)),
+       btn('score up', () => beat('score_up')), btn('score down', () => beat('score_down')));
+  line('Survivor', ...pick(SLOTS, 'slot'));
+  line('… who', btn('joins', () => beat('join', S.slot)), btn('leaves', () => beat('left', S.slot)), btn('goes down', () => beat('downed', S.slot)),
+       btn('enters an encounter', () => beat('enc_start', S.slot)), btn('wins', () => beat('enc_win', S.slot, 0)),
+       btn('wins against the odds', () => beat('enc_win', S.slot, 1)), btn('is thrown', () => beat('enc_thrown', S.slot)),
+       btn('hits a hazard', () => beat('enc_hazard', S.slot)), btn('clears it', () => beat('enc_cleared', S.slot)));
+  line('The Doom · tier', ...pick(['0 far', '1', '2', '3 hunting'], 'tier'));
+  line('… taunts', ...[0, 1, 2].map((n) => btn('line ' + (n + 1), () => beat('doom_taunt', S.tier, n))),
+       btn('its band', () => beat('doom_band', S.tier)));
+}
+
+function buildReels() {
+  const box = $('#reels');
+  const reel = (title, sub, seq) => {
+    const b = el('button', { class: 'pad', type: 'button', onclick: () => play('seq=' + seq, b) }, title, el('small', { text: sub }));
+    box.append(b);
+  };
+  reel('Content reel', 'narrator, whisper, calliope, music box, bell, harmonium · 21 s', 1);
+  reel('Tones + narrator', 'three bare sines through the whole engine, then the narrator · 10 s', 2);
+}
+
+// ── EVALUATE: scripted listening tests ──────────────────────────────────────
+// A test is a list of [msFromStart, action, note]; each one records what it
+// changes and puts it back at the end -- or at once if STOP ends it early.
+const T = { run: 0, timers: [], restore: null };
+function testNote(msg) { $('#test-now').textContent = msg; }
+function endTest(msg) {
+  T.timers.forEach(clearTimeout); T.timers = [];
+  T.run++;
+  if (T.restore) { const r = T.restore; T.restore = null; r(); }
+  testNote(msg || '');
+}
+function runTest(btn, steps, restore) {
+  endTest();
+  const run = T.run;
+  flash(btn);
+  T.restore = restore;
+  for (const [at, fn, note] of steps) {
+    T.timers.push(setTimeout(() => {
+      if (run !== T.run) return;
+      if (fn) fn();
+      if (note) testNote(note);
+    }, at));
+  }
+}
+function buildTests() {
+  const I = S.info;
+  const line = (text) => I.say.indexOf(text);
+  const voice = (name) => Math.max(0, I.voices.indexOf(name));
+  const WELCOME = line('welcome to the wasteland.');
+  const SCENT = line('something out there has your scent.');
+  const CALLIOPE = I.sfx.indexOf('calliope_call');
+  const ASHFALL = I.music.indexOf('ashfall');
+  const say = (n, style) => { if (n >= 0) play('say=' + n + '&style=' + style); };
+  const box = $('#tests');
+  const test = (title, sub, make) => {
+    const b = el('button', { class: 'pad', type: 'button', onclick: () => {
+      if (S.val.vol === 0) { toast('Raise the volume first — the board is muted.'); return; }
+      make(b);
+    } }, title, el('small', { text: sub }));
+    box.append(b);
+  };
+
+  test('Voice over music', 'ashfall, then the narrator, the Doom’s whisper and a calliope call on top · 15 s', (b) => {
+    const style = S.val.style, mlvl = S.val.mlvl;
+    runTest(b, [
+      [0,     () => { if (S.val.mlvl === 0) change('mlvl', 6); if (ASHFALL >= 0) change('style', ASHFALL); },
+              'Music: ashfall (the day style) coming in…'],
+      [4000,  () => say(WELCOME, voice('narrator')), 'The narrator over the music — is every word on top?'],
+      [7500,  () => say(SCENT, voice('whisper')),   'The Doom’s whisper over the music.'],
+      [11000, () => { if (CALLIOPE > 0) play('sfx=' + CALLIOPE); }, 'An effect: the calliope call.'],
+      [15000, () => endTest('Done. Adjust Music, Voice, Effects or the dip, and run it again.')],
+    ], () => { change('style', style); if (mlvl === 0) change('mlvl', 0); });
+  });
+
+  test('Hiss: live silence vs muted', 'the output running with nothing playing, then true mute · 13 s', (b) => {
+    const vol = S.val.vol, mlvl = S.val.mlvl;
+    runTest(b, [
+      [0,     () => { job('/sndplay?stop=1'); change('mlvl', 0); },
+              'LIVE SILENCE — the output is running, nothing is playing (tails fade over ~4 s)…'],
+      [7000,  () => change('vol', 0), 'MUTED — the amp is fed pure zeros. Did the hiss change?'],
+      [12500, () => endTest('Done. Same hiss in both halves = the amp itself; gone when muted = the signal.')],
+    ], () => { change('vol', vol); change('mlvl', mlvl); });
+  });
+
+  test('Old cut vs new cut', 'the narrator with the old gritty 16-bit cut, then today’s dithered one · 7 s', (b) => {
+    const q = S.val.q;
+    runTest(b, [
+      [0,    () => { change('q', 0); say(WELCOME, voice('narrator')); }, 'OLD: truncated after the volume (the grit).'],
+      [3300, () => { change('q', 3); say(WELCOME, voice('narrator')); }, 'NEW: dithered and noise-shaped.'],
+      [6800, () => endTest('Done.')],
+    ], () => change('q', q));
+  });
+
+  test('The six voices', 'the same line as narrator, radio, whisper, the Doom, the barker, the chant · 18 s', (b) => {
+    const order = ['narrator', 'radio', 'whisper', 'doom', 'barker', 'chant'];
+    const steps = order.map((v, i) => [i * 3000, () => say(WELCOME, voice(v)), v.toUpperCase()]);
+    steps.push([order.length * 3000, () => endTest('Done. The VOICE CHARACTER knobs shape all of them.')]);
+    runTest(b, steps, null);
+  });
+}
+
+// ── Save / reset / stop / export ────────────────────────────────────────────
+function save() {
+  job('/snddbg?save=1', (j) => { applyState(j); takeSnapshot(); refreshStatus(); toast(j && j.saved ? 'Saved on the board.' : 'Save failed.'); });
+}
+let resetArmed = 0;
+function reset() {
+  const b = $('#reset');
+  if (!resetArmed) {
+    b.textContent = 'CONFIRM RESET'; b.classList.add('arm');
+    resetArmed = setTimeout(() => { resetArmed = 0; b.textContent = 'RESET'; b.classList.remove('arm'); }, 4000);
+    return;
+  }
+  clearTimeout(resetArmed); resetArmed = 0; b.textContent = 'RESET'; b.classList.remove('arm');
+  job('/snddbg?reset=1', (j) => { applyState(j); takeSnapshot(); refreshStatus(); toast('Back to the firmware’s own mix. Nothing is saved now.'); });
+}
+function stopAll() {
+  flash($('#stop'));
+  net.jobs.length = 0;
+  job('/sndplay?stop=1');
+  if (T.timers.length || T.restore) endTest('Stopped — everything the test changed is back.');
+}
+function exportText() {
+  const o = {};
+  for (const k of Object.keys(S.knobs)) if (SAVES(k) && k !== 'mlvl') o[k] = S.val[k];
+  return JSON.stringify(o);
+}
+async function copyExport() {
+  const text = exportText();
+  try { await navigator.clipboard.writeText(text); toast('Copied.'); }
+  catch (e) {
+    const r = document.createRange(); r.selectNodeContents($('#export'));
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Selected — copy it with Ctrl+C.');
+  }
+}
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+async function boot() {
+  let info;
+  try { info = await getJSON('/sndinfo'); }
+  catch (e) {
+    setOnline(false);
+    const b = $('#banner');
+    b.textContent = 'This board did not answer GET /sndinfo. It needs firmware with the sound desk (game-server.hpp), and the page must be opened from the board: http://<board>/sound.html. Retrying…';
+    b.classList.add('show');
+    setTimeout(boot, 4000);
+    return;
+  }
+  $('#banner').classList.remove('show');
+  S.info = info;
+  for (const d of info.knobs) S.knobs[d.k] = d;
+  buildVolume(); buildTests(); buildMusic(); buildVoice(); buildSfx(); buildBeats(); buildReels(); buildTune();
+  S.fmt = info.state && info.state.fmt;
+  setOnline(true);
+  applyState(info.state);
+  takeSnapshot();
+  refreshStatus();
+
+  $('#stop').addEventListener('click', stopAll);
+  $('#save').addEventListener('click', save);
+  $('#reset').addEventListener('click', reset);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') stopAll(); });
+  // Follow the board (the game's settings can move the volume and music level
+  // too) without ever stacking requests: one poll, only when idle and visible.
+  setInterval(() => {
+    if (document.hidden || net.busy || net.jobs.length || Object.keys(net.knobs).length || S.drag) return;
+    job('/snddbg', applyState);
+  }, 3000);
+}
+boot();
+})();
+</script>
+</body>
+</html>

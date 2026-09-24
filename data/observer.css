@@ -1,0 +1,403 @@
+/*──────────────────── Observer screen ────────────────────────────
+  This is a SHOW, not a dashboard.
+
+  The first version of this file was a status console: a world rail, a meter
+  grid, a six-card scoreboard, and the narrator's line in 1.25vw at the
+  bottom. Everything on it was true and none of it was worth watching. The
+  spec is unambiguous about what the screen is for -- the encounter is the
+  story, the voice is the show, the survival meters are CONSEQUENCES -- so
+  the layout now spends its space that way:
+
+    - ONE survivor, named in the biggest type on the page.
+    - Their state as a WORD ("NEARLY GONE"), not a gauge. A hairline under
+      the name carries the fraction for anyone who cares.
+    - The scene's prose is NOT on the stage. A paragraph is something you
+      read, and nobody reads a paragraph on a television from across a room.
+      The narrator quotes it one clause at a time instead, on the beat it
+      belongs to.
+    - The greed meter as a sentence you can read across a room.
+    - The narrator's line at headline size, and nothing competing with it.
+    - The cast as NAMES, struck through when they stop. That is the arc.
+    - A death takes the whole screen. It does not grey out a table row.
+
+  Built for three metres away: no hover, no scroll, overflow hidden, every
+  size derived from vw so 1080p and 4K both work untouched.
+  Palette is the game's own (:root in style.css) -- amber-on-black stencil.
+─────────────────────────────────────────────────────────────────*/
+:root {
+  --bg:        #080604;
+  --bg-deep:   #050402;
+  --bdr:       #221408;
+  --bdr-mid:   #3A2410;
+  --bdr-hi:    #5C3C16;
+  --txt:       #A86820;    /* amber body */
+  --txt-dim:   #6B4010;    /* dim amber */
+  --gold:      #C07818;    /* mid amber */
+  --gold-hi:   #E8A828;    /* bright amber */
+  --rust:      #6A3008;
+  --ash:       #A07828;
+  --blood:     #4A1208;
+  --alarm:     #D8502A;
+  --stencil:   Impact, 'Arial Narrow', 'Arial Black', sans-serif;
+
+  /* One unit, and everything is a multiple of it, so 4K needs no media
+     query. Bounded by the SHORT axis as well as the wide one: on 21:9 a pure
+     vw unit grows while the height does not, and the stage quietly overflows
+     off the top and bottom of somebody’s television. */
+  /* The base unit, scaled by --fit, which observer.js drives from a live
+     measurement of the stage. A viewport-derived size alone is only ever
+     right for the aspect ratio it was tuned on; this ends up as large as
+     the actual screen allows. See fitStage(). */
+  /* LG webOS / older Chromium: no inset:, min()/max()/clamp() or flex gap.
+     A custom property never fails to parse, so the fallback for --u is an
+     @supports block below rather than a preceding declaration. */
+  --u: calc(1.12vw * var(--fit, 1));
+  --night: 1;      /* driven from dayTick -- a real time-of-day arc */
+  --dx: 0px;       /* burn-in drift, a few px on a slow cycle */
+  --dy: 0px;
+}
+@supports (width: max(1px, 2px)) {
+  :root { --u: calc(max(13px, min(1.12vw, 1.96vh)) * var(--fit, 1)); }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: 'Courier New', Courier, monospace;
+  overflow: hidden;
+  user-select: none;
+  cursor: none;                       /* a TV has no pointer */
+}
+
+#obs {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  transform: translate(var(--dx), var(--dy));
+  filter: brightness(calc(0.74 + 0.26 * var(--night)));
+  transition: filter 4s linear;
+}
+
+/* Grain and a heavy vignette: the edges of the screen are not information. */
+#obs::after {
+  content: ''; position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 60;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23g)'/></svg>");
+  background-size: calc(var(--u) * 12) calc(var(--u) * 12);
+}
+#obs::before {
+  content: ''; position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 59;
+  background: radial-gradient(ellipse at 50% 45%, transparent 62%, rgba(0,0,0,0.55) 100%);
+}
+
+/*──────────────────── World strip ────────────────────────────────
+  Context, deliberately quiet. If you find yourself reading it, something
+  louder has failed.                                                      */
+#strip {
+  display: flex; align-items: center; gap: calc(var(--u) * 2.2);
+  padding: calc(var(--u) * 0.7) calc(var(--u) * 2.4);
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 1.7);
+  letter-spacing: calc(var(--u) * 0.22);
+  color: var(--ash);
+  border-bottom: 1px solid var(--bdr);
+}
+#w-weather { color: var(--ash); }
+#w-weather.w1, #w-weather.w2 { color: #6FA8C8; }
+#w-weather.w3 { color: #9FC050; }
+#w-weather.w4, #w-weather.w5 { color: #8A8A9A; }
+#w-threat {
+  flex: 0 0 calc(var(--u) * 10); height: calc(var(--u) * 0.4);
+  background: var(--bdr); overflow: hidden;
+}
+#w-threat i { display: block; height: 100%; width: 0; background: var(--gold); transition: width 1s linear; }
+#w-threat.warm i { background: var(--gold-hi); }
+#w-threat.hot  i { background: var(--alarm); }
+#w-status { margin-left: auto; letter-spacing: calc(var(--u) * 0.1); }
+#w-status.st-live    { color: var(--txt-dim); }
+#w-status.st-stalled { color: var(--alarm); }
+
+/*──────────────────── The stage ──────────────────────────────────*/
+#stage {
+  position: relative;
+  display: flex; flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--u) * 0.5);
+  padding: calc(var(--u) * 0.5) calc(var(--u) * 4);
+  min-height: 0; overflow: hidden;
+}
+/* Nothing on the stage is allowed to shrink. An auto-basis flex item in a
+   column that runs 5px over silently steals the space from whichever child
+   can give it. Nothing on this stage is long enough to clip gracefully, so
+   nothing is allowed to give in the first place. */
+#stage > * { flex: 0 0 auto; }
+
+/* The hex disk is SCENERY: the board’s own hand-painted tiles, full bleed,
+   at full strength. It used to sit at opacity 0.5 under a hard radial mask
+   AND the page vignette, which between them turned 1.4 MB of painted terrain
+   into a faint smudge -- all the cost of loading the art and none of the
+   benefit. Legibility is bought with the scrim below instead, which darkens
+   the side the type is on and leaves the rest of the picture alone. */
+#disk-bg {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 0;
+  opacity: 0; transition: opacity 1.2s ease;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 62%, transparent 99%);
+          mask-image: radial-gradient(ellipse at 50% 50%, #000 62%, transparent 99%);
+}
+#stage.open #disk-bg { opacity: 1; }
+/* THE PLINTH. Between the art and the type, never over the type.
+   This was a slow left-to-right gradient, which meant the contrast under any
+   given word depended on where that word happened to fall and what terrain
+   was behind it -- a bright dune under the condition line and it vanished.
+   It is a near-solid block for the width the text occupies and then a fast
+   fade, so legibility does not depend on the map. */
+#stage::after {
+  content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(6,4,3,0.96) 0%, rgba(6,4,3,0.95) 44%,
+                          rgba(6,4,3,0.62) 56%, rgba(6,4,3,0.10) 74%,
+                          rgba(6,4,3,0) 100%),
+    linear-gradient(180deg, rgba(6,4,3,0.55) 0%, transparent 18%,
+                           transparent 80%, rgba(6,4,3,0.7) 100%);
+}
+/* A scene is a room, not a map. The ground goes away entirely and the stakes
+   get a flat black field to sit on. */
+#stage.scene::after { background: rgba(6,4,3,0.94); }
+/* Keep the type inside the solid part of the plinth. */
+/* The type column. Wide enough that a door label -- the longest line on the
+   stage -- lands on ONE line at 16:9, and narrow enough that the art still
+   has a frame of its own to the right of it. */
+#stage > :not(#disk-bg):not(#admired) { max-width: 60%; max-width: min(60%, 66ch); }
+/* A canvas now: 61 hand-painted tiles per frame, redrawn only when the
+   ground under the camera actually changes. Markers are drawn into it. */
+#s-disk { display: block; width: 100%; height: 100%; }
+
+#who, #place, #greed, #doors { position: relative; z-index: 2; }
+
+/*──────────────────── THE ADMIRED ────────────────────────────────
+  The standings, in the corner, quiet. Same ladder as the board of the dead
+  in game-data.js -- these ones are just still on it.                     */
+#admired {
+  position: absolute; top: 0; right: calc(var(--u) * 2.2); z-index: 2;
+  min-width: calc(var(--u) * 20);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 0.9) calc(var(--u) * 0.7);
+  background: rgba(6, 4, 3, 0.74);
+  border: 1px solid var(--bdr);
+  border-top: none;
+}
+#admired h4 {
+  font-family: var(--stencil); font-weight: normal;
+  font-size: calc(var(--u) * 1.4); letter-spacing: calc(var(--u) * 0.32);
+  color: var(--txt-dim); margin-bottom: calc(var(--u) * 0.45);
+}
+#adm-rows { list-style: none; display: flex; flex-direction: column; gap: calc(var(--u) * 0.24); }
+#adm-rows li {
+  display: flex; align-items: baseline; gap: calc(var(--u) * 0.6);
+  font-size: calc(var(--u) * 1.7); color: var(--ash);
+}
+#adm-rows .a-n    { color: var(--txt-dim); min-width: calc(var(--u) * 1.1); }
+#adm-rows .a-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#adm-rows .a-sc   { color: var(--gold); font-variant-numeric: tabular-nums; }
+/* The arrow is little on purpose. It is a hint, not a verdict. */
+#adm-rows .a-t    { min-width: calc(var(--u) * 1); text-align: center; }
+#adm-rows .t-up   { color: #8FC050; }
+#adm-rows .t-dn   { color: var(--alarm); }
+#adm-rows .t-flat { color: var(--txt-dim); }
+#adm-rows li.on .a-name { color: var(--gold-hi); }
+#adm-rows li.on .a-n    { color: var(--gold); }
+/* What the subject is climbing toward. The one line of comedy in the panel,
+   so it gets the panel’s widest type rather than its smallest. */
+#adm-next {
+  margin-top: calc(var(--u) * 0.5);
+  padding-top: calc(var(--u) * 0.45);
+  border-top: 1px solid var(--bdr);
+  font-size: calc(var(--u) * 1.5);
+  color: var(--rust);
+}
+
+/* The name. Biggest thing on the page, and it is a person, not a metric. */
+#w-name {
+  font-family: var(--stencil); font-weight: normal;
+  font-size: calc(var(--u) * 4); line-height: 1;
+  letter-spacing: calc(var(--u) * 0.24);
+  color: var(--gold-hi);
+  text-shadow: 0 0 calc(var(--u) * 2.4) rgba(232,168,40,0.28), 0 3px 0 #000;
+}
+/* The fraction, as an underline rather than a gauge. */
+#w-bar {
+  width: calc(var(--u) * 26); height: calc(var(--u) * 0.34);
+  margin-top: calc(var(--u) * 0.35);
+  background: var(--bdr);
+}
+#w-bar i { display: block; height: 100%; background: var(--gold); transition: width 0.6s ease; }
+#w-bar.warn i { background: #C88018; }
+#w-bar.crit i { background: var(--alarm); }
+
+#w-cond {
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 2.3); letter-spacing: calc(var(--u) * 0.42);
+  color: var(--ash); margin-top: calc(var(--u) * 0.35);
+}
+#w-cond.warn { color: #E09A20; }
+#w-cond.crit { color: var(--alarm); animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Where they are. */
+#place { margin-top: calc(var(--u) * 0.45); }
+#w-place {
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 2.6); letter-spacing: calc(var(--u) * 0.2);
+  color: var(--txt);
+  border-left: calc(var(--u) * 0.32) solid var(--bdr-hi);
+  padding-left: calc(var(--u) * 0.9);
+}
+#stage.scene #w-place { color: var(--gold); border-left-color: var(--gold); }
+
+/*──────────────────── The greed meter ────────────────────────────
+  The centrepiece, and the reason the screen exists: the audience can see
+  that the exit is open, and watches somebody not take it.                */
+#greed { display: none; margin-top: calc(var(--u) * 0.35); }
+#stage.scene #greed { display: block; }
+#g-bank {
+  display: none;
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 2.5); letter-spacing: calc(var(--u) * 0.3);
+  color: #0B0804; background: var(--gold-hi);
+  padding: calc(var(--u) * 0.2) calc(var(--u) * 1.1);
+  width: max-content;
+  box-shadow: 0 0 calc(var(--u) * 2.6) rgba(232,168,40,0.5);
+  animation: bank 1.6s ease-in-out infinite;
+}
+#greed.armed #g-bank { display: block; }
+@keyframes bank {
+  0%,100% { box-shadow: 0 0 calc(var(--u) * 1.4) rgba(232,168,40,0.35); }
+  50%     { box-shadow: 0 0 calc(var(--u) * 4.2) rgba(232,168,40,0.9); }
+}
+#g-haul {
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 2.2); letter-spacing: calc(var(--u) * 0.24);
+  color: var(--gold); margin-top: calc(var(--u) * 0.5);
+}
+#greed.armed #g-haul { color: var(--gold-hi); }
+
+/*──────────────────── The doors ──────────────────────────────────
+  Odds first and enormous. The number is the decision.                    */
+#doors { list-style: none; margin-top: calc(var(--u) * 0.5); }
+#stage.open #doors { display: none; }
+#doors li {
+  display: flex; align-items: baseline; gap: calc(var(--u) * 0.9);
+  padding: calc(var(--u) * 0.2) 0;
+}
+#doors .d-body { display: flex; flex-direction: column; min-width: 0; }
+#doors .risk {
+  font-family: var(--stencil); font-size: calc(var(--u) * 2.5);
+  color: var(--gold-hi); min-width: calc(var(--u) * 5);
+  letter-spacing: calc(var(--u) * 0.04);
+}
+/* Mono, not stencil. A door label is a SENTENCE -- "force the cage with the
+   bolt-cutter" -- and Impact is a condensed display face: set it in caps with
+   tracking at sentence length and every word costs the viewer a beat. The
+   stencil stays where it belongs, on the short all-caps headers.
+   It WRAPS rather than truncating: half a door is not a decision. */
+#doors .lbl {
+  font-size: calc(var(--u) * 1.9); line-height: 1.22;
+  letter-spacing: calc(var(--u) * 0.02); color: var(--txt);
+}
+#doors .meta {
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 1.6); color: var(--ash);
+  letter-spacing: calc(var(--u) * 0.18);
+  margin-top: calc(var(--u) * 0.12);
+}
+#doors li.ends .risk { color: var(--alarm); }
+#doors li.ends .meta i {
+  font-style: normal; white-space: nowrap;
+  margin-left: calc(var(--u) * 0.6);
+  color: #0B0804; background: var(--alarm);
+  padding: 0 calc(var(--u) * 0.45);
+}
+#doors li.terminal {
+  font-family: var(--stencil); font-size: calc(var(--u) * 1.9);
+  letter-spacing: calc(var(--u) * 0.4); color: var(--txt-dim);
+}
+
+/*──────────────────── The voice ──────────────────────────────────
+  One line, as big as the page can carry.                                 */
+/* FIXED height, not min-height. A band that grows with the sentence moves
+   the stage up and down every four seconds, and on a television that reads
+   as the page twitching. */
+#voice {
+  position: relative; z-index: 1;
+  padding: calc(var(--u) * 1.1) calc(var(--u) * 4) calc(var(--u) * 0.8);
+  border-top: 1px solid var(--bdr);
+  height: calc(var(--u) * 7.4);
+  overflow: hidden;
+}
+#line {
+  font-size: calc(var(--u) * 2.6); line-height: 1.3;
+  color: var(--txt); max-width: 74ch;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+#voice.on #line { color: var(--gold-hi); text-shadow: 0 0 calc(var(--u) * 1.6) rgba(232,168,40,0.28); }
+#line.hit { animation: hit 0.5s cubic-bezier(.2,.9,.2,1); }
+@keyframes hit {
+  from { opacity: 0; transform: translateY(calc(var(--u) * 0.5)); }
+  to   { opacity: 1; transform: none; }
+}
+/*──────────────────── The cast ───────────────────────────────────
+  Names. Struck through when they stop. That is the whole arc, and it is
+  the only thing on the screen that only ever moves one way.              */
+#cast {
+  display: flex; flex-wrap: wrap; gap: calc(var(--u) * 1.6);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 4) calc(var(--u) * 0.9);
+  border-top: 1px solid var(--bdr);
+  font-family: var(--stencil);
+  font-size: calc(var(--u) * 1.9); letter-spacing: calc(var(--u) * 0.18);
+  color: var(--ash);
+}
+#cast .c i { font-style: normal; margin-left: calc(var(--u) * 0.3); }
+#cast .c.on { color: var(--gold-hi); }
+#cast .c.in-scene i { color: var(--gold-hi); }
+#cast .c.dead { color: var(--rust); text-decoration: line-through; opacity: 0.75; }
+#cast .c.dead i { color: var(--blood); text-decoration: none; }
+
+/*──────────────────── Takeovers ──────────────────────────────────
+  A death is the set-piece. It gets the screen.                           */
+#takeover {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50;
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(var(--u) * 1);
+  padding: 0 calc(var(--u) * 6);
+  text-align: center;
+  background: radial-gradient(ellipse at 50% 50%, #140503 0%, #050201 70%);
+}
+#takeover.on { display: flex; animation: slam 0.45s cubic-bezier(.2,.9,.2,1); }
+@keyframes slam { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+#takeover .to-kicker {
+  font-family: var(--stencil); font-size: calc(var(--u) * 1.5);
+  letter-spacing: calc(var(--u) * 1.1); color: var(--rust);
+}
+#takeover .to-name {
+  font-size: calc(var(--u) * 3.6); line-height: 1.2;
+  color: var(--alarm); max-width: 34ch;
+}
+#takeover .to-line {
+  font-size: calc(var(--u) * 1.9); line-height: 1.45;
+  color: var(--ash); max-width: 44ch;
+}
+#takeover.k-PASSED { background: radial-gradient(ellipse at 50% 50%, #17120A 0%, #050402 70%); }
+#takeover.k-PASSED .to-kicker { color: var(--gold); }
+#takeover.k-PASSED .to-name   { color: #E8D070; }
+
+/* Portrait, or a window nobody will actually watch this on. */
+@media (max-aspect-ratio: 4/5) {
+  :root { --u: 1.5vh; }
+  @supports (width: min(1px, 2px)) { :root { --u: min(2vw, 1.5vh); } }
+  #stage { padding: calc(var(--u) * 1.4) calc(var(--u) * 2.4); }
+  #voice, #cast { padding-left: calc(var(--u) * 2.4); padding-right: calc(var(--u) * 2.4); }
+  #stage > :not(#disk-bg) { max-width: none; }
+}

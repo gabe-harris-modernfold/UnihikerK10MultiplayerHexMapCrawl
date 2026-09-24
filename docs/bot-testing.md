@@ -9,7 +9,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 
 ## For AI coding agents (read first, ≤ 1 min)
 
-- **Self-test, no board:** `cd bots && python smoke.py` (359 checks). Run this
+- **Self-test, no board:** `cd bots && python smoke.py` (456 checks). Run this
   before every live run; it catches a broken parser in 2 s instead of wasting
   10 minutes of hardware time. It also reads the firmware source and fails on
   drift: 36 constants mirrored in `config.py`, the dispatch table, and the
@@ -72,6 +72,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `telemetry.py` | Polls `/state` for board health alongside the game log. |
 | `causes.py` | Attributes every LL loss, and every death, to a cause. |
 | `metrics.py` | Post-run analysis; `--aggregate` pools runs. |
+| `gearcheck.py` | Equipment audit: declared mods vs the wire, and a survival ranking. |
 | `record.py` | JSONL per run into `runs/` (gitignored). |
 
 ### Policies
@@ -83,6 +84,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `contentmax` | Seeks POIs specifically. Judged on `content_score()`, not score. |
 | `coward` | Refuses all risk, keeps supplies deep, avoids fire/doom/craters. |
 | `rival` | Races for contested POIs to deny them; grabs ground items; makes lopsided trade offers. |
+| `gearmax` | Hunts encounter loot for equipment and wears everything it finds, good or bad. Feeds `gearcheck.py`. |
 | `subterranean` | **Subterranean Explorer.** Lives in the bunker tunnels: maps the corridors, works them for water and scrap, sleeps below, surfaces only for food. |
 | `tunnelrunner` | **Subterranean Explorer.** Uses the tunnels as transport: dives, walks to the shaft that surfaces furthest away, climbs out and works the fresh ground. |
 | `sentinel` | The soak bot. **Makes camp** (water, forage, an existing shelter or a Settlement; never radioactive or a hatch), **builds a shelter** there (improved when it has 2 scrap, upgrades later, rebuilds after a quake), harvests in place, and stays awake until 90% of each day has passed, **then rests in the shelter** — so days run ~4.5 of 5 minutes and it heals every night. Realtime only — arena refuses it in sprint mode. |
@@ -445,6 +447,57 @@ still down there at dawn.
 
 ---
 
+## Auditing the equipment
+
+`gearmax` + `gearcheck.py` exist to answer a question the other policies
+cannot: **does each item in the registry actually do what items.cfg says?**
+
+```bash
+python arena.py --host "$HOST" --bots 4 --policies gearmax,gearmax,gearmax,gearmax \
+    --target 3000 --max-minutes 15
+python gearcheck.py                       # newest run
+python gearcheck.py runs/run-2026*.jsonl  # pool several
+```
+
+**Why a dedicated policy.** Equipment comes from exactly one faucet --
+encounter loot, dealt by `data/encounters/loot_tables.json` on a bank -- so
+collecting gear means opening POIs, and the survival policies do not detour
+for them. `gearmax` also sets `equip_anything`, which is the part that
+matters: the shared `gear_action()` refuses anything whose `gear_score()` is
+not strictly positive, so a net-negative item would never be worn and its
+penalty would never be observed. GearMax wears junk on purpose. That makes
+*its* survival numbers unrepresentative and the *items'* numbers possible.
+
+**What gearcheck can and cannot prove.** It reports per declared mod, never
+per item, because "the item did something" is not a test -- an item declaring
+`rad -1` and `terrain 4` tells you nothing by leaving `llCap` alone:
+
+| mod | evidence | strength |
+|---|---|---|
+| `ll` | `llCap` delta across the equip (`appendPackArrays` sends the EFFECTIVE ceiling) | hard |
+| `slots` | `is` delta, allowing for the INV_SLOTS_MAX clamp | hard |
+| `vision` | `vr` on the vis disk `pushVisDisk()` sends straight after the equip | hard |
+| `mp` | dawn MP against `ll + 3` + declared, unwounded dawns only | soft |
+| `rad` | direction of change at the dawns it was worn | soft |
+| `terrain`, `threat`, narrative | **nothing on the wire carries them** | untested |
+
+A mod with no evidence is reported UNTESTED with the reason. That is not a
+formality: after a 15-minute run most of the registry's *interesting* effects
+-- the terrain perks, the narrative ones -- are still unmeasured, and a
+report that quietly passed them would be worse than no report.
+
+The audit is itself tested: `smoke.py` feeds it an item whose mod lands, one
+whose does not, one applied twice, a clamp case and a vis disk arriving after
+a step, and requires it to tell them apart.
+
+**Reading the survival ranking.** LL lost per game-day worn, against the
+fleet's own baseline for dawns where nothing was worn. Dawn LL loss is
+mostly exposure, thirst and hunger, which most gear does not touch, so this
+is a screen for items that make things *worse*, not a ranking of benefit --
+and `days` is printed on every row because a two-day sample is noise.
+
+---
+
 ## Orphaned runs
 
 The single most expensive failure mode found so far, because it looks like a
@@ -613,6 +666,51 @@ Two things changed underneath at the same time, both of which move the numbers:
 
 `config.EQUIPMENT` is parsed from `data/items.cfg` at import rather than
 hardcoded, so adding an item to the registry needs no change here.
+
+## Death drops (and why a fall no longer costs the canteen)
+
+A downed survivor now leaves everything it carried on the hex where it fell
+(`dropRemains()`; firmware side in the "Death drops" section of
+[dev-loop.md](dev-loop.md)): pack and worn gear as ordinary ground piles,
+resource tokens in a remains record that sync and `ground_update` carry as
+`rm`. It is anyone's for `GROUND_AGE_DAYS` (30). Before this, every death
+wiped the bot's crafted canteen — respawn is a fresh survivor — and it had to
+scrape together the scrap for another.
+
+What `SurvivorPolicy` does with it:
+
+- **Stood on a grave, any grave, it takes what is there** (`remains_action()`):
+  `{"t":"loot"}` for the tokens when some kind has room (the server takes what
+  fits, water first), then `pickup_item` for equipment. This runs *ahead of
+  every errand*, and it has to: the canteen errand would otherwise walk a
+  respawned bot off its own grave to hunt scrap for a new canteen, and the
+  walk-back would then bring it straight back.
+- **It walks back to its own grave** (`recover_action()`) while the grave holds
+  something it can actually lift — tokens with room, equipment with a free
+  slot — and will still exist on arrival. Same two-call shape as the canteen
+  errand: within today's MP ahead of the survival floor, up to
+  `RECOVER_SEARCH_COST` after it. "Own" is the seat's `pid` on the record, or a
+  grave recorded from a `why:"fell"` naming our seat (`Observation.my_graves`),
+  because a respawn can land in a different seat.
+- **The canteen errand stands down** while its canteen lies on a grave it can
+  reach — three scrap for a second one would be waste.
+- **Graves on a hatch are never walked to.** A fall underground drops on the
+  hatch above, and stepping onto a hatch is the descent, so on foot that grave
+  cannot be stood on. Loot and pickup are refused at depth 1 anyway.
+- `loots` and `recover_moves` ride the content block, and `arena.py` prints
+  them at the end of a run.
+
+Two policies had latent loops that graves made live, both fixed:
+
+- **`rival`'s pickup was a placeholder `noop`**, so it froze on the first pile
+  it stood on — any pile, since it walks to all of them. It lifts anything
+  underfoot now, and only walks to piles while it has a free slot.
+- **`gearmax` walked to piles it never lifts** (consumables), then was drawn
+  straight back from the next hex. It only targets equipment now, and only
+  with a slot free.
+
+Runs from before this are not comparable on anything to do with carrying:
+death used to reset the pack, and now it merely relocates it.
 
 ## What gets measured
 

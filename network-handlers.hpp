@@ -43,6 +43,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (CMD_IS("drop_item")    ) handleMsg_drop_item(client, data, len);
   else if (CMD_IS("drop_res")     ) handleMsg_drop_res(client, data, len);
   else if (CMD_IS("pickup_item")  ) handleMsg_pickup_item(client, data, len);
+  else if (CMD_IS("loot")         ) handleMsg_loot(client, data, len);
   else if (CMD_IS("settings")     ) handleMsg_settings(client, data, len);
   else if (CMD_IS("enc_start")    ) handleMsg_enc_start(client, data, len);
   else if (CMD_IS("enc_choice")   ) handleMsg_enc_choice(client, data, len);

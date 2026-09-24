@@ -45,7 +45,15 @@ function scanVariantCounts() {
     }
     return max;
   };
-  const vc = TERRAIN_IMG_NAMES.map((name) => countFor(`hex${name}`));
+  // The tile atlas (scripts/tilegen/build_tiles.py) carries its own counts,
+  // exactly as the firmware reads them; the per-file scan is the fallback.
+  let vc = TERRAIN_IMG_NAMES.map((name) => countFor(`hex${name}`));
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'img', 'tiles.json'), 'utf8'));
+    if (Array.isArray(m.counts)) vc = TERRAIN_IMG_NAMES.map((_, t) => m.counts[t] | 0);
+  } catch {
+    // no atlas: per-file counts stand
+  }
   const sv = SHELTER_IMG_NAMES.map((name) => countFor(name));
   const fa = countFor('forrageAnimal');
   console.log(`[variants] terrain=${JSON.stringify(vc)} shelter=${JSON.stringify(sv)} forrageAnimal=${fa}`);
@@ -497,6 +505,13 @@ function makePlayer(id) {
   const spawn = pickSpawnPos(id);
   return {
     id, on: true,
+    // The firmware sets both of these on pick (network-msg-player.hpp) and
+    // publishes them on /state. connectMs is not cosmetic: the observer keys
+    // its shadow roster on pid + connectMs, so a slot handed back to the
+    // lobby and re-picked is never mistaken for the same survivor recovering.
+    name: ARCHETYPE_NAMES[id] || ('P' + id),
+    connectMs: uptimeMs(),
+    lastMoveMs: uptimeMs(),
     q: spawn.q, r: spawn.r,
     sc: 0,
     inv: [0, 0, 0, 0, 0],
@@ -557,6 +572,7 @@ function loadItemRegistry() {
     else if (key === 'rad')      cur.rad     = parseInt(val, 10) || 0;
     else if (key === 'mp')       cur.mp      = parseInt(val, 10) || 0;
     else if (key === 'slots')    cur.slots   = parseInt(val, 10) || 0;   // pack slot bonus while equipped
+    else if (key === 'water_cap') cur.waterCap = parseInt(val, 10) || 0; // water carried outside the pack cap (Canteen)
     else if (key === 'effect')   cur.effect  = val;
     else if (key === 'param')    cur.param   = parseInt(val, 10) || 0;
     else if (key === 'effect2')  cur.effect2 = val;
@@ -594,8 +610,7 @@ function effectiveMaxLL(p) {
 // added by applyDawnItemCosts() only when the cost was paid.
 function effectiveMP(p) {
   let mp = 6 + ((p.ll + 1) >> 1) - (p.wnd[1] | 0);
-  const carried = p.inv.reduce((a, b) => a + b, 0);
-  if (carried > effectiveInvSlots(p)) mp--;
+  if (tokenLoad(p) > effectiveInvSlots(p)) mp--;
   for (const eid of p.eq) {
     const def = ITEM_DEFS[eid];
     if (def && def.mp && !itemHasOpCost(def)) mp += def.mp;
@@ -623,10 +638,27 @@ function applyDawnItemCosts(p) {
   return unfuelled;
 }
 
-// Spare resource-token capacity. Mirrors tokenRoomFor() in inventory_items.hpp.
-function tokenRoomFor(p) {
+// Water tokens carried outside the pack cap (Canteen). Mirrors canteenCap().
+function canteenCap(p) {
+  let cap = 0;
+  for (const eid of p.eq) if (eid) cap += (ITEM_DEFS[eid]?.waterCap | 0);
+  return Math.max(0, cap);
+}
+
+// Tokens that count against the pack: everything less canteen water.
+// Mirrors tokenLoad() — the ONE token total every carry check uses.
+function tokenLoad(p) {
   const carried = p.inv.reduce((a, b) => a + b, 0);
-  return Math.max(0, effectiveInvSlots(p) - carried);
+  return carried - Math.min(p.inv[0] | 0, canteenCap(p));
+}
+
+// Spare resource-token capacity. Mirrors tokenRoomFor() in inventory_items.hpp:
+// water (resIdx 0) also gets any empty canteen space. `cap` defaults to the
+// effective pack size; tryCollect passes the mock's small test cap instead.
+function tokenRoomFor(p, resIdx = -1, cap = effectiveInvSlots(p)) {
+  let room = Math.max(0, cap - tokenLoad(p));
+  if (resIdx === 0) room += Math.max(0, canteenCap(p) - (p.inv[0] | 0));
+  return room;
 }
 
 // +1 vision per equipped item with reveal_fog param 1 (Dark Goggles, Glow
@@ -696,11 +728,11 @@ function effectiveInvSlots(p) {
 // happen here, at serialisation, exactly once -- mirrors appendPackArrays()
 // in inventory_items.hpp, which is the only place the firmware emits them.
 function playerView(p) {
-  return { ...p, is: effectiveInvSlots(p), llCap: effectiveMaxLL(p) };
+  return { ...p, is: effectiveInvSlots(p), llCap: effectiveMaxLL(p), wc: canteenCap(p) };
 }
-// The same two fields for a targeted item_result ack.
+// The same fields for a targeted item_result ack.
 function packFields(p) {
-  return { is: effectiveInvSlots(p), llCap: effectiveMaxLL(p) };
+  return { is: effectiveInvSlots(p), llCap: effectiveMaxLL(p), wc: canteenCap(p) };
 }
 
 const RECIPE_DEFS = loadRecipeRegistry();
@@ -743,17 +775,165 @@ function craftRecipe(p, recipeId) {
 }
 
 // ── Ground items — mirrors GroundItem groundItems[MAX_GROUND] in the .ino ───
-const MAX_GROUND = 32;
-const groundItems = Array.from({ length: MAX_GROUND }, () => ({ q: 0, r: 0, itemType: 0, qty: 0 }));
+// Every pile carries the day it was last added to: anything on the ground is
+// reclaimed GROUND_AGE_DAYS later (groundAgeOut), and a full table reclaims the
+// oldest pile elsewhere to make room (groundSlotFor). Mirrors the "Ground piles
+// and remains" block in inventory_items.hpp.
+const MAX_GROUND      = 64;
+const GROUND_AGE_DAYS = 30;
+const MAX_REMAINS     = 12;
+const groundItems = Array.from({ length: MAX_GROUND }, () => ({ q: 0, r: 0, itemType: 0, qty: 0, day: 0 }));
+// Where survivors fell and the resource tokens they were carrying — mirrors
+// Remains remainsTable[MAX_REMAINS]. Their items are ordinary piles above.
+const remainsTable = Array.from({ length: MAX_REMAINS }, () => ({ used: false }));
+
+// Age in days of something stamped `day`; the firmware's dayCount is a uint16.
+const groundAge = (day) => (dayCount - day) & 0xFFFF;
+const clearPile = (gi) => Object.assign(gi, { q: 0, r: 0, itemType: 0, qty: 0, day: 0 });
+
 function groundItemsList() {
   const out = [];
   for (let g = 0; g < MAX_GROUND; g++) {
-    if (groundItems[g].itemType) out.push({ g, q: groundItems[g].q, r: groundItems[g].r, id: groundItems[g].itemType, n: groundItems[g].qty });
+    const gi = groundItems[g];
+    if (gi.itemType) out.push({ g, q: gi.q, r: gi.r, id: gi.itemType, n: gi.qty, d: gi.day });
   }
   return out;
 }
-function groundUpdateMsg(q, r) {
-  return { t: 'ground_update', q, r, gi: groundItemsList() };
+function remainsList() {
+  return remainsTable.filter((rm) => rm.used)
+    .map((rm) => ({ q: rm.q, r: rm.r, pid: rm.pid, nm: rm.name, d: rm.day, res: rm.res.slice() }));
+}
+// Mirrors buildGroundUpdate(): q/r is the hex that changed (-1,-1 map-wide),
+// why/pid mark the log-worthy ones ("fell", "aged").
+function groundUpdateMsg(q, r, why, pid) {
+  const m = { t: 'ground_update', q, r };
+  if (why) { m.why = why; m.pid = pid; }
+  m.gi = groundItemsList();
+  m.rm = remainsList();
+  return m;
+}
+
+function groundHasAt(q, r) {
+  return groundItems.some((gi) => gi.itemType && gi.q === q && gi.r === r);
+}
+function remainsIndexAt(q, r) {
+  return remainsTable.findIndex((rm) => rm.used && rm.q === q && rm.r === r);
+}
+// A record ends once every token is taken and every pile on its hex is gone.
+function remainsPrune(q, r) {
+  const i = remainsIndexAt(q, r);
+  if (i < 0) return;
+  if (remainsTable[i].res.some((n) => n > 0) || groundHasAt(q, r)) return;
+  remainsTable[i].used = false;
+}
+// The pile of itemId at (q,r), else a free slot, else the oldest pile
+// elsewhere is reclaimed early. Mirrors groundSlotFor().
+function groundSlotFor(q, r, itemId) {
+  let freeSlot = -1, oldest = -1;
+  for (let g = 0; g < MAX_GROUND; g++) {
+    const gi = groundItems[g];
+    if (!gi.itemType) { if (freeSlot < 0) freeSlot = g; continue; }
+    if (gi.q === q && gi.r === r) { if (gi.itemType === itemId) return g; continue; }
+    if (oldest < 0 || groundAge(gi.day) > groundAge(groundItems[oldest].day)) oldest = g;
+  }
+  if (freeSlot >= 0) return freeSlot;
+  if (oldest < 0) return -1;
+  const gone = groundItems[oldest];
+  console.log(`[ground] full: reclaimed item ${gone.itemType} x${gone.qty} at (${gone.q},${gone.r}) from day ${gone.day}`);
+  const { q: gq, r: gr } = gone;
+  clearPile(gone);
+  remainsPrune(gq, gr);
+  return oldest;
+}
+// Mirrors groundPut(): stacking onto a pile restarts its age.
+function groundPut(q, r, itemId, qty) {
+  if (!itemId || !qty) return false;
+  const g = groundSlotFor(q, r, itemId);
+  if (g < 0) return false;
+  const gi = groundItems[g];
+  if (gi.itemType !== itemId) gi.qty = 0;
+  Object.assign(gi, { q, r, itemType: itemId, qty: Math.min(255, gi.qty + qty), day: dayCount });
+  return true;
+}
+// Mirrors remainsFor(): join a record already on the hex, else a free one,
+// else reclaim the oldest (its tokens go; its piles stay, unmarked).
+function remainsFor(q, r) {
+  const i = remainsIndexAt(q, r);
+  if (i >= 0) return remainsTable[i];
+  let slot = remainsTable.findIndex((rm) => !rm.used);
+  if (slot < 0) {
+    slot = 0;
+    for (let k = 1; k < MAX_REMAINS; k++)
+      if (groundAge(remainsTable[k].day) > groundAge(remainsTable[slot].day)) slot = k;
+    console.log(`[remains] full: reclaimed ${remainsTable[slot].name}'s at (${remainsTable[slot].q},${remainsTable[slot].r})`);
+  }
+  remainsTable[slot] = { used: true, q, r, pid: 0, day: dayCount, res: [0, 0, 0, 0, 0], name: '' };
+  return remainsTable[slot];
+}
+// Everything a downed survivor carried stays where they fell: pack stacks and
+// worn gear as piles, tokens in the record. Mirrors dropRemains(); q/r stay
+// pinned to the hatch below ground, so a fall down there lands on the hatch.
+function dropRemains(p) {
+  let piles = false;
+  for (let s = 0; s < INV_SLOTS_MAX; s++) {
+    if (!p.it[s]) continue;
+    groundPut(p.q, p.r, p.it[s], p.iq[s] || 1);
+    p.it[s] = 0; p.iq[s] = 0;
+    piles = true;
+  }
+  for (let e = 0; e < p.eq.length; e++) {
+    if (!p.eq[e]) continue;
+    groundPut(p.q, p.r, p.eq[e], 1);
+    p.eq[e] = 0;
+    piles = true;
+  }
+  const tokens = p.inv.reduce((a, b) => a + (b | 0), 0);
+  if (!piles && !tokens) return false;
+  const rm = remainsFor(p.q, p.r);   // after the piles, same reason as the firmware
+  rm.pid  = p.id;
+  rm.day  = dayCount;
+  rm.name = (String(p.name || '').replace(/[^\x20-\x7E]|["\\]/g, '_').slice(0, 11)) || `Walker ${p.id + 1}`;
+  for (let k = 0; k < 5; k++) { rm.res[k] = Math.min(99, rm.res[k] + (p.inv[k] | 0)); p.inv[k] = 0; }
+  console.log(`[remains] pid=${p.id} at (${p.q},${p.r}) tokens=${tokens} piles=${piles} day=${dayCount}`);
+  return true;
+}
+// Mirrors lootRemains(): res 1-5 or 0 for everything that fits, capped by
+// tokenRoomFor(), no score. out: 0 ok, 1 nothing here, 2 pack full.
+function lootRemains(p, res) {
+  const got = [0, 0, 0, 0, 0];
+  if (p.dp) return { out: 1, got };
+  const i = remainsIndexAt(p.q, p.r);
+  if (i < 0) return { out: 1, got };
+  const rm = remainsTable[i];
+  let any = false, blocked = false;
+  for (let k = 0; k < 5; k++) {
+    if (res && k !== res - 1) continue;
+    if (!rm.res[k]) continue;
+    const take = Math.min(rm.res[k], tokenRoomFor(p, k), 99 - (p.inv[k] | 0));
+    if (take <= 0) { blocked = true; continue; }
+    p.inv[k] += take; rm.res[k] -= take; got[k] = take;
+    any = true;
+  }
+  if (!any) return { out: blocked ? 2 : 1, got };
+  remainsPrune(p.q, p.r);
+  return { out: 0, got };
+}
+// The dawn sweep. Mirrors groundAgeOut(); true when anything went.
+function groundAgeOut() {
+  let changed = false;
+  for (const gi of groundItems) {
+    if (!gi.itemType || groundAge(gi.day) < GROUND_AGE_DAYS) continue;
+    console.log(`[ground] aged out: item ${gi.itemType} x${gi.qty} at (${gi.q},${gi.r}) from day ${gi.day}`);
+    clearPile(gi);
+    changed = true;
+  }
+  for (const rm of remainsTable) {
+    if (!rm.used) continue;
+    if (groundAge(rm.day) >= GROUND_AGE_DAYS) { rm.used = false; changed = true; continue; }
+    remainsPrune(rm.q, rm.r);
+    if (!rm.used) changed = true;
+  }
+  return changed;
 }
 
 // ── Encounters (mirrors network-msg-encounter.hpp closely enough for UI work) ──
@@ -1052,7 +1232,7 @@ function dawnUpkeepAll() {
     // firmware enqueues EVT_DOWNED from inside the loss loop, i.e. *before*
     // EVT_DAWN. Same order here so a client (or bots/causes.py, which matches
     // a death against the damage record nearest it) sees what hardware sends.
-    if (downed) broadcast({ t: 'ev', k: 'downed', pid: id });
+    if (downed) downPlayer(p);
     broadcast({
       t: 'ev', k: 'dawn', pid: id, day: dayCount,
       f: p.food, w: p.water, ll: p.ll, mp: p.mp, dll: actualDelta,
@@ -1061,6 +1241,9 @@ function dawnUpkeepAll() {
     });
     console.log(`[dawn] day=${dayCount} pid=${id} f=${p.food} w=${p.water} ll=${p.ll} dll=${actualDelta}`);
   }
+  // Piles and remains GROUND_AGE_DAYS old go back to the dust — mirrors the
+  // groundAgeOut() call in tickGame()'s dawn block.
+  if (groundAgeOut()) broadcast(groundUpdateMsg(-1, -1, 'aged'));
   broadcast(stateMsg());
 }
 
@@ -1202,9 +1385,27 @@ function fogTick(connected) {
     let llProb = (FOG_INTENSITY[t] ?? 0) * FOG_LL_TICK_RATE;
     if (hasShelter(p.q, p.r)) { mpProb *= 0.5; llProb *= 0.5; }
     if (p.mp > 0 && Math.random() < mpProb) { p.mp--; changed = true; }
-    if (Math.random() < llProb) { p.ll = Math.max(0, p.ll - 1); changed = true; }
+    if (Math.random() < llProb) {
+      p.ll = Math.max(0, p.ll - 1); changed = true;
+      if (p.ll === 0) downPlayer(p);   // the firmware's fog tick enqueues EVT_DOWNED; this never said so
+    }
   }
   if (changed) broadcast(stateMsg());
+}
+
+// Mirrors tickGame()'s downed sweep + surfacePlayer() (tunnels.hpp): a survivor
+// downed below has no legal action while the bad air keeps ticking, so put
+// them back on the surface at the hatch they went down. Event only, same as
+// the firmware -- no vis disk.
+function surfaceDownedBelow(connected) {
+  for (const p of connected) {
+    if (!p.dp || p.ll !== 0) continue;
+    const h = (p.hatchIdx < bunkerHatches.length) ? p.hatchIdx : 0;
+    if (bunkerHatches.length) { p.q = bunkerHatches[h].sq; p.r = bunkerHatches[h].sr; }
+    p.dp = 0;
+    broadcast({ t: 'ev', k: 'tun_out', pid: p.id, q: p.q, r: p.r, hatch: h, mp: p.mp });
+    console.log(`[tunnel] surfaced downed pid=${p.id} -> hatch ${h} (${p.q},${p.r})`);
+  }
 }
 
 // Day tick — mirrors tickGame(): normal timeout OR (if anyone's connected) every
@@ -1219,7 +1420,15 @@ setInterval(() => {
     dayTick = 0;
     dawnUpkeepAll();
   }
-  fogTick(connected);
+  // Weather and the world system act on the surface only -- firmware skips
+  // depth != 0 players in every one of these (world-system.hpp, the fog tick
+  // in actions_game_loop.hpp). Their q/r are pinned to the hatch while below,
+  // so without this the Doom hunted, and lightning and fog hurt, survivors
+  // who were nowhere near. The quake still draws from everyone: the firmware
+  // picks its epicentre that way too (maybeTriggerQuake, actions_game_loop.hpp).
+  const surface = connected.filter((p) => !p.dp);
+  surfaceDownedBelow(connected);
+  fogTick(surface);
   maybeTriggerQuake(connected);
   worldTickCounter++;
   if (worldTickCounter % WORLD_TICK_INTERVAL === 0) {
@@ -1227,17 +1436,17 @@ setInterval(() => {
     // reads/decays state this tick), fire damage resolves against THIS
     // tick's fresh intensity before spreadFire() decays it, and the caravan
     // prompt runs after the caravan has actually moved.
-    tickCreepingDoom(connected);
-    maybeIgniteLightning(connected);
-    resolveFireDamage(connected);
-    resolveDoomProximity(connected);
-    tickDoomTaunts(connected);   // after the act event, so the voice follows the damage
+    tickCreepingDoom(surface);
+    maybeIgniteLightning(surface);
+    resolveFireDamage(surface);
+    resolveDoomProximity(surface);
+    tickDoomTaunts(surface);     // after the act event, so the voice follows the damage
     tickTunnelTaunts(connected); // the other voice: second thoughts, for anyone camped in a bare corridor
     spreadFire();
-    maybeTriggerFlashFlood(connected);
-    spreadFlood(connected);
-    tickCaravan(connected);
-    resolveCaravanProximity(connected);
+    maybeTriggerFlashFlood(surface);
+    spreadFlood(surface);
+    tickCaravan(surface);
+    resolveCaravanProximity(surface);
     // Firmware's broadcastState() runs unconditionally every game tick (see
     // game-server.hpp), so caravan movement is never stale there. This mock
     // only broadcasts opportunistically (from message handlers) otherwise,
@@ -1371,7 +1580,7 @@ function encChoice(ws, id, m) {
   console.log(`[enc] choice pid=${id} skill=${skill} dn=${dn} tot=${tot} ok=${ok} ends=${ended}`);
   broadcast(ev);
   if (ended) {
-    if (p.ll === 0) broadcast({ t: 'ev', k: 'downed', pid: id });
+    if (p.ll === 0) downPlayer(p);
     encEnd(id, p.ll === 0 ? 'downed' : 'hazard');
   }
   broadcast(stateMsg());
@@ -1397,7 +1606,9 @@ function encBank(ws, id, m) {
     total += take;
   }
   const hadItems = e.pendingItems.length > 0;
-  for (const { it, iq } of e.pendingItems) grantItemOrDrop(p, it, iq);
+  let spilled = false;
+  for (const { it, iq } of e.pendingItems) spilled = grantItemOrDrop(p, it, iq) || spilled;
+  if (spilled) broadcast(groundUpdateMsg(p.q, p.r));   // mirrors handleMsg_enc_bank
   p.kr = (p.kr | 0) | (e.pendingRecipes | 0);
   const scoreD = total * 3 + (e.fullClear ? 10 : 0);
   p.sc += scoreD;
@@ -1434,6 +1645,195 @@ function handleEnc(req, res) {
     res.end(data);
   });
 }
+
+// ── GET /state — read-only snapshot, mirroring the firmware's /state route in
+// game-server.hpp. The observer screen (docs/observer-screen-spec.md) polls
+// this instead of opening a socket: on the board every /ws client is handed a
+// PLAYER slot and there are only six, so a spectator on /ws would eat a seat
+// and draw itself on everyone's map. /state consumes nothing.
+//
+// Field-for-field parity with the firmware is the whole point — anything the
+// observer reads here it has to find on the board too. That includes
+// encId/encBiome, which together are the GET /enc?biome=&id= address of the
+// scene a player is standing in; without them a spectator can see that
+// somebody is in an encounter and nothing about which one.
+//
+//   ?pid=N   appends that player's vision disk as "view" (the camera)
+//   ?sd=1    accepted and ignored — there is no SD card out here
+const NUM_TERRAIN = 16;
+const ARCHETYPE_NAMES = ['Guide', 'Quartermaster', 'Medic', 'Mule', 'Scout', 'Endurer'];
+// Deliberately 12 names for 16 terrains, exactly like TNAME_FULL in
+// game-server.hpp: that array is declared [NUM_TERRAIN] but initialised with
+// twelve strings, so terrain 12-15 (hatches and tunnels) serialise empty on
+// the board. They serialise empty here too, so a client that forgets to fall
+// back to TERRAIN[] client-side breaks offline as well as on hardware.
+const TNAME_FULL = [
+  'Open Scrub', 'Ash Dunes', 'Rust Forest', 'Marsh', 'Broken Urban',
+  'Flooded Ruins', 'Glass Fields', 'Rolling Hills', 'Mountain', 'Settlement',
+  'Nuke Crater', 'River Channel',
+];
+const T_SHORT = [
+  'Scrub', 'Dunes', 'Forst', 'Marsh', 'Urban', 'Flood', 'Glass', 'Hills',
+  'Mtn  ', 'Settl', 'Nukr ', 'River', 'Bunkr', 'Vent ', 'Tunnl', 'Clpsd',
+];
+const RES_NAME_L = ['none', 'water', 'food', 'fuel', 'medicine', 'scrap'];
+
+// millis() stand-in. The firmware's connectMs is milliseconds since boot, and
+// the observer keys its shadow roster on pid + connectMs — that pair is the
+// only stable identity across a slot being handed back to the lobby and
+// re-picked, so it has to move the same way here.
+const MOCK_BOOT_MS = Date.now();
+function uptimeMs() { return Date.now() - MOCK_BOOT_MS; }
+
+// One cell of the vision disk, in the shape /state emits (not the packed hex
+// the /ws sync uses). dq/dr are offsets from the player so the client can lay
+// the disk out without knowing the wrap.
+function stateViewCell(p, dq, dr) {
+  const cq = ((p.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+  const cr = ((p.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+  const baseIdx = (cr * MAP_COLS + cq) * 6;
+  const ttRaw = ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16));
+  const dd    = ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16));
+  const tt    = ttRaw & 0x7F;                 // bit 7 is the tire-track overlay
+  const cell  = resources[cq + '_' + cr];
+  const res   = cell ? cell.res : 0;
+  // Which of /img/hex<Name><N>.png this hex wears. buildMap() packs it into
+  // the low nibble of VV exactly like the wire map, so this reads it back
+  // from the same place -- see liveMapHex().
+  const variant = baseIdx & 0x0F;
+  return {
+    q: cq, r: cr, dq, dr,
+    terrain: tt, terrainName: TNAME_FULL[tt] || '',
+    shelter: (dd & 0x40) ? 1 : 0,
+    resource: res, resourceName: RES_NAME_L[res] || 'none',
+    amount: cell ? cell.amt : 0,
+    footprints: dd & 0x3F,
+    tireTrack: (ttRaw & 0x80) !== 0,
+    variant,
+    poi: (dd & 0x80) !== 0,
+  };
+}
+
+function stateView(pid) {
+  const p = players[pid];
+  if (!p) return null;
+  const visR = surfaceVis(p);
+  const cells = [];
+  for (let dr = -visR; dr <= visR; dr++) {
+    for (let dq = -visR; dq <= visR; dq++) {
+      const s = -(dq + dr);
+      if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * visR) continue;
+      cells.push(stateViewCell(p, dq, dr));
+    }
+  }
+  return { pid, name: p.name, q: p.q, r: p.r, visR, cells };
+}
+
+// An empty slot still serialises, same as the firmware's fixed players[6] —
+// the observer needs to watch a slot go quiet, not have it vanish from the array.
+function stateEmptyPlayer(i) {
+  return {
+    pid: i, conn: false, wsClientId: 0, connectMs: 0, lastMoveMs: 0,
+    name: ARCHETYPE_NAMES[i] || '?', arch: i, archName: ARCHETYPE_NAMES[i] || '?',
+    invSlots: 0, invSlotsEff: 0, equip: [0, 0, 0, 0, 0],
+    q: 0, r: 0, ll: 0, food: 0, water: 0, rad: 0, mp: 0,
+    wounds: [0, 0], resting: false, radClean: false,
+    fThreshBelow: 0, wThreshBelow: 0,
+    skills: [0, 0, 0, 0, 0], inv: [0, 0, 0, 0, 0],
+    invType: new Array(INV_SLOTS_MAX).fill(0),
+    invQty: new Array(INV_SLOTS_MAX).fill(0),
+    score: 0, steps: 0, dp: 0, llCap: 0, encActive: false,
+  };
+}
+
+function statePlayer(i) {
+  const p = players[i];
+  if (!p) return stateEmptyPlayer(i);
+  const e = encounters[i];
+  const blk = {
+    pid: i, conn: true, wsClientId: i + 1,
+    connectMs: p.connectMs | 0, lastMoveMs: p.lastMoveMs | 0,
+    name: p.name, arch: p.arch, archName: ARCHETYPE_NAMES[p.arch] || '?',
+    invSlots: p.is, invSlotsEff: effectiveInvSlots(p),
+    equip: p.eq.slice(),
+    q: p.q, r: p.r,
+    ll: p.ll, food: p.food, water: p.water, rad: p.rad, mp: p.mp,
+    wounds: p.wnd.slice(),
+    resting: !!p.rt, radClean: false,
+    fThreshBelow: p.fth | 0, wThreshBelow: p.wth | 0,
+    skills: p.sk.slice(), inv: p.inv.slice(),
+    invType: p.it.slice(), invQty: p.iq.slice(),
+    score: p.sc, steps: p.sp, dp: p.dp | 0,
+    llCap: effectiveMaxLL(p),
+    encActive: !!e,
+  };
+  if (e) {
+    blk.encQ = e.q; blk.encR = e.r; blk.encNode = e.nodeKey;
+    blk.encId = e.encId; blk.encBiome = e.biome;
+    blk.encCanBank = !!e.canBank;
+    blk.encLoot = e.pendingLoot.slice();
+  }
+  return blk;
+}
+
+function handleState(req, res) {
+  const u = new URL(req.url, 'http://x');
+  let shelters = 0, impShelters = 0, poiCount = 0;
+  const resCnt  = [0, 0, 0, 0, 0, 0];
+  const terrCnt = new Array(NUM_TERRAIN).fill(0);
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let c = 0; c < MAP_COLS; c++) {
+      const baseIdx = (r * MAP_COLS + c) * 6;
+      const tt = ttFor(c, r, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) & 0x7F;
+      const dd = ddFor(c, r, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16));
+      if (dd & 0x40) shelters++;
+      if (dd & 0x80) poiCount++;
+      if (tt < NUM_TERRAIN) terrCnt[tt]++;
+      const cell = resources[c + '_' + r];
+      if (cell && cell.res > 0 && cell.res < 6) resCnt[cell.res] += cell.amt;
+    }
+  }
+  const body = {
+    day: dayCount, dayTick, tickId: dayCount * DAY_TICKS + dayTick, tc: threatClock,
+    weather: weatherPhase, connected: Object.keys(players).length,
+    evtQueue: 0,
+    // The heap telemetry has no meaning offline, but the observer graphs
+    // mem.heap across a two-hour run to prove it is not leaking the board, so
+    // the block has to be there and the fields have to be numbers.
+    mem: {
+      heap: 0, minHeap: 0, maxBlock: 0, psram: 0,
+      uptimeMs: uptimeMs(), uploadResumes: 0, lastUploadErr: '',
+      maxTickMs: 0, broadcastSkips: 0, broadcastSkipsConsec: 0,
+      broadcastPartial: 0, assetReqActive: 0, assetReqRejects: 0,
+    },
+    rtc: { synced: false },
+    map: {
+      cells: MAP_ROWS * MAP_COLS,
+      shelters, impShelters, pois: poiCount,
+      res: { water: resCnt[1], food: resCnt[2], fuel: resCnt[3], med: resCnt[4], scrap: resCnt[5] },
+      terrain: terrCnt.map((count, id) => ({ id, name: T_SHORT[id], count })),
+    },
+    // The same "vc"/"sv" arrays the lobby and sync messages carry, scanned
+    // from data/img at boot. An HTTP-only client has no socket to learn them
+    // on and cannot otherwise tell how many tile variants exist.
+    vc: VARIANT_COUNTS.vc.slice(),
+    sv: VARIANT_COUNTS.sv.slice(),
+  };
+  if (u.searchParams.has('pid')) {
+    const view = stateView(parseInt(u.searchParams.get('pid'), 10));
+    if (view) body.view = view;
+  }
+  body.players = [];
+  for (let i = 0; i < MAX_PLAYERS; i++) body.players.push(statePlayer(i));
+
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-cache',
+  });
+  res.end(JSON.stringify(body));
+}
+
 
 const players = {};       // id -> player
 const sockets = new Map(); // ws -> id
@@ -1495,13 +1895,53 @@ const sendToPid = (id, obj) => {
   for (const [ws, pid] of sockets.entries()) if (pid === id) send(ws, obj);
 };
 
+// ── The fall — mirrors the EVT_DOWNED handler in network-events.hpp ──────────
+// Every place that takes a survivor's last LL point comes through here.
+// Everything they carried stays on the hex (dropRemains), the downed notice
+// goes to their own client only (it used to be broadcast, which sent EVERY
+// open tab to the death screen), everyone sees them leave, and the seat goes
+// back to the lobby with its lifetime score and steps -- handleMsg_pick's
+// "downed" path. The seat is freed a turn later so a caller still looping over
+// `players` (dawn upkeep, the world tick) never sees the map change under it.
+const downedCarry = {};   // id -> { sc, sp } for the next pick of that seat
+function downPlayer(p) {
+  if (!p || p.downed) return;        // a second hit on a body already falling
+  p.downed = true;
+  const id = p.id;
+  const left = dropRemains(p);
+  // Same order as the firmware: downed, left, then what they left behind.
+  sendToPid(id, { t: 'ev', k: 'downed', pid: id });
+  broadcast({ t: 'ev', k: 'left', pid: id });
+  if (left) broadcast(groundUpdateMsg(p.q, p.r, 'fell', id));
+  setImmediate(() => {
+    if (players[id] !== p) return;
+    if (encounters[id]) encEnd(id, 'downed');
+    if (tradeOffers[id]) tradeOffers[id].active = false;
+    delete lastCaravanHex[id];
+    downedCarry[id] = { sc: p.sc, sp: p.sp };
+    delete players[id];
+    for (const [ws, pid] of sockets.entries()) {
+      if (pid !== id) continue;
+      sockets.set(ws, -1);             // back in the lobby, same socket
+      send(ws, lobbyMsg());
+    }
+    broadcast(stateMsg());
+    console.log(`[downed] pid=${id} seat freed (score ${p.sc} carried)`);
+  });
+}
+
 // ── Trade offers — mirrors network-msg-trade.hpp closely enough for UI work:
 // one outstanding offer per sender, same-hex + resource checks, 30s expiry.
 const tradeOffers = {}; // fromId -> { active, fromId, toId, give, want, expiresAt }
 const TRADE_EXPIRE_MS = 30000;
 
+// Mirrors samehex() (inventory_items.hpp): same board, then tq/tr below --
+// q/r are pinned to the hatch there, so comparing them paired survivors who
+// merely went down the same hatch, however far apart they now stand.
 function sameHex(a, b) {
-  return !!a && !!b && a.on && b.on && a.q === b.q && a.r === b.r;
+  if (!a || !b || !a.on || !b.on) return false;
+  if ((a.dp | 0) !== (b.dp | 0)) return false;
+  return a.dp ? (a.tq === b.tq && a.tr === b.tr) : (a.q === b.q && a.r === b.r);
 }
 function hasResources(p, qty) {
   return !!p && qty.every((n, i) => (p.inv[i] || 0) >= n);
@@ -1632,7 +2072,7 @@ function maybeIgniteLightning(connected) {
     if (p.ll === 0) continue;   // already down — mirrors the guard in world-system.hpp
     p.ll = Math.max(0, p.ll - 2);
     broadcast({ t: 'ev', k: 'fire_dmg', pid: p.id, q, r, intensity: 10 }); // 10 = direct strike sentinel, outside fire's 1-3 range
-    if (p.ll === 0) broadcast({ t: 'ev', k: 'downed', pid: p.id });
+    if (p.ll === 0) downPlayer(p);
   }
 }
 
@@ -1680,7 +2120,7 @@ function resolveFireDamage(connected) {
     p.ll = Math.max(0, p.ll - (intensity >= 3 ? 2 : 1));
     if (intensity === 3) p.rad = Math.min(255, p.rad + 1);
     broadcast({ t: 'ev', k: 'fire_dmg', pid: p.id, q: p.q, r: p.r, intensity });
-    if (p.ll === 0) broadcast({ t: 'ev', k: 'downed', pid: p.id });
+    if (p.ll === 0) downPlayer(p);
   }
 }
 
@@ -1802,7 +2242,7 @@ function spreadFlood(connected) {
           p.mp = 0;
           // 10 = swept-away sentinel, outside flood's 1-3 range; llLost is what it actually cost
           broadcast({ t: 'ev', k: 'flood_dmg', pid: p.id, q: nq, r: nr, intensity: 10, llLost: FLOOD_LL_DAMAGE });
-          if (p.ll === 0) broadcast({ t: 'ev', k: 'downed', pid: p.id });
+          if (p.ll === 0) downPlayer(p);
         }
       }
     }
@@ -1983,7 +2423,7 @@ function resolveDoomProximity(connected) {
     if (doom.awareness >= 100 && p.ll > 0) {
       p.ll = Math.max(0, p.ll - 1);
       llLost = 1;
-      if (p.ll === 0) broadcast({ t: 'ev', k: 'downed', pid: p.id });
+      if (p.ll === 0) downPlayer(p);
     }
     broadcast({ t: 'ev', k: 'doom_act', pid: p.id, q: p.q, r: p.r, llLost });
   }
@@ -2124,6 +2564,7 @@ function syncMsg(id) {
     gs: { wp: weatherPhase, dc: dayCount, tc: threatClock },
     world: worldStateMsg(),
     gi: groundItemsList(),
+    rm: remainsList(),
     vc: VARIANT_COUNTS.vc,
     sv: VARIANT_COUNTS.sv,
     fa: VARIANT_COUNTS.fa,
@@ -2136,15 +2577,16 @@ function tryCollect(p, ws) {
   const cell = resources[k];
   if (!cell || cell.res === 0 || cell.amt === 0) return; // nothing to collect (and no fail event — server-side knows truly nothing here)
 
-  const total = p.inv.reduce((a, b) => a + b, 0);
-  if (total >= INV_SLOTS) {
+  // Canteen water is outside the pack, and water may fill its empty space
+  // even in a full pack — tokenRoomFor() prices both, against the test cap.
+  const room = tokenRoomFor(p, cell.res - 1, INV_SLOTS);
+  if (room <= 0) {
     // Inv-full: send col_fail to the moving player only.
     // cap mirrors the firmware's effectiveInvSlots() — the client shows it as "(have/cap)".
     send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2, cap: INV_SLOTS });
     console.log(`[col] FAIL inv-full pid=${p.id} q=${p.q} r=${p.r}`);
     return;
   }
-  const room = INV_SLOTS - total;
   const gain = Math.min(cell.amt, room);
   if (gain === 0) return;
 
@@ -2299,15 +2741,10 @@ function addItemToInv(p, itemId, qty) {
 // ground at the player's hex. Mirrors grantItemOrDrop() in
 // network-msg-encounter.hpp.
 function grantItemOrDrop(p, itemId, qty) {
-  if (!itemId || !qty) return;
+  if (!itemId || !qty) return false;
   qty -= addItemToInv(p, itemId, qty);
-  if (!qty) return;
-  let gslot = groundItems.findIndex((g) => g.itemType === itemId && g.q === p.q && g.r === p.r);
-  if (gslot < 0) gslot = groundItems.findIndex((g) => !g.itemType);
-  if (gslot < 0) return; // ground full — item lost, matches the firmware's warn-and-drop behaviour
-  groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
-  groundItems[gslot].itemType = itemId;
-  groundItems[gslot].qty = Math.min(255, groundItems[gslot].qty + qty);
+  if (!qty) return false;
+  return groundPut(p.q, p.r, itemId, qty);   // true = some of it landed on the ground
 }
 
 // Use the item in inventory slot slotIdx. Consumables apply their stat deltas
@@ -2354,32 +2791,27 @@ function useItem(p, slotIdx) {
 function dropItem(p, slotIdx, qty) {
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) return false;
   if (!p.it[slotIdx] || p.iq[slotIdx] < qty) return false;
-  const itemId = p.it[slotIdx];
-
-  let gslot = groundItems.findIndex((g) => g.itemType === itemId && g.q === p.q && g.r === p.r);
-  if (gslot < 0) gslot = groundItems.findIndex((g) => !g.itemType);
-  if (gslot < 0) return false;
-
+  if (!groundPut(p.q, p.r, p.it[slotIdx], qty)) return false;
   p.iq[slotIdx] -= qty;
   if (!p.iq[slotIdx]) p.it[slotIdx] = 0;
-
-  groundItems[gslot].q = p.q; groundItems[gslot].r = p.r;
-  groundItems[gslot].itemType = itemId;
-  groundItems[gslot].qty = Math.min(255, groundItems[gslot].qty + qty);
   return true;
 }
 
 // Pick up as much of ground item gslot as fits; player must be standing on
-// that hex. Mirrors pickupGroundItem() in inventory_items.hpp.
+// that hex, on the surface. Mirrors pickupGroundItem() in inventory_items.hpp.
 function pickupGroundItem(p, gslot) {
   if (gslot < 0 || gslot >= MAX_GROUND) return false;
   const gi = groundItems[gslot];
-  if (!gi.itemType || gi.q !== p.q || gi.r !== p.r) return false;
+  if (!gi.itemType || p.dp || gi.q !== p.q || gi.r !== p.r) return false;
 
   const canTake = addItemToInv(p, gi.itemType, gi.qty);
   if (!canTake) return false;
   gi.qty -= canTake;
-  if (!gi.qty) { gi.itemType = 0; gi.q = 0; gi.r = 0; }
+  if (!gi.qty) {
+    const { q, r } = gi;
+    clearPile(gi);
+    remainsPrune(q, r);   // that may have been the last thing on a grave
+  }
   return true;
 }
 
@@ -2482,6 +2914,7 @@ const MIME = {
   '.js'  : 'application/javascript; charset=utf-8',
   '.css' : 'text/css; charset=utf-8',
   '.png' : 'image/png',
+  '.webp': 'image/webp',
   '.jpg' : 'image/jpeg',
   '.svg' : 'image/svg+xml',
   '.ico' : 'image/x-icon',
@@ -2559,14 +2992,97 @@ function handleDevManifest(res) {
   res.end(body);
 }
 
+// ── Sound desk (data/sound.html): /sndinfo, /snddbg, /sndplay, /sndtest ─────
+// Mirrors ui-audio.hpp + game-server.hpp so the desk can be worked on
+// offline. The catalogue -- the knob table and the effect, line, voice, music
+// and story names -- is read out of the firmware headers themselves, so the
+// page sees exactly what the board would send. Nothing plays; requests log.
+const SND = (() => {
+  const root = path.join(__dirname, '..');
+  const read = (f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch (e) { return ''; } };
+  // The string literals of the C array whose declaration contains `name`.
+  const cStrings = (src, name) => {
+    const at = src.indexOf(name);
+    if (at < 0) return [];
+    const a = src.indexOf('{', at), b = src.indexOf('};', a);
+    return (a < 0 || b < 0) ? [] : src.slice(a + 1, b).split('"').filter((_, i) => i % 2 === 1).map((s) => s.split(String.fromCharCode(92, 39)).join("'"));
+  };
+  const music = cStrings(read('snd-music.hpp'), 'MUS_STYLE_NAME[');
+  const knobs = [];
+  const src = read('ui-audio.hpp');
+  const at = src.indexOf('SND_KNOB[SNDK_COUNT] = {');
+  const end = src.indexOf('};', at);
+  if (at >= 0 && end > at) {
+    for (const part of src.slice(src.indexOf('{', at) + 1, end).split('{').slice(1)) {
+      const f = part.split('}')[0].split(',').map((s) => s.trim());
+      const num = (s) => (s.startsWith('MS_COUNT') ? music.length - 1 : parseFloat(s));
+      knobs.push({ k: f[0].split('"').join(''), min: num(f[1]), max: num(f[2]), step: num(f[3]) });
+    }
+  }
+  // The firmware's compiled defaults (sndKnobCapture reads these back at boot).
+  const DEF = { vol: 3, mlvl: 6, mus: 0.89, sfx: 0.65, vgain: 0.39, duck: 0.55, rev: 1, noise: 1, wind: 1, lp: 4800,
+                hp: 240, comp: 20 * Math.log10(0.25), q: 3, vlp: 0, vunv: 1, vsoft: 0, vchirp: -1, dac8: -1,
+                lvl_narrator: 0.8, lvl_chant: 0.8, lvl_whisper: 0.75, lvl_doom: 0.72, lvl_barker: 0.8,
+                lvl_radio: 0.9, vmid: -37.7, vmax: -31.7, style: -1, tension: -1 };
+  for (const d of knobs) d.def = d.k in DEF ? DEF[d.k] : 0;
+  const val = Object.fromEntries(knobs.map((d) => [d.k, d.def]));
+  let saved = false;
+  const clamp = (d, v) => {
+    if (!Number.isFinite(v)) v = d.def;
+    if (d.step >= 1) v = d.min + Math.round((v - d.min) / d.step) * d.step;
+    return Math.min(d.max, Math.max(d.min, v));
+  };
+  const state = () => ({ k: { ...val }, saved, playing: val.style >= 0 ? music[val.style] : 'idle', fmt: 'mock, no speaker' });
+  const info = () => ({
+    knobs, state: state(), music,
+    sfx: cStrings(read('snd-sfx.hpp'), 'SFX_NAME['),
+    say: cStrings(read('snd-vocab.h'), 'SND_VOCAB[VOC_COUNT] = {'),
+    voices: cStrings(read('snd-lpc.hpp'), 'SAY_STYLE_NAME[]'),
+    story: cStrings(read('snd-engine.hpp'), 'SND_STORY_NAME[]'),
+  });
+  function handle(req, res, reqPath) {
+    const u = new URL(req.url, 'http://x');
+    const json = (o) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(o));
+    };
+    if (reqPath === '/sndinfo') return json(info());
+    if (reqPath === '/snddbg') {
+      if (u.searchParams.has('reset')) {
+        for (const d of knobs) if (d.k !== 'vol' && d.k !== 'mlvl') val[d.k] = d.def;
+        saved = false;
+      }
+      for (const d of knobs) if (u.searchParams.has(d.k)) val[d.k] = clamp(d, parseFloat(u.searchParams.get(d.k)));
+      if (u.searchParams.has('save')) saved = true;
+      if (u.search) console.log('[snd] knobs', u.search);
+      return json(state());
+    }
+    if (reqPath === '/sndplay') {
+      console.log('[snd] play', u.search);
+      return json({ ok: true, muted: val.vol === 0 });
+    }
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('sndtest (mock: nothing plays)');
+  }
+  return { handle, routes: new Set(['/sndinfo', '/snddbg', '/sndplay', '/sndtest']) };
+})();
+
 const httpServer = http.createServer((req, res) => {
   const reqPath = req.url.split('?')[0];
+  if (req.method === 'GET' && SND.routes.has(reqPath)) {
+    SND.handle(req, res, reqPath);
+    return;
+  }
   if (req.method === 'POST' && reqPath === '/upload') {
     handleUpload(req, res);
     return;
   }
   if (req.method === 'GET' && reqPath === '/enc') {
     handleEnc(req, res);
+    return;
+  }
+  if (req.method === 'GET' && reqPath === '/state') {
+    handleState(req, res);
     return;
   }
   if (req.method === 'GET' && reqPath === '/assets.json' && !BUNDLE_MODE) {
@@ -2644,6 +3160,9 @@ wss.on('connection', (ws) => {
           break;
         }
         players[id] = makePlayer(id);
+        // A seat whose survivor fell: a fresh survivor, but the lifetime score
+        // and steps carry over (handleMsg_pick's isDowned path).
+        if (downedCarry[id]) { Object.assign(players[id], downedCarry[id]); delete downedCarry[id]; }
         sockets.set(ws, id);
         send(ws, { t: 'asgn', id });
         send(ws, syncMsg(id));
@@ -2910,7 +3429,10 @@ wss.on('connection', (ws) => {
         send(ws, { t: 'item_result', ok, act: 'use', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, efxp: narParam, ...packFields(p) });
         if (ok) {
           broadcast(stateMsg());
-          if (revealParam >= 2) {
+          // Surface only: this is a surface vis disk around q/r, which
+          // underground is the hatch -- a client below would apply it as
+          // its own board's view.
+          if (revealParam >= 2 && !p.dp) {
             // No persistent fog memory to "reveal" in the mock, so a one-shot
             // or whole-map read just resends a bigger vis-disk — capped well
             // under map size so the payload stays reasonable.
@@ -2959,6 +3481,42 @@ wss.on('connection', (ws) => {
         const ok = pickupGroundItem(p, gslot);
         send(ws, { t: 'item_result', ok, act: 'pickup', gslot, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
         if (ok) { broadcast(groundUpdateMsg(p.q, p.r)); broadcast(stateMsg()); }
+        break;
+      }
+
+      case 'loot': {
+        // {"t":"loot","res":R} — tokens from the remains on this hex. Mirrors
+        // handleMsg_loot in network-msg-items.hpp.
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p || p.ll === 0) break;
+        const res = msg.res | 0;
+        if (res < 0 || res > 5) break;
+        const { out, got } = lootRemains(p, res);
+        send(ws, { t: 'loot_result', ok: out === 0, why: out, pid: id, got, inv: p.inv });
+        if (out === 0) { broadcast(groundUpdateMsg(p.q, p.r)); broadcast(stateMsg()); }
+        break;
+      }
+
+      case 'dbg_die': {
+        // Test-only: {"t":"dbg_die"} — the sender's survivor goes down where
+        // they stand, through the same funnel as every real death.
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p || p.ll === 0) break;
+        p.ll = 0; p.mp = 0;
+        downPlayer(p);
+        break;
+      }
+
+      case 'dbg_age': {
+        // Test-only: {"t":"dbg_age","days":29} — age every pile and remains
+        // record by N days, then run the dawn sweep as if dawn had come.
+        const days = Math.max(0, msg.days | 0);
+        for (const gi of groundItems) if (gi.itemType) gi.day = (gi.day - days) & 0xFFFF;
+        for (const rm of remainsTable) if (rm.used) rm.day = (rm.day - days) & 0xFFFF;
+        groundAgeOut();
+        broadcast(groundUpdateMsg(-1, -1, 'aged'));
         break;
       }
 

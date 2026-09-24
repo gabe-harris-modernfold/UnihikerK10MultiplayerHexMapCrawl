@@ -42,7 +42,7 @@ class RivalPolicy(SurvivorPolicy):
     # dropped ground items to keep them from anyone else.
     gear_weights = {
         "mp": 4.0, "vision": 3.0, "slots": 2.0, "ll": 1.5,
-        "threat": 1.0, "rad": 0.5, "terrain": 1.5,
+        "threat": 1.0, "rad": 0.5, "terrain": 1.5, "water_cap": 1.5,
         "nar": {NAR_COLD_IMMUNE: 2.0, NAR_SCAV_DOUBLE: 1.5,
                 NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
                 NAR_FIRE_STARTER: 1.0},
@@ -77,10 +77,14 @@ class RivalPolicy(SurvivorPolicy):
             if act is not None:
                 return act
 
-        # Anything on the floor here is free.
-        for gi in obs.ground_items:
-            if gi.get("q") == me.q and gi.get("r") == me.r:
-                return Action("noop", why="ground item here (pickup not wired)")
+        # Anything on the floor here is free, and taking it is the point: a
+        # pile left lying is a pile somebody else gets.  This was a noop
+        # placeholder ("pickup not wired"), which parked the bot on the pile
+        # for good -- tolerable while ground items were rare overflow, a freeze
+        # once every fall started leaving a whole pack on its grave.
+        grab = self.grab_ground_item(obs)
+        if grab is not None:
+            return grab
 
         offer = self._maybe_trade(obs)
         if offer is not None:
@@ -92,7 +96,10 @@ class RivalPolicy(SurvivorPolicy):
 
         full = self.pack_full(obs)
         others = [(p.q, p.r) for p in obs.rivals() if p.ll > 0]
-        ground = {(g.get("q"), g.get("r")) for g in obs.ground_items}
+        # Only piles it could lift: walking to one with no free slot means
+        # arriving, taking nothing, leaving, and being drawn straight back.
+        ground = ({(g.get("q"), g.get("r")) for g in obs.ground_items}
+                  if self.pack_has_slot(me) else set())
 
         def value(cell, q, r, cost):
             if cost <= 0:
@@ -122,6 +129,22 @@ class RivalPolicy(SurvivorPolicy):
             q, r, d, cost, val = target
             return Action("move", d=d, why=f"hunt -> ({q},{r}) v={val:.1f}")
         return Action("move", d=self.rng.choice(legal), why="fallback step")
+
+    def grab_ground_item(self, obs) -> Action | None:
+        """pickup_item for any pile underfoot -- equipment or not -- while the
+        pack has a free slot.  The shared pickup_gear() takes equipment only;
+        this is the Rival's appetite for litter.  Surface only, like every
+        ground pile, and on the same retry cooldown."""
+        me = obs.me
+        if me.depth or not self.pack_has_slot(me):
+            return None
+        for gi in obs.ground_items:
+            if not gi.get("id") or (gi.get("q"), gi.get("r")) != (me.q, me.r):
+                continue
+            act = self._pickup(gi, f"grab item {gi['id']} underfoot")
+            if act is not None:
+                return act
+        return None
 
     def _maybe_trade(self, obs) -> Action | None:
         """Lopsided offer to the nearest neighbour, on a cooldown.

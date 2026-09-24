@@ -119,11 +119,86 @@ void saveGame() {
     } else {
       Log.error("SD OPEN FAIL (append): %s", SAVE_MAP_F);
     }
+    // Ground ages + remains records -- their own file, see SAVE_GND_F. The
+    // days are in groundItems[] order, the same order as the block above.
+    File gd = SD.open(SAVE_GND_F, FILE_WRITE);
+    if (gd) {
+      SaveGroundHdr gh = { GROUND_SAVE_MAGIC, 1, MAX_GROUND, 0 };
+      for (int i = 0; i < MAX_REMAINS; i++) if (remainsTable[i].used) gh.nRemains++;
+      uint16_t days[MAX_GROUND];
+      for (int g = 0; g < MAX_GROUND; g++) days[g] = groundItems[g].day;
+      size_t gdBytes = gd.write((uint8_t*)&gh, sizeof(gh));
+      gdBytes += gd.write((uint8_t*)days, sizeof(days));
+      for (int i = 0; i < MAX_REMAINS; i++) {
+        const Remains& rm = remainsTable[i];
+        if (!rm.used) continue;
+        SaveRemains sr = {};
+        sr.pid = rm.pid; sr.q = rm.q; sr.r = rm.r; sr.day = rm.day;
+        memcpy(sr.res,  rm.res,  sizeof(sr.res));
+        memcpy(sr.name, rm.name, sizeof(sr.name));
+        gdBytes += gd.write((uint8_t*)&sr, sizeof(sr));
+      }
+      gd.close();
+      Log.verbose("SD WRITE: %s bytes=%u remains=%u", SAVE_GND_F,
+                  (unsigned)gdBytes, (unsigned)gh.nRemains);
+    } else {
+      Log.error("SD OPEN FAIL (write): %s", SAVE_GND_F);
+    }
     xSemaphoreGive(G.mutex);
     Log.notice("saveGame complete took=%ums", (unsigned)(millis() - _t0));
   } else {
     Log.warning("saveGame: G.mutex timeout (100ms) — skipped");
   }
+}
+
+// ── Ground ages + remains (SAVE_GND_F) ───────────────────────────────────────
+// Called by tryLoadSave() once map.bin -- and with it the ground piles and
+// G.dayCount -- has loaded. Without the file (a save older than it) every pile
+// is dated today, so it gets a full GROUND_AGE_DAYS, and there are no remains.
+// A day that is not younger than GROUND_AGE_DAYS cannot be real (the dawn
+// sweep runs before the dawn save), so it is treated the same way.
+static void loadGroundFile() {
+  memset(remainsTable, 0, sizeof(remainsTable));
+  for (int g = 0; g < MAX_GROUND; g++) groundItems[g].day = G.dayCount;
+  if (!SD.exists(SAVE_GND_F)) { Log.notice("No %s: piles dated today, no remains", SAVE_GND_F); return; }
+  File f = SD.open(SAVE_GND_F, FILE_READ);
+  if (!f) { Log.error("SD OPEN FAIL (read): %s", SAVE_GND_F); return; }
+  SaveGroundHdr gh;
+  if (f.read((uint8_t*)&gh, sizeof(gh)) != sizeof(gh) ||
+      gh.magic != GROUND_SAVE_MAGIC || gh.version != 1) {
+    Log.warning("%s header unreadable - ignoring", SAVE_GND_F);
+    f.close();
+    return;
+  }
+  for (int g = 0; g < (int)gh.nGround; g++) {
+    uint16_t d;
+    if (f.read((uint8_t*)&d, sizeof(d)) != sizeof(d)) break;
+    if (g < MAX_GROUND && groundItems[g].itemType && groundAge(d) < GROUND_AGE_DAYS)
+      groundItems[g].day = d;
+  }
+  int n = 0;
+  for (int i = 0; i < (int)gh.nRemains && n < MAX_REMAINS; i++) {
+    SaveRemains sr;
+    if (f.read((uint8_t*)&sr, sizeof(sr)) != sizeof(sr)) break;
+    // Same defensive bounds check as the caravan/doom coords in tryLoadSave().
+    if (sr.q < 0 || sr.q >= MAP_COLS || sr.r < 0 || sr.r >= MAP_ROWS || sr.pid >= MAX_PLAYERS) continue;
+    Remains& rm = remainsTable[n++];
+    rm.used = true;
+    rm.pid  = sr.pid;
+    rm.q    = sr.q;
+    rm.r    = sr.r;
+    rm.day  = (groundAge(sr.day) < GROUND_AGE_DAYS) ? sr.day : G.dayCount;
+    for (int k = 0; k < 5; k++) rm.res[k] = (uint8_t)min(99, (int)sr.res[k]);
+    memcpy(rm.name, sr.name, sizeof(rm.name));
+    rm.name[sizeof(rm.name) - 1] = '\0';
+    for (int c = 0; rm.name[c]; c++)   // it goes out inside JSON quotes
+      if (rm.name[c] < 0x20 || rm.name[c] > 0x7E || rm.name[c] == '"' || rm.name[c] == '\\') rm.name[c] = '_';
+  }
+  f.close();
+  // A record with no tokens left marks its piles; with neither, it is done.
+  for (int i = 0; i < MAX_REMAINS; i++)
+    if (remainsTable[i].used) remainsPrune(remainsTable[i].q, remainsTable[i].r);
+  Log.notice("SD READ: %s remains=%d", SAVE_GND_F, n);
 }
 
 // ── SD Load ───────────────────────────────────────────────────────────────────
@@ -235,6 +310,7 @@ bool tryLoadSave() {
   Log.notice("Save map loaded day=%u tick=%lu tc=%u weather=%u groundItems=%d",
              (unsigned)G.dayCount, (unsigned long)G.dayTick, (unsigned)G.threatClock,
              (unsigned)G.weatherPhase, giLoaded);
+  loadGroundFile();   // needs G.dayCount, set above
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());

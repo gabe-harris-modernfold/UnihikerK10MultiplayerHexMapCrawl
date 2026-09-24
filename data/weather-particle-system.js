@@ -244,6 +244,16 @@ class WeatherParticleSystem {
     this.particles.push(this._spawnDust(anchor));
   }
 
+  // Underground quake: one fleck of grit shaken loose from the ceiling over a
+  // random open tunnel cell. Same shape as emitDust, far lighter particle.
+  emitSift(chance, anchors) {
+    if (!anchors?.length) return;
+    if (this._weatherFull) return;
+    if (Math.random() > chance) return;
+    const anchor = anchors[(Math.random() * anchors.length) | 0];
+    this.particles.push(this._spawnSift(anchor));
+  }
+
   // ── Fire ───────────────────────────────────────────────────────────────
   // anchors are {x, y, spread, intensity, q, r} from fire-field.js via
   // renderer.js's terrain pass, one per burning hex (not a single random pick
@@ -700,6 +710,27 @@ class WeatherParticleSystem {
       opacity: 0, age: 0, dead: false,
       maxY: null,
       ttl: 90 + Math.random() * 70, fade: 30,
+    };
+  }
+
+  // Grit sifting down from a tunnel ceiling. Reuses the 'dust' puff renderer
+  // but small, faint and *falling* -- the surface dust is kicked up and
+  // billows outward; this is shaken loose and drops, with barely any drift.
+  // Paler than the surface grit so it still reads against the near-black
+  // tunnel board once the underground vignette has darkened it.
+  _spawnSift(anchor) {
+    return {
+      id: this._nextId++, shape: 'dust',
+      x: anchor.x + (Math.random() - 0.5) * anchor.spread * 1.2,
+      y: anchor.y + (Math.random() - 0.5) * anchor.spread * 1.0,
+      dx: (Math.random() - 0.5) * 0.1,
+      dy: 0.15 + Math.random() * 0.25,
+      color: `${150 + Math.trunc(Math.random() * 25)},${142 + Math.trunc(Math.random() * 25)},${128 + Math.trunc(Math.random() * 22)}`,
+      size: 1.5 + Math.random() * 2,
+      maxOpacity: 0.18 + Math.random() * 0.17,
+      opacity: 0, age: 0, dead: false,
+      maxY: null,
+      ttl: 50 + Math.random() * 50, fade: 18,
     };
   }
 

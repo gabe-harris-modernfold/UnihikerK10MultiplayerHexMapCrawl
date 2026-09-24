@@ -264,13 +264,11 @@ class RunReport:
         """
         ins = _dedupe_events(self.rows, "tun_in")
         outs = _dedupe_events(self.rows, "tun_out")
-        steps_below = Counter()
-        for r in self.rows:
-            if r["ch"] != "rx":
-                continue
-            d = r["d"]
-            if d.get("t") == "ev" and d.get("k") == "mv" and d.get("dp"):
-                steps_below[d.get("pid")] += 1
+        # Deduped: `ev` is broadcast with ws.textAll(), so every underground
+        # step is recorded once per connected bot. Counting the raw rows
+        # multiplies the whole tunnel economy by the fleet size.
+        steps_below = Counter(d.get("pid") for _t, d in _dedupe_events(self.rows, "mv")
+                              if d.get("dp"))
         # Pair each descent with the next ascent by the same survivor: the
         # surface gap between the two hatches is what the trip bought.
         pending, trips = {}, []

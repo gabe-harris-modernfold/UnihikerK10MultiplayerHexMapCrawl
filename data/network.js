@@ -139,6 +139,7 @@ let pendingActions = [];    // [{obj, ts}] — move/act dropped while offline, r
 // Set to true once server confirms it has saved creds; prevents redundant auto-sends.
 let serverHasWifiCreds = false;
 let pendingLobbyRedirect = false;  // true while downed-death pause is running
+let _fallenPid = -1;               // the seat we last fell in, for the "Your pack" log line
 
 /**
  * Establish WebSocket connection to game server.
@@ -249,6 +250,7 @@ function _clearPickTimeout() {
 // to the lobby on reconnect — otherwise a second pick is rejected as "not in lobby".
 function _checkDownedState() {
   if (myId >= 0 && !pendingLobbyRedirect && players[myId].ll === 0) {
+    _fallenPid = myId;
     myId = -1;
     pendingLobbyRedirect = true;
     addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you.</span>');
@@ -298,6 +300,29 @@ function _msgAsgn(msg) {
   hideCharSelect();
 }
 
+// ── Boot hold ─────────────────────────────────────────────────────
+// index.html's boot screen stays up until the K10's first hello (a lobby, or
+// a sync) has arrived and every image it asked for — tile atlas, shelters,
+// forage animals, plus the pawns and glyphs engine.js queued at load — has
+// loaded or failed. So a fresh visit and a refresh both reach the character
+// picker with its art already in. A mid-session reconnect doesn't come back
+// here: the boot screen is gone by then.
+let _bootHello = null;
+if (window.AssetLoader?.holdBoot) {
+  const hello = new Promise(res => { _bootHello = res; });
+  AssetLoader.holdBoot(async ui => {
+    const show = () => ui.status(uiConn.val === 'Connected'     ? 'Waiting for the lobby\u2026'
+                               : uiConn.val === 'Connecting...' ? 'Contacting the K10\u2026'
+                               : 'Contacting the K10\u2026 (' + uiConn.val + ')');
+    show();
+    const tick = setInterval(show, 500);
+    await hello;
+    clearInterval(tick);
+    ui.status('Loading art\u2026');
+    await artSettled((n, total) => ui.progress(n, total, 'images'));
+  });
+}
+
 function _msgLobby(msg) {
   lobbyAvail.val = Array.isArray(msg.avail) ? msg.avail : [];
   // Start preloading hex/shelter/forage-animal art immediately on connect,
@@ -307,6 +332,7 @@ function _msgLobby(msg) {
   if (msg.vc) loadTerrainVariants(msg.vc);
   if (msg.sv) loadShelterVariants(msg.sv);
   if (msg.fa) loadForrageAnimalImgs(msg.fa);
+  _bootHello?.();
   _clearPickTimeout();
   uiPickPending.val = false;
   console.log('%c[LOBBY] avail=%o myId=%d pendingLobbyRedirect=%s', 'color:#09f;font-weight:bold', lobbyAvail.val, myId, pendingLobbyRedirect);
@@ -347,9 +373,11 @@ function _msgSync(msg) {
   if (msg.vc) loadTerrainVariants(msg.vc);
   if (msg.sv) loadShelterVariants(msg.sv);
   if (msg.fa) loadForrageAnimalImgs(msg.fa);
+  _bootHello?.();
   if (msg.gs) _applyGameState(msg.gs);
   if (msg.world) _applyWorldState(msg.world);
   if (Array.isArray(msg.gi)) groundItems = msg.gi;
+  if (Array.isArray(msg.rm)) remains = msg.rm;
   hideConnectOverlay();
   if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
   if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
@@ -405,6 +433,7 @@ function _msgState(msg) {
     // of these — that double-counts the bonus.
     if (pd.is    !== undefined) p.is    = pd.is;
     if (pd.llCap !== undefined) p.llCap = pd.llCap;
+    if (pd.wc    !== undefined) p.wc    = pd.wc;     // canteen water cap
     if (pd.kr !== undefined) p.kr = pd.kr;  // known-recipes bitmask (mock's 's' sends it; firmware's doesn't — kr there only ever arrives via 'sync' or a craft item_result)
     if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
     // Bunker tunnels: which board this survivor is on, and where on it.
@@ -450,7 +479,11 @@ function _handleSelfVis() {
     // MC 4 cooldown for a step the server billed at 2, and ignored the Raft
     // on water entirely.
     let _mc = terrainMCFor(_cell.terrain, _me);
-    if (_mc) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * (_mc + (WEATHER_MOVE_PENALTY[weatherPhase] ?? 0));
+    // Underground there is no weather to walk through: moveTunnel() bills
+    // MOVE_CD_MS * mc flat (survival_state.hpp), so adding the penalty here
+    // throttled a chem-storm corridor walk to 2.5x what the server allows.
+    const _wx = myDepth ? 0 : (WEATHER_MOVE_PENALTY[weatherPhase] ?? 0);
+    if (_mc) moveCooldownMs = MOVE_COOLDOWN_BASE_MS * (_mc + _wx);
   }
   // A "hex still holds a resource after the move → pack must be full" toast
   // used to live here. It guessed, and it misfired: the server answers *every*
@@ -458,6 +491,8 @@ function _handleSelfVis() {
   // reveals send one too, so standing on an uncollectable pile re-toasted on
   // every keypress — on top of the col_fail toast for the same pickup. The
   // server's col_fail (reason 2) is authoritative; it is the only notice now.
+  // Someone's remains underfoot: say so once per arrival (ui-items.js).
+  noteRemainsUnderfoot?.(_here.q, _here.r);
   // Auto-trigger encounter: vis fires after applyVisDisk so the board is fresh.
   // Coordinates are whichever board we are on — handleMsg_enc_start() reads
   // the player's own depth server-side, so nothing extra rides the message.
@@ -504,9 +539,42 @@ function _msgTunnelSync(msg) {
 
 function _msgGroundUpdate(msg) {
   if (Array.isArray(msg.gi)) groundItems = msg.gi;
-  if (document.getElementById('hex-info')?.classList.contains('open') && myId >= 0) {
-    renderHexGroundItems?.(players[myId].q, players[myId].r);
+  if (Array.isArray(msg.rm)) remains = msg.rm;
+  // "fell": msg.pid's survivor went down on msg.q/r and left their stuff
+  // there. "aged": the dawn sweep reclaimed piles GROUND_AGE_DAYS old.
+  if (msg.why === 'fell') {
+    // _evDowned has already cleared myId by the time this arrives for our own
+    // fall (downed is sent first), hence the remembered seat.
+    const mine = msg.pid === myId || msg.pid === _fallenPid;
+    const rm   = remains.find(x => x.q === msg.q && x.r === msg.r);
+    const who  = mine ? 'Your' : `${escHtml(rm?.nm || players[msg.pid]?.nm || `P${msg.pid}`)}'s`;
+    addLog(`<span class="log-check-fail">☠ ${who} pack lies where ${mine ? 'you' : 'they'} fell, ${hexNameOf(msg.q, msg.r)} — anyone's for the taking, ${GROUND_AGE_DAYS} days.</span>`);
+  } else if (msg.why === 'aged') {
+    addLog('<span class="log-mv">☠ The wasteland takes back what was left lying too long.</span>');
   }
+  if (document.getElementById('hex-info')?.classList.contains('open') && myId >= 0) {
+    const _pos = myBoardPos();
+    renderHexGroundItems?.(_pos.q, _pos.r);
+  }
+}
+
+// Ack for {t:'loot'}: `got` is what came out of the remains, `why` the
+// server's LOOT_* code (0 ok, 1 nothing here, 2 pack full). inv is the
+// looter's fresh token counts; the ground_update broadcast redraws the hex.
+function _msgLootResult(msg) {
+  if (msg.pid >= 0 && msg.pid < MAX_PLAYERS && Array.isArray(msg.inv)) players[msg.pid].inv = msg.inv;
+  if (msg.pid !== myId) return;
+  if (msg.ok) {
+    const parts = (msg.got || []).map((n, k) => n ? `${n}× ${RES_NAMES[k + 1]}` : '').filter(Boolean);
+    addLog(`<span class="log-col">☠ You take ${parts.join(', ')} from the remains.</span>`);
+    showToast(`☠ Took ${parts.join(', ')}.`);
+  } else if (msg.why === 2) {
+    showToast('Pack full — drop something first.');
+  } else {
+    showToast('Nothing left here to take.');
+  }
+  updateSidebar();
+  _packFullRearmCheck();
 }
 
 function _msgWifi(msg) {
@@ -556,10 +624,12 @@ function handleMsg(msg) {
     case 'tsync':         _msgTunnelSync(msg);   break;
     case 'ev':            handleEvent(msg);      break;
     case 'ground_update': _msgGroundUpdate(msg); break;
+    case 'loot_result':   _msgLootResult(msg);   break;
     case 'item_result':   _evItemResult(msg);    break;
     case 'res_result':    _evResResult(msg);     break;
     case 'full':
       console.warn('[RX] Server full — all slots taken');
+      _bootHello?.();   // let the boot screen go so the SERVER FULL box shows
       document.getElementById('connect-box').innerHTML =
         '<h2>SERVER FULL</h2><p>All 6 slots taken.<br>Try again later.</p>' +
         '<button onclick="location.reload()" class="server-full-retry-btn">\u21BA RETRY</button>';
@@ -610,9 +680,9 @@ function handleMsg(msg) {
 let _packFullNotified = false;   // notice already shown for the current episode
 let _packFullAtTotal  = 0;       // token total when it was shown — re-arm below this
 
+// Canteen water excluded: the server's cap counts tokenLoad(), not the raw sum.
 function _invTokenTotal(pid) {
-  const inv = players[pid]?.inv;
-  return Array.isArray(inv) ? inv.reduce((a, b) => a + (b || 0), 0) : 0;
+  return tokenLoadOf(players[pid]);
 }
 
 // Called whenever fresh server totals land for us. Spending anything (treat,
@@ -754,13 +824,18 @@ function _evMv(ev) {
 }
 
 function _evDowned(ev) {
+  // The firmware only ever sends this to the survivor who fell; the mock used
+  // to broadcast it and knock every open tab to the death screen. Also drops
+  // a second notice after _checkDownedState() already took us out.
+  if (ev.pid !== undefined && ev.pid !== myId) return;
   // Server has reset our slot — show death message then redirect to char selection
+  _fallenPid = myId;
   myId = -1;
   pendingLobbyRedirect = true;
   console.log('%c[DOWNED] Received — starting 3.5s redirect timer', 'color:#f44;font-weight:bold', `lobbyAvail=${JSON.stringify(lobbyAvail.val)}`);
   globalThis._onEncEnd?.();  // close encounter overlay if open when player is downed
   addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you. Find shelter next time.</span>');
-  showToast('☠ The wasteland claims you. Your story ends in the dust.');
+  showToast('☠ The wasteland claims you. Your pack stays where you fell.');
   setTimeout(() => {
     pendingLobbyRedirect = false;
     console.log('[DOWNED] Timer fired — lobbyAvail=%o', lobbyAvail.val);
@@ -1149,6 +1224,7 @@ function _evItemResult(ev) {
     // changes the LL ceiling — both in the same message that reports the equip,
     // so the grid and the LIFE track move immediately instead of at next sync.
     if (ev.is    !== undefined) p.is    = ev.is;
+    if (ev.wc    !== undefined) p.wc    = ev.wc;
     if (ev.llCap !== undefined) { p.llCap = ev.llCap; if (ev.pid === myId) uiLLCap.val = ev.llCap; }
     // CRAFT and a caravan BUY are the item actions that also spend resource
     // tokens (inv[]), unlike use/equip/unequip/drop which only touch

@@ -141,6 +141,7 @@ static void drainEvents() {
 
   // Longest payload is enc_res at ~207 chars worst case; 288 leaves headroom.
   char buf[288];
+  bool saveAfterDrain = false;   // a fall left piles on the ground -- persist them
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
@@ -208,6 +209,17 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"hatch\":%d,\"mp\":%d}",
           down ? "tun_in" : "tun_out", ev.pid, ev.q, ev.r, (int)ev.amt, (int)ev.moveMP);
         evTextAll(buf, len);
+        // Going down gets the nest on the LCD (ui-fx.hpp) -- the spiders -- at
+        // most every three minutes. Captioned but not chronicled: survivors go
+        // up and down all game, and a line per hatch would bury the book.
+        // Coming back up, one of the small ones comes with them.
+        if (down)
+          fxCue(FXK_BELOW, (int8_t)ev.pid, K10_SAY("goes down into the dark.",
+                                                   "climbs down. Something below moves.",
+                                                   "drops through the hatch, into the dark."));
+        else
+          fxCue(FXK_CRAWL, (int8_t)ev.pid);
+        sndStory(SS_TUNNEL, down ? 1 : 0);
         break;
       }
 
@@ -216,11 +228,12 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"join\",\"pid\":%d}", ev.pid);
         evTextAll(buf, len);
-        k10LogAdd(K10_SAY("takes up the road with us.",
-                          "arrives out of the haze, still walking.",
-                          "falls in with the line of march."),
-                  (int8_t)ev.pid, TONE_GOOD, GLY_ARRIVE);
-        k10Play(MOTIF_SEWER_ECHO);
+        const char* jl = K10_SAY("takes up the road with us.",
+                                 "arrives out of the haze, still walking.",
+                                 "falls in with the line of march.");
+        k10LogAdd(jl, (int8_t)ev.pid, TONE_GOOD, GLY_ARRIVE);
+        fxCue(FXK_JOIN, (int8_t)ev.pid, jl);   // their name, cut in (ui-fx.hpp)
+        sndStory(SS_JOIN, ev.pid);             // a radio blip, their signature, the radio voice
         break;
       }
 
@@ -233,6 +246,7 @@ static void drainEvents() {
                           "is gone before the fire burns down.",
                           "leaves an empty place at the watch."),
                   (int8_t)ev.pid, TONE_PLAIN, GLY_DEPART);
+        sndStory(SS_LEFT, ev.pid);
         break;
       }
 
@@ -252,6 +266,7 @@ static void drainEvents() {
           (int)ev.dawnWndMin, (int)ev.dawnWndMaj,
           (int)ev.dawnUnfuelled);
         evTextAll(buf, len);
+        sndDawn((uint16_t)ev.dawnDay);   // the call, the roll call, "day N" -- once a day (ui-audio.hpp)
         // Chronicle — only once per day (pid==0 guards double-logging for 6-player dawn)
         if (ev.pid == 0) {
           char lb[48];
@@ -261,6 +276,7 @@ static void drainEvents() {
                            "Another sun. Day %d begins."),
                    (int)ev.dawnDay);
           k10LogAdd(lb, -1, TONE_PLAIN, GLY_DAWN);
+          fxCue(FXK_DAWN, -1, lb, nullptr, (uint16_t)ev.dawnDay);   // the chapter card
         }
         // Bad air is per-survivor, not per-day, so it sits outside the pid==0
         // guard -- two sleepers in the tunnels each get their own line. The
@@ -304,6 +320,13 @@ static void drainEvents() {
         k10LogAdd(actProse(ev.actType, ev.actOut), (int8_t)ev.pid,
                   (ev.actType == 7) ? TONE_PLAIN : (ev.actOut ? TONE_GOOD : TONE_ILL),
                   (ev.actType < 8) ? ACT_GLYPH[ev.actType] : GLY_NONE);
+        // A craft is decorated on the LCD (ui-fx.hpp, the commendation). The
+        // one cue whose caption is not the chronicle's line: it is what was
+        // made, because that is what the certificate cites.
+        if (ev.actType == 5 && ev.actOut == AO_SUCCESS) {
+          const RecipeDef* rd = getRecipeDef(ev.actRecipe);
+          fxCue(FXK_CRAFTED, (int8_t)ev.pid, rd ? rd->name : nullptr, nullptr, ev.actRecipe);
+        }
       }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
@@ -343,16 +366,26 @@ static void drainEvents() {
         // 3. Reset slot so it's available for re-pick; move client back to lobby.
         //    Take the name on the way past -- the slot is about to be handed to
         //    whoever picks it up next, and the death screen wants who it was.
+        //    Everything they carried stays on the hex where they fell
+        //    (dropRemains, inventory_items.hpp) for anyone to take.
         char downedName[16] = {0};
+        bool fellWithStuff = false;
+        int  fellQ = 0, fellR = 0;
         if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
           Player& p = G.players[ev.pid];
           memcpy(downedName, p.name, sizeof(downedName));
           downedName[sizeof(downedName) - 1] = '\0';
+          fellWithStuff = dropRemains(ev.pid);
+          fellQ = p.q; fellR = p.r;
           p.connected  = false;
           p.wsClientId = 0;
           p.resting    = false;  // clear stale resting flag on disconnect
           G.connectedCount--;
           xSemaphoreGive(G.mutex);
+        }
+        if (fellWithStuff) {
+          broadcastGroundUpdate(fellQ, fellR, "fell", ev.pid);
+          saveAfterDrain = true;   // once, after the drain loop -- SD writes are slow
         }
         if (!downedName[0])
           snprintf(downedName, sizeof(downedName), "Walker %d", (int)ev.pid + 1);
@@ -362,6 +395,7 @@ static void drainEvents() {
                           "is finished. The waste keeps them."),
                   (int8_t)ev.pid, TONE_ILL, GLY_DEATH);
         DeathUI::begin(downedName, "does not come out standing.");
+        fxCue(FXK_DOWNED, (int8_t)ev.pid);   // the knock the skull arrives on
         taskENTER_CRITICAL(&evtMux);
         for (int i = 0; i < MAX_PLAYERS; i++) {
           if (!lobbyIds[i]) { lobbyIds[i] = ev.evWsId; break; }
@@ -369,7 +403,7 @@ static void drainEvents() {
         taskEXIT_CRITICAL(&evtMux);
         // 4. Tell all lobby clients (including the downed player) archetypes now available
         broadcastLobbyUpdate();
-        k10Play(MOTIF_DEAD_BATTERY);
+        sndStory(SS_DOWNED, ev.pid);   // the flatline, then the elegy on their signature
         ledPerish();  // red heartbeat across all 3 lamps — see ui-leds.hpp
         break;
       }
@@ -379,7 +413,7 @@ static void drainEvents() {
         // Broadcast regen event then send full syncs to all connected clients
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
         evTextAll(buf, len);
-        k10Play(MOTIF_POWER_DOWN);
+        sndStory(SS_REGEN);
         int synced = 0;
         for (const auto& cl : ws.getClients()) {
           uint32_t cid = cl.id();
@@ -487,7 +521,7 @@ static void drainEvents() {
                           "crosses the threshold alone."),
                   (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
 
-        k10Play(MOTIF_DARK_ENTRY);
+        sndStory(SS_ENC_START, ev.pid);
          
         break;
 
@@ -527,19 +561,23 @@ static void drainEvents() {
           "takes it and keeps standing.",
         };
         if (ev.encOut) {
-          k10LogAdd(ENC_WON[(ev.encSkill < 5) ? ev.encSkill : 0],
-                    (int8_t)ev.pid, TONE_GOOD, GLY_LIGHT);
-          k10Play(MOTIF_DARK_DEPART);
+          const char* wl = ENC_WON[(ev.encSkill < 5) ? ev.encSkill : 0];
+          k10LogAdd(wl, (int8_t)ev.pid, TONE_GOOD, GLY_LIGHT);
+          // A win the numbers said was lost gets a panel -- the same DN bar
+          // the LONG ODDS commendation below is pressed at.
+          if (ev.encDN >= 8) fxCue(FXK_LONGODDS, (int8_t)ev.pid, wl);
+          sndStory(SS_ENC_WIN, ev.pid, ev.encDN >= 8);   // the long odds also get "that is correct"
         } else if (ev.encEnds) {
-          k10LogAdd(K10_SAY("is thrown back into daylight, bleeding.",
-                            "comes out the way they went in, worse."),
-                    (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
-          k10Play(MOTIF_BROKEN_TECH);
+          const char* tl = K10_SAY("is thrown back into daylight, bleeding.",
+                                   "comes out the way they went in, worse.");
+          k10LogAdd(tl, (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
+          fxCue(FXK_THROWN, (int8_t)ev.pid, tl);
+          sndStory(SS_ENC_THROWN, ev.pid);
         } else {
           k10LogAdd(K10_SAY("takes a hard turn and presses on.",
                             "is hurt by the place and stays in it."),
                     (int8_t)ev.pid, TONE_ILL, GLY_CLASH);
-          k10Play(MOTIF_SYSTEM_FAULT);
+          sndStory(SS_ENC_HAZARD, ev.pid);
         }
         {
           // What the room actually cost, set down as plates beside the prose.
@@ -577,7 +615,8 @@ static void drainEvents() {
           char lb[48];
           snprintf(lb, sizeof(lb), "clears the place out entire. +%d.", (int)ev.actScoreD);
           k10LogAdd(lb, (int8_t)ev.pid, TONE_GOOD, GLY_HAUL);
-          k10Play(MOTIF_WEIRD_ANOMALY);
+          fxCue(FXK_CLEARED, (int8_t)ev.pid, lb);
+          sndStory(SS_ENC_CLEARED, ev.pid);
         } else {
           k10LogAdd(K10_SAY("carries the haul back into the light.",
                             "brings out what the dark was keeping."),
@@ -654,7 +693,16 @@ static void drainEvents() {
         k10LogAdd(WX_PROSE[(ev.q < 6) ? ev.q : 0], -1,
                   (ev.q == 0) ? TONE_GOOD : TONE_OMEN,
                   WX_GLYPH[(ev.q < 6) ? ev.q : 0]);
-        if (ev.q == WEATHER_STORM) k10Play(MOTIF_MUTANT_BREATH); else k10Play(MOTIF_DISTANT_THUD);
+        {
+          // The LCD's panel for the new sky: storm and chem rain are events,
+          // the fogs are the world closing in, rain and a clearing are just a
+          // caption. Index matches WX[] above.
+          static const uint8_t WX_FX[6] = {
+            FXK_WEATHER, FXK_WEATHER, FXK_STORM, FXK_CHEM, FXK_FOG, FXK_FOG,
+          };
+          fxCue(WX_FX[(ev.q < 6) ? ev.q : 0], -1, WX_PROSE[(ev.q < 6) ? ev.q : 0]);
+        }
+        sndStory(SS_WEATHER, (uint8_t)ev.q);   // the sky's sound and line; the score follows the phase
         // Announce the new phase on the lamps in its own signature colour; the
         // ambient sky picks the phase up on the next updateLEDs() tick anyway.
         { uint8_t wr, wg, wb; weatherFlashColour((uint8_t)ev.q, wr, wg, wb);
@@ -669,6 +717,7 @@ static void drainEvents() {
         k10LogAdd(K10_SAY("meets a caravan on the road.",
                           "falls in with traders for an hour."),
                   (int8_t)ev.pid, TONE_GOOD, GLY_CARAVAN);
+        sndStory(SS_CARAVAN, ev.pid);   // the calliope and the barker
         break;
       }
 
@@ -679,10 +728,19 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"fire_dmg\",\"pid\":%d,\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
         evTextAll(buf, len);
-        k10LogAdd(K10_SAY("is caught in the burn.",
-                          "walks into fire and wears it out.",
-                          "comes through the flames marked."),
-                  (int8_t)ev.pid, TONE_ILL, GLY_FIRE);
+        {
+          const char* fl = K10_SAY("is caught in the burn.",
+                                   "walks into fire and wears it out.",
+                                   "comes through the flames marked.");
+          k10LogAdd(fl, (int8_t)ev.pid, TONE_ILL, GLY_FIRE);
+          // amt 10 is the direct-strike sentinel (maybeIgniteLightning()):
+          // that was lightning, not a fire, and the LCD says so.
+          if (ev.amt == 10) fxCue(FXK_STRIKE, (int8_t)ev.pid,
+                                  K10_SAY("is struck where they stand.",
+                                          "takes the lightning full on."));
+          else              fxCue(FXK_FIRE, (int8_t)ev.pid, fl);
+          sndStory(SS_FIRE, ev.pid, ev.amt == 10);   // 10 = lightning: thunder, not flames
+        }
         break;
       }
 
@@ -737,10 +795,14 @@ static void drainEvents() {
           "\"intensity\":%d,\"llLost\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt, (int)ev.res);
         evTextAll(buf, len);
-        k10LogAdd(K10_SAY("is swept off their feet by the flash flood.",
-                          "loses their footing as the ground gives way.",
-                          "goes under for a moment in the rising water."),
-                  (int8_t)ev.pid, TONE_ILL, GLY_FLOOD);
+        {
+          const char* fl = K10_SAY("is swept off their feet by the flash flood.",
+                                   "loses their footing as the ground gives way.",
+                                   "goes under for a moment in the rising water.");
+          k10LogAdd(fl, (int8_t)ev.pid, TONE_ILL, GLY_FLOOD);
+          fxCue(FXK_FLOOD, (int8_t)ev.pid, fl);
+          sndStory(SS_FLOOD, ev.pid);
+        }
         break;
       }
 
@@ -753,9 +815,12 @@ static void drainEvents() {
         Log.notice("EVT doom_warn pid=%d", (int)ev.pid);
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"doom_warn\",\"pid\":%d}", (int)ev.pid);
         evTextAll(buf, len);
-        k10LogAdd(K10_SAY("feels the Doom turn its head.",
-                          "goes quiet. Something out there noticed."),
-                  (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+        {
+          const char* dl = K10_SAY("feels the Doom turn its head.",
+                                   "goes quiet. Something out there noticed.");
+          k10LogAdd(dl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+          fxCue(FXK_DOOM_EYE, (int8_t)ev.pid, dl);   // the eye strip
+        }
         break;
       }
 
@@ -768,9 +833,12 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"doom_act\",\"pid\":%d,\"q\":%d,\"r\":%d,\"llLost\":%d}",
           (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
         evTextAll(buf, len);
-        k10LogAdd(K10_SAY("loses something to the Doom.",
-                          "pays the Doom what it came for."),
-                  (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+        {
+          const char* dl = K10_SAY("loses something to the Doom.",
+                                   "pays the Doom what it came for.");
+          k10LogAdd(dl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+          fxCue(FXK_DOOM_ACT, (int8_t)ev.pid, dl);
+        }
         break;
       }
 
@@ -804,29 +872,38 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"doom_taunt\",\"pid\":%d,\"tier\":%d,\"idx\":%d}",
           (int)ev.pid, (int)ev.amt, (int)ev.res);
         evTextAll(buf, len);
+        // The K10 whispers the same line every phone shows (DOOM_TAUNTS[tier][idx % 3]).
+        sndStory(SS_DOOM_TAUNT, (uint8_t)ev.amt, (uint8_t)ev.res);
         switch (ev.amt) {
+          // Each tier has its panel on the LCD (ui-fx.hpp): the eyes for the
+          // scent, the claws for the rot, RUN for the hunt, and a caption
+          // for the release.
           case 3: {
-            k10LogAdd(K10_SAY("is being hunted. It has stopped tracking.",
-                              "is all it wants now. No trail, just them."),
-                      (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            const char* tl = K10_SAY("is being hunted. It has stopped tracking.",
+                                     "is all it wants now. No trail, just them.");
+            k10LogAdd(tl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            fxCue(FXK_DOOM_HUNT, (int8_t)ev.pid, tl);
             break;
           }
           case 2: {
-            k10LogAdd(K10_SAY("works, and the Doom unmakes it behind them.",
-                              "cannot keep anything it has decided to rot."),
-                      (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            const char* tl = K10_SAY("works, and the Doom unmakes it behind them.",
+                                     "cannot keep anything it has decided to rot.");
+            k10LogAdd(tl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            fxCue(FXK_DOOM_ACT, (int8_t)ev.pid, tl);
             break;
           }
           case 1: {
-            k10LogAdd(K10_SAY("left too much of themselves on the ground.",
-                              "has been noticed. The wind changed."),
-                      (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            const char* tl = K10_SAY("left too much of themselves on the ground.",
+                                     "has been noticed. The wind changed.");
+            k10LogAdd(tl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
+            fxCue(FXK_DOOM_EYE, (int8_t)ev.pid, tl);
             break;
           }
           default: {
-            k10LogAdd(K10_SAY("feels the weight behind them lift.",
-                              "has slipped it, for now."),
-                      (int8_t)ev.pid, TONE_GOOD, GLY_DOOM);
+            const char* tl = K10_SAY("feels the weight behind them lift.",
+                                     "has slipped it, for now.");
+            k10LogAdd(tl, (int8_t)ev.pid, TONE_GOOD, GLY_DOOM);
+            fxCue(FXK_DOOM_LOST, (int8_t)ev.pid, tl);
             {
               uint8_t pv[1] = { AWD_OFF_SCENT };
               k10LogPlate(PLATE_AWARD, "Doom lost the trail",
@@ -856,4 +933,5 @@ static void drainEvents() {
   }
   if (snapCount > 0) LOG_VERBOSE("drainEvents: dispatched=%d", snapCount);
   // pendingCount was already reset to 0 inside the spinlock snapshot above.
+  if (saveAfterDrain) saveGame();   // outside the mutex; saveGame() takes it itself
 }

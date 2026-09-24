@@ -1,10 +1,10 @@
 // ── Terrain card — sets reactive state; DOM updates via van.derive ─
 function updateTerrainCard() {
   if (myId < 0) return;
-  const me   = players[myId];
-  const cell = gameMap[me.r]?.[me.q];
+  const pos  = myBoardPos();
+  const cell = pos && boardCells()[pos.r]?.[pos.q];
   if (!cell) return;
-  uiCurrentCell.val = { ...cell, q: me.q, r: me.r };
+  uiCurrentCell.val = { ...cell, q: pos.q, r: pos.r };
 }
 
 function populateHexInfo(q, r, cell) {
@@ -66,7 +66,7 @@ function populateHexInfo(q, r, cell) {
   const playersRow  = document.getElementById('hi-players-row');
   const playersList = document.getElementById('hi-players-list');
   if (playersRow && playersList) {
-    const here = players.filter(p => p.on && p.q === q && p.r === r);
+    const here = players.filter(p => p.on && (p.id === myId || sharesMyHex(p)));
     playersList.innerHTML = '';
     playersRow.style.display = here.length ? '' : 'none';
     here.forEach(p => {
@@ -139,7 +139,8 @@ function updateSidebar() {
   const me = players[myId];
   for (let i = 0; i < 5; i++) uiInv[i].val = me.inv[i];
   uiScore.val   = me.sc;
-  uiPos.val     = `Q:${me.q}  R:${me.r}`;
+  const _pos    = myBoardPos();
+  uiPos.val     = `Q:${_pos.q}  R:${_pos.r}`;
   uiSteps.val  = me.sp ?? 0;
   uiVision.val = getEffectiveVR();
   uiLL.val      = me.ll   ?? 6;

@@ -1663,9 +1663,17 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
 .hi-ground-pickup:hover{border-color:var(--gold);color:var(--gold)}
 .hi-ground-pickup img{width:16px;height:16px;object-fit:cover;border-radius:1px}
 .hi-ground-pickup .gp-plus{color:var(--gold-hi);font-weight:bold}
+/* A fallen survivor's remains: who, how long they last, their tokens */
+.hi-remains-head{
+  font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:0.5px;
+  margin:1px 0 2px
+}
+.hi-remains-head .hi-remains-who{color:#D8CBB0}
+.hi-ground-pickup .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.hi-ground-pickup.hi-remains-all{border-style:dashed}
 
 /* Broken image fallback */
-img.item-icon-img{background:var(--bg-deep)}
+img.item-icon-img{background:var(--bg-deep);image-rendering:pixelated}
 img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
 
 /* ── Encounter overlay ──────────────────────────────────────────────── */
@@ -1770,7 +1778,7 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;
   border:1px solid var(--bdr-hi);background:var(--bg-deep);font-size:var(--fs-d);color:var(--txt)
 }
-.enc-haul-chip img{width:14px;height:14px;object-fit:cover;border-radius:1px}
+.enc-haul-chip img{width:14px;height:14px;object-fit:cover;border-radius:1px;image-rendering:pixelated}
 .enc-haul-qty{color:var(--gold-hi);font-weight:bold}
 #enc-haul-empty{font-size:var(--fs-d);color:var(--txt-dim);font-style:italic}
 /* Haul steppers — trim what you'll actually bank before leaving. Button and

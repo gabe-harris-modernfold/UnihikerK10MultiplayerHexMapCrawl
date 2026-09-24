@@ -362,13 +362,13 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
   uint8_t  gain = cell.amount;
 
   // Enforce total-carry cap — count all tokens across all types against the
-  // pack size in effect (archetype base + equipment slot bonuses)
-  int totalInv = 0;
-  for (int k = 0; k < 5; k++) totalInv += (int)p.inv[k];
-  int cap = (int)effectiveInvSlots(p);
-  if (totalInv >= cap) {
-    Log.notice("col SKIP inv-full pid=%d q=%d r=%d res=%d totalInv=%d/%d",
-               pid, q, r, (int)cell.resource, totalInv, cap);
+  // pack size in effect (archetype base + equipment slot bonuses).  Water
+  // also fits in any empty canteen space, which tokenRoomFor() adds on.
+  int cap  = (int)effectiveInvSlots(p);
+  int room = tokenRoomFor(p, idx);
+  if (room <= 0) {
+    Log.notice("col SKIP inv-full pid=%d q=%d r=%d res=%d load=%d/%d",
+               pid, q, r, (int)cell.resource, tokenLoad(p), cap);
     GameEvent ev = {}; ev.type = EVT_COLLECT_FAIL; ev.pid = (uint8_t)pid;
     ev.q = (int16_t)q; ev.r = (int16_t)r; ev.res = cell.resource; ev.amt = COL_FAIL_INV_FULL;
     ev.depth = depth;
@@ -380,7 +380,6 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
     return;  // cell stays untouched — icon correctly remains visible
   }
   // Collect only as many as there is room for
-  int room = cap - totalInv;
   gain = (uint8_t)min((int)gain, room);
   if (gain == 0) {
     Log.notice("col SKIP no-room pid=%d q=%d r=%d", pid, q, r);

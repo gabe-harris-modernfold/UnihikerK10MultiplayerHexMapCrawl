@@ -118,6 +118,19 @@ EXIT_UNKNOWN_RESERVE = 6
 # The tunnel board is 160 cells at 2 MP a step; this crosses all of it.
 TUNNEL_SEARCH_COST = 80
 SURFACE_SEARCH_COST = 45
+# The walk to a hatch gets its own, much longer reach.  There are 8 hatches in
+# 4275 surface hexes, so the nearest known one is routinely past 45 MP -- and
+# a hatch outside the search is a hatch that does not exist.  hatch_bonus/cost
+# already prefers the near ones.
+DIVE_SEARCH_COST = 120
+# What a hatch is worth to a thirsty survivor.  Every corridor cell waters
+# (TERRAIN_HAS_WATER[14]), so a hatch is the gateway to the wettest ground in
+# the game; worth more than one surface pond (has_water terrain scores 70).
+HATCH_WATER_VALUE = 90.0
+# Exploration pull while provisioned but with no hatch in the map: fogged
+# ground and frontier edges, on top of the ordinary resupply values.
+SEEK_UNSEEN_VALUE = 6.0
+SEEK_FRONTIER_WEIGHT = 1.5
 
 
 class TunnelPolicy(SurvivorPolicy):
@@ -134,7 +147,7 @@ class TunnelPolicy(SurvivorPolicy):
     # that spends its life below.
     gear_weights = {
         "vision": 5.0, "mp": 3.5, "ll": 2.5, "slots": 1.5,
-        "rad": 0.5, "threat": 0.5, "terrain": 0.5,
+        "rad": 0.5, "threat": 0.5, "terrain": 0.5, "water_cap": 2.5,
         "nar": {NAR_SCAV_DOUBLE: 2.0, NAR_COLD_IMMUNE: 0.5,
                 NAR_FIRE_STARTER: 0.5, NAR_LAND_FORAGE: 0.5,
                 NAR_RIVER_FORAGE: 0.25},
@@ -182,7 +195,13 @@ class TunnelPolicy(SurvivorPolicy):
         self._shafts_used = set()
         self._hatches_seen = set()  # hatch indices anyone has been seen using
         self._dive = None           # bookkeeping for the trip in progress
-        self._wanted_out = False    # surface_reason fired and we are still down
+        self._wanted_out = False    # we NEED out and are still down here
+        # Does the current surface_reason mean "leave now" or merely "keep
+        # heading for an exit"? The runner is always doing the latter -- it is
+        # a courier, every moment below is mid-crossing -- so without the
+        # distinction its stranded_dawns counted every night it ever slept
+        # underground as a misjudged dive.
+        self._urgent = False
         self._depth = 0             # depth at the last decide(), for dawn
         self._dive_terrain = 0      # 12 or 13: which hatch we came down
         self._surfaced_reason = ""
@@ -305,8 +324,14 @@ class TunnelPolicy(SurvivorPolicy):
         return best + EXIT_SLACK
 
     def surface_reason(self, obs) -> str | None:
-        """Why this dive should end, or None to stay down."""
+        """Why this dive should end, or None to stay down.
+
+        Every reason the base class gives is a genuine one, so it sets
+        `_urgent`; a subclass with a standing reason to be heading out (the
+        runner) clears it for that case.
+        """
         me = obs.me
+        self._urgent = True
         if me.inv[RES_FOOD] <= SURFACE_FOOD:
             return f"food {me.inv[RES_FOOD]}: nothing to forage underground"
         # Sleeping down here is allowed and costs no exposure, but the
@@ -324,6 +349,7 @@ class TunnelPolicy(SurvivorPolicy):
                     f"away: leaving while we still can")
         if not self.work_below(obs):
             return "nothing left down here"
+        self._urgent = False
         return None
 
     def work_below(self, obs) -> bool:
@@ -341,7 +367,7 @@ class TunnelPolicy(SurvivorPolicy):
             return Action("noop", why="underground with no legal move")
 
         why = self.surface_reason(obs)
-        self._wanted_out = why is not None
+        self._wanted_out = why is not None and self._urgent
         if why is not None:
             self._surfaced_reason = why
             out = self.climb_out(obs, prefer=self.exit_preference(obs), why=why,
@@ -467,12 +493,28 @@ class TunnelPolicy(SurvivorPolicy):
             return self.hatch_bonus(obs, cell, q, r) / cost
 
         target = best_target(obs.map, me.q, me.r, value,
-                             max_cost=SURFACE_SEARCH_COST, stop_at=ends_journey)
+                             max_cost=DIVE_SEARCH_COST, stop_at=ends_journey)
         if target is None or target[2] not in legal:
             return None
         q, r, d, cost, val = target
         self._committed = True
         return Action("move", d=d, why=f"diving at hatch ({q},{r}) c={cost}")
+
+    def staple_value(self, obs, cell, dry, starving):
+        """A hatch is water, for a survivor who can afford the trip down.
+
+        This is the gate that actually decided whether these bots dove.  The
+        survival floor runs before pursue(), and on a dry map roll it fired on
+        every cycle -- 531 of 933 tunnelrunner decisions in one realtime run
+        were EMERGENCY water walks to surface ponds, while the one place where
+        every cell waters sat unconsidered.  Starving is excluded: there is no
+        food below, and surface_reason() would send it straight back up.
+        """
+        if not dry or starving or obs.underground:
+            return 0.0
+        if not is_hatch_terrain(cell.terrain) or obs.me.inv[RES_FOOD] < 1:
+            return 0.0
+        return HATCH_WATER_VALUE
 
     def surface_value(self, obs, cell, q, r, cost) -> float | None:
         """What a surface hex is worth while we are up here resupplying.
@@ -490,12 +532,18 @@ class TunnelPolicy(SurvivorPolicy):
         else:
             if is_hatch_terrain(cell.terrain):
                 return None                # not on purpose, not yet
-            if cell.resource == RES_FOOD + 1:
-                v += 45.0
-            elif cell.resource == RES_WATER + 1:
-                v += 35.0
-            elif cell.resource:
-                v += 12.0
+            # collectResource() refuses every pickup at the token cap, and
+            # FORAGE/WATER overfill past it -- so a pile is worth nothing to
+            # a full pack and stays exactly where it is.  Valuing it anyway
+            # pinned the explorer to a 3-hex triangle for an entire realtime
+            # run (2026-09-23), stepping on and off a food pile at 10-12 of 8.
+            if cell.resource and token_room(me, cell.resource - 1) > 0:
+                if cell.resource == RES_FOOD + 1:
+                    v += 45.0
+                elif cell.resource == RES_WATER + 1:
+                    v += 35.0
+                else:
+                    v += 12.0
             if not cell.visited_by(obs.pid):
                 v += 1.0
         v += 0.4 * frontier_bonus(obs.map, q, r)
@@ -507,23 +555,37 @@ class TunnelPolicy(SurvivorPolicy):
         if not legal:
             return Action("noop", why="no legal move")
 
+        # Stocked and willing, but no hatch in reach: go and find one.  Before
+        # this the fallback was resupply, which deliberately stays near what
+        # it has already seen -- so a bot that spawned out of sight of a hatch
+        # topped up its pack forever and never learned where one was.
+        seeking = False
         if self.ready_to_dive(obs):
             dive = self.dive_move(obs)
             if dive is not None:
                 return dive
-            self._committed = False     # no hatch reachable: resupply instead
+            self._committed = False
+            seeking = True
         else:
             self._committed = False
 
         def value(cell, q, r, cost):
-            return self.surface_value(obs, cell, q, r, cost)
+            v = self.surface_value(obs, cell, q, r, cost)
+            if not seeking or cost <= 0:
+                return v
+            if cell is not None and is_hatch_terrain(cell.terrain):
+                return v
+            e = (SEEK_UNSEEN_VALUE if cell is None else 0.0) \
+                + SEEK_FRONTIER_WEIGHT * frontier_bonus(obs.map, q, r)
+            return (v or 0.0) + e / cost if e > 0 else v
 
         target = best_target(obs.map, me.q, me.r, value,
                              max_cost=SURFACE_SEARCH_COST, stop_at=ends_journey)
         if target is not None and target[2] in legal:
             q, r, d, cost, val = target
+            verb = "seeking a hatch" if seeking else "resupply"
             return Action("move", d=d,
-                          why=f"resupply -> ({q},{r}) c={cost} v={val:.1f}")
+                          why=f"{verb} -> ({q},{r}) c={cost} v={val:.1f}")
         return Action("move", d=self.rng.choice(legal), why="surface fallback step")
 
 

@@ -1,5 +1,5 @@
 #pragma once
-// ── Item message handlers: use, equip, unequip, drop, pickup ─────────────────
+// ── Item message handlers: use, equip, unequip, drop, pickup, loot ───────────
 
 // Shared helper: build item_result JSON into a static buffer and send it.
 // The static buffers here are per-function, not shared, so concurrent calls
@@ -33,27 +33,6 @@ static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
     xSemaphoreGive(G.mutex);
   }
   if (visLen > 0) client->text(visBuf);
-}
-
-// ground_update: every ground item on the map. Stops at the last whole entry
-// that fits -- it used to write the separator with upd[upos++] unchecked, and
-// 32 items with wide coordinates is within a few bytes of the 1280 buffer.
-static void buildGroundUpdate(char* upd, size_t cap, int16_t q, int16_t r) {
-  int upos = snprintf(upd, cap, "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,\"gi\":[",
-                      (int)q, (int)r);
-  bool first = true;
-  for (int g = 0; g < MAX_GROUND; g++) {
-    if (!groundItems[g].itemType) continue;
-    char one[64];
-    int n = snprintf(one, sizeof(one), "%s{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d}",
-                     first ? "" : ",", g, groundItems[g].q, groundItems[g].r,
-                     groundItems[g].itemType, groundItems[g].qty);
-    if (upos + n + 3 > (int)cap) break;   // leave room for "]}" and the NUL
-    memcpy(upd + upos, one, (size_t)n);
-    upos += n;
-    first = false;
-  }
-  snprintf(upd + upos, cap - (size_t)upos, "]}");
 }
 
 // Common tail of the item handlers' refusal paths. The item functions return
@@ -201,19 +180,17 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   int qty = qv ? atoi(qv + 1) : 1;
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
-  PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
-  ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
-  upd[0] = '\0';
+  int  gq = 0, gr = 0;
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) data
   bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     locked = true;
     mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       ok = dropItem(mySlot, (uint8_t)slotIdx, (uint8_t)qty);
-      Player& p = G.players[mySlot];
-      if (ok) buildGroundUpdate(upd, sizeof(upd), p.q, p.r);
-      Player& pl = p;
+      Player& pl = G.players[mySlot];
+      gq = pl.q; gr = pl.r;
       int ap = appendFmt(ack, sizeof(ack), 0,
         "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"drop\",\"slot\":%d,\"pid\":%d,",
         ok?"true":"false", slotIdx, mySlot);
@@ -225,7 +202,7 @@ static void handleMsg_drop_item(AsyncWebSocketClient* client, char* data, size_t
   }
   if (ok) {
     saveGame();
-    if (upd[0]) ws.textAll(upd);
+    broadcastGroundUpdate(gq, gr);
   }
   if (ack[0]) client->text(ack);
   nackItem(client, locked, mySlot, ok);
@@ -292,19 +269,17 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
   int gslot = atoi(gv + 1);
   if (gslot < 0 || gslot >= MAX_GROUND) { wsNack(client, "bad_arg"); return; }
   PSRAM_STATIC(char, ack, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
-  PSRAM_STATIC(char, upd, [1280]);
   bool ok = false;
-  ack[0] = '\0';  // static buffers: must not leak a previous call's (possibly another player's) data
-  upd[0] = '\0';
+  int  gq = 0, gr = 0;
+  ack[0] = '\0';  // static buffer: must not leak a previous call's (possibly another player's) data
   bool locked = false; int mySlot = -1;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     locked = true;
     mySlot = findSlot(client->id());
     if (mySlot >= 0 && G.players[mySlot].connected) {
       ok = pickupGroundItem(mySlot, (uint8_t)gslot);
-      Player& p2 = G.players[mySlot];
-      if (ok) buildGroundUpdate(upd, sizeof(upd), p2.q, p2.r);
-      Player& pl2 = p2;
+      Player& pl2 = G.players[mySlot];
+      gq = pl2.q; gr = pl2.r;
       int ap = appendFmt(ack, sizeof(ack), 0,
         "{\"t\":\"item_result\",\"ok\":%s,\"act\":\"pickup\",\"gslot\":%d,\"pid\":%d,",
         ok?"true":"false", gslot, mySlot);
@@ -316,8 +291,55 @@ static void handleMsg_pickup_item(AsyncWebSocketClient* client, char* data, size
   }
   if (ok) {
     saveGame();
-    if (upd[0]) ws.textAll(upd);
+    broadcastGroundUpdate(gq, gr);   // also drops the grave marker once the hex is bare
   }
   if (ack[0]) client->text(ack);
   nackItem(client, locked, mySlot, ok);
+}
+
+// {"t":"loot","res":R} -- take resource tokens from the remains on this hex:
+// R = 1-5 for one kind, 0 or absent for everything that fits (lootRemains()).
+// The looter gets a loot_result -- `why` is LOOT_* (0 ok, 1 nothing here,
+// 2 pack full), `got` what was taken; everyone gets the ground_update, which
+// is also how the marker disappears once the hex is bare.
+static void handleMsg_loot(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
+  int res = 0;
+  const char* rp = strstr(data, "\"res\"");
+  const char* rv = rp ? strchr(rp + 5, ':') : nullptr;
+  if (rv) res = atoi(rv + 1);
+  if (res < 0 || res > 5) { wsNack(client, "bad_arg"); return; }
+  char    ack[192];
+  uint8_t got[5] = {0};
+  uint8_t out    = LOOT_NONE;
+  int     gq = 0, gr = 0;
+  ack[0] = '\0';
+  bool locked = false, downed = false; int mySlot = -1;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    locked = true;
+    mySlot = findSlot(client->id());
+    downed = mySlot >= 0 && G.players[mySlot].ll == 0;
+    if (mySlot >= 0 && G.players[mySlot].connected && !downed) {
+      out = lootRemains(mySlot, res, got);
+      Player& pl = G.players[mySlot];
+      gq = pl.q; gr = pl.r;
+      snprintf(ack, sizeof(ack),
+        "{\"t\":\"loot_result\",\"ok\":%s,\"why\":%d,\"pid\":%d,"
+        "\"got\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d]}",
+        out == LOOT_OK ? "true" : "false", (int)out, mySlot,
+        got[0], got[1], got[2], got[3], got[4],
+        pl.inv[0], pl.inv[1], pl.inv[2], pl.inv[3], pl.inv[4]);
+    }
+    xSemaphoreGive(G.mutex);
+  }
+  if (ack[0]) client->text(ack);
+  if (out == LOOT_OK) {
+    broadcastGroundUpdate(gq, gr);
+    saveGame();
+  }
+  if      (!locked)          wsNack(client, "busy");
+  else if (mySlot < 0)       wsNack(client, "not_seated");
+  else if (downed)           wsNack(client, "downed");
+  else if (out == LOOT_FULL) wsNack(client, "pack_full");
+  else if (out != LOOT_OK)   wsNack(client, "not_here");
 }

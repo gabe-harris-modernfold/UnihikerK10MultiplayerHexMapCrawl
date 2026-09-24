@@ -25,6 +25,13 @@ let fireHexesThisFrame = [];
 // these get an extra, heavier burst of dust on top of the regular fault-line
 // dust to sell "a settlement just got flattened" rather than an ordinary shake.
 let quakeConvertedPixelsThisFrame = [];
+// Underground: pixel centres of every open cell in sight while a surface quake
+// is shaking -- where renderTunnelTremor() sifts grit down from the ceiling.
+let tunnelTremorPixelsThisFrame = [];
+// "q_r" of every hex drawn with an atlas tile this frame. Those tiles carry
+// their own edge line (and a prop standing up from the hex in front covers
+// it, as it should), so renderGridLines() leaves them alone.
+const tiledHexes = new Set();
 let weatherNow = Date.now();
 
 const LIGHTNING_MIN_GAP_MS   = 3200;
@@ -33,6 +40,11 @@ const ARC_MIN_GAP_MS   = 4200;
 const ARC_STRIKE_CHANCE = 0.02; // chem storm's hex-to-hex arc, same cadence idea as the sky strike
 const QUAKE_DUST_CHANCE = 0.28; // rolled twice per frame per active quake
 const QUAKE_CONVERTED_DUST_CHANCE = 0.8; // rolled several times per frame per leveled-settlement hex
+// Underground the tremor only shakes grit loose -- a light sift spread over
+// the open cells in view, not the fault-line cloud. Rolled this many times a
+// frame at this chance x the quake envelope.
+const QUAKE_TUNNEL_SIFT_ROLLS  = 2;
+const QUAKE_TUNNEL_SIFT_CHANCE = 0.25;
 // The flat (non-soft) storm wash clips to the hex, so two washed neighbours
 // meet along a shared edge. Clipping short of the cell left an unwashed
 // hairline between every pair and the band read as a mosaic of tiles rather
@@ -402,7 +414,15 @@ function lerpPlayerPositions() {
     // are on the other one; leave their marker where it was rather than
     // dragging it somewhere meaningless (renderCharacters skips them anyway).
     const v = playerViewPos(i);
-    if (!v) continue;
+    if (!v) { renderPos[i].board = -1; continue; }
+    // First frame in view on this board -- after they crossed, or we did:
+    // snap. Lerping from the other board's coordinates slid the marker (and,
+    // for us, the whole camera) across rock that isn't there on every descent,
+    // because tun_in lands before the state broadcast that carries tq/tr.
+    if (renderPos[i].board !== myDepth) {
+      renderPos[i].q = v.q; renderPos[i].r = v.r; renderPos[i].board = myDepth;
+      continue;
+    }
     let tq = v.q, tr = v.r;
     // Only the surface wraps. Underground the board is walled, so the
     // shortest-path unwrapping below would be wrong (and could push the
@@ -536,6 +556,11 @@ function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
 // Returns the 0..1 intensity it drew at (0 = nothing drawn), which
 // drawCellOverlays uses to gate the raindrop glyph.
 function drawStormWash(cx, cy, mapQ, mapR) {
+  // The sky is on the surface board only. Underground this would paint the
+  // storm field's surface coordinates onto tunnel cells that happen to share
+  // them -- and feed stormyHexesThisFrame, which is where rain, fog and
+  // lightning take their anchors from.
+  if (myDepth) return 0;
   const cfg = STORM_PHASE_CFG[weatherPhase];
   if (!cfg) return 0;   // phase 0 (clear) has no entry
   const intensity = stormIntensityAt(mapQ, mapR, weatherPhase, weatherNow);
@@ -629,7 +654,9 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
   // the anchor collected below — several separate seats scattered across the
   // hex, not one plume at its centre, since this is a top-down view of an area
   // alight (see fireSeats in weather-particle-system.js).
-  if (fireField) {
+  // Surface only: the fire field is keyed by surface q/r, so underground it
+  // would set tunnel cells alight that merely share a burning hex's numbers.
+  if (fireField && !myDepth) {
     const fireIntensity = fireField.intensityAt(mapQ, mapR);
     if (fireIntensity > 0) {
       const BED_FILL = ['', '#C8400E', '#FF7A1E', '#FFC864'];
@@ -676,14 +703,17 @@ function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
   }
 }
 
-function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
+// ghost: the sight-fade veil alpha this hex gets once its content is down
+// (0 = none). The veil is hex-shaped, so it can't reach the part of a tile
+// that stands up into the hex behind; that part is ghosted by the same amount
+// instead, and a peak at the edge of sight fades out with its own hex.
+function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
   ctx.globalAlpha = surveyed ? 0.7 : 1;
-  const _tv  = terrainImgVariants[cell.terrain];
-  const tImg = poiArtFor(cell.terrain, cell.variant) ||
-               (_tv?.length > 0 ? (_tv[cell.variant % _tv.length] || _tv[0]) : null);
-  if (tImg?.loaded) {
-    const imgSz = HEX_SZ * 2;
-    ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
+  const tile = terrainTile(cell.terrain, cell.variant);
+  if (tile) {
+    if (ghost > 0 && !tile.img) drawTileSplit(tile, cx, cy, 1 - ghost);
+    else drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+    if (!tile.img) tiledHexes.add(`${mapQ}_${mapR}`);
   } else {
     if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, cell.resource > 0);
     if (cell.terrain === 11) drawRiverRipples(cx, cy);
@@ -699,13 +729,15 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed) {
 // that change while your back is turned, and drawing a remembered one is
 // worse than drawing nothing. No quake jitter either; you are recalling this
 // hex, not standing on it.
+// Remembered ground keeps to its own hex: under a 90% veil an overhang would
+// be a ghost of a ghost, and a hex-shaped veil could not cover it anyway.
 function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
-  const _tv  = terrainImgVariants[cell.terrain];
-  const tImg = poiArtFor(cell.terrain, cell.variant) ||
-               (_tv?.length > 0 ? (_tv[cell.variant % _tv.length] || _tv[0]) : null);
-  if (tImg?.loaded) {
-    const imgSz = HEX_SZ * 2;
-    ctx.drawImage(tImg, cx - imgSz / 2, cy - imgSz / 2, imgSz, imgSz);
+  const tile = terrainTile(cell.terrain, cell.variant);
+  if (tile?.img) {
+    drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+  } else if (tile) {
+    drawTileSplit(tile, cx, cy, 0, true);
+    tiledHexes.add(`${mapQ}_${mapR}`);
   } else if (cell.terrain !== 11) {
     drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
   }
@@ -715,10 +747,44 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   ctx.fill();
 }
 
+// An atlas tile drawn in two parts: the hex itself solid, and the overhang
+// above it at `overAlpha` (hexOnly: no overhang at all). Clipping the
+// overhang to "tile box minus hex" is an even-odd clip on one path.
+function drawTileSplit(tile, cx, cy, overAlpha, hexOnly = false) {
+  ctx.save();
+  drawHexPath(ctx, cx, cy, HEX_SZ);
+  ctx.clip();
+  drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+  ctx.restore();
+  if (hexOnly || overAlpha <= 0.02) return;
+  const b = tileBox(cx, cy, HEX_SZ);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(b.x, b.y, b.w, b.h);
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 3 * i;
+    const x = cx + HEX_SZ * Math.cos(a), y = cy + HEX_SZ * Math.sin(a);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.clip('evenodd');
+  ctx.globalAlpha *= overAlpha;
+  drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+  ctx.restore();
+}
+
 // ── Pass 1: Hex fills + terrain icons + resources ─────────────────
+// Rows go back to front (r outer, q inner): in axial coords every neighbour
+// above a hex has a smaller r, or the same r and a smaller q, so a tile that
+// stands up into the hex behind always lands on top of it.
 function renderHexTerrain(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR, meAct } = cam;
   const effectiveVR = getEffectiveVR();
+  tiledHexes.clear();
+  // A surface quake is felt below (see renderTunnelTremor), but its fault
+  // line indexes the surface map -- so underground no per-hex jitter, just
+  // a note of which open cells are in sight for the grit to fall on.
+  const tunnelTremor = myDepth && quakeField ? quakeField.peakEnvelope() : 0;
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
@@ -762,7 +828,8 @@ function renderHexTerrain(cam) {
 
       if (visible || surveyed) {
         let ccx = cx, ccy = cy;
-        const qinfo = quakeField?.cellInfo(mapQ, mapR);
+        if (tunnelTremor > 0 && visible && cell.terrain !== 15) tunnelTremorPixelsThisFrame.push({ x: cx, y: cy });
+        const qinfo = myDepth ? null : quakeField?.cellInfo(mapQ, mapR);
         if (qinfo) {
           let pts = quakePixelsThisFrame.get(qinfo.id);
           if (!pts) { pts = []; quakePixelsThisFrame.set(qinfo.id, pts); }
@@ -772,7 +839,7 @@ function renderHexTerrain(cam) {
           ccx += (Math.random() - 0.5) * mag;
           ccy += (Math.random() - 0.5) * mag;
         }
-        renderHexContent(ccx, ccy, cell, mapQ, mapR, surveyed);
+        renderHexContent(ccx, ccy, cell, mapQ, mapR, surveyed, fade > 0 ? SIGHT_FADE_ALPHA[fade] : 0);
         if (fade > 0) {
           // Veiled last so it covers terrain art, footprints, weather and fire
           // alike — otherwise the edge of sight would show a crisp flame on a
@@ -801,6 +868,8 @@ function renderHexTerrain(cam) {
 }
 
 // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ────────
+// Atlas tiles bake their own edge (see tiledHexes), so this only outlines
+// fog, flat-fill and per-file hexes.
 function renderGridLines(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR } = cam;
   ctx.strokeStyle = 'rgba(50,50,50,0.5)';
@@ -810,6 +879,10 @@ function renderGridLines(cam) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq = centreQ + dq;
       const vr = centreR + dr;
+      if (tiledHexes.size) {
+        const _n = boardNorm(vq, vr);
+        if (_n && tiledHexes.has(`${_n.q}_${_n.r}`)) continue;
+      }
       const px = hexToPixel(vq, vr, HEX_SZ);
       const cx = px.x + ox;
       const cy = px.y + oy;
@@ -913,6 +986,56 @@ function closestWrapCoords(rp, meRp) {
     }
   }
   return { vq, vr };
+}
+
+// ── Pass 1e: Remains — where survivors fell ───────────────────────
+// Drawn whatever the fog, like the caravan and the Doom (world-entities.js):
+// every client is told about a fall, and the survivor who fell has to be able
+// to find the way back to their pack. A bone grave-cross on a dark disc, ringed
+// in the fallen archetype's colour, set in the hex's lower-left so it clears
+// the centred character icon, the below-us marker (bottom edge) and the hex
+// label (top). It fades over its last few days, so a grave about to be
+// reclaimed (GROUND_AGE_DAYS) reads as one. The name comes out at a zoom where
+// there is room for it.
+function renderRemains(cam) {
+  if (typeof remains === 'undefined' || !remains.length) return;
+  const { ox, oy, meRp } = cam;
+  const rad = Math.max(5, HEX_SZ * 0.15);
+  for (const rm of remains) {
+    const { vq, vr } = closestWrapCoords(rm, meRp);
+    const px = hexToPixel(vq, vr, HEX_SZ);
+    const cx = px.x + ox - HEX_SZ * 0.40;
+    const cy = px.y + oy + HEX_SZ * 0.30;
+    if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
+    if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
+    const left = groundDaysLeft(rm.d);
+    ctx.save();
+    ctx.globalAlpha = left < 5 ? 0.4 + 0.12 * left : 1;
+    ctx.fillStyle = '#0B0906';
+    ctx.beginPath(); ctx.arc(cx, cy, rad * 1.3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = ARCHETYPE_COLORS[rm.pid] ?? PLAYER_COLORS[rm.pid] ?? '#8A7F6A';
+    ctx.lineWidth   = Math.max(1.5, rad * 0.24);
+    ctx.beginPath(); ctx.arc(cx, cy, rad * 1.08, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#E4D8BC';
+    ctx.lineCap     = 'round';
+    ctx.lineWidth   = Math.max(1.5, rad * 0.3);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - rad * 0.66);              ctx.lineTo(cx, cy + rad * 0.66);
+    ctx.moveTo(cx - rad * 0.42, cy - rad * 0.2);  ctx.lineTo(cx + rad * 0.42, cy - rad * 0.2);
+    ctx.stroke();
+    if (rm.nm && HEX_SZ >= 44) {
+      ctx.font         = `${Math.max(8, Math.round(HEX_SZ * 0.15))}px 'Courier New', monospace`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'top';
+      ctx.lineWidth    = 3;
+      ctx.strokeStyle  = 'rgba(11,9,6,0.85)';
+      ctx.fillStyle    = '#E4D8BC';
+      const tag = rm.nm.substring(0, 8).toUpperCase();
+      ctx.strokeText(tag, cx, cy + rad * 1.4);
+      ctx.fillText(tag, cx, cy + rad * 1.4);
+    }
+    ctx.restore();
+  }
 }
 
 // ── Pass 2: Character icons ────────────────────────────────────────
@@ -1070,6 +1193,22 @@ function renderQuakeOverlay() {
   }
 }
 
+// ── Underground: the tremor from above ───────────────────────────
+// What reaches the tunnels is the shaking -- buildCamera()'s whole-view shake
+// is deliberately not depth-gated -- and a fine sift of grit shaken loose from
+// the ceiling over every open cell in sight. Collapsed Tunnel (15) is solid
+// rock with nowhere for it to fall, so renderHexTerrain leaves it out. Much
+// lighter than the fault-line dust: nothing ruptured down here, it just shook.
+function renderTunnelTremor() {
+  if (!weatherParticles || !tunnelTremorPixelsThisFrame.length) return;
+  const env = quakeField.peakEnvelope();
+  if (env <= 0.02) return;
+  const anchors = tunnelTremorPixelsThisFrame.map(p => ({ x: p.x, y: p.y, spread: HEX_SZ }));
+  for (let i = 0; i < QUAKE_TUNNEL_SIFT_ROLLS; i++) {
+    weatherParticles.emitSift(QUAKE_TUNNEL_SIFT_CHANCE * env, anchors);
+  }
+}
+
 // ── Underground tint ──────────────────────────────────────────────
 // A cold, heavy vignette so the bunker tunnels never read as "the surface map
 // at night". Drawn over the board but under the time-of-day tint, because the
@@ -1131,14 +1270,18 @@ const LAYERS = [
   { name: 'hex_labels',   draw: (cam) => renderHexLabels(cam) },
   { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
   { name: 'current_hex',  draw: (cam) => renderCurrentHex(cam) },
+  // Surface coordinates, like the piles they mark -- a fall below lands on
+  // the hatch above, so underground there is nothing of theirs on this board.
+  { name: 'remains',      draw: (cam) => { if (!myDepth) renderRemains(cam); } },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   // The world system and the weather live on the surface map. Underground
   // their coordinates would land on the wrong board entirely, so skip them
-  // rather than drawing a caravan in a bunker corridor.
+  // rather than drawing a caravan in a bunker corridor. The quake is the one
+  // exception: it is felt below, as grit sifting down (renderTunnelTremor).
   { name: 'caravan',      draw: (cam) => { if (!myDepth) renderCaravan(cam); } },
   { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
   { name: 'weather',      draw: (_)   => { if (!myDepth) renderWeatherOverlay(); } },
-  { name: 'quake',        draw: (_)   => { if (!myDepth) renderQuakeOverlay(); } },
+  { name: 'quake',        draw: (_)   => { if (myDepth) renderTunnelTremor(); else renderQuakeOverlay(); } },
   // Ticks unconditionally — shared by weather (gated above) and quake dust
   // (not weather-gated), so it must run regardless of weatherPhase.
   // Fire particles emit here too (not weather-gated — a fire burns
@@ -1163,6 +1306,7 @@ function render() {
   stormyHexesThisFrame = [];
   quakePixelsThisFrame = new Map();
   quakeConvertedPixelsThisFrame = [];
+  tunnelTremorPixelsThisFrame = [];
   fireHexesThisFrame = [];
   if (quakeField) quakeField.update(weatherNow);
 

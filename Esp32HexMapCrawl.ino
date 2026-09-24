@@ -359,7 +359,18 @@ static const float WEATHER_INTENSITY[6][NUM_TERRAIN] = {
 
 // ── Item system ─────────────────────────────────────────────────
 static constexpr uint8_t  MAX_ITEMS  = 128;
-static constexpr uint8_t  MAX_GROUND = 32;
+// 32 -> 64 when a fall started leaving the whole pack on the ground: one
+// survivor can drop 23 piles at once (18 pack slots + 5 worn). No save
+// migration -- map.bin's ground block is read until EOF, so an old 32-record
+// block simply loads into the first 32 slots.
+static constexpr uint8_t  MAX_GROUND = 64;
+// Anything left lying on the ground -- a dropped item, an encounter's overflow
+// loot, a fallen survivor's pack and tokens -- is reclaimed by the wasteland
+// this many game-days after it was last added to (see groundAgeOut()).
+static constexpr uint16_t GROUND_AGE_DAYS = 30;
+// Remains records (inventory_items.hpp): two falls per seat before the oldest
+// is reclaimed early.
+static constexpr uint8_t  MAX_REMAINS = 12;
 // Caravan shelf (world-system.hpp): consumables the trader sells for resource
 // tokens. Lives here rather than with the other CARAVAN_* tuning because
 // SaveHeader below needs the slot count before world-system.hpp is included.
@@ -392,7 +403,8 @@ enum StatIdx : uint8_t {
   STAT_RAD     = 3,
   STAT_MP      = 4,
   STAT_SLOTS   = 5,
-  STAT_COUNT   = 6
+  STAT_WATER_CAP = 6,   // water tokens carried outside the pack cap (Canteen)
+  STAT_COUNT   = 7
 };
 
 enum ItemCategory : uint8_t {
@@ -443,6 +455,23 @@ struct GroundItem {
   int16_t  q, r;
   uint8_t  itemType;
   uint8_t  qty;
+  uint16_t day;       // G.dayCount when last added to -- drives GROUND_AGE_DAYS.
+                      // Not in SaveGroundItem (that record is fixed at 6 bytes);
+                      // it rides /save/ground.bin instead.
+};
+
+// Where a survivor went down, and the resource tokens they were carrying.
+// Their typed items and worn gear become ordinary groundItems[] piles; the
+// tokens need a record of their own because a HexCell holds one resource type
+// and a survivor carries five. The record is also the grave marker the client
+// draws, so it outlives its tokens while any pile is still on its hex.
+struct Remains {
+  bool     used;
+  uint8_t  pid;       // the seat that fell (seat == archetype, so it colours the marker)
+  int16_t  q, r;      // surface hex -- a fall underground lands on the hatch above
+  uint16_t day;       // G.dayCount when they fell: GROUND_AGE_DAYS and eviction order
+  uint8_t  res[5];    // water/food/fuel/med/scrap still lying here
+  char     name[12];  // who, as they were called when they fell (JSON-safe)
 };
 
 // ── Crafting ──────────────────────────────────────────────────────────────
@@ -855,6 +884,12 @@ static constexpr uint8_t  SAVE_VERSION = 18;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
+// Ground ages + remains records. A file of its own rather than another block
+// in map.bin, so neither SAVE_VERSION nor the ground block's read-until-EOF
+// layout had to change: a save without it loads with every pile given a fresh
+// GROUND_AGE_DAYS and no remains. Only read when map.bin itself loaded.
+static const char         SAVE_GND_F[] = "/save/ground.bin";
+static constexpr uint32_t GROUND_SAVE_MAGIC = 0x444E5247ul;   // "GRND"
 
 struct __attribute__((packed)) SaveHeader {
   uint32_t magic;
@@ -920,6 +955,22 @@ struct __attribute__((packed)) SaveGroundItem {
   uint8_t qty;
 };
 
+// /save/ground.bin: this header, then nGround uint16 days (groundItems[] order,
+// matching map.bin's ground block), then nRemains SaveRemains.
+struct __attribute__((packed)) SaveGroundHdr {
+  uint32_t magic;
+  uint8_t  version;
+  uint8_t  nGround;
+  uint8_t  nRemains;
+};
+struct __attribute__((packed)) SaveRemains {
+  uint8_t  pid;
+  int16_t  q, r;
+  uint16_t day;
+  uint8_t  res[5];
+  char     name[12];
+};
+
 static GameEvent*     pendingEvents = nullptr;   // [EVT_QUEUE_SIZE], PSRAM (allocPsramGlobals)
 static int            pendingCount  = 0;
 static portMUX_TYPE   evtMux        = portMUX_INITIALIZER_UNLOCKED;
@@ -955,8 +1006,10 @@ static uint8_t     recipeCount = 0;
 
 // ── Ground items ──────────────────────────────────────────────
 static GroundItem groundItems[MAX_GROUND];
+static Remains    remainsTable[MAX_REMAINS];
 static unsigned long  lastStatusMs  = 0;
 static unsigned long  lastScreenMs  = 0;
+static unsigned long  lastHkMs      = 0;   // the 10 Hz lamp/chime tick, see loop()
 static constexpr uint32_t SCREEN_MS  = 10000;
 static UNIHIKER_K10   k10;
 static Music          k10Music;
@@ -1042,12 +1095,16 @@ static uint8_t  k10PrevTCLevel = 0;
 static uint8_t  s_audioVol   = 5;
 static uint8_t  s_ledBright  = 4;
 static bool     s_screenFlip = false;
+static uint8_t  s_fxLevel    = 2;   // LCD FX (ui-fx.hpp): 0 off, 1 restrained, 2 madness; Button A cycles
+static uint8_t  s_musicVol   = 6;   // K10 music + ambience (snd-music.hpp): 0 off .. 9; web settings slider
 
 static void loadK10Prefs() {
   Preferences p; p.begin("k10", true);
   s_audioVol   = p.getUChar("vol",    5);
   s_ledBright  = p.getUChar("bright", 4);
   s_screenFlip = p.getBool("flip",    false);
+  s_fxLevel    = p.getUChar("fx",     2);
+  s_musicVol   = p.getUChar("mus",    6);
   p.end();
 }
 static void saveK10Prefs() {
@@ -1055,6 +1112,8 @@ static void saveK10Prefs() {
   p.putUChar("vol",    s_audioVol);
   p.putUChar("bright", s_ledBright);
   p.putBool("flip",    s_screenFlip);
+  p.putUChar("fx",     s_fxLevel);
+  p.putUChar("mus",    s_musicVol);
   p.end();
 }
 
@@ -1273,6 +1332,10 @@ void setup() {
   Log.notice("K10 hw init ok");
   loadK10Prefs();
   Log.notice("K10 prefs loaded: audioVol=%d ledBright=%d", (int)s_audioVol, (int)s_ledBright);
+  // The sound engine: reinstalls I2S at the same 16 kHz, starts the audio task
+  // on core 0 and says hello (ui-audio.hpp, snd-engine.hpp).
+  sndStart();
+  sndStory(SS_BOOT);
 
   // ── LovyanGFX display init ────────────────────────────────────
   // k10.begin() turns backlight off (XL9535 P0.0=LOW). Enable it via Wire.
@@ -1298,8 +1361,10 @@ void setup() {
   canvas.fillScreen(0x0000);
   canvas.pushSprite(0, 0);
   Log.notice("Sprite 240x320 16bpp in PSRAM");
+  fxBegin(s_fxLevel);   // the LCD compositor's own sprites (ui-fx.hpp)
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
+  splashUsbHint(true);
 
   // ── Mutex + game state init ───────────────────────────────────
   G.mutex = xSemaphoreCreateMutex();
@@ -1311,6 +1376,7 @@ void setup() {
   G.dayTick = 0; G.dayCount = 0;
   resetWeather();
   memset(groundItems, 0, sizeof(groundItems));
+  memset(remainsTable, 0, sizeof(remainsTable));
   memset(encounters, 0, sizeof(encounters));
   memset(tradeOffers, 0, sizeof(tradeOffers));
 
@@ -1327,19 +1393,20 @@ void setup() {
   Log.notice("SD mount start");
   if (!SD.begin()) {
     Log.fatal("SD.begin() FAILED — halting");
-    splashAdd("SD FAIL - insert card!", 0xC04020);
+    splashFail("SD FAIL - insert card!");
     for (;;) delay(1000);
   }
   {
     uint64_t tot = SD.totalBytes() / (1024*1024);
     uint64_t use = SD.usedBytes()  / (1024*1024);
     Log.notice("SD mount OK total=%uMB used=%uMB", (unsigned)tot, (unsigned)use);
+    splashLoadArt();
     char sdBuf[30]; snprintf(sdBuf, 30, "SD %uMB/%uMB used", (unsigned)tot, (unsigned)use);
     splashAdd(sdBuf, 0x406030);
   }
   if (!SD.exists("/data/index.html")) {
     Log.warning("SD MISSING: /data/index.html");
-    splashAdd("WARN: no index.html!", 0xC89030);
+    splashFail("WARN: no index.html!", 0xC89030);
   } else {
     Log.notice("index.html found");
     splashAdd("index.html OK", 0x60A040);
@@ -1368,6 +1435,7 @@ void setup() {
   } else {
     Log.notice("ButtonA not held, normal boot");
   }
+  splashUsbHint(false);
 
   setupVariantCounts();
 
@@ -1412,6 +1480,7 @@ void setup() {
              (int)W.caravan.q, (int)W.caravan.r, (int)W.creepingDoom.q, (int)W.creepingDoom.r);
 
   setupWiFiAndServer();
+  splashFreeArt();
 
   // 18 KB: was 24 KB until drainEvents()'s 6.4 KB snapshot[] moved to PSRAM,
   // so headroom is unchanged. Task stacks come out of internal heap; check
@@ -1476,7 +1545,13 @@ void loop() {
   }
 
   checkGestureSwitch();
-  checkScoreAudio();
+  checkFxButton(now);
+  // The loop now runs as fast as the LCD is animating (see the delay at the
+  // bottom), but the lamps and the score chimes were written for a 10 Hz loop:
+  // stormBolt() and the flicker cues count ticks, not milliseconds. So those
+  // keep their own 10 Hz, however fast the frames are going.
+  bool tick10 = (now - lastHkMs >= 100);
+  if (tick10) { lastHkMs = now; checkScoreAudio(); }
 
   bool screenChanged = (k10Screen != k10ScreenLast);
   k10ScreenLast = k10Screen;
@@ -1488,35 +1563,45 @@ void loop() {
   // counter and the flames both animate.
   unsigned long screenInterval = (uploadActive || deathActive) ? 100UL
                                                                : (unsigned long)SCREEN_MS;
-  if (screenChanged || k10Dirty || uploadActive || deathActive ||
-      (now - lastScreenMs >= screenInterval)) {
+  // Rendering a screen and putting it on the glass are separate steps now:
+  // the screens render into `canvas` exactly as often as they always did, and
+  // fxPresent() composes canvas onto the glass -- every repaint, plus every
+  // frame something is moving (a panel, a shake, the hum bar).
+  bool repaint = screenChanged || k10Dirty || (now - lastScreenMs >= screenInterval);
+  bool pushed  = false;
+  if (repaint) {
     lastScreenMs = now;
     k10Dirty = false;
     if (deathActive) {
       drawDeathScreen();
-      canvas.pushSprite(0, 0);
       k10ScreenXition = false;   // a takeover swallows the switch's animation
     } else if (uploadActive) {
       drawUploadScreen();
-      canvas.pushSprite(0, 0);
+      canvas.pushSprite(0, 0);   // a tool screen: always raw, never composed
+      pushed = true;
       k10ScreenXition = false;
-    } else if (k10ScreenXition) {
-      // Renders and pushes every frame of the switch itself (ui-screens.hpp).
+    } else if (k10ScreenXition && !fxLive()) {
+      // LCD FX off: the original tube dropout, which pushes its own frames.
       k10ScreenXition = false;
       screenSwitchTransition();
+      pushed = true;
     } else {
+      // LCD FX on: keep the frame on the glass, render the new screen, and
+      // the next frames cut the old one away (ui-fx.hpp).
+      if (k10ScreenXition) { k10ScreenXition = false; fxSwitchScreens(now); }
       drawActiveScreen();
-      canvas.pushSprite(0, 0);
+      if (fxLive()) fxContentChanged((const uint16_t*)canvas.getBuffer(), now, screenChanged);
     }
     if (!uploadActive && !deathActive) k10ScreenLast = k10Screen;
     else k10ScreenLast = 255;   // force a repaint when the takeover ends
   }
+  if (!pushed && !uploadActive && (repaint || fxWantsFrame(now))) fxPresent(now, deathActive);
 
   // One call owns the whole strip: updateLEDs() runs the perish alarm, the
   // lightning, the event cue, the dread layer and the time-of-day/weather sky
   // in a single pass and expires its own timers, so there is nothing left for
   // the display loop to arbitrate.
-  updateLEDs();
+  if (tick10) updateLEDs();
 
   if (now - lastStatusMs >= STATUS_MS) {
     lastStatusMs = now;
@@ -1524,5 +1609,6 @@ void loop() {
                 (int)G.connectedCount, (unsigned long)G.tickId,
                 (unsigned)(ESP.getFreeHeap() / 1024));
   }
-  delay(100);
+  // 100 ms as ever when the screen is still; a frame's worth while it moves.
+  delay(fxLoopDelay(now, now));
 }

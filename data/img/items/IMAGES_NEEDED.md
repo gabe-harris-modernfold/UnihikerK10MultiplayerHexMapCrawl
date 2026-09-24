@@ -3,6 +3,10 @@
 All files go in `data/img/items/`.
 Each item needs two images: a full illustration and a small badge icon.
 
+**Badge icons are done, and they are not files:** `data/item-icons.js` draws
+all 65 in code (preview: `node scripts/item_icon_sheet.js`), so the icon
+column below is obsolete. Only the `item_N.png` illustrations are open.
+
 | ID | Item | item_N.png (~128×128) | icon_N.png (~32×32) |
 |----|------|-----------------------|----------------------|
 |  1 | Med Kit            | ☐ | ☐ |

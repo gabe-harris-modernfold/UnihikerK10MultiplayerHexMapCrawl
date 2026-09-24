@@ -361,6 +361,8 @@ const RECIPES = [
   // here — the server still decides via the kr bitmask it sends.
   { id: 18, name: 'Backpack', outputItem: 64, outputQty: 1,
     matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 5, 0, 0, 0], starter: true },
+  { id: 19, name: 'Canteen', outputItem: 65, outputQty: 1,
+    matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 0, 0, 0, 3], starter: true },
 ];
 function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
 function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
@@ -377,15 +379,18 @@ const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 6, 0,0,0,0];
 const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0, 0,0,7,0];
 const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1, 0,0,1,0];
 // Tunnel Floor(14): water from cistern seeps, scrap from bunker fittings, and
-// a Medic can still treat. Camping, crafting, resting and surveying are refused
-// underground -- handleAction() blocks all four server-side, so mirror it here
+// a Medic can still treat. Camping, crafting and surveying are refused
+// underground -- handleAction() blocks all three server-side, so mirror it here
 // rather than offering buttons the server will silently reject. SURVEY is the
 // one that actually matters: doSurvey() writes p.surveyedMap[], which is sized
 // for the 75x57 surface map.
-// Hatches (12/13) are surface tiles and behave like any other surface hex.
+// The server refuses on p.depth, not on terrain, and the shaft cell at the foot
+// of a hatch is terrain 12/13 on the tunnel board too -- so "underground" is the
+// board being shown (myDepth), with the terrain test kept as a backstop. On the
+// surface a hatch behaves like any other surface hex.
 function actAvailable(actId, terrainIdx) {
   if (terrainIdx == null || terrainIdx >= NUM_TERRAIN) return false;
-  const underground = terrainIdx >= 14;
+  const underground = terrainIdx >= 14 || (typeof myDepth !== 'undefined' && !!myDepth);
   switch (actId) {
     case ACT_FORAGE:  return TERRAIN_FORAGE_DN[terrainIdx]  > 0;
     case ACT_WATER:   return TERRAIN_HAS_WATER[terrainIdx]  > 0;
@@ -476,7 +481,9 @@ const EQUIP_SLOT_NAMES = ['','Noggin','Hide','Mitts','Hooves','Rust Bucket'];
 const ITEM_CATEGORY_NAMES = ['Gulpable','Bolt-On','Salvage','Relic'];
 
 // Item catalog — mirrors /data/items.cfg on SD card.
-// Image paths: img/items/item_<id>.png (illustration) and img/items/icon_<id>.png (badge)
+// Image paths: img/items/item_<id>.png (illustration). Badges are not files:
+// item-icons.js draws one per id at the size it is shown -- see getItemIcon().
+// `icon` is only what a page without that script would try to load.
 // Narrative: preUse (shown before use prompt), postUse (after effect), story (key item lore)
 // usable: key items (category 3) only — true when items.cfg gives this item a
 // real effect (effectId != EFX_NONE), meaning useItem() in inventory_items.hpp
@@ -557,6 +564,10 @@ const ITEMS = [
     img:'img/items/item_64.png', icon:'img/items/icon_64.png',
     preUse:  null, postUse: null,
     story:   'Canvas, webbing, and four sets of initials inked over each other. Whatever will not fit in your hands rides on your back. +4 inventory slots while equipped.' },
+  { id:65, name:'Canteen',          category:1, slot:2,
+    img:'img/items/item_65.png', icon:'img/items/icon_65.png',
+    preUse:  null, postUse: null,
+    story:   'Three scrap plates hammered round and riveted shut, slung across the chest on a strap. It sloshes when you walk. Carries 3 Water outside your pack while equipped.' },
   { id:16, name:'Hoarder\'s Rig',   category:1, slot:2,
     img:'img/items/item_16.png', icon:'img/items/icon_16.png',
     preUse:  null, postUse: null,
@@ -806,6 +817,7 @@ const ITEM_MODS = {
   47: { mp: -1, rad: -5 },                                         // Lead Snuggie
   63: { note: 'Crosses any water terrain at 1 MP' },               // Raft
   64: { slots: +4 },                                               // Backpack
+  65: { waterCap: +3 },                                            // Canteen
 };
 
 // ── Equipment terrain perks (mirrors items.cfg "terrain" / TERR_PASS_* ) ─────
@@ -818,6 +830,10 @@ const ITEM_MODS = {
 // INV_SLOTS_MAX in the .ino — was 12, which was also the Mule's base, so a
 // Mule's slot gear did nothing.
 const INV_SLOTS_MAX = 18;
+// Game-days anything left on the ground -- a dropped item, a fallen survivor's
+// pack and tokens -- lasts before the dawn sweep reclaims it. Mirrors
+// GROUND_AGE_DAYS in the .ino (groundAgeOut() in inventory_items.hpp).
+const GROUND_AGE_DAYS = 30;
 const TERR_PASS_RIVER = 1, TERR_PASS_CLIFF = 2, TERR_PASS_RAD = 4, TERR_PASS_WATER = 8;
 const RIVER_MC = 2, CLIFF_MC = 2, RAFT_MC = 1;
 // item id -> terrain bitmask. Keep in step with items.cfg's "terrain" key.
@@ -858,7 +874,10 @@ function getItemImg(id)  {
   const item = getItemById(id);
   return item ? item.img  : ITEM_IMG_PLACEHOLDER;
 }
-function getItemIcon(id) {
+// Badge for an item, as an <img> src, for an <img> px CSS pixels square.
+function getItemIcon(id, px = 26) {
+  const drawn = typeof ItemIcons !== 'undefined' ? ItemIcons.url(id, px) : '';
+  if (drawn) return drawn;
   const item = getItemById(id);
   return item ? item.icon : ITEM_ICON_PLACEHOLDER;
 }

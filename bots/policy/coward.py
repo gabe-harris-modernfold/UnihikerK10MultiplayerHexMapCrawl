@@ -35,7 +35,7 @@ class CowardPolicy(SurvivorPolicy):
     # worth almost nothing to a survivor whose plan is to sit still.
     gear_weights = {
         "ll": 4.0, "rad": 3.0, "threat": 2.0, "terrain": 2.0,
-        "mp": 0.5, "slots": 0.5, "vision": 0.5,
+        "mp": 0.5, "slots": 0.5, "vision": 0.5, "water_cap": 4.0,
         "nar": {NAR_COLD_IMMUNE: 8.0, NAR_FIRE_STARTER: 3.0,
                 NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
                 NAR_SCAV_DOUBLE: 0.5},

@@ -1,5 +1,13 @@
 # Item Icon — Image-Gen Prompts
 
+> **The badges are drawn in code now, not generated.** `data/item-icons.js`
+> renders every item's icon from distance-field shapes and the house noise,
+> at the size each slot shows it — there are no `icon_<id>.png` files and
+> none are needed. Its drawings follow the STYLE block and the Subject lines
+> below, which is why this file stays: it is the brief. Preview the whole set
+> with `node scripts/item_icon_sheet.js`. The prompts still apply to the
+> 128 px `item_<id>.png` illustrations, which nothing draws yet.
+
 Companion to [IMAGES_NEEDED.md](IMAGES_NEEDED.md) (that file's item list is
 stale — it predates several item renames/additions in `data/items.cfg`).
 This covers all **64** current items (ids 1–64, no gaps). None of the

@@ -18,6 +18,11 @@ Other key references:
   Read it before touching `bots/` or drawing conclusions from a run: the
   protocol has several failure modes that are completely silent (a refused
   `pick`, an `enc_start` without `q`/`r`, a dirty board at reset).
+- **[docs/sound-engine.md](docs/sound-engine.md)** — the K10 speaker: a
+  16 kHz synth, generative score, orchestrated effects and a TMS5220
+  (Speak & Spell) voice in `snd-*.hpp`, board glue in `ui-audio.hpp`. Story
+  beats go through `sndStory()`; `k10Play(MOTIF_*)` still works. Preview any
+  change to WAV with `python scripts/sndsim/sndsim.py` before flashing.
 - `usb_drive.h` — Hold-A-at-boot USB-MSC mode. Coexists with the live
   `/upload` flow; do not replace one with the other.
 - `ui-upload.hpp` — on-device "FILE UPLOAD" progress screen, driven by the

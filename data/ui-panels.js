@@ -153,7 +153,7 @@ function initActionPanel() {
       // postUse doubles as the shop blurb: it is the one client-side string
       // that spells out what a Gulpable actually does ("... +2 LL.").
       btn.innerHTML =
-        `<img class="stock-icon item-icon-img" src="${escHtml(getItemIcon(id))}" alt="" width="26" height="26" onerror="${_iconOnError(id)}">` +
+        `<img class="stock-icon item-icon-img" src="${escHtml(getItemIcon(id, 26))}" alt="" width="26" height="26" onerror="${_iconOnError(id)}">` +
         `<span class="stock-body">` +
           `<span class="act-label">${escHtml(item?.name ?? 'Item #' + id)} <span class="stock-qty">×${qty}</span></span>` +
           `<span class="act-desc">${escHtml(item?.postUse || item?.preUse || '')}</span>` +
@@ -229,8 +229,8 @@ function initActionPanel() {
     tradeTargetPid = -1;
     if (myId < 0) return;
     const me = players[myId];
-    const colocated = players.filter(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r);
-    const caravanHere = worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r;
+    const colocated = players.filter(p => p.id !== myId && p.on && sharesMyHex(p));
+    const caravanHere = caravanSharesMyHex();
     if (colocated.length === 0 && !caravanHere) {
       el.innerHTML = '<div class="action-no-cond">No survivors or caravan on this hex</div>';
       return;
@@ -269,9 +269,7 @@ function initActionPanel() {
   let lastAutoTradeHex = null;   // 'q_r' of the caravan hex we last popped
 
   function caravanOnMyHex() {
-    const me = myId >= 0 ? players[myId] : null;
-    const c  = worldState.caravan;
-    return !!(me && c?.active && c.q === me.q && c.r === me.r);
+    return myId >= 0 && caravanSharesMyHex();
   }
 
   function openCaravanTrade() {
@@ -279,7 +277,7 @@ function initActionPanel() {
     const me = players[myId];
     // Header/status are normally set by openActionPanel(); this path skips it
     // (trade is free, so neither the MP-0 nor the resting gate applies).
-    const terr = gameMap[me.r]?.[me.q]?.terrain ?? null;
+    const terr = myBoardCell()?.terrain ?? null;
     terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
     const _terrSub = document.getElementById('act-panel-terrain-sub');
     if (_terrSub) _terrSub.textContent = 'IN THE ' + terrName.toUpperCase();
@@ -443,8 +441,8 @@ function initActionPanel() {
   function showExhaustedPanel(me) {
     // Same two-way gate as openActionPanel's tradeAvail: a co-located
     // survivor OR the caravan (trade is free, so it stays open when exhausted).
-    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r) ||
-      !!(worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r);
+    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && sharesMyHex(p)) ||
+      caravanSharesMyHex();
     let exhaustedHTML = '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
     if (tradeAvailExhausted) {
       exhaustedHTML +=
@@ -487,7 +485,11 @@ function initActionPanel() {
     }
     if (players[myId]?.enc) return;
     const me   = players[myId];
-    const cell = gameMap[me.r]?.[me.q];
+    // The cell under your feet on the board you are on -- underground that
+    // is the corridor (tq/tr), not the surface hatch me.q/r is pinned to.
+    // Reading the hatch greyed out WATER and SCAVENGE, the two things the
+    // tunnels are for, and lit SHELTER/SURVEY that the server refuses below.
+    const cell = myBoardCell();
     const terr        = cell?.terrain ?? null;
     const mp          = me.mp  ?? 0;
     const scrap       = me.inv?.[4] ?? 0;
@@ -559,8 +561,8 @@ function initActionPanel() {
     }
 
     // TRADE availability: requires another connected player, or the caravan, on the same hex
-    const tradeAvail  = players.some(p => p.id !== myId && p.on && p.q === me.q && p.r === me.r) ||
-      !!(worldState.caravan?.active && worldState.caravan.q === me.q && worldState.caravan.r === me.r);
+    const tradeAvail  = players.some(p => p.id !== myId && p.on && sharesMyHex(p)) ||
+      caravanSharesMyHex();
     // CRAFT: Settlement only, same terrain check TREAT uses for non-Medics — which
     // recipes are actually affordable is decided per-card inside the craft sub-panel.
     const craftAvail  = terr === null || terr === 9;
@@ -760,6 +762,7 @@ function initMenuSystem() {
     if (ssidInp) ssidInp.value = localStorage.getItem('wifi_ssid') || '';
     if (passInp) passInp.value = localStorage.getItem('wifi_pass') || '';
     populateSlider('k10-vol-slider', 'k10-vol-val', 'k10_audioVol',  5, '0 (mute)');
+    populateSlider('k10-mus-slider', 'k10-mus-val', 'k10_musicVol',  6, '0 (off)');
     populateSlider('k10-led-slider', 'k10-led-val', 'k10_ledBright', 5, '0 (off)');
   }
 
@@ -1262,6 +1265,29 @@ function initMenuSystem() {
             )
           )
         ),
+        // The K10's generative score and ambience (snd-music.hpp), under the
+        // volume above: 0 leaves only effects and the voice. The firmware keeps
+        // it in NVS, so this slider only has to send when it moves.
+        md({ class: 'settings-row' },
+          mp({ class: 'settings-label' }, 'K10 Music'),
+          md({ class: 'settings-slider-row' },
+            minput({
+              id: 'k10-mus-slider', type: 'range', min: '0', max: '9', step: '1',
+              value: localStorage.getItem('k10_musicVol') ?? '6',
+              class: 'settings-slider',
+              oninput: e => {
+                const v = Number.parseInt(e.target.value);
+                const lbl = document.getElementById('k10-mus-val');
+                if (lbl) lbl.textContent = v === 0 ? '0 (off)' : String(v);
+                localStorage.setItem('k10_musicVol', v);
+                send({ t: 'settings', musicVol: v });
+              }
+            }),
+            ms({ id: 'k10-mus-val', class: 'settings-slider-val' },
+              (() => { const v = Number.parseInt(localStorage.getItem('k10_musicVol') ?? '6'); return v === 0 ? '0 (off)' : String(v); })()
+            )
+          )
+        ),
         md({ class: 'settings-row' },
           mp({ class: 'settings-label' }, 'K10 LED Brightness'),
           md({ class: 'settings-slider-row' },
@@ -1424,7 +1450,13 @@ function initMenuSystem() {
         // Title screen
         entries.push({ group: 'UI', label: 'Title Screen', path: 'img/wastelandTitle0.png' });
 
-        // Terrain variants (populated after server sync)
+        // Terrain tile atlas pages (scripts/tilegen/build_tiles.py)
+        for (const img of tileAtlas.pages) {
+          const p = new URL(img.dataset?.src || img.src, window.location.href).pathname;
+          entries.push({ group: 'Terrain', label: p.split('/').pop(), path: p });
+        }
+
+        // Terrain variants (per-file fallback, populated after server sync)
         for (const variants of terrainImgVariants) {
           for (const img of variants) {
             const p = new URL(img.dataset?.src || img.src, window.location.href).pathname;
@@ -1446,10 +1478,10 @@ function initMenuSystem() {
           }
         }
 
-        // Item illustrations + badge icons
+        // Item illustrations. Badges are drawn by item-icons.js, so there
+        // is no file to fetch for them.
         for (const item of ITEMS) {
           entries.push({ group: 'Item Img',  label: item.name, path: item.img });
-          entries.push({ group: 'Item Icon', label: item.name, path: item.icon });
         }
 
         assetProgress.val = { done: 0, total: entries.length };

@@ -23,6 +23,8 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 
   bool assigned = false;
   const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
+  bool lateDrop = false;
+  int  lateQ = 0, lateR = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
     Player& p = G.players[arch];
@@ -46,6 +48,12 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
       if (!isReconnect) {
         uint16_t savedScore = isDowned ? p.score : 0;
         uint16_t savedSteps = isDowned ? p.steps : 0;
+        // Backstop for the EVT_DOWNED handler's dropRemains(): if that missed
+        // its mutex, or this seat was saved downed before a fall left anything
+        // behind, the old survivor's pack still goes on the ground where they
+        // fell instead of being wiped by resetSurvivor() below. A no-op when
+        // the pack is already empty, which is the usual case.
+        if (isDowned && dropRemains(arch)) { lateDrop = true; lateQ = p.q; lateR = p.r; }
         resetSurvivor(p, (uint8_t)arch);
         pickSpawnNearPlayer(p, (uint8_t)arch);
         snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
@@ -84,6 +92,10 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
     client->text(buf);
     sendSync(client, arch);
     broadcastLobbyUpdate();
+    if (lateDrop) {
+      broadcastGroundUpdate(lateQ, lateR, "fell", arch);
+      saveGame();
+    }
   } else {
     wsNack(client, refused ? refused : "busy");
     sendLobbyMsg(client);
@@ -292,21 +304,35 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     return;
   }
   {
-    Log.notice("Regen: removing %s and %s", SAVE_MAP_F, SAVE_PLY_F);
+    Log.notice("Regen: removing %s, %s and %s", SAVE_MAP_F, SAVE_PLY_F, SAVE_GND_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
+    SD.remove(SAVE_GND_F);
     // A new world: nothing from the old one may leak through.
     for (int i = 0; i < MAX_PLAYERS; i++)
       if (encounters[i].active) endEncounter(i, ENC_END_REGEN, /*restorePoi=*/false);
     memset(tradeOffers, 0, sizeof(tradeOffers));
     memset(groundItems, 0, sizeof(groundItems));
+    memset(remainsTable, 0, sizeof(remainsTable));
     generateMap();
     wInit();  // re-place world entities — stale coords may now be impassable (e.g. a new Nuke Crater)
     G.dayCount = 1; G.dayTick = 0; G.threatClock = 0;
     resetWeather();
     for (int i = 0; i < MAX_PLAYERS; i++) {
       Player& pl = G.players[i];
-      if (!pl.connected) continue;
+      if (!pl.connected) {
+        // A downed seat still holding a pack (a save from before falls left
+        // their stuff behind) would have handleMsg_pick's dropRemains()
+        // backstop spill it onto whatever hex its old coordinates name in the
+        // new world. Nothing of the old world survives it.
+        if (pl.ll == 0) {
+          memset(pl.inv,     0, sizeof(pl.inv));
+          memset(pl.invType, 0, sizeof(pl.invType));
+          memset(pl.invQty,  0, sizeof(pl.invQty));
+          memset(pl.equip,   0, sizeof(pl.equip));
+        }
+        continue;
+      }
       // Connected survivors start the new world fresh on Open Scrub, keeping
       // only name, score, and steps.
       resetSurvivor(pl, pl.archetype);
@@ -466,6 +492,11 @@ static void handleMsg_settings(AsyncWebSocketClient* client, char* data, size_t 
   if (avp) { const char* avv = strchr(avp + 10, ':'); if (avv) {
     int v = atoi(avv + 1);
     if (v >= 0 && v <= 9) s_audioVol = (uint8_t)v;
+  }}
+  const char* mvp = strstr(data, "\"musicVol\"");
+  if (mvp) { const char* mvv = strchr(mvp + 10, ':'); if (mvv) {
+    int v = atoi(mvv + 1);
+    if (v >= 0 && v <= 9) s_musicVol = (uint8_t)v;
   }}
   const char* lbp = strstr(data, "\"ledBright\"");
   if (lbp) { const char* lbv = strchr(lbp + 11, ':'); if (lbv) {
