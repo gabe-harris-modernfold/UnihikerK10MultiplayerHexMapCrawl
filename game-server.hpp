@@ -37,22 +37,92 @@ static const char* netTaskState(eTaskState s) {
   }
 }
 
+// The second failure (2026-09-24 20:37): lwIP answered every probe and the
+// driver stayed associated, yet no data moved for five minutes until a beacon
+// timeout (reason 200) dropped the link and a rejoin brought it all back. The
+// internal heap's largest block had fallen 91 -> 18 KB just before. What
+// follows is for telling that apart next time: allocation failures, heap
+// fragmentation (internal and DMA-capable, which the driver's buffers need),
+// each seated socket's queue and TCP send space, and a "data dead" snapshot
+// when players are seated but no WS event has arrived for 20 s.
+
+// Every failed allocation, from any task. Counters only: logging from inside
+// an allocator failure could itself allocate. netLogHeap() reports them.
+static volatile uint32_t g_allocFailN = 0, g_allocFailIntN = 0;
+static volatile uint32_t g_allocFailLastSize = 0, g_allocFailLastCaps = 0, g_allocFailLastMs = 0;
+static volatile uint32_t g_allocFailMinSize = 0xFFFFFFFFu, g_allocFailMaxSize = 0;
+static void netAllocFailed(size_t size, uint32_t caps, const char* fn) {
+  (void)fn;   // always the heap API's own name, so it says nothing
+  g_allocFailN++;
+  if (caps & (MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)) g_allocFailIntN++;
+  g_allocFailLastSize = (uint32_t)size; g_allocFailLastCaps = caps; g_allocFailLastMs = millis();
+  if (size < g_allocFailMinSize) g_allocFailMinSize = (uint32_t)size;
+  if (size > g_allocFailMaxSize) g_allocFailMaxSize = (uint32_t)size;
+}
+
+static uint32_t g_wsEvtNPrev = 0, g_wsEvtPrevMs = 0;
+
+// Internal and DMA-capable heap in full: a fragmenting heap shows as the free
+// block count climbing while `largest` falls and `free` holds.
+static void netLogHeap(const char* tag) {
+  multi_heap_info_t in = {}, dm = {};
+  heap_caps_get_info(&in, MALLOC_CAP_INTERNAL);
+  heap_caps_get_info(&dm, MALLOC_CAP_DMA);
+  uint32_t now = millis();
+  Log.notice("NETWD %s heap int free=%u largest=%u min=%u blocks=%u free_blocks=%u | "
+             "dma free=%u largest=%u | allocFail=%u int=%u last=%uB caps=0x%x %us ago size=%u..%u",
+             tag, (unsigned)in.total_free_bytes, (unsigned)in.largest_free_block,
+             (unsigned)in.minimum_free_bytes, (unsigned)in.total_blocks, (unsigned)in.free_blocks,
+             (unsigned)dm.total_free_bytes, (unsigned)dm.largest_free_block,
+             (unsigned)g_allocFailN, (unsigned)g_allocFailIntN, (unsigned)g_allocFailLastSize,
+             (unsigned)g_allocFailLastCaps,
+             (unsigned)(g_allocFailN ? (now - g_allocFailLastMs) / 1000 : 0),
+             (unsigned)(g_allocFailN ? g_allocFailMinSize : 0), (unsigned)g_allocFailMaxSize);
+}
+
+// Each seated socket: messages queued in AsyncWebSocket, and the TCP send
+// buffer space left. A socket whose space sits at 0 while its queue is full
+// is one whose peer is not ACKing -- the data path, not the game.
+// Read without G.mutex, the way refreshWsLiveness() looks clients up: it is
+// only ever printed.
+static void netLogClients() {
+  char line[200]; int n = 0;
+  for (int i = 0; i < MAX_PLAYERS && n < (int)sizeof(line) - 40; i++) {
+    const Player& p = G.players[i];
+    if (!p.connected) continue;
+    AsyncWebSocketClient* c = ws.client(p.wsClientId);
+    AsyncClient* tc = c ? c->client() : nullptr;
+    if (!c) { n += snprintf(line + n, sizeof(line) - n, " s%d:gone", i); continue; }
+    n += snprintf(line + n, sizeof(line) - n, " s%d:q%u%s/sp%u", i, (unsigned)c->queueLen(),
+                  c->queueIsFull() ? "F" : "", tc ? (unsigned)tc->space() : 0u);
+  }
+  if (n) Log.notice("NETWD   sockets%s", line);
+}
+
 // One line on the link: the driver's association (not WiFi.status(), which
-// only moves when the event task delivers an event), the heap the network
-// stack allocates from, and how long since async_tcp last delivered anything.
+// only moves when the event task delivers an event), softAP stations (a
+// station dozing in power save makes the driver hold frames for it), WS event
+// rate, and how long since async_tcp last delivered anything.
 static void netLogLink(const char* tag, uint32_t now) {
   wifi_ap_record_t ap = {};
   bool assoc = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
-  Log.notice("NETWD %s tcpip rtt=%ums assoc=%d rssi=%d wifiStatus=%d wsIdle=%us seated=%d "
+  uint32_t dt = now - g_wsEvtPrevMs;
+  unsigned rate = (g_wsEvtPrevMs && dt) ? (unsigned)((g_wsEvtN - g_wsEvtNPrev) * 1000u / dt) : 0u;
+  g_wsEvtNPrev = g_wsEvtN; g_wsEvtPrevMs = now;
+  Log.notice("NETWD %s tcpip rtt=%ums assoc=%d rssi=%d ch=%d wifiStatus=%d apSta=%d wsIdle=%us wsEv/s=%u seated=%d "
              "iheap=%uKB ilargest=%uKB imin=%uKB mboxFull=%u",
              tag, (unsigned)g_tcpipRttMs, assoc ? 1 : 0, assoc ? (int)ap.rssi : 0,
-             (int)WiFi.status(), (unsigned)((now - g_lastWsEvtMs) / 1000),
-             (int)G.connectedCount,
+             assoc ? (int)ap.primary : 0, (int)WiFi.status(), (int)WiFi.softAPgetStationNum(),
+             (unsigned)((now - g_lastWsEvtMs) / 1000), rate, (int)G.connectedCount,
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)g_netMboxFull);
 }
+
+// Set from the Wi-Fi event task; the game loop takes the snapshot, since by
+// then the sockets are still in the table for one more pass.
+static const char* volatile g_netSnapReq = nullptr;
 
 // The tasks that matter, by name. uxTaskGetSystemState() would list them all,
 // but the core's prebuilt FreeRTOS is linked without the trace facility.
@@ -92,7 +162,71 @@ static void netWatchdog(uint32_t now) {
     Log.warning("NETWD recovered: lwIP task was stuck for %ums", (unsigned)(g_tcpipPongMs - g_netStallT0));
     g_netStallT0 = 0; g_netDumpMs = 0;
   }
-  if (now - g_netBeatMs >= 60000) { g_netBeatMs = now; netLogLink("ok", now); }
+  // Players seated, but nothing inbound for 20 s: the data path is dead while
+  // lwIP is not. Inbound means DATA / PING / PONG -- a DISCONNECT is lwIP
+  // timing a dead socket out, and counting it once reported a 19-minute wedge
+  // as "resumed". Bots send several messages a second; a browser player idle
+  // that long also trips the log (not the heal -- see below).
+  static uint32_t deadT0 = 0, deadDumpMs = 0, lastHealMs = 0, healN = 0;
+  // Signed: async_tcp can stamp g_lastWsDataMs just after `now` was read.
+  int32_t quietMs = (int32_t)(now - g_lastWsDataMs);
+  bool dataDead = G.connectedCount > 0 && quietMs >= 20000;
+  if (dataDead) {
+    if (!deadT0) deadT0 = g_lastWsDataMs;
+    if (!deadDumpMs || now - deadDumpMs >= 30000) {
+      deadDumpMs = now;
+      Log.warning("NETWD DATA-DEAD: nothing inbound for %us with %d seated, lwIP answering",
+                  (unsigned)((now - g_lastWsDataMs) / 1000), (int)G.connectedCount);
+      netLogLink("dead", now);
+      netLogHeap("dead");
+      netLogClients();
+      netDumpTasks();
+    }
+    // The heal. That state latches: memory recovered and every player gone,
+    // it stayed dead for 50 min on 2026-09-24, and only a reassociation (a
+    // beacon timeout, the first time) brought it back. So after 30 s, if
+    // every seated socket is jammed -- queue full or no TCP send space, i.e.
+    // nothing is being ACKed, which an idle browser never looks like --
+    // drop and rejoin the AP. At most every 2 minutes.
+    if (quietMs >= 30000 && (!lastHealMs || now - lastHealMs >= 120000)) {
+      int seated = 0, jammed = 0;
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!G.players[i].connected) continue;
+        AsyncWebSocketClient* c = ws.client(G.players[i].wsClientId);
+        if (!c) continue;
+        seated++;
+        AsyncClient* tc = c->client();
+        if (c->queueIsFull() || (tc && tc->space() < 64)) jammed++;
+      }
+      if (seated > 0 && jammed == seated) {
+        lastHealMs = now; healN++;
+        Log.warning("NETWD HEAL #%u: all %d seated sockets jammed, nothing inbound for %us -- reassociating Wi-Fi",
+                    (unsigned)healN, seated, (unsigned)((now - g_lastWsDataMs) / 1000));
+        wifiNextSweepMs = now + 30000;   // keep the roaming sweep off this reconnect
+        WiFi.reconnect();
+      }
+    }
+  } else if (deadT0) {
+    Log.warning("NETWD data resumed after %us (heals so far %u)",
+                (unsigned)((now - deadT0) / 1000), (unsigned)healN);
+    deadT0 = 0; deadDumpMs = 0;
+  }
+  if (const char* why = g_netSnapReq) {
+    g_netSnapReq = nullptr;
+    netLogLink(why, now);
+    netLogHeap(why);
+    netLogClients();
+    netDumpTasks();
+  }
+  // Heartbeat: every 60 s, every 10 s while anyone is seated -- the slide
+  // toward a wedge is what the last run did not record.
+  uint32_t beat = G.connectedCount > 0 ? 10000 : 60000;
+  if (now - g_netBeatMs >= beat) {
+    g_netBeatMs = now;
+    netLogLink("ok", now);
+    netLogHeap("ok");
+    if (G.connectedCount > 0) netLogClients();
+  }
   g_tcpipPingMs = now ? now : 1;
   if (tcpip_try_callback(netProbeCb, nullptr) != ERR_OK) {
     // The lwIP mailbox is full: the task is not draining it. Counted, and
@@ -109,7 +243,10 @@ static void onWifiEvent(arduino_event_id_t ev, arduino_event_info_t info) {
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
       Log.notice("WIFI STA associated ch=%d", (int)info.wifi_sta_connected.channel); break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Log.warning("WIFI STA disconnected reason=%d", (int)info.wifi_sta_disconnected.reason); break;
+      Log.warning("WIFI STA disconnected reason=%d", (int)info.wifi_sta_disconnected.reason);
+      netLogHeap("wifi-disc");            // the heap as the link went, before sockets close
+      g_netSnapReq = "wifi-disc";         // sockets and tasks from the game loop
+      break;
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
       Log.notice("WIFI STA got ip=%s", IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str()); break;
     case ARDUINO_EVENT_WIFI_STA_LOST_IP:
@@ -475,6 +612,17 @@ static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
 static void setupWiFiAndServer() {
   Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
+  heap_caps_register_failed_alloc_callback(netAllocFailed);   // counted, reported by NETWD
+  {
+    // Proof that setup()'s heap_caps_malloc_extmem_enable() took: where a
+    // plain 2 KB malloc lands now (it used to be internal).
+    void* t = malloc(2048);
+    Log.notice("malloc routing: 2 KB -> %s, internal free=%u largest=%u",
+               t && esp_ptr_external_ram(t) ? "PSRAM" : "internal",
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    free(t);
+  }
   WiFi.onEvent(onWifiEvent);     // before WiFi.mode(), so the first association is logged too
   WiFi.setHostname(MDNS_HOST);   // DHCP hostname; must precede WiFi.mode()
   WiFi.mode(WIFI_AP_STA);

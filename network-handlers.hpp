@@ -60,11 +60,16 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
 // Last time async_tcp delivered any WS event -- the network watchdog
 // (game-server.hpp) reports it, so a wedge shows how long the socket side
 // has been silent.
-static volatile uint32_t g_lastWsEvtMs = 0;
+static volatile uint32_t g_lastWsEvtMs  = 0;
+static volatile uint32_t g_lastWsDataMs = 0;  // inbound traffic only (DATA / PING / PONG): a
+                                              // DISCONNECT is lwIP giving up, not the link working
+static volatile uint32_t g_wsEvtN       = 0;  // every WS event; NETWD reports the rate
 
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
   g_lastWsEvtMs = millis();
+  if (type == WS_EVT_DATA || type == WS_EVT_PING || type == WS_EVT_PONG) g_lastWsDataMs = g_lastWsEvtMs;
+  g_wsEvtN++;
   const char* tn;
   switch (type) {
     case WS_EVT_CONNECT:    tn = "CONNECT"; break;

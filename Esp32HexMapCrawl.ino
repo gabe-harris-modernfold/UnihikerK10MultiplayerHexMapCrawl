@@ -1277,6 +1277,14 @@ static void allocPsramGlobals() {
 
 // ── Setup ──────────────────────────────────────────────────────
 void setup() {
+  // From here on every plain malloc()/new over 512 B goes to PSRAM; the core's
+  // build-time default keeps them internal up to 4 KB. The internal heap is
+  // where the Wi-Fi driver's packet buffers come from, and on 2026-09-24 the
+  // churn of 5 bots (WS message buffers, Strings, vectors) drained it until
+  // those failed and the Wi-Fi data path latched dead (NETWD, game-server.hpp).
+  // Explicit MALLOC_CAP_INTERNAL / DMA allocations -- the driver's, lwIP's,
+  // task stacks -- are unaffected.
+  heap_caps_malloc_extmem_enable(512);
   uint32_t _bootT0 = millis();
   { unsigned long t0 = millis(); while (!Serial && millis()-t0 < 3000) delay(10); }
   delay(200);
