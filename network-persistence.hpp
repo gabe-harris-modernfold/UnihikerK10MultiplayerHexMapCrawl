@@ -214,7 +214,7 @@ bool tryLoadSave() {
     f.close(); return false;
   }
   if (hdr.magic != SAVE_MAGIC || hdr.version != SAVE_VERSION) {
-    Log.warning("Save magic/version mismatch magic=%08x ver=%u — ignoring",
+    Log.warning("Save magic/version mismatch magic=0x%x ver=%u — ignoring",
                 (unsigned)hdr.magic, (unsigned)hdr.version);
     f.close();
     return false;

@@ -1320,7 +1320,10 @@ void setup() {
       g_crash.depth = (uint8_t)min((int)cs.exc_bt_info.depth, 8);
       for (int i = 0; i < g_crash.depth; i++) g_crash.bt[i] = cs.exc_bt_info.bt[i];
       strlcpy(g_crash.elf, (const char*)cs.app_elf_sha256, sizeof(g_crash.elf));
-      Log.warning("last crash: task=%s pc=0x%08lx cause=%lu elf=%s",
+      // ArduinoLog reads ONE character after '%': "%08lx" consumed no argument,
+      // so %s got the cause as a pointer and this line crashed -- leaving a new
+      // dump for the next boot to log, a boot loop. No widths/lengths here.
+      Log.warning("last crash: task=%s pc=0x%x cause=%u elf=%s",
                   g_crash.task, (unsigned long)g_crash.pc,
                   (unsigned long)g_crash.cause, g_crash.elf);
     }
