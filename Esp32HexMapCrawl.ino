@@ -41,7 +41,7 @@
  *  10 Nuke Crater   MC=∞  SV=0  vis=STANDARD (impassable)
  *  11 River Channel MC=2  SV=0  vis=STANDARD (path-placed only)
  *
- * WiFi: AP mode, SSID "WASTELAND", IP 192.168.4.1
+ * WiFi: AP mode, SSID "WASTELAND", IP 192.168.47.1
  *
  * ── Serial debug output key ──────────────────────────────────────
  *   [SETUP]   Startup milestones and config summary

@@ -633,6 +633,14 @@ static void setupWiFiAndServer() {
   WiFi.setHostname(MDNS_HOST);   // DHCP hostname; must precede WiFi.mode()
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, nullptr, 1, 0, AP_MAX_CLIENTS);
+  // The softAP's own subnet. It was the core default 192.168.4.1/24 -- the
+  // same /24 as the house network the board also joins, so the board had two
+  // interfaces on one subnet: replies to a LAN client could be routed out the
+  // softAP, and handleConnect's via-softAP check took every LAN client for a
+  // hotspot one. 192.168.47.x is nobody's router default.
+  if (!WiFi.softAPConfig(IPAddress(192, 168, 47, 1), IPAddress(192, 168, 47, 1),
+                         IPAddress(255, 255, 255, 0)))
+    Log.error("softAPConfig 192.168.47.1 failed -- the AP keeps its default address");
   Log.notice("AP start SSID=%s maxClients=%d", AP_SSID, AP_MAX_CLIENTS);
   // http://k10.local/ -- the DHCP lease moves on every reboot, and a crash
   // mid-run used to mean a subnet sweep to find the board again. The

@@ -26,12 +26,12 @@ This separation allows real-time network communication without blocking game log
 ### Architecture: Embedded Web Server
 
 The game uses **ESPAsyncWebServer** to:
-1. **Host an Access Point** at `WASTELAND` (192.168.4.1) with no authentication
+1. **Host an Access Point** at `WASTELAND` (192.168.47.1) with no authentication
 2. **Serve a Single-Page Application (SPA):** HTML/CSS/JavaScript interface served from SPIFFS
 3. **Manage WebSocket Connections:** Bidirectional JSON-based protocol for game state synchronization
 4. **Handle Static Assets:** Stylesheet, game client code, and UI elements
 
-Players connect via WiFi and open a browser to `http://192.168.4.1/` to join the game. Each connected player receives real-time updates about the hex grid, other players, and game events through WebSocket messages.
+Players connect via WiFi and open a browser to `http://192.168.47.1/` to join the game. Each connected player receives real-time updates about the hex grid, other players, and game events through WebSocket messages.
 
 ---
 
@@ -65,7 +65,7 @@ Players connect via WiFi and open a browser to `http://192.168.4.1/` to join the
 2. **Activate WiFi AP:** Once booted, the K10 broadcasts WiFi network `WASTELAND` (no password)
 3. **Connect Players:**
    - On phone/laptop, connect to WiFi network `WASTELAND`
-   - Open browser and navigate to `http://192.168.4.1/`
+   - Open browser and navigate to `http://192.168.47.1/`
    - Enter your survivor name and choose your archetype (Guide, Quartermaster, Medic, Mule, Scout, or Endurer)
    - Click **ENTER WASTELAND**
 4. **Starting Resources:**
@@ -194,7 +194,7 @@ The game does not start while in USB drive mode.
 2. Upload `Esp32HexMapCrawl.ino` to the K10 via USB-C
 3. Insert a prepared MicroSD card (see above)
 4. Once booted, the K10 displays "WASTELAND CRAWL" splash screen
-5. Players connect to WiFi `WASTELAND` and open `http://192.168.4.1/`
+5. Players connect to WiFi `WASTELAND` and open `http://192.168.47.1/`
 
 ### Development
 

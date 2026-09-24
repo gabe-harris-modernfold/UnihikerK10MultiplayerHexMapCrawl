@@ -54,7 +54,7 @@ $p.Close()
 
 if (-not $ip) {
   Write-Host "[reset] rebooted on $Port but saw no 'Boot STA connected' within ${Seconds}s."
-  Write-Host "[reset] It may still be joining, or it fell back to the WASTELAND AP (192.168.4.1)."
+  Write-Host "[reset] It may still be joining, or it fell back to the WASTELAND AP (192.168.47.1)."
   exit 1
 }
 Write-Host "[reset] board rebooted, joined Wi-Fi at $ip"

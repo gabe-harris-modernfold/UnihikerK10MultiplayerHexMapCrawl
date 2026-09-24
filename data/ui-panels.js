@@ -1157,7 +1157,7 @@ function initMenuSystem() {
           )
         ),
 
-        mp({ class: 'menu-text-body' }, mb({}, 'WebSocket'), ' — ws://192.168.4.1/ws'),
+        mp({ class: 'menu-text-body' }, mb({}, 'WebSocket'), ' — ws://192.168.47.1/ws'),
         md({ class: 'ht-track-list' },
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Join'),
@@ -1173,7 +1173,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Tip'),
-            mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.4.1/state?pid=0 for player zero, /state?pid=1 for player one, etc.')
+            mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.47.1/state?pid=0 for player zero, /state?pid=1 for player one, etc.')
           )
         )
       ));
@@ -1566,7 +1566,7 @@ function initMenuSystem() {
           'Survive.'
         ),
         mp({ class: 'about-ver' }, '11 terrain types \u00B7 5 resource types \u00B7 6 survivors'),
-        mp({ class: 'about-ver' }, 'WebSocket \u00B7 AP mode \u00B7 SSID: WASTELAND \u00B7 192.168.4.1'),
+        mp({ class: 'about-ver' }, 'WebSocket \u00B7 AP mode \u00B7 SSID: WASTELAND \u00B7 192.168.47.1'),
       )
     );
 

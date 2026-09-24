@@ -57,7 +57,7 @@ const ESP32_HOST = "192.168.4.78";
 const ESP32_PORT = 80;
 ```
 
-Update `ESP32_HOST` if your device gets a different address. The AP-mode default is `192.168.4.1`.
+Update `ESP32_HOST` if your device gets a different address. The AP-mode default is `192.168.47.1`.
 
 ---
 
