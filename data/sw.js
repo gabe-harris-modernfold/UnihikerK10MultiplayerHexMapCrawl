@@ -7,7 +7,7 @@
 // v7: hexGlassFields2 repainted in place (the placeholder gave way to real art).
 // v8: hexMarsh0-3 repainted in place (hexMarsh4-5 are new).
 // v9: hexSettlement0-7 redrawn in place (hexSettlement8-13 are new).
-const CACHE = 'img-v9';
+const CACHE = 'img-v10';   // v10: ui_glyphs.png grew glyph 21 (TRAP)
 
 // Take over from an older worker at once instead of on the next visit: an
 // old one still serving /img/tiles.json cache-first would pin the first

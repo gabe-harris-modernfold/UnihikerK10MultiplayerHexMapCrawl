@@ -856,7 +856,7 @@ function initMenuSystem() {
 
       sec('The Mission',
         mp({ class: 'menu-text-body' },
-          'Six survivors share a 75×57 toroidal wasteland. The map wraps — walk far enough ' +
+          'Up to five survivors share a 75×57 toroidal wasteland. The map wraps — walk far enough ' +
           'in any direction and you come back around. Explore hexes to reveal terrain, collect ' +
           'resources, and keep each other alive. A game day lasts 5 minutes. Survive as many ' +
           'days as you can.'
@@ -1097,7 +1097,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'All 6 slots: name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/resting/radClean), score/steps. conn:false = empty slot.')
+            mp({ class: 'ht-track-desc' }, 'One entry per archetype seat (at most 5 seated at once): name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/resting/radClean), score/steps. conn:false = empty slot.')
           )
         ),
 
@@ -1450,10 +1450,12 @@ function initMenuSystem() {
         // Title screen
         entries.push({ group: 'UI', label: 'Title Screen', path: 'img/wastelandTitle0.png' });
 
-        // Terrain tile atlas pages (scripts/tilegen/build_tiles.py)
+        // Sprite sheets: one per terrain, per shelter kind, and the forage set (scripts/hex_sheets.py)
         for (const img of tileAtlas.pages) {
           const p = new URL(img.dataset?.src || img.src, window.location.href).pathname;
-          entries.push({ group: 'Terrain', label: p.split('/').pop(), path: p });
+          const label = p.split('/').pop();
+          const group = label.startsWith('shelter') ? 'Shelter' : label.startsWith('forrage') ? 'Forage' : 'Terrain';
+          entries.push({ group, label, path: p });
         }
 
         // Terrain variants (per-file fallback, populated after server sync)
@@ -1559,13 +1561,13 @@ function initMenuSystem() {
       back('main'),
       md({ class: 'about-header' },
         mp({ class: 'about-logo' }, '\u2620 WASTELAND CRAWL'),
-        mp({ class: 'about-sub'  }, 'Post-Apocalyptic Hex Crawl', mbr(), '6-player co-op scavenging on ESP32-S3'),
+        mp({ class: 'about-sub'  }, 'Post-Apocalyptic Hex Crawl', mbr(), '5-player co-op scavenging on ESP32-S3'),
         mp({ class: 'about-sub'  },
           'Explore a 25\u00D719 toroidal wasteland.', mbr(),
           'Scavenge water, food, fuel, medicine and scrap.', mbr(),
           'Survive.'
         ),
-        mp({ class: 'about-ver' }, '11 terrain types \u00B7 5 resource types \u00B7 6 survivors'),
+        mp({ class: 'about-ver' }, '11 terrain types \u00B7 5 resource types \u00B7 6 archetypes \u00B7 5 players'),
         mp({ class: 'about-ver' }, 'WebSocket \u00B7 AP mode \u00B7 SSID: WASTELAND \u00B7 192.168.47.1'),
       )
     );
@@ -1574,69 +1576,281 @@ function initMenuSystem() {
   });
 }
 
-// ── Character Selection Screen ────────────────────────────────────
+// \u2500\u2500 Character Selection Screen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// A roster and a file. Six chips across the top -- a claimed survivor stays in
+// the roster, stamped, instead of vanishing -- and under them the file of the
+// one on show: portrait, trait, skills, and the pack they walk out with, drawn
+// token by token against its slots. Nothing is sent until the CLAIM bar, which
+// names who it claims; a tap used to pick whichever card it landed on.
+// Swipe the file (touch) or use the arrow keys to page through the roster.
+//
+// The only reactive reads are lobbyAvail, uiPickPending and csShown. "Claimed
+// by" names come from the plain `players` global, so a state broadcast never
+// re-renders the page under the reader (the menu pages' van.js trap).
+const csShown = van.state(-1);    // archetype on show; -1 = the first free one
+let _csDir = 0;                   // +1 / -1: the side the next file slides in from
+let _csClaimArch = -1, _csClaimAt = 0;   // last pick this client sent, and when
+let _csSwipe = null;
+let _csPreloaded = false;
+
+const _CS_SK_WORD  = ['untrained', 'trained', 'expert'];
+// Icons are drawn at the size they're shown -- keep in step with style.css
+// "Character Selection" (.sv-slot img, .sv-bp img, .sv-bp-cost img).
+const _CS_TOKEN_PX = 28;
+const _CS_BP_PX    = 20;
+const _CS_COST_PX  = 14;
+
+function _csPortrait(arch) { return `img/survivors/${arch.name.toLowerCase()}.jpg`; }
+
+function _csShownIdx() {
+  const s = csShown.val;
+  return s >= 0 && s < ARCHETYPES.length ? s : (lobbyAvail.val[0] ?? 0);
+}
+
+function _csShow(i, dir = 0) {
+  const n = ARCHETYPES.length;
+  _csDir = dir;
+  csShown.val = ((i % n) + n) % n;
+}
+
+// Who holds a claimed seat, if this client has heard of them.
+function _csHolder(i) {
+  const p = typeof players !== 'undefined' ? players[i] : null;
+  return p?.on && p.nm ? p.nm : '';
+}
+
+function _csClaim(i) {
+  if (uiPickPending.val || !lobbyAvail.val.includes(i)) return;
+  // If a survivor is already active, require confirmation before abandoning them
+  if (myId >= 0 && players[myId]?.on) {
+    if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
+  }
+  _csClaimArch = i;
+  _csClaimAt = performance.now();
+  uiPickPending.val = true;
+  send({ t: 'pick', arch: i });
+  if (pickTimeoutId) clearTimeout(pickTimeoutId);
+  pickTimeoutId = setTimeout(() => { // NOSONAR — declared in ui-state.js
+    if (uiPickPending.val) {
+      uiPickPending.val = false;
+    }
+    pickTimeoutId = null;
+  }, 8000);
+}
+
+// Horizontal swipe on the file pages the roster. Touch/pen only; a vertical
+// drag is the browser's (touch-action:pan-y) and arrives here as a cancel.
+function _csSwipeStart(e) {
+  if (e.pointerType === 'mouse') return;
+  _csSwipe = { x: e.clientX, y: e.clientY, t: performance.now() };
+}
+function _csSwipeEnd(e) {
+  const s = _csSwipe;
+  _csSwipe = null;
+  if (!s) return;
+  const dx = e.clientX - s.x, dy = e.clientY - s.y;
+  if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.6 || performance.now() - s.t > 700) return;
+  const d = dx < 0 ? 1 : -1;
+  _csShow(_csShownIdx() + d, d);
+}
+
 function initCharSelect() {
-  const { div, span, h2, p } = van.tags;
+  const { div, span, h2, h3, p, img, button } = van.tags;
   const container = document.getElementById('char-select-content');
   if (!container) return;
 
-  van.add(container, () => {
+  // A token badge, or its colour swatch on a page without item-icons.js.
+  const token = (res, px) => {
+    const src = getResIcon(res, px);
+    return src
+      ? img({ class: 'item-icon-img', src, alt: '', width: px, height: px, draggable: false })
+      : span({ class: `dot ${RES_DOT_CLASSES[res - 1]}` });
+  };
+
+  const header = () => {
+    const free = lobbyAvail.val.length;
+    return p({ class: 'cs-sel-sub' }, free
+      ? `${free} of ${ARCHETYPES.length} survivors unclaimed.`
+      : 'Every survivor is out there. Wait for a seat to come free.');
+  };
+
+  const roster = () => {
+    const availSet = new Set(lobbyAvail.val);
+    const sel = _csShownIdx();
+    return div({ class: 'sv-roster', role: 'tablist', 'aria-label': 'Survivors' },
+      ...ARCHETYPES.map((arch, i) => {
+        const taken = !availSet.has(i);
+        return button({
+          class: `sv-chip${i === sel ? ' sel' : ''}${taken ? ' taken' : ''}`,
+          style: `--ring:${ARCHETYPE_COLORS[i]}`,
+          role: 'tab',
+          'aria-selected': String(i === sel),
+          'aria-label': arch.name + (taken ? ', claimed' : ''),
+          onclick: () => _csShow(i, Math.sign(i - sel)),
+        },
+          span({ class: 'sv-chip-face' },
+            img({ src: `img/survivors/${arch.name.toLowerCase()}Pawn.jpg`, alt: '', draggable: false })),
+          span({ class: 'sv-chip-name' }, arch.name)
+        );
+      })
+    );
+  };
+
+  const file = () => {
+    const i     = _csShownIdx();
+    const arch  = ARCHETYPES[i];
+    const taken = !lobbyAvail.val.includes(i);
+    const kit   = archKit(arch);
+    const bonus = arch.kitBonus ?? [];
+    const slots = arch.invSlots;
+    const load  = kit.reduce((a, b) => a + b, 0);
+    const dir   = _csDir;
+    _csDir = 0;
+
+    // One tile per token, inv[] order; the role's extras are the last of
+    // their kind and carry the + mark.
+    const tiles = [];
+    kit.forEach((n, r) => {
+      for (let j = 0; j < n; j++) {
+        const extra = j >= n - (bonus[r] || 0);
+        tiles.push(div({ class: `sv-slot full${extra ? ' bonus' : ''}`,
+                         title: RES_NAMES[r + 1] + (extra ? ' \u2014 role bonus' : '') },
+          token(r + 1, _CS_TOKEN_PX)));
+      }
+    });
+    while (tiles.length < slots) tiles.push(div({ class: 'sv-slot' }));
+    const kitWords = kit.map((n, r) => (n ? `${n} ${RES_NAMES[r + 1]}` : '')).filter(Boolean).join(', ');
+    const extras   = bonus.map((n, r) => (n ? `+${n} ${RES_NAMES[r + 1]}` : '')).filter(Boolean);
+
+    // Starter recipes: the same for everyone, but they say the pack can grow.
+    const blueprints = RECIPES.filter(rc => rc.starter).map(rc => {
+      const item = getItemById(rc.outputItem);
+      const name = item?.name ?? rc.name;
+      const mods = typeof _formatMods === 'function' ? _formatMods(getItemMods?.(rc.outputItem)) : '';
+      const cost = rc.resCost.map((n, r) => (n ? `${n} ${RES_NAMES[r + 1]}` : '')).filter(Boolean).join(' + ');
+      return span({ class: 'sv-bp', title: `${name}${mods ? ' (' + mods + ')' : ''} \u2014 costs ${cost}` },
+        img({ class: 'item-icon-img', src: getItemIcon(rc.outputItem, _CS_BP_PX), alt: '',
+              width: _CS_BP_PX, height: _CS_BP_PX, draggable: false }),
+        span({ class: 'sv-bp-name' }, name),
+        ...rc.resCost.map((n, r) => (n ? span({ class: 'sv-bp-cost' }, `${n}\u00D7`, token(r + 1, _CS_COST_PX)) : null))
+      );
+    });
+
+    return div({
+      class: `sv-file${taken ? ' taken' : ''}${dir > 0 ? ' in-r' : dir < 0 ? ' in-l' : ''}`,
+      style: `--ring:${ARCHETYPE_COLORS[i]}`,
+      role: 'tabpanel',
+      'aria-label': `${arch.name} survivor file`,
+      onpointerdown: _csSwipeStart,
+      onpointerup: _csSwipeEnd,
+      onpointercancel: () => { _csSwipe = null; },
+    },
+      div({ class: 'sv-head' },
+        div({ class: 'sv-portrait' },
+          img({
+            src: _csPortrait(arch), alt: '', draggable: false,
+            // The first portrait in pulls the other five, so paging is instant.
+            onload: () => {
+              if (_csPreloaded) return;
+              _csPreloaded = true;
+              for (const a of ARCHETYPES) new Image().src = _csPortrait(a);
+            },
+          }),
+          taken ? span({ class: 'sv-stamp' }, 'CLAIMED') : null
+        ),
+        div({ class: 'sv-id' },
+          span({ class: 'sv-file-no' }, `SURVIVOR FILE ${String(i + 1).padStart(2, '0')}`),
+          h3({ class: `sv-name${arch.name.length > 9 ? ' long' : ''}` }, arch.name),
+          p({ class: 'sv-flavor' }, arch.flavor)
+        )
+      ),
+      div({ class: 'sv-trait' },
+        span({ class: 'sv-lbl' }, 'TRAIT'),
+        span({ class: 'sv-trait-txt' }, arch.trait)),
+      div({ class: 'sv-sec' },
+        div({ class: 'sv-sec-head' },
+          span({ class: 'sv-lbl' }, 'STARTING PACK'),
+          span({ class: 'sv-aside' }, `${load} / ${slots} slots`)),
+        div({ class: 'sv-pack', role: 'img', 'aria-label': `${kitWords}; ${load} of ${slots} slots filled` }, ...tiles),
+        extras.length
+          ? p({ class: 'sv-note' }, span({ class: 'sv-plus' }, '+'), ` role bonus: ${extras.join(', ')}`)
+          : null
+      ),
+      div({ class: 'sv-sec' },
+        div({ class: 'sv-sec-head' },
+          span({ class: 'sv-lbl' }, 'SKILLS'),
+          span({ class: 'sv-aside' },
+            span({ class: 'sv-key' }, span({ class: 'sv-pip on' })), 'trained ',
+            span({ class: 'sv-key' }, span({ class: 'sv-pip on' }), span({ class: 'sv-pip on' })), 'expert')),
+        div({ class: 'sv-skills' },
+          ...SK_NAMES.map((sk, si) => {
+            const lvl = arch.skills[si] | 0;
+            return div({ class: `sv-skill lvl-${lvl}`, title: `${sk}: ${_CS_SK_WORD[lvl]}`,
+                         'aria-label': `${sk}: ${_CS_SK_WORD[lvl]}` },
+              span({ class: 'sv-sk-name' }, sk),
+              span({ class: 'sv-pips' },
+                span({ class: 'sv-pip' + (lvl >= 1 ? ' on' : '') }),
+                span({ class: 'sv-pip' + (lvl >= 2 ? ' on' : '') })));
+          }))
+      ),
+      p({ class: 'sv-desc' }, arch.desc),
+      blueprints.length
+        ? div({ class: 'sv-sec' },
+            div({ class: 'sv-sec-head' },
+              span({ class: 'sv-lbl' }, 'BLUEPRINTS'),
+              span({ class: 'sv-aside' }, 'every survivor')),
+            div({ class: 'sv-bps' }, ...blueprints))
+        : null
+    );
+  };
+
+  const bar = () => {
+    const i       = _csShownIdx();
+    const name    = ARCHETYPES[i].name;
     const avail   = lobbyAvail.val;
     const pending = uiPickPending.val;
-    const availSet = new Set(avail);
-    console.log('[LOBBY] char-select render — avail=%o pending=%s', avail, pending);
-
-    return div({ class: 'cs-page' },
-      h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),
-      p({ class: 'cs-sel-sub' },
-        'Each role has a unique trait. Select carefully \u2014 you cannot change once the wasteland claims you.'
-      ),
-      div({ class: 'arch-grid' },
-        ...ARCHETYPES.map((arch, i) => {
-          const taken = !availSet.has(i);
-          if (taken) return null;
-          const color = arch.color;
-
-          const skillDots = SK_NAMES.map((sk, si) => {
-            const lvl = arch.skills[si];
-            return div({ class: 'arch-skill-row' },
-              span({ class: 'arch-sk-name' }, sk),
-              span({ class: `arch-sk-val sk-lvl-${lvl}` },
-                '\u25CF'.repeat(lvl) + '\u25CB'.repeat(2 - lvl)
-              )
-            );
-          });
-
-          return div({
-            class: `arch-card${taken ? ' arch-taken' : ''}${pending ? ' arch-btn-pending' : ''}`,
-            style: `--arch-color:${color}; --arch-portrait:url('img/survivors/${arch.name.toLowerCase()}.jpg')`,
-            onclick: taken ? undefined : () => {
-              if (pending) return;
-              // If a survivor is already active, require confirmation before abandoning them
-              if (myId >= 0 && players[myId]?.on) {
-                if (!confirm('\u26A0 Abandon your current survivor?\nAll progress, score and position will be lost.')) return;
-              }
-              uiPickPending.val = true;
-              send({ t: 'pick', arch: i });
-              if (pickTimeoutId) clearTimeout(pickTimeoutId);
-              pickTimeoutId = setTimeout(() => { // NOSONAR — declared in ui-state.js
-                if (uiPickPending.val) {
-                  uiPickPending.val = false;
-                }
-                pickTimeoutId = null;
-              }, 8000);
-            }
-          },
-            div({ class: 'arch-header' },
-              div({ class: 'arch-name-wrap' },
-                span({ class: 'arch-name' }, arch.name)
-              )
-            ),
-            div({ class: 'arch-skills' }, ...skillDots),
-            null
-          );
-        })
-      )
+    const taken   = !avail.includes(i);
+    let main, sub;
+    if (pending) {
+      main = `CLAIMING THE ${name}\u2026`;
+      sub  = 'waiting on the K10';
+    } else if (taken) {
+      const who    = _csHolder(i);
+      const beaten = _csClaimArch === i && performance.now() - _csClaimAt < 15000;
+      main = `THE ${name} IS CLAIMED`;
+      sub  = beaten ? 'someone got there first \u2014 pick another'
+           : who    ? `claimed by ${who}`
+           : avail.length ? 'pick another survivor' : 'wait for a seat to come free';
+    } else {
+      main = `\u25B6 CLAIM THE ${name}`;
+      sub  = 'final \u2014 no switching later';
+    }
+    return div({ class: 'sv-bar' },
+      button({
+        class: `sv-claim${pending ? ' pending' : ''}`,
+        style: `--ring:${ARCHETYPE_COLORS[i]}`,
+        disabled: pending || taken,
+        onclick: () => _csClaim(i),
+      },
+        span({ class: 'sv-claim-main' }, main),
+        span({ class: 'sv-claim-sub' }, sub))
     );
+  };
+
+  van.add(container, div({ class: 'cs-page' },
+    h2({ class: 'cs-sel-title' }, '\u2620 CHOOSE YOUR SURVIVOR'),
+    header,
+    roster,
+    file,
+    bar
+  ));
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (!document.getElementById('char-select-overlay')?.classList.contains('open')) return;
+    if (e.target?.closest?.('input, textarea, select')) return;
+    e.preventDefault();
+    const d = e.key === 'ArrowRight' ? 1 : -1;
+    _csShow(_csShownIdx() + d, d);
   });
 }

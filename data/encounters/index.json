@@ -38,5 +38,10 @@
   "9": {
     "count": 21,
     "path": "settlement"
+  },
+  "traps": {
+    "count": 20,
+    "path": "traps",
+    "tiers": [6, 9, 5]
   }
 }

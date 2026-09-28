@@ -419,6 +419,8 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
 // Tokens land back on the hex when it can hold them (empty, or already holding
 // the same resource) so the pile can be picked up again later; a hex already
 // holding a *different* resource can't take them and they are lost to the dust.
+// So is a hex with mould on it (ecology.hpp's blight would eat the pile a tick
+// later, after the client had been told it was still there).
 // Either way the 10 pts/token collectResource() granted comes back off —
 // without that, drop→collect on the same hex is an infinite score pump.
 // Mirrored in mock-server/server.js (dropResource).
@@ -441,7 +443,8 @@ static uint8_t dropResource(int pid, uint8_t res, uint8_t qty,
   p.score = (p.score > refund) ? (uint16_t)(p.score - refund) : 0;
 
   HexCell& cell = G.map[p.r][p.q];
-  bool onGround = (cell.resource == 0 || cell.resource == res);
+  bool onGround = !ecoBlightAt(ecoBlightMap(), p.q, p.r) &&
+                  (cell.resource == 0 || cell.resource == res);
   if (onGround) {
     int pile = (cell.resource == res ? (int)cell.amount : 0) + (int)take;
     cell.resource     = res;
@@ -469,11 +472,12 @@ static uint8_t computeValidMoves(int pid) {
   // Underground the board is a different size and does NOT wrap, so an
   // off-board neighbour is simply not a legal move. Collapsed Tunnel (15) is
   // MC 255, so canEnterTerrain() refuses it for free and the client greys the
-  // button without any tunnel-specific client code.
+  // button without any tunnel-specific client code. A floor cell behind a wall
+  // is refused too: only an open side (tunOpen, tunnels.hpp) is a way through.
   if (p.depth) {
     for (int d = 0; d < 6; d++) {
       int nq = p.tq + DQ[d], nr = p.tr + DR[d];
-      if (!tunIn(nq, nr)) continue;
+      if (!tunIn(nq, nr) || !tunOpen(p.tq, p.tr, d)) continue;
       if (canEnterTerrain(pid, G.tunnel[nr][nq].terrain, nullptr)) mask |= (1 << d);
     }
     return mask;
@@ -507,6 +511,7 @@ static const char* moveTunnel(int pid, int dir) {
   int nq = p.tq + DQ[dir];
   int nr = p.tr + DR[dir];
   if (!tunIn(nq, nr)) return "wall";   // the tunnel board does not wrap: that is a wall
+  if (!tunOpen(p.tq, p.tr, dir)) return "wall";   // rock between this cell and that one
 
   uint8_t destTerrain = G.tunnel[nr][nq].terrain;
   uint8_t mc          = 0;
@@ -554,6 +559,10 @@ static const char* moveTunnel(int pid, int dir) {
     ev.amt = 0;                        // no tire tracks underground
     enqEvt(ev); }
   collectResource(pid, p.tq, p.tr, 1);
+  // A booby trap on this corridor cell fires now (traps.hpp) -- after the
+  // pickup, like the surface. A shaft never carries one, so this and the
+  // climb-out below cannot both happen on one step.
+  trapOnArrival(pid);
   // Landing on a shaft climbs out (tunnels.hpp).  After the pickup, so the
   // last thing you grab on the way past still lands in the pack.
   tunnelStepUp(pid);
@@ -652,6 +661,7 @@ static const char* movePlayer(int pid, int dir) {
         p.ll--;
         ledFlash(0, 100, 0);
         k10Play(MOTIF_ACID_DRIP);
+        ecoNoteHurt(pid, DC_CHEM);   // a chem burn is an injury: the daisies seed here (ecology.hpp)
         { GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
           dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg); }
         if (p.ll == 0) {
@@ -686,7 +696,16 @@ static const char* movePlayer(int pid, int dir) {
     ev.moveMP = p.movesLeft;
     ev.amt = laidTrack ? 1 : 0;  // EVT_MOVE-specific reuse of the generic amt field: 1 = this step laid a tire track
     enqEvt(ev); }
+  // Wasteland Daisies (ecology.hpp): stepping onto a bloomed patch costs 1 LL.
+  // After the move event so the client sees the step, then the bite; before
+  // the pickup so a survivor downed by the flowers takes nothing with them.
+  ecoBiteCheck(pid);
   collectResource(pid, p.q, p.r);
+  // A booby trap under this hex fires now (traps.hpp), opening a scene the
+  // survivor did not ask for. After collectResource() on purpose: you grab
+  // the bottle on your way into the punji pit. Hatches never carry a trap,
+  // so this and the descent below cannot both happen on one step.
+  trapOnArrival(pid);
   // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels
   // (tunnels.hpp).  Last, so the surface EVT_MOVE reaches clients before the
   // EVT_TUNNEL_ENTER that follows it.

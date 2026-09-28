@@ -173,5 +173,9 @@ int main(int argc, char** argv) {
       { { 250, FXK_CRAFTED, 1, "Sock Puppet Bandage", nullptr, 2 } }, calm, false);
   if (want("crawl"))   run("crawl",   in, out, "dashboard", nullptr, 0, 0, 6500,
       { { 250, FXK_CRAWL, 2, nullptr, nullptr, 0 } }, calm, false);
+  if (want("tripwire")) run("tripwire", in, out, "dashboard", nullptr, 0, 0, 3700,
+      { { 250, FXK_TRIPWIRE, 2, "puts a foot down and hears it click.", nullptr, 0 } }, calm, false);
+  if (want("beartrap")) run("beartrap", in, out, "encounters", nullptr, 0, 0, 5200,
+      { { 250, FXK_BEARTRAP, 0, "is caught and held while it bites.", nullptr, 0 } }, calm, false);
   return 0;
 }

@@ -18,7 +18,9 @@
 // Takes G.mutex itself — call it with the mutex released.
 static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
   if (!client || pid < 0) return;
-  PSRAM_STATIC(char, visBuf, [1100]);
+  // 1600: an underground disk at the widest light (radius 6, clipped to the
+  // 16x10 board) is ~110 cells at 12 chars with its "op" tail.
+  PSRAM_STATIC(char, visBuf, [1600]);
   int visLen = 0;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int vr; bool mr;
@@ -29,7 +31,7 @@ static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
     visLen = buildVisDisk(visBuf, sizeof(visBuf),
                           dep ? G.players[pid].tq : G.players[pid].q,
                           dep ? G.players[pid].tr : G.players[pid].r,
-                          vr, mr, nullptr, dep);
+                          vr, mr, nullptr, dep, pid);
     xSemaphoreGive(G.mutex);
   }
   if (visLen > 0) client->text(visBuf);

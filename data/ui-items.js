@@ -18,6 +18,34 @@ function _iconOnError(id) {
   return `this.onerror=null;this.src='${fb}'`;
 }
 
+// Tiles are drawn at the size CSS shows them — keep these three in step
+// with the icon sizes in style.css "Character Sheet" / "Item system".
+const _csWide  = window.matchMedia('(min-width:700px) and (min-height:521px)');
+const _csShort = window.matchMedia('(max-width:699px) and (max-height:720px)');
+function _csIconPx(phone, short, wide) {
+  if (_csWide.matches)  return wide;
+  if (_csShort.matches) return short;
+  return phone;
+}
+for (const mq of [_csWide, _csShort]) {
+  mq.addEventListener?.('change', () => {
+    if (!uiCharOpen.val) return;
+    resetLastEqKey();
+    renderInventory();
+    renderEquipment();
+  });
+}
+
+// Click + Enter/Space for the div tiles (role="button")
+function _onActivate(el, fn) {
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.addEventListener('click', fn);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+  });
+}
+
 // Render typed inventory slots into #cs-item-grid
 function renderInventory() {
   const grid = document.getElementById('cs-item-grid');
@@ -30,6 +58,9 @@ function renderInventory() {
   const slots = packSlotsOf(me);
   const occupied = (me.it ?? []).filter(id => id > 0).length;
   console.log('%c[INV] renderInventory', 'color:#fc0', `myId=${myId} slots=${slots} occupied=${occupied}`);
+  const count = document.getElementById('cs-pack-count');
+  if (count) count.textContent = `${occupied}/${slots} slots`;
+  const px = _csIconPx(48, 42, 56);
   grid.innerHTML = '';
   for (let i = 0; i < slots; i++) {
     const typeId = me.it?.[i] ?? 0;
@@ -39,15 +70,18 @@ function renderInventory() {
     div.dataset.slot = i;
     if (typeId) {
       const item = getItemById?.(typeId);
-      const catClass = CAT_CLASSES[item?.category ?? 0] ?? 'cat-consumable';
+      const cat  = item?.category ?? 0;
+      const name = item?.name ?? '?';
+      div.dataset.cat = cat;
+      div.title = `${name} — ${CAT_NAMES[cat] ?? '?'}`;
+      div.setAttribute('aria-label', `${name}${qty > 1 ? ' ×' + qty : ''}, ${CAT_NAMES[cat] ?? ''}`);
       div.innerHTML =
-        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId, 26))}" alt="" width="26" height="26" onerror="${_iconOnError(typeId)}">` +
-        `<span class="item-slot-qty">${qty > 1 ? qty : ''}</span>` +
-        `<span class="item-slot-name">${escHtml(item?.name ?? '?')}</span>` +
-        `<span class="item-cat-badge ${catClass}">${CAT_NAMES[item?.category ?? 0]?.slice(0, 4) ?? '?'}</span>`;
-      div.addEventListener('click', () => openItemMenu(i, false));
+        `<img class="item-slot-icon item-icon-img" src="${escHtml(_itemIcon(typeId, px))}" alt="" width="${px}" height="${px}" onerror="${_iconOnError(typeId)}">` +
+        (qty > 1 ? `<span class="item-slot-qty">×${qty}</span>` : '') +
+        `<span class="item-slot-name">${escHtml(name)}</span>`;
+      _onActivate(div, () => openItemMenu(i, false));
     } else {
-      div.innerHTML = `<span class="item-slot-empty-icon">\u25A1</span>`;
+      div.setAttribute('aria-label', 'empty slot');
     }
     grid.appendChild(div);
   }
@@ -128,6 +162,8 @@ function computeEquipBonuses(player) {
 }
 
 // Render equipment slots into #cs-equip-grid (EQUIP_HEAD..VEHICLE, equip[0..4])
+// and their summed bonuses into #cs-equip-totals. Per-item mods and notes are
+// on the item sheet (openItemMenu) — a phone-width slot can't hold them.
 function renderEquipment() {
   const grid = document.getElementById('cs-equip-grid');
   if (!grid || myId < 0) return;
@@ -137,6 +173,7 @@ function renderEquipment() {
   _lastEqKey = eqKey;
   console.log('%c[INV] renderEquipment', 'color:#fc0', `myId=${myId} eq=${eqKey}`);
   const SLOT_LABELS = ['NOGGIN', 'HIDE', 'MITTS', 'HOOVES', 'RUST BUCKET'];
+  const px = _csIconPx(40, 34, 48);
   grid.innerHTML = '';
   for (let s = 0; s < 5; s++) {
     const itemId = me.eq?.[s] ?? 0;
@@ -144,46 +181,35 @@ function renderEquipment() {
     div.className = 'equip-slot' + (itemId ? ' filled' : '');
     div.dataset.eslot = s;
     if (itemId) {
-      const item     = getItemById?.(itemId);
-      const mods     = getItemMods?.(itemId);
-      const modsLine = _formatMods(mods);
-      const noteLine = mods?.note ? escHtml(mods.note) : '';
+      const item = getItemById?.(itemId);
+      const name = item?.name ?? '?';
+      const modsLine = _formatMods(getItemMods?.(itemId));
+      div.title = modsLine ? `${name} — ${modsLine}` : name;
+      div.setAttribute('aria-label', `${SLOT_LABELS[s]}: ${name}`);
       div.innerHTML =
         `<span class="equip-slot-name">${SLOT_LABELS[s]}</span>` +
-        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId, 28))}" alt="" width="28" height="28" onerror="${_iconOnError(itemId)}">` +
-        `<span class="equip-slot-label">${escHtml(item?.name ?? '?')}</span>` +
-        (modsLine ? `<span class="equip-slot-bonus" style="display:block;font-size:10px;color:var(--gold,#ffd700);margin-top:2px;letter-spacing:0.5px">${escHtml(modsLine)}</span>` : '') +
-        (noteLine ? `<span class="equip-slot-note" style="display:block;font-size:9px;color:var(--txt-dim,#888);font-style:italic;margin-top:1px">${noteLine}</span>` : '');
-      div.addEventListener('click', () => openItemMenu(s, true));
+        `<img class="equip-slot-icon item-icon-img" src="${escHtml(_itemIcon(itemId, px))}" alt="" width="${px}" height="${px}" onerror="${_iconOnError(itemId)}">` +
+        `<span class="equip-slot-label">${escHtml(name)}</span>`;
+      _onActivate(div, () => openItemMenu(s, true));
     } else {
+      div.setAttribute('aria-label', `${SLOT_LABELS[s]}: nothing`);
       div.innerHTML =
         `<span class="equip-slot-name">${SLOT_LABELS[s]}</span>` +
-        `<span class="equip-slot-empty">\u2500</span>` +
-        `<span class="equip-slot-label" style="color:var(--txt-dim)">nothing</span>`;
+        `<span class="equip-slot-empty">─</span>`;
     }
     grid.appendChild(div);
   }
 
-  // Totals summary block \u2014 sums bonuses across all equipped items.
-  // Display only; gameplay still driven by server-side calculations.
+  // Totals — sums bonuses across all equipped items. Display only; gameplay
+  // is still driven by server-side calculations. Notes show at ≥700px.
+  const totals = document.getElementById('cs-equip-totals');
+  if (!totals) return;
   const { tot, notes, dormant } = computeEquipBonuses(me);
-  const totals = document.createElement('div');
-  totals.className = 'equip-totals';
-  totals.style.cssText = 'grid-column:1 / -1;padding:8px;border-top:1px solid var(--bdr-mid,#333);margin-top:6px;font-size:12px';
   const totalLine = _formatMods(tot);
-  const hasAny    = totalLine || notes.length;
   totals.innerHTML =
-    `<div style="font-weight:bold;color:var(--gold,#ffd700);margin-bottom:4px;letter-spacing:1px">\u26a1 EQUIPMENT BONUSES</div>` +
-    (totalLine
-      ? `<div style="color:var(--txt-bright,#eee)">${escHtml(totalLine)}</div>`
-      : (hasAny ? '' : '<div style="color:var(--txt-dim,#888)">\u2014 nothing strapped on \u2014</div>')) +
-    notes.map(n =>
-      `<div style="color:var(--txt-dim,#aaa);font-style:italic;margin-top:2px">\u2022 ${escHtml(n.name)}: ${escHtml(n.note)}</div>`
-    ).join('') +
-    dormant.map(d =>
-      `<div style="color:var(--warn,#cc8866)">NO FUEL: ${escHtml(d.name)} grants nothing today</div>`
-    ).join('');
-  grid.appendChild(totals);
+    (totalLine ? `<div class="eq-tot-line">${escHtml(totalLine)}</div>` : '') +
+    notes.map(n => `<div class="eq-tot-note">• ${escHtml(n.name)}: ${escHtml(n.note)}</div>`).join('') +
+    dormant.map(d => `<div class="eq-tot-warn">NO FUEL: ${escHtml(d.name)} grants nothing today</div>`).join('');
 }
 
 // Item action context menu (slide-up sheet)
@@ -215,8 +241,20 @@ function openItemMenu(slotIdx, isEquipped) {
 
   const menuIcon = document.getElementById('item-menu-icon');
   menuIcon.onerror = () => { menuIcon.onerror = null; menuIcon.src = getItemIconFallback?.(itemId) ?? ITEM_ICON_PLACEHOLDER; };
-  menuIcon.src = _itemIcon(itemId, 32);
+  menuIcon.src = _itemIcon(itemId, 44);
   document.getElementById('item-menu-name').textContent = name;
+
+  // Category + bonuses: the sheet's tiles only show icon and name
+  const modsEl = document.getElementById('item-menu-mods');
+  if (modsEl) {
+    const cat  = item?.category ?? 0;
+    const mods = getItemMods?.(itemId);
+    const line = _formatMods(mods);
+    modsEl.innerHTML =
+      `<span class="item-cat-badge ${CAT_CLASSES[cat] ?? 'cat-consumable'}">${escHtml(CAT_NAMES[cat] ?? '?')}</span>` +
+      (line ? `<span class="item-menu-mods-line">${escHtml(line)}</span>` : '') +
+      (mods?.note ? `<span class="item-menu-mods-note">${escHtml(mods.note)}</span>` : '');
+  }
 
   const storyEl = document.getElementById('item-menu-story');
   storyEl.textContent = story ?? '';

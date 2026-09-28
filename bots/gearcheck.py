@@ -21,6 +21,7 @@ verdict:
 |---|---|---|
 | `ll` | `llCap` delta across the equip -- `appendPackArrays()` sends the EFFECTIVE ceiling | hard |
 | `slots` | `is` delta, allowing for the INV_SLOTS_MAX clamp | hard |
+| `water_cap` | `wc` delta -- `appendPackArrays()` sends canteenCap() | hard |
 | `vision` | `vr` on the vis disk `pushVisDisk()` sends right after the equip | hard |
 | `rad` | direction of radiation change at the dawns it was worn | soft |
 | `mp` | dawn MP against `ll + 3` + declared, only on unwounded dawns | soft |
@@ -93,7 +94,8 @@ def _sum(eq, stat) -> int:
 def declared(item):
     """The mods this item actually claims, as (stat, amount) pairs."""
     st = EQUIP_STATS.get(item, {})
-    out = [(k, st.get(k, 0)) for k in ("ll", "slots", "vision", "rad", "mp")
+    out = [(k, st.get(k, 0))
+           for k in ("ll", "slots", "water_cap", "vision", "rad", "mp")
            if st.get(k)]
     if st.get("terrain"):
         out.append(("terrain", st["terrain"]))
@@ -120,6 +122,7 @@ class GearAudit:
     def add_run(self, path: Path) -> None:
         rows = read_run(path)
         st = defaultdict(lambda: {"eq": [0] * 5, "is": None, "llCap": None,
+                                  "wc": None,
                                   "vr": None, "day": 0, "wnd": [0, 0],
                                   "seen": False, "pending": None})
         for r in rows:
@@ -188,12 +191,14 @@ class GearAudit:
             s["is"] = int(d["is"])
         if d.get("llCap") is not None:
             s["llCap"] = int(d["llCap"])
+        if d.get("wc") is not None:
+            s["wc"] = int(d["wc"])
 
     def _check_hard(self, s, new_eq, d, source) -> None:
-        """llCap and is are pure functions of the equipment set, so a loadout
-        change must move them by exactly the declared amount."""
+        """llCap, is and wc are pure functions of the equipment set, so a
+        loadout change must move them by exactly the declared amount."""
         changed = {x for x in new_eq if x} ^ {x for x in s["eq"] if x}
-        for stat, field in (("ll", "llCap"), ("slots", "is")):
+        for stat, field in (("ll", "llCap"), ("slots", "is"), ("water_cap", "wc")):
             before, after = s.get(field), d.get(field)
             if before is None or after is None:
                 continue

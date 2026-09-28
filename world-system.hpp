@@ -216,6 +216,7 @@ static void wIgnite(int16_t q, int16_t r, uint8_t intensity = 1) {
     GameEvent ev = {}; ev.type = EVT_FIRE_SPREAD;
     ev.q = q; ev.r = r; ev.amt = cell.fire;
     enqEvt(ev);
+    ecoOnIgnite(q, r);   // a daisy patch here is ash now: no bite on the way through (ecology.hpp)
   }
 }
 
@@ -311,6 +312,7 @@ static void maybeIgniteLightning() {
     p.ll = (uint8_t)max(0, (int)p.ll - 2);
     ledFlash(255, 255, 140);
     k10Play(MOTIF_BUNKER_ALARM);
+    ecoNoteHurt(i, DC_LIGHTNING);   // an injury: the daisies seed where it landed (ecology.hpp)
     GameEvent ev = {}; ev.type = EVT_FIRE_DAMAGE;
     ev.pid = (uint8_t)i; ev.q = q; ev.r = r;
     ev.amt = 10;  // sentinel, clearly outside fire's 1-3 intensity range: direct lightning strike
@@ -484,6 +486,7 @@ static void spreadFlood() {
             p.movesLeft = 0;
             ledFlash(80, 160, 255);
             k10Play(MOTIF_SEWER_ECHO);
+            ecoNoteHurt(i, DC_FLOOD);   // an injury: the daisies seed here (ecology.hpp)
             GameEvent dev = {}; dev.type = EVT_FLOOD_DAMAGE;
             dev.pid = (uint8_t)i; dev.q = (int16_t)nq; dev.r = (int16_t)nr;
             dev.amt = 10;  // sentinel, outside flood's 1-3 intensity range: swept off your feet
@@ -662,6 +665,7 @@ static void resolveDoomProximity() {
     if (W.creepingDoom.awareness >= 100 && p.ll > 0) {
       p.ll--;
       llLost = 1;
+      ecoNoteHurt(i, DC_DOOM);   // an injury: the daisies seed here (ecology.hpp)
       if (p.ll == 0) {
         p.movesLeft = 0;
         GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
@@ -979,6 +983,7 @@ static void resolveFireDamage() {
     if (fireHere == 3) p.radiation = (uint8_t)min(255, (int)p.radiation + 1);
     ledFlash(255, 60, 0);
     k10Play(MOTIF_WARNING_GRUNT);
+    ecoNoteHurt(i, DC_FIRE);   // an injury: the daisies seed here -- and burn with the hex (ecology.hpp)
     GameEvent fev = {};
     fev.type = EVT_FIRE_DAMAGE;
     fev.pid  = (uint8_t)i;

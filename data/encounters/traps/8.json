@@ -1,0 +1,104 @@
+{
+  "id": "trap_no_grownups",
+  "tier": 2,
+  "title": "The {{adjective}} Playhouse",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A child's wooden playhouse, painted once in primary colours and never again. The door comes up to your hip; the only way in is on your knees. On it, in poster paint: NO GROWNUPS ALOUD. The roof is wrong. Somebody has swapped it for a sheet of ply and about twenty breeze blocks, and the little walls bow outward like a man holding his breath. Through the window: a tea party for four, a tin on every saucer. Just inside the door one broom handle props up the lot, and a skipping rope runs from its foot to the teapot.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back away from the little door without touching the porch",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_eaves"
+        },
+        {
+          "label": "Crawl in and wedge the roof before you touch the tea",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_tea_party"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You back off the porch a boot's length at a time, eyes on the broom handle as though it might follow you. It does not. The tea party carries on without you, four places laid, the teapot waiting to be poured, a teddy bear holding his cup with enormous patience. You were not invited. Reading the sign again from a safe distance, you were never going to be.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You go in on your knees with the pry bar held crossways over your head and jam it between the wall plates, so the roof has something other than a broom handle to lean on. Then you breathe. The tins on the saucers are real, labels and all. Pinned to the back wall is the plan for the whole thing in crayon — blocks, stick, rope, a stick-figure grown-up lying very flat — and down the margin, in weary adult capitals: OK. FINE. YES, MORE BLOCKS. In the corner, a toy box with a sticker on the lid: PRIVATE.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 3] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Lift the lid of the toy box marked PRIVATE",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_toy_box"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The toy box is full to the lid and none of it is toys. Sealed medicine, bottled water with the caps taped down, a coil of good wire — a whole household's emergency kit, packed with care and labelled in the adult hand: FOR EMERGENCIES. Under that, in crayon, the other half of the argument: NO GROWNUPS. {{irony}} You take the lot, on your knees, in a tiny house, and you cannot shake the feeling that you are about to be sent to your room.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 2] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_eaves": {
+      "text": "Your heel clips the porch rail on the way back and the whole little house shivers. One breeze block walks off the edge of the roof, considers the drop, and lands across the top of your boot. Something in your foot goes flat that was not flat a moment ago. Inside, the tea party does not so much as rattle a cup.",
+      "penalty": { "ll": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_tea_party": {
+      "text": "The pry bar is a hand's width too short. You learn this with your head and shoulders through the doorway, when it skids off the wall plate and the broom handle goes, and twenty breeze blocks arrive on the small of your back all at once. You go face-first into the tea party. The teapot was full. It has been brewing for six years, and something with legs has been brewing in it. Your canteen bursts under you like a sob.",
+      "penalty": { "ll": [-2, -3], "water": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "the_toy_box": {
+      "text": "The pry bar was holding up one end of the roof. The toy box, it turns out, was holding up the other, and the moment the lid lifts the roof takes the shortest route to the floor, which is through you. You are pinned in a child's house with your head in a child's toy box, face down in a shoebox marked HAMSTER FUNERAL, and after all these years the hamster is still in attendance. Your pack takes the rest of the blocks. Your pack does not survive.",
+      "penalty": { "ll": [-2, -4], "food": [-1, -2], "scrap": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Private",
+      "Members-Only",
+      "Invitation-Only",
+      "Very Exclusive",
+      "Kids-Only"
+    ],
+    "irony": [
+      "No grown-up ever got in. That was, to be fair, the brief.",
+      "Somebody built it exactly to spec. The spec had no exemptions.",
+      "It kept out every grown-up. Every single one.",
+      "Whoever packed it was never once allowed to open it."
+    ]
+  }
+}

@@ -27,6 +27,9 @@ NUKE_CRATER = 10
 
 
 class CowardPolicy(SurvivorPolicy):
+    # Never works a booby trap: every forced scene is a back-out.
+    trap_nerve = 2.0
+
     name = "coward"
     # Gear the way it plays: nothing but not dying. Exposure is the largest
     # single LL drain measured, so the Bear Skin Cape's immunity outranks any

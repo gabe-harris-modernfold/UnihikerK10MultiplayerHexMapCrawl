@@ -5,6 +5,7 @@ const http = require('http');
 const fs   = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const { Ecology, ECO_TICK_MS } = require('./ecology');   // the Understory (docs/ecology-spec.md)
 
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
 const argPort  = (process.argv.find(a => a.startsWith('--port=')) || '').slice(7);
@@ -13,7 +14,8 @@ const PORT     = Number(argPort) || process.env.PORT || 8765;
 // (what the K10 serves) instead of the synthesised per-file dev manifest.
 const BUNDLE_MODE = !!process.env.MOCK_BUNDLE || process.argv.includes('--bundle');
 
-const MAP_COLS = 75, MAP_ROWS = 57, MAX_PLAYERS = 6;
+const MAP_COLS = 75, MAP_ROWS = 57, MAX_PLAYERS = 6;   // seats, one per archetype
+const MAX_SEATED = 5;   // at most this many seated at once -- firmware MAX_SEATED
 
 const hex2 = (n) => n.toString(16).padStart(2, '0');
 
@@ -45,19 +47,24 @@ function scanVariantCounts() {
     }
     return max;
   };
-  // The tile atlas (scripts/tilegen/build_tiles.py) carries its own counts,
-  // exactly as the firmware reads them; the per-file scan is the fallback.
+  // The sprite sheets' manifest (scripts/hex_sheets.py) carries its own
+  // counts, exactly as the firmware reads them; the per-file scan is the
+  // fallback.
   let vc = TERRAIN_IMG_NAMES.map((name) => countFor(`hex${name}`));
+  let sv = SHELTER_IMG_NAMES.map((name) => countFor(name));
+  let fa = countFor('forrageAnimal');
+  let tc = [0, 0, 0, 0];   // tunnel art: rooms, entrance, vent, cave (no per-file fallback)
   try {
     const m = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'img', 'tiles.json'), 'utf8'));
     if (Array.isArray(m.counts)) vc = TERRAIN_IMG_NAMES.map((_, t) => m.counts[t] | 0);
+    if (Array.isArray(m.shelterCounts)) sv = SHELTER_IMG_NAMES.map((_, s) => m.shelterCounts[s] | 0);
+    if (Array.isArray(m.forageCounts)) fa = m.forageCounts[0] | 0;
+    if (Array.isArray(m.tunnelCounts)) tc = [0, 1, 2, 3].map((i) => m.tunnelCounts[i] | 0);
   } catch {
     // no atlas: per-file counts stand
   }
-  const sv = SHELTER_IMG_NAMES.map((name) => countFor(name));
-  const fa = countFor('forrageAnimal');
-  console.log(`[variants] terrain=${JSON.stringify(vc)} shelter=${JSON.stringify(sv)} forrageAnimal=${fa}`);
-  return { vc, sv, fa };
+  console.log(`[variants] terrain=${JSON.stringify(vc)} shelter=${JSON.stringify(sv)} forrageAnimal=${fa} tunnel=${JSON.stringify(tc)}`);
+  return { vc, sv, fa, tc };
 }
 const VARIANT_COUNTS = scanVariantCounts();
 
@@ -110,8 +117,13 @@ const terrainOverrides = new Map();
 // not one this mock simulates). Kept the caravan-era name since it's still
 // mostly caravan traffic and a rename would ripple through every use below.
 const caravanTracks = new Set();
+// Surface footprints laid since boot ("q_r" -> 6-bit pid mask), OR'd into the
+// baked DD footprint bits. The firmware stamps HexCell.footprints on every
+// step (movePlayer); this mock never did, and the Understory feeds on
+// footprints (ecology.js transforms), so its mould would have starved here.
+const footprintMask = new Map();
 function ddFor(c, r, ddNum) {
-  let out = ddNum;
+  let out = ddNum | (footprintMask.get(`${c}_${r}`) || 0);
   if (consumedPoi.has(`${c}_${r}`))       out &= ~0x80;
   if (destroyedShelters.has(`${c}_${r}`)) out &= ~0x40;
   return out;
@@ -134,14 +146,16 @@ function ttFor(c, r, ttNum) {
 // correct here because the answer was always yes. Pass (pq, pr, vr) to fog;
 // called with no arguments it still returns the full board, which is what
 // the debug /state dump wants.
-function liveMapHex(pq, pr, vr) {
+// `pid` is who the map is for: a trap they escaped goes out with TT bit 4
+// set, and outside the disk too, like encodeMapFog() in hex-map.hpp.
+function liveMapHex(pq, pr, vr, pid) {
   const fogged = (vr !== undefined);
   let s = '';
   for (let r = 0; r < MAP_ROWS; r++) {
     for (let c = 0; c < MAP_COLS; c++) {
-      if (fogged && hexDistWrap(pq, pr, c, r) > vr) { s += 'FF0000'; continue; }
+      if (fogged && hexDistWrap(pq, pr, c, r) > vr && !trapKnownBy(0, c, r, pid)) { s += 'FF0000'; continue; }
       const baseIdx = (r * MAP_COLS + c) * 6;
-      const ttNum = ttFor(c, r, parseInt(MAP_HEX.substr(baseIdx, 2), 16));
+      const ttNum = ttFor(c, r, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) | trapBit(0, c, r, pid);
       const dd = MAP_HEX.substr(baseIdx + 2, 2);
       const ddNum = ddFor(c, r, parseInt(dd, 16));
       const cell = resources[`${c}_${r}`];
@@ -155,7 +169,7 @@ function liveMapHex(pq, pr, vr) {
 }
 
 // Build a visdisk around (pq, pr) reflecting live resource state.
-function buildVisDisk(pq, pr, vr) {
+function buildVisDisk(pq, pr, vr, pid) {
   let cells = '';
   for (let dr = -vr; dr <= vr; dr++) {
     for (let dq = -vr; dq <= vr; dq++) {
@@ -164,7 +178,7 @@ function buildVisDisk(pq, pr, vr) {
       const cq = ((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
       const cr = ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
       const baseIdx = (cr * MAP_COLS + cq) * 6;
-      const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)));
+      const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) | trapBit(0, cq, cr, pid));
       const dd = hex2(ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)));
       const cell = resources[`${cq}_${cr}`];
       const variant = baseIdx & 0x0F;
@@ -199,13 +213,19 @@ const bunkerHatches = [];          // { sq, sr, tq, tr }
 
 function tunIn(q, r) { return q >= 0 && q < TUN_COLS && r >= 0 && r < TUN_ROWS; }
 
-// Distance metric for fog radius. The firmware uses proper axial hex distance,
-// but DIR_DELTA above is the mock's own "approximate — mostly works" geometry
-// (note it has no (+-1, 0) step), so an axial metric would disagree with what
-// a player can actually walk. Chebyshev matches these deltas closely enough
-// for a fog disc, and the client just renders whatever cells arrive.
+// Tunnel neighbours are the firmware's DQ/DR (Esp32HexMapCrawl.ino), NOT
+// DIR_DELTA: that table is the mock's own approximation for the surface, and
+// it has no (+-1, 0) step. The tunnel board is corridors with walls between
+// cells, drawn with pieces whose openings must meet their neighbour's, so
+// here "adjacent" has to mean what the renderer draws as adjacent. The
+// client sends directions in this convention too.
+const TUN_DQ = [1, 1, 0, -1, -1, 0];
+const TUN_DR = [0, -1, -1, 0, 1, 1];
+
+// Axial hex distance, as tunDist() in tunnels.hpp.
 function tunDist(q1, r1, q2, r2) {
-  return Math.max(Math.abs(q2 - q1), Math.abs(r2 - r1));
+  const dq = q2 - q1, dr = r2 - r1;
+  return (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
 }
 
 // Is (q,r) one of the shafts? Keyed on bunkerHatches[] rather than the terrain
@@ -214,32 +234,136 @@ function isShaftCell(q, r) {
   return bunkerHatches.some((h) => h.tq === q && h.tr === r);
 }
 
-// Carve with the SAME deltas the move handler uses, so every corridor cell is
-// reachable by an actual player move. Greedy on squared Euclidean distance,
-// with a ~25% random legal step so corridors bend. Shaft cells are walls to
-// this walk: stepping onto one climbs out (stepUpIfShaft), so a corridor
-// routed through a shaft would eject anyone merely passing by.
-function carveCorridor(q1, r1, q2, r2) {
-  let q = q1, r = r1;
-  for (let step = 0; step < TUN_COLS * TUN_ROWS * 4; step++) {
+// ── Open sides -- mirrors "Open sides" in tunnels.hpp ──
+// cell.op: bits 0-5 side d is open (TUN_DQ/TUN_DR order), bit 6 = bit 4 of
+// the art index (variant is the low nibble), bit 7 = a room.
+const TOP_OPEN = 0x3F, TOP_ART_HI = 0x40, TOP_ROOM = 0x80;
+function tunOpen(q, r, d) { return (tunnel[r][q].op >> d) & 1; }
+function tunLink(q, r, d) {
+  tunnel[r][q].op |= 1 << d;
+  tunnel[r + TUN_DR[d]][q + TUN_DQ[d]].op |= 1 << ((d + 3) % 6);
+}
+function tunRotate(m, k) { let o = 0; for (let d = 0; d < 6; d++) if ((m >> d) & 1) o |= 1 << ((d + k) % 6); return o; }
+function tunMirror(m) { let o = 0; for (let d = 0; d < 6; d++) if ((m >> d) & 1) o |= 1 << ((10 - d) % 6); return o; }
+function tunCanon(m) {
+  m &= TOP_OPEN;
+  let best = 0xFF;
+  for (const mm of [m, tunMirror(m)]) for (let k = 0; k < 6; k++) best = Math.min(best, tunRotate(mm, k));
+  return best;
+}
+const TUN_SHAPE = { DEAD: 0b000001, SHARP: 0b000011, GENTLE: 0b000101, STRAIGHT: 0b001001,
+                    TEE: 0b001011, WYE: 0b010101, CROSS: 0b011011 };
+const TUN_DRAWN = new Set(Object.values(TUN_SHAPE));
+function tunShapeDrawn(m) { return TUN_DRAWN.has(tunCanon(m)); }
+function tunShapeCost(m) { return !tunShapeDrawn(m) ? 40 : (tunCanon(m) === TUN_SHAPE.TEE ? 20 : 0); }
+const randInt = (n) => (Math.random() * n) | 0;
+
+// Mirrors carveCorridor() in tunnels.hpp: progress 30 a hex, no turn sharper
+// than 60 degrees, shape costs on both cells, reused links free, a little
+// noise, and 25 for every earlier visit this walk made to a cell -- without
+// that it can ping-pong along corridor it already dug. shapely=false is the
+// last-resort reroute: progress and noise only. Shaft cells are walls.
+function carveCorridor(q1, r1, q2, r2, shapely = true) {
+  let q = q1, r = r1, head = -1;
+  const visits = Array.from({ length: TUN_ROWS }, () => new Array(TUN_COLS).fill(0));
+  for (let step = 0; step < TUN_COLS * TUN_ROWS * 3; step++) {
+    visits[r][q]++;
     if (q === q2 && r === r2) return;
-    const legal = [];
-    let bestD = -1, bestDist = Infinity;
+    let bestD = -1, bestScore = Infinity;
     for (let d = 0; d < 6; d++) {
-      const [dq, dr] = DIR_DELTA[d];
-      const nq = q + dq, nr = r + dr;
+      const nq = q + TUN_DQ[d], nr = r + TUN_DR[d];
       if (!tunIn(nq, nr) || isShaftCell(nq, nr)) continue;
-      legal.push(d);
-      const ddq = q2 - nq, ddr = r2 - nr;
-      const dist = ddq * ddq + ddr * ddr;
-      if (dist < bestDist) { bestDist = dist; bestD = d; }
+      let score = 25 * visits[nr][nq];
+      if (shapely && tunOpen(q, r, d)) score -= 5;
+      else if (shapely) {
+        if (head >= 0 && d !== head && d !== (head + 1) % 6 && d !== (head + 5) % 6) score += 60;
+        score += tunShapeCost(tunnel[r][q].op | (1 << d));
+        if (tunnel[nr][nq].tt === 14) score += tunShapeCost(tunnel[nr][nq].op | (1 << ((d + 3) % 6)));
+      }
+      score -= 30 * (tunDist(q, r, q2, r2) - tunDist(nq, nr, q2, r2));
+      score += randInt(22);
+      if (score < bestScore) { bestScore = score; bestD = d; }
     }
-    if (!legal.length) return;
-    const d = (Math.random() < 0.25) ? legal[(Math.random() * legal.length) | 0] : bestD;
-    const [dq, dr] = DIR_DELTA[d];
-    q += dq; r += dr;
-    if (tunnel[r][q].tt === 15) tunnel[r][q].tt = 14;
+    if (bestD < 0) return;
+    const nq = q + TUN_DQ[bestD], nr = r + TUN_DR[bestD];
+    if (tunnel[nr][nq].tt === 15) tunnel[nr][nq].tt = 14;
+    tunLink(q, r, bestD);
+    q = nq; r = nr; head = bestD;
   }
+}
+
+// Flood fill through open sides, shafts solid -- tunnelFloodFill(.., true).
+function tunnelReach(q0, r0) {
+  const seen = Array.from({ length: TUN_ROWS }, () => new Array(TUN_COLS).fill(false));
+  const stack = [[q0, r0]];
+  seen[r0][q0] = true;
+  while (stack.length) {
+    const [cq, cr] = stack.pop();
+    for (let d = 0; d < 6; d++) {
+      if (!tunOpen(cq, cr, d)) continue;
+      const nq = cq + TUN_DQ[d], nr = cr + TUN_DR[d];
+      if (!tunIn(nq, nr) || seen[nr][nq]) continue;
+      if (tunnel[nr][nq].tt === 15 || isShaftCell(nq, nr)) continue;
+      seen[nr][nq] = true;
+      stack.push([nq, nr]);
+    }
+  }
+  return seen;
+}
+
+// Rooms and cave-ins hang off a corridor into the rock ABOVE it (N, NE, NW),
+// so the angled art is entered through its open front. placeRooms() /
+// placeCaveIns() in tunnels.hpp.
+const TUN_UP = [2, 1, 3];
+const TUNNEL_ROOMS = 12, TUNNEL_CAVE_INS = 3;
+function tunCorridorCell(q, r) { return tunnel[r][q].tt === 14 && !(tunnel[r][q].op & TOP_ROOM); }
+
+function placeRooms(want) {
+  const rooms = [];
+  while (rooms.length < want) {
+    let best = null;
+    for (let r = 0; r < TUN_ROWS; r++)
+      for (let q = 0; q < TUN_COLS; q++) {
+        if (!tunCorridorCell(q, r)) continue;
+        for (const d of TUN_UP) {
+          const nq = q + TUN_DQ[d], nr = r + TUN_DR[d];
+          if (!tunIn(nq, nr) || tunnel[nr][nq].tt !== 15) continue;
+          const c = tunCanon(tunnel[r][q].op | (1 << d));
+          const pref = c === TUN_SHAPE.CROSS ? 0 : c === TUN_SHAPE.WYE ? 10 : c === TUN_SHAPE.TEE ? 30 : -1;
+          if (pref < 0) continue;
+          const score = pref + randInt(25);
+          if (!best || score < best.score) best = { score, q, r, d };
+        }
+      }
+    if (!best) break;
+    const nq = best.q + TUN_DQ[best.d], nr = best.r + TUN_DR[best.d];
+    tunnel[nr][nq].tt = 14;
+    tunLink(best.q, best.r, best.d);
+    tunnel[nr][nq].op |= TOP_ROOM;
+    rooms.push([nq, nr]);
+  }
+  return rooms;
+}
+
+function placeCaveIns(want, kinds) {
+  const cells = [];
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++) if (tunCorridorCell(q, r)) cells.push([q, r]);
+  for (let i = cells.length - 1; i > 0; i--) { const j = randInt(i + 1); [cells[i], cells[j]] = [cells[j], cells[i]]; }
+  let placed = 0;
+  for (const [q, r] of cells) {
+    if (placed >= want) break;
+    for (const d of TUN_UP) {
+      const nq = q + TUN_DQ[d], nr = r + TUN_DR[d];
+      if (!tunIn(nq, nr) || tunnel[nr][nq].tt !== 15 || tunnel[nr][nq].variant) continue;
+      if (!tunShapeDrawn(tunnel[r][q].op | (1 << d))) continue;
+      tunnel[r][q].op |= 1 << d;
+      tunnel[nr][nq].variant = 1 + (placed % Math.max(1, kinds));
+      placed++;
+      break;
+    }
+  }
+  return placed;
 }
 
 function buildTunnels() {
@@ -258,35 +382,37 @@ function buildTunnels() {
   for (let r = 0; r < TUN_ROWS; r++) {
     tunnel.push([]);
     for (let q = 0; q < TUN_COLS; q++)
-      tunnel[r].push({ tt: 15, res: 0, amt: 0, variant: 0, poi: 0, footprints: 0 });
+      tunnel[r].push({ tt: 15, res: 0, amt: 0, variant: 0, poi: 0, footprints: 0, op: 0 });
   }
 
+  // Shafts: one per column band, never touching another shaft.
   const n = bunkerHatches.length;
   for (let i = 0; i < n; i++) {
     const b0 = Math.floor((i * TUN_COLS) / n);
     const b1 = Math.max(b0 + 1, Math.floor(((i + 1) * TUN_COLS) / n));
-    const tq = Math.min(b0 + ((Math.random() * (b1 - b0)) | 0), TUN_COLS - 1);
-    const tr = 1 + ((Math.random() * (TUN_ROWS - 2)) | 0);
+    let tq = 0, tr = 0;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      tq = Math.min(b0 + randInt(b1 - b0), TUN_COLS - 1);
+      tr = 1 + randInt(TUN_ROWS - 2);
+      if (bunkerHatches.slice(0, i).every((h) => tunDist(tq, tr, h.tq, h.tr) >= 2)) break;
+    }
     bunkerHatches[i].tq = tq;
     bunkerHatches[i].tr = tr;
     tunnel[tr][tq].tt = 14;
   }
-  // Junctions: one adjacent floor cell per shaft, and it is the junctions the
-  // chain runs between. A shaft must not be load-bearing -- stepping onto one
-  // climbs straight out, so a chain carved shaft-to-shaft ejects anyone
-  // walking from shaft i-1 to shaft i+1. Each shaft hangs off the network as a
-  // one-hex spur instead. Mirrors the junction pass in generateTunnels().
+  // Junctions: one floor cell per shaft, below it where it can be (S, SE,
+  // SW) so the shaft art faces its corridor. The chain runs junction to
+  // junction; each shaft hangs off it as a one-hex spur.
+  const BELOW = [5, 0, 4];
   const jun = bunkerHatches.map((h) => {
-    const pick = [];
-    for (let d = 0; d < 6; d++) {
-      const [dq, dr] = DIR_DELTA[d];
-      const nq = h.tq + dq, nr = h.tr + dr;
-      if (!tunIn(nq, nr) || isShaftCell(nq, nr)) continue;
-      pick.push([nq, nr]);
-    }
+    const ok = (d) => { const nq = h.tq + TUN_DQ[d], nr = h.tr + TUN_DR[d]; return tunIn(nq, nr) && !isShaftCell(nq, nr); };
+    let pick = BELOW.filter(ok);
+    if (!pick.length) pick = [0, 1, 2, 3, 4, 5].filter(ok);
     if (!pick.length) return [h.tq, h.tr];          // walled in by edge and peers
-    const [jq, jr] = pick[(Math.random() * pick.length) | 0];
-    tunnel[jr][jq].tt = 14;                         // the spur off the shaft
+    const d = pick[randInt(pick.length)];
+    const jq = h.tq + TUN_DQ[d], jr = h.tr + TUN_DR[d];
+    tunnel[jr][jq].tt = 14;
+    tunLink(h.tq, h.tr, d);
     return [jq, jr];
   });
 
@@ -297,48 +423,59 @@ function buildTunnels() {
     carveCorridor(jun[1][0], jun[1][1], jun[n - 1][0], jun[n - 1][1]);
   }
 
-  // Prove it rather than assume it: flood fill from junction 0 with every
-  // shaft solid. Any junction that does not come back was reachable only by
-  // cutting the corner across a shaft -- carve it a second way in and recheck.
+  // Prove it rather than assume it: flood fill from junction 0 through open
+  // sides with every shaft solid, and reroute to any junction left out.
   let shaftFree = false;
   for (let pass = 0; pass <= n && !shaftFree; pass++) {
-    const seen = Array.from({ length: TUN_ROWS }, () => new Array(TUN_COLS).fill(false));
-    const stack = [jun[0]];
-    seen[jun[0][1]][jun[0][0]] = true;
-    while (stack.length) {
-      const [cq, cr] = stack.pop();
-      for (let d = 0; d < 6; d++) {
-        const [dq, dr] = DIR_DELTA[d];
-        const nq = cq + dq, nr = cr + dr;
-        if (!tunIn(nq, nr) || seen[nr][nq]) continue;
-        if (tunnel[nr][nq].tt === 15 || isShaftCell(nq, nr)) continue;
-        seen[nr][nq] = true;
-        stack.push([nq, nr]);
-      }
-    }
+    const seen = tunnelReach(jun[0][0], jun[0][1]);
     const orphan = jun.findIndex(([jq, jr], i) => i > 0 && !seen[jr][jq]);
     if (orphan < 0) { shaftFree = true; break; }
     if (pass === n) break;                          // last pass was verify-only
-    console.log(`[tunnels] junction ${orphan} only reachable through a shaft - rerouting`);
-    carveCorridor(jun[0][0], jun[0][1], jun[orphan][0], jun[orphan][1]);
+    console.log(`[tunnels] junction ${orphan} cut off - rerouting`);
+    // First reroute keeps to the art's shapes; after that, just get there.
+    carveCorridor(jun[0][0], jun[0][1], jun[orphan][0], jun[orphan][1], pass === 0);
   }
   // Shafts share the surface hatch's terrain id so the art reads the same
   // from either side.
   bunkerHatches.forEach((h, i) => { tunnel[h.tr][h.tq].tt = (i & 1) ? 13 : 12; });
 
+  const [nRoom, nEnt, nVent, nCave] = VARIANT_COUNTS.tc;
+  const rooms = placeRooms(TUNNEL_ROOMS);
+  const caves = placeCaveIns(TUNNEL_CAVE_INS, nCave);
+
   // Water (1) and Scrap (5) only — mirrors terrainSpawnRes(14) in hex-map.hpp.
-  let floor = 0;
+  let floor = 0, artless = 0;
   for (let r = 0; r < TUN_ROWS; r++)
     for (let q = 0; q < TUN_COLS; q++) {
-      if (tunnel[r][q].tt !== 14) continue;
+      const c = tunnel[r][q];
+      if (c.tt !== 14) continue;
       floor++;
+      if (tunCorridorCell(q, r) && !tunShapeDrawn(c.op)) artless++;
       if (Math.random() < 0.19) {
-        tunnel[r][q].res = Math.random() < 0.5 ? 1 : 5;
-        tunnel[r][q].amt = 1 + ((Math.random() * 3) | 0);
+        c.res = Math.random() < 0.5 ? 1 : 5;
+        c.amt = 1 + randInt(3);
       }
     }
-  console.log(`[tunnels] ${TUN_COLS}x${TUN_ROWS} hatches=${n} floor=${floor} ` +
-    `shaftFreePaths=${shaftFree ? 'ok' : 'FAILED'} ` +
+
+  // Art, as the art pass in generateTunnels(): rooms from a shuffled deck,
+  // shafts round their interiors, a free variant on every corridor cell.
+  const deck = Array.from({ length: Math.min(nRoom, 32) }, (_, i) => i);
+  for (let i = deck.length - 1; i > 0; i--) { const j = randInt(i + 1); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+  rooms.forEach(([q, r], k) => {
+    const idx = deck.length ? deck[k % deck.length] : 0;
+    tunnel[r][q].variant = idx & 0x0F;
+    if (idx & 0x10) tunnel[r][q].op |= TOP_ART_HI;
+  });
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++) if (tunCorridorCell(q, r)) tunnel[r][q].variant = randInt(16);
+  let nextEnt = randInt(Math.max(1, nEnt)), nextVent = randInt(Math.max(1, nVent));
+  for (const h of bunkerHatches) {
+    const c = tunnel[h.tr][h.tq];
+    c.variant = (c.tt === 13 ? nextVent++ % Math.max(1, nVent) : nextEnt++ % Math.max(1, nEnt)) & 0x0F;
+  }
+
+  console.log(`[tunnels] ${TUN_COLS}x${TUN_ROWS} hatches=${n} floor=${floor} rooms=${rooms.length} ` +
+    `caves=${caves} artless=${artless} shaftFreePaths=${shaftFree ? 'ok' : 'FAILED'} ` +
     bunkerHatches.map((h, i) => `#${i}(${h.sq},${h.sr})->(${h.tq},${h.tr})`).join(' '));
 }
 
@@ -350,9 +487,8 @@ function tunnelValidMoves(p) {
   if (!p.dp || p.mp <= 0 || p.ll === 0) return 0;
   let mask = 0;
   for (let d = 0; d < 6; d++) {
-    const [dq, dr] = DIR_DELTA[d];
-    const nq = p.tq + dq, nr = p.tr + dr;
-    if (!tunIn(nq, nr)) continue;
+    const nq = p.tq + TUN_DQ[d], nr = p.tr + TUN_DR[d];
+    if (!tunIn(nq, nr) || !tunOpen(p.tq, p.tr, d)) continue;   // off the board, or a wall
     if (tunnel[nr][nq].tt === 15) continue;   // Collapsed Tunnel is MC 255
     mask |= (1 << d);
   }
@@ -390,18 +526,28 @@ function surfaceVis(p) {
   return Math.max(0, SURFACE_VIS_BASE + gear - WEATHER_VIS_PENALTY[weatherPhase]);
 }
 
-function tunCellHex(q, r) {
+function tunCellHex(q, r, pid) {
   const c = tunnel[r][q];
-  return hex2(c.tt) + hex2((c.footprints & 0x3F) | (c.poi ? 0x80 : 0)) +
+  return hex2(c.tt | trapBit(1, q, r, pid)) + hex2((c.footprints & 0x3F) | (c.poi ? 0x80 : 0)) +
          hex2(((c.res & 0xF) << 4) | (c.variant & 0x0F));
 }
 
 // Whole fogged tunnel board (960 hex chars at 16x10) — sent on descend.
-function tunnelMapHex(pq, pr, vr) {
+function tunnelMapHex(pq, pr, vr, pid) {
   let s = '';
   for (let r = 0; r < TUN_ROWS; r++)
     for (let q = 0; q < TUN_COLS; q++)
-      s += (tunDist(q, r, pq, pr) <= vr) ? tunCellHex(q, r) : 'FF0000';
+      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid)) ? tunCellHex(q, r, pid) : 'FF0000';
+  return s;
+}
+
+// The same cells' open sides, 2 hex chars each, "00" for fog -- tsync "op",
+// as encodeTunnelOps() in hex-map.hpp.
+function tunnelMapOps(pq, pr, vr, pid) {
+  let s = '';
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++)
+      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid)) ? hex2(tunnel[r][q].op) : '00';
   return s;
 }
 
@@ -425,7 +571,8 @@ function stepDownIfHatch(ws, id, p) {
   sendTunnelSync(ws, p);      // the client has never seen the tunnel board
   const tvr = tunnelVis(p);
   send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-             cells: buildTunnelVisDisk(p.tq, p.tr, tvr) });
+             cells: buildTunnelVisDisk(p.tq, p.tr, tvr, id),
+             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
   return true;
 }
 
@@ -436,12 +583,13 @@ function stepUpIfShaft(ws, id, p) {
   p.dp = 0; p.hatchIdx = h;
   p.q = bunkerHatches[h].sq; p.r = bunkerHatches[h].sr;
   broadcast({ t: 'ev', k: 'tun_out', pid: id, q: p.q, r: p.r, hatch: h, mp: p.mp });
+  ecoBite(p);   // the hex you climb out onto may be in flower (tunnelStepUp -> ecoBiteCheck)
   const svr = surfaceVis(p);
-  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr) });
+  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, id) });
   return true;
 }
 
-function buildTunnelVisDisk(pq, pr, vr) {
+function buildTunnelVisDisk(pq, pr, vr, pid) {
   let cells = '';
   for (let dr = -vr; dr <= vr; dr++)
     for (let dq = -vr; dq <= vr; dq++) {
@@ -449,15 +597,30 @@ function buildTunnelVisDisk(pq, pr, vr) {
       if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * vr) continue;
       const cq = pq + dq, cr = pr + dr;
       if (!tunIn(cq, cr)) continue;       // walled, not toroidal
-      cells += hex2(cq) + hex2(cr) + tunCellHex(cq, cr);
+      cells += hex2(cq) + hex2(cr) + tunCellHex(cq, cr, pid);
     }
   return cells;
+}
+
+// A tunnel vis disk's "op": each cell's open sides in the order
+// buildTunnelVisDisk() lists them (buildVisDisk() in hex-map.hpp).
+function buildTunnelVisOps(pq, pr, vr) {
+  let ops = '';
+  for (let dr = -vr; dr <= vr; dr++)
+    for (let dq = -vr; dq <= vr; dq++) {
+      const s = -(dq + dr);
+      if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * vr) continue;
+      const cq = pq + dq, cr = pr + dr;
+      if (!tunIn(cq, cr)) continue;
+      ops += hex2(tunnel[cr][cq].op);
+    }
+  return ops;
 }
 
 function sendTunnelSync(ws, p) {
   const vr = tunnelVis(p);
   send(ws, { t: 'tsync', cols: TUN_COLS, rows: TUN_ROWS, vr, q: p.tq, r: p.tr,
-             map: tunnelMapHex(p.tq, p.tr, vr) });
+             map: tunnelMapHex(p.tq, p.tr, vr, p.id), op: tunnelMapOps(p.tq, p.tr, vr, p.id) });
 }
 
 // ── Player factory ──────────────────────────────────────────────────────────
@@ -472,6 +635,14 @@ const ARCHETYPE_SKILLS = [
   [1, 0, 0, 2, 2],  // 5 Endurer
 ];
 const ARCHETYPE_INV_SLOTS = [8, 8, 8, 12, 8, 8];
+// Starting tokens (water, food, fuel, med, scrap) -- resetSurvivor() in
+// inventory_items.hpp: 2/1/1/1/1 for everyone, +1 food for the Quartermaster,
+// +1 med for the Medic, +1 food/med/scrap for the Mule. The lobby's pack
+// preview (SURVIVOR_KIT/kitBonus in game-data.js) shows the same numbers.
+const ARCHETYPE_KIT = [
+  [2, 1, 1, 1, 1], [2, 2, 1, 1, 1], [2, 1, 1, 2, 1],
+  [2, 2, 1, 2, 2], [2, 1, 1, 1, 1], [2, 1, 1, 1, 1],
+];
 const NUM_SKILLS     = 5;
 const WOUND_MAX_EACH = 3;
 const TREAT_DN       = 9; // mirrors TREAT_DN in Esp32HexMapCrawl.ino
@@ -514,7 +685,7 @@ function makePlayer(id) {
     lastMoveMs: uptimeMs(),
     q: spawn.q, r: spawn.r,
     sc: 0,
-    inv: [0, 0, 0, 0, 0],
+    inv: (ARCHETYPE_KIT[id] ?? [0, 0, 0, 0, 0]).slice(),
     sp: 0,
     ll: 7, food: 6, water: 6, rad: 0,
     mp: 6,
@@ -941,7 +1112,118 @@ const ENC_INDEX = (() => {
   try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'encounters', 'index.json'), 'utf8')); }
   catch { return {}; }
 })();
-const encounters = {};   // pid -> { q, r, biome, encId, json, nodeKey, canBank, pendingLoot[5], pendingItems[], fullClear }
+const encounters = {};   // pid -> { q, r, dp, biome, encId, json, nodeKey, canBank, escape, trap, pendingLoot[5], pendingItems[], fullClear }
+
+// ── Booby traps (mirrors traps.hpp) ─────────────────────────────────────────
+// A trapped hex forces a scene on whoever walks onto it; escaping leaves it
+// armed and on that survivor's map alone; banking anything disarms it; a
+// failed check springs it. The mock's terrain is a baked stripe with no
+// cities, so placement keeps the firmware's bands and rates but is otherwise a
+// stand-in -- dbg_trap arms one next to you for UI work.
+// "dp:q_r" -> { armed, known (6-bit pid mask), enc (1-based id in the traps pool) }
+const traps = new Map();
+const trapKey = (dp, q, r) => `${dp ? 1 : 0}:${q}_${r}`;
+const TRAP_POOL = ENC_INDEX.traps || null;
+const TRAP_TIER_RANGE = (() => {             // [lo, hi] per tier from index.json "tiers"
+  const out = [[1, 0], [1, 0], [1, 0]];
+  if (!TRAP_POOL) return out;
+  const tiers = Array.isArray(TRAP_POOL.tiers) ? TRAP_POOL.tiers : [TRAP_POOL.count | 0];
+  let next = 1;
+  for (let t = 0; t < 3 && next <= TRAP_POOL.count; t++) {
+    const n = tiers[t] | 0;
+    if (n > 0) { out[t] = [next, Math.min(TRAP_POOL.count, next + n - 1)]; next = out[t][1] + 1; }
+  }
+  return out;
+})();
+const TRAP_PERMILLE = { core: 180, outskirt: 80, open: 40, tunnel: 80 };   // traps.hpp
+function trapKnownBy(dp, q, r, pid) {
+  const tr = traps.get(trapKey(dp, q, r));
+  return !!(tr && tr.armed && pid !== undefined && pid !== null && (tr.known & (1 << pid)));
+}
+const trapBit = (dp, q, r, pid) => (trapKnownBy(dp, q, r, pid) ? 0x10 : 0);
+function trapTier(band, amount) {             // trapRollTier(): richness weights the roll
+  let rich = Math.min(3, amount | 0) + (band === 'core' ? 3 : band === 'open' ? 0 : 2);
+  rich = Math.min(5, rich);
+  const wc = Math.max(0, 70 - 15 * rich), wm = 25 + 5 * rich, wt = 5 + 10 * rich;
+  const roll = Math.random() * (wc + wm + wt);
+  return roll < wc ? 0 : roll < wc + wm ? 1 : 2;
+}
+function placeTraps() {
+  traps.clear();
+  if (!TRAP_POOL || !(TRAP_POOL.count > 0)) { console.warn('[trap] no traps pool in index.json'); return; }
+  const decks = TRAP_TIER_RANGE.map(([lo, hi]) => { const d = []; for (let i = lo; i <= hi; i++) d.push(i); return { ids: d, next: d.length }; });
+  const deal = (tier) => {
+    for (const t of [[0, 1, 2], [1, 0, 2], [2, 1, 0]][tier]) {
+      const D = decks[t];
+      if (!D.ids.length) continue;
+      if (D.next >= D.ids.length) { for (let i = D.ids.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [D.ids[i], D.ids[j]] = [D.ids[j], D.ids[i]]; } D.next = 0; }
+      return D.ids[D.next++];
+    }
+    return 0;
+  };
+  const count = { core: 0, outskirt: 0, open: 0, tunnel: 0 };
+  for (let r = 0; r < MAP_ROWS; r++) for (let q = 0; q < MAP_COLS; q++) {
+    const t = terrainAt(q, r) & 0x0F;
+    if (t === 9 || t === 10 || t === 11 || t === 12 || t === 13 || t === 15 || hasPoi(q, r)) continue;
+    let band = 'open';
+    if (t === 4) {
+      let un = 0;
+      for (const [dq, dr] of Object.values(DIR_DELTA))
+        if ((terrainAt(((q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS, ((r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS) & 0x0F) === 4) un++;
+      band = un >= 5 ? 'core' : 'outskirt';
+    }
+    if (Math.random() * 1000 >= TRAP_PERMILLE[band]) continue;
+    const cell = resources[`${q}_${r}`], enc = deal(trapTier(band, cell ? cell.amt : 0));
+    if (!enc) continue;
+    traps.set(trapKey(0, q, r), { armed: true, known: 0, enc });
+    count[band]++;
+  }
+  for (let r = 0; r < TUN_ROWS; r++) for (let q = 0; q < TUN_COLS; q++) {
+    const c = tunnel[r][q];
+    if (c.tt !== 14 || c.poi) continue;
+    // Never a shaft's junction: every descent steps onto it next.
+    if (Object.values(DIR_DELTA).some(([dq, dr]) => isShaftCell(q + dq, r + dr))) continue;
+    if (Math.random() * 1000 >= TRAP_PERMILLE.tunnel) continue;
+    const enc = deal(trapTier('tunnel', c.amt));
+    if (!enc) continue;
+    traps.set(trapKey(1, q, r), { armed: true, known: 0, enc });
+    count.tunnel++;
+  }
+  console.log(`[trap] placed core=${count.core} outskirts=${count.outskirt} open=${count.open} tunnels=${count.tunnel}`);
+}
+// A trap changed state: "known" goes to the escapee alone, the rest to everyone.
+function trapEvent(ws, id, dp, q, r, out) {
+  const msg = { t: 'ev', k: 'trap', pid: id, q, r, dp: dp ? 1 : 0, out };
+  if (out === 'known') send(ws, msg); else broadcast(msg);
+}
+// trapOnArrival(): the scene the survivor did not ask for. Returns true when
+// one opened (the caller has already sent the vis disk the panel sits on).
+function trapOnArrival(ws, id, p) {
+  if (!p || p.ll === 0 || encounters[id]) return false;
+  const dp = p.dp ? 1 : 0, q = dp ? p.tq : p.q, r = dp ? p.tr : p.r, tr = traps.get(trapKey(dp, q, r));
+  if (!tr || !tr.armed || !TRAP_POOL) return false;
+  if (!openEncounter(ws, id, p, q, r, TRAP_POOL.path, tr.enc, false, { trap: true, dp })) return false;
+  tr.armed = false;                           // held while it runs; trapSettle() decides the rest
+  return true;
+}
+// trapSettle(): 'rearm' (cut short: exactly as it was), 'known', 'sprung', 'spent'.
+function trapSettle(ws, id, outcome) {
+  const e = encounters[id];
+  if (!e || !e.trap) return;
+  const tr = traps.get(trapKey(e.dp, e.q, e.r));
+  if (!tr) return;
+  if (outcome === 'rearm') { tr.armed = true; return; }
+  if (outcome === 'known') { tr.armed = true; tr.known |= (1 << id); }
+  else traps.delete(trapKey(e.dp, e.q, e.r));
+  trapEvent(ws, id, e.dp, e.q, e.r, outcome);
+  console.log(`[trap] ${outcome} pid=${id} dp=${e.dp} (${e.q},${e.r})`);
+}
+// A penalty that is a scalar or a [a, b] range, rolled inclusive (jsonRoll()).
+function penRoll(v) {
+  if (!Array.isArray(v)) return v | 0;
+  const a = v[0] | 0, b = (v.length > 1 ? v[1] : v[0]) | 0, lo = Math.min(a, b), hi = Math.max(a, b);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
 
 // Load an encounter file the same way the firmware's encLoadFile() does.
 function loadEncounterJson(biome, encId) {
@@ -983,13 +1265,14 @@ function resolveChoice(json, nodeKey, ci) {
     skill:    Math.max(0, Math.min(NUM_SKILLS - 1, ch.skill | 0)),
     cost:     { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
                 water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0 },
-    nextKey, nextCanBank: true, nextTerminal: true,
+    nextKey, nextCanBank: true, nextTerminal: true, nextEscape: false,
     loot: [0, 0, 0, 0, 0], items: [], lootTable: '', recipeId: 0,
     hazLL: 0, hazRad: 0, hazRes: [0, 0, 0, 0, 0], hazWMin: 0, hazWMaj: 0, hazEnds: false,
   };
   if (next) {
     out.nextCanBank  = !!next.can_bank;
     out.nextTerminal = !(Array.isArray(next.choices) && next.choices.length);
+    out.nextEscape   = !!next.escape;
     out.lootTable    = next.loot_table ?? '';
     for (const e of next.loot ?? []) {
       const mn = e.qty?.[0] ?? 1, mx = e.qty?.[1] ?? mn;
@@ -1003,30 +1286,40 @@ function resolveChoice(json, nodeKey, ci) {
   const haz = ch.hazard_id ? json.hazards?.[ch.hazard_id] : null;
   if (haz) {
     const pen = haz.penalty ?? {};
-    out.hazLL  = pen.ll | 0;
-    out.hazRad = pen.radiation | 0;
-    ['water', 'food', 'fuel', 'med', 'scrap'].forEach((k, i) => { const v = pen[k] | 0; if (v < 0) out.hazRes[i] = Math.min(99, -v); });
-    out.hazWMin = Math.max(0, Math.min(WOUND_MAX_EACH, haz.wound?.[0] | 0));
-    out.hazWMaj = Math.max(0, Math.min(WOUND_MAX_EACH, haz.wound?.[1] | 0));
+    // Every number may be a [a, b] range, rolled once (jsonRoll()).
+    out.hazLL  = penRoll(pen.ll);
+    out.hazRad = penRoll(pen.radiation);
+    ['water', 'food', 'fuel', 'med', 'scrap'].forEach((k, i) => { const v = penRoll(pen[k]); if (v < 0) out.hazRes[i] = Math.min(99, -v); });
+    // "wound" the floor per tier, "wound_max" the ceiling, rolled between.
+    const wroll = (t) => {
+      const lo = Math.max(0, Math.min(WOUND_MAX_EACH, haz.wound?.[t] | 0));
+      const hi = Math.max(lo, Math.min(WOUND_MAX_EACH, haz.wound_max ? (haz.wound_max[t] | 0) : lo));
+      return lo + Math.floor(Math.random() * (hi - lo + 1));
+    };
+    out.hazWMin = wroll(0);
+    out.hazWMaj = wroll(1);
     out.hazEnds = !!haz.ends_encounter;
   }
   return out;
 }
 
-function openEncounter(ws, id, p, q, r, biome, encId, consumePoi) {
+// opts.trap: a booby trap fired under a step (trapOnArrival) -- no threat
+// clock tick, "trap" on the enc_path and the enc_start, and q/r on board dp.
+function openEncounter(ws, id, p, q, r, biome, encId, consumePoi, opts) {
+  const trap = !!(opts && opts.trap), dp = opts && opts.dp ? 1 : 0;
   const json = loadEncounterJson(biome, encId);
-  if (!json) { send(ws, { t: 'err', msg: 'The way in is blocked' }); return false; }
+  if (!json) { if (!trap) send(ws, { t: 'err', msg: 'The way in is blocked' }); return false; }
   if (consumePoi) consumedPoi.add(`${q}_${r}`);
-  if (threatClock < 20) threatClock++;
+  if (!trap && threatClock < 20) threatClock++;
   const startKey = json.nodes?.[json.start_node] ? json.start_node : Object.keys(json.nodes ?? {})[0];
   const start = json.nodes?.[startKey];
-  encounters[id] = { q, r, biome, encId, json, nodeKey: startKey,
-                     canBank: !!start?.can_bank,
+  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws,
+                     canBank: !!start?.can_bank, escape: !!start?.escape,
                      pendingLoot: [0, 0, 0, 0, 0], pendingItems: [], pendingRecipes: 0,
                      fullClear: !(Array.isArray(start?.choices) && start.choices.length) };
   p.enc = true;
-  send(ws, { t: 'enc_path', biome, id: encId });
-  broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r });
+  send(ws, trap ? { t: 'enc_path', biome, id: encId, trap: 1 } : { t: 'enc_path', biome, id: encId });
+  broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 } : { t: 'ev', k: 'enc_start', pid: id, q, r });
   console.log(`[enc] start pid=${id} ${biome}/${encId}.json node=${startKey}`);
   return true;
 }
@@ -1491,7 +1784,12 @@ function encStart(ws, id, msg) {
 function encEnd(id, reason) {
   const e = encounters[id];
   if (!e) return;
-  if (reason === 'dawn' || reason === 'disconnect') consumedPoi.delete(`${e.q}_${e.r}`);
+  // A trap has no POI; endEncounter() re-arms it on an involuntary end and
+  // springs it on a hazard or a fall. 'escaped' was settled by the caller.
+  if (e.trap) {
+    if (reason === 'dawn' || reason === 'disconnect') trapSettle(e.ws, id, 'rearm');
+    else if (reason === 'hazard' || reason === 'downed') trapSettle(e.ws, id, 'sprung');
+  } else if (reason === 'dawn' || reason === 'disconnect') consumedPoi.delete(`${e.q}_${e.r}`);
   delete encounters[id];
   const p = players[id];
   if (p) p.enc = false;
@@ -1529,7 +1827,7 @@ function encChoice(ws, id, m) {
   const ev    = { t: 'ev', k: 'enc_res', pid: id, out: ok ? 1 : 0, skill, dn, tot,
                   loot: [0, 0, 0, 0, 0], it: 0, iq: 0, it2: 0, iq2: 0, penLL: 0, penRad: 0,
                   penRes: [0, 0, 0, 0, 0], penWnd: [0, 0], ends: 0,
-                  drains: [0, 0, 0, 0, 0, 0], rec: 0 };
+                  drains: [0, 0, 0, 0, 0, 0], rec: 0, trap: e.trap ? 1 : 0 };
   let ended = false;
   if (ok) {
     for (let i = 0; i < 5; i++) {
@@ -1556,12 +1854,18 @@ function encChoice(ws, id, m) {
     if (ch.recipeId && ch.recipeId <= 32) { e.pendingRecipes |= (1 << (ch.recipeId - 1)); ev.rec = ch.recipeId; }
     e.nodeKey = ch.nextKey;
     e.canBank = ch.nextCanBank;
+    e.escape  = ch.nextEscape;
     if (ch.nextTerminal) e.fullClear = true;
     if (p.ll === 0) ended = true;
   } else {
-    ev.penLL = ch.hazLL; ev.penRad = ch.hazRad; ev.ends = ch.hazEnds ? 1 : 0;
+    // A sprung trap is a spent trap: every trap hazard ends it, and it never
+    // takes the last point of LL -- traps maim, the wasteland kills.
+    if (e.trap) ch.hazEnds = true;
+    const llBefore = p.ll;
     if (ch.hazLL > 0)      p.ll = Math.min(7, p.ll + ch.hazLL);
-    else if (ch.hazLL < 0) p.ll = Math.max(0, p.ll + ch.hazLL);
+    else if (ch.hazLL < 0) { p.ll = Math.max(e.trap ? Math.min(1, llBefore) : 0, p.ll + ch.hazLL); eco.noteHurt(p.q, p.r); }   // an injury: the daisies seed on the encounter's hex
+    // What it actually cost, as the firmware reports it.
+    ev.penLL = ch.hazLL > 0 ? ch.hazLL : p.ll - llBefore; ev.penRad = ch.hazRad; ev.ends = ch.hazEnds ? 1 : 0;
     p.rad = Math.max(0, Math.min(10, p.rad + ch.hazRad));
     for (let i = 0; i < 5; i++) {
       const take = Math.min(ch.hazRes[i], p.inv[i]);
@@ -1601,16 +1905,25 @@ function encBank(ws, id, m) {
     // below reports what was actually banked, not what was rolled — otherwise
     // the client's _evEncBank adds the untrimmed amount to its inv[].
     const take = Math.min(e.pendingLoot[i], keep[i] ?? 99);
-    p.inv[i] = Math.min(99, p.inv[i] + take);
     e.pendingLoot[i] = take;
     total += take;
   }
+  // Nothing taken from an escape node, or from a trap at all, is not a bank:
+  // no score, no full clear, and a trap left like this stays armed -- on this
+  // survivor's map (handleMsg_enc_bank).
+  if (!total && !e.pendingItems.length && !e.pendingRecipes && (e.trap || e.escape)) {
+    if (e.trap) trapSettle(ws, id, 'known');
+    encEnd(id, 'escaped');
+    broadcast(stateMsg());
+    return;
+  }
+  for (let i = 0; i < 5; i++) p.inv[i] = Math.min(99, p.inv[i] + e.pendingLoot[i]);
   const hadItems = e.pendingItems.length > 0;
   let spilled = false;
   for (const { it, iq } of e.pendingItems) spilled = grantItemOrDrop(p, it, iq) || spilled;
   if (spilled) broadcast(groundUpdateMsg(p.q, p.r));   // mirrors handleMsg_enc_bank
   p.kr = (p.kr | 0) | (e.pendingRecipes | 0);
-  const scoreD = total * 3 + (e.fullClear ? 10 : 0);
+  const scoreD = total * 3 + ((e.fullClear && !e.escape) ? 10 : 0);   // an escape node is a way out, not a clear
   p.sc += scoreD;
   broadcast({ t: 'ev', k: 'enc_bank', pid: id, q: e.q, r: e.r, loot: e.pendingLoot, scoreD, recs: e.pendingRecipes || 0 });
   // grantItemOrDrop() just mutated it[]/iq[] — like every other item action,
@@ -1618,14 +1931,28 @@ function encBank(ws, id, m) {
   // never carries pack contents (mirrors handleMsg_enc_bank's item_result in
   // network-msg-encounter.hpp).
   if (hadItems) send(ws, { t: 'item_result', ok: true, act: 'enc_bank', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+  if (e.trap) trapSettle(ws, id, 'spent');   // taking the bait is what disarms it
   delete encounters[id];
   p.enc = false;
   broadcast(stateMsg());
   console.log(`[enc] bank pid=${id} loot=${JSON.stringify(e.pendingLoot)} +${scoreD}`);
 }
 
-function encAbort(id) {
-  if (!encounters[id]) return;
+function encAbort(id, ws) {
+  const e = encounters[id];
+  if (!e) return;
+  if (e.trap) {
+    // handleMsg_enc_abort: no walking away from a trap. Past the mechanism
+    // (a cache) or out the escape door, you leave with nothing and it stays
+    // armed -- and known; at the start you take the escape door, roll and all.
+    if (e.canBank || e.fullClear) { trapSettle(ws, id, 'known'); encEnd(id, 'escaped'); broadcast(stateMsg()); return; }
+    const ci = (e.json.nodes?.[e.nodeKey]?.choices || []).findIndex((c) => e.json.nodes?.[c.success_node]?.escape);
+    if (ci < 0) { send(ws, { t: 'err', msg: 'There is no way back out from here. Choose.' }); return; }
+    encChoice(ws, id, { ci });
+    if (encounters[id] && encounters[id].escape) { trapSettle(ws, id, 'known'); encEnd(id, 'escaped'); }
+    broadcast(stateMsg());
+    return;
+  }
   if (threatClock < 20) threatClock++;
   encEnd(id, 'abort');
   broadcast(stateMsg());
@@ -1711,6 +2038,7 @@ function stateViewCell(p, dq, dr) {
     tireTrack: (ttRaw & 0x80) !== 0,
     variant,
     poi: (dd & 0x80) !== 0,
+    ...(trapKnownBy(0, cq, cr, p.id) ? { trap: true } : {}),   // only a trap this survivor knows
   };
 }
 
@@ -1771,6 +2099,7 @@ function statePlayer(i) {
     blk.encQ = e.q; blk.encR = e.r; blk.encNode = e.nodeKey;
     blk.encId = e.encId; blk.encBiome = e.biome;
     blk.encCanBank = !!e.canBank;
+    blk.encTrap = !!e.trap;
     blk.encLoot = e.pendingLoot.slice();
   }
   return blk;
@@ -1810,6 +2139,13 @@ function handleState(req, res) {
     map: {
       cells: MAP_ROWS * MAP_COLS,
       shelters, impShelters, pois: poiCount,
+      // Booby traps, as game-server.hpp's /state: armed on the surface, how
+      // many of those someone has escaped (and so has on their map), armed below.
+      traps: (() => {
+        let armed = 0, known = 0, tunnelN = 0;
+        for (const [k, tr] of traps) { if (!tr.armed) continue; if (k[0] === '1') tunnelN++; else { armed++; if (tr.known) known++; } }
+        return { armed, known, tunnel: tunnelN };
+      })(),
       res: { water: resCnt[1], food: resCnt[2], fuel: resCnt[3], med: resCnt[4], scrap: resCnt[5] },
       terrain: terrCnt.map((count, id) => ({ id, name: T_SHORT[id], count })),
     },
@@ -1825,6 +2161,15 @@ function handleState(req, res) {
   }
   body.players = [];
   for (let i = 0; i < MAX_PLAYERS; i++) body.players.push(statePlayer(i));
+  // The Understory (mock-server/ecology.js): the same block game-server.hpp
+  // emits, plus this mock's clock multiplier. ?ecoseed=N pins the genome for
+  // the next genesis (dbg_eco regen); ?ecobite=0|1 and ?ecoblight=0|1 are the
+  // NVS eco/bite and eco/blight switches.
+  if (u.searchParams.has('ecoseed')) ecoPinnedSeed = (parseInt(u.searchParams.get('ecoseed'), 10) || 0) >>> 0;
+  if (u.searchParams.has('ecobite')) eco.biteOn = u.searchParams.get('ecobite') !== '0';
+  if (u.searchParams.has('ecoblight')) eco.blightOn = u.searchParams.get('ecoblight') !== '0';
+  body.eco = Object.assign(eco.species ? eco.stateJson() : { on: true, seed: 0, name: '' },
+                           { speed: ecoSpeedNow, pinnedSeed: ecoPinnedSeed });
 
   res.writeHead(200, {
     'Content-Type': 'application/json',
@@ -1879,6 +2224,7 @@ const DIR_DELTA = {
 // Tunnel generation uses DIR_DELTA above, so it cannot run at module top --
 // const is in the temporal dead zone until this point.
 buildTunnels();
+placeTraps();   // last, like Phase 7: after the POIs and the hatches
 
 const send = (ws, obj) => {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -2034,7 +2380,10 @@ function igniteHex(q, r, intensity) {
     fireCount++;
   }
   fireGrid[key] = Math.max(fireGrid[key] || 0, intensity);
-  if (wasUnlit) broadcast({ t: 'ev', k: 'fire_spread', q, r, intensity: fireGrid[key] });
+  if (wasUnlit) {
+    eco.onIgnite(q, r);   // a daisy patch here is ash now: no bite on the way through (ecology.js)
+    broadcast({ t: 'ev', k: 'fire_spread', q, r, intensity: fireGrid[key] });
+  }
 }
 
 // Permanent, one-way: Ash Dunes isn't flammable, so a hex only ever burns
@@ -2071,6 +2420,7 @@ function maybeIgniteLightning(connected) {
     if (p.q !== q || p.r !== r) continue;
     if (p.ll === 0) continue;   // already down — mirrors the guard in world-system.hpp
     p.ll = Math.max(0, p.ll - 2);
+    eco.noteHurt(q, r);   // an injury: the daisies seed where it landed (ecology.js)
     broadcast({ t: 'ev', k: 'fire_dmg', pid: p.id, q, r, intensity: 10 }); // 10 = direct strike sentinel, outside fire's 1-3 range
     if (p.ll === 0) downPlayer(p);
   }
@@ -2118,6 +2468,7 @@ function resolveFireDamage(connected) {
     if (intensity < 2 || p.ll === 0) continue;
     // Scales with intensity, mirroring fireDamageFor() in world-system.hpp
     p.ll = Math.max(0, p.ll - (intensity >= 3 ? 2 : 1));
+    eco.noteHurt(p.q, p.r);   // an injury: the daisies seed here -- and burn with the hex (ecology.js)
     if (intensity === 3) p.rad = Math.min(255, p.rad + 1);
     broadcast({ t: 'ev', k: 'fire_dmg', pid: p.id, q: p.q, r: p.r, intensity });
     if (p.ll === 0) downPlayer(p);
@@ -2239,6 +2590,7 @@ function spreadFlood(connected) {
           if (p.q !== nq || p.r !== nr) continue;
           if (p.ll === 0) continue;   // already down, slot reset pending
           p.ll = Math.max(0, p.ll - FLOOD_LL_DAMAGE);
+          eco.noteHurt(nq, nr);   // an injury: the daisies seed here (ecology.js)
           p.mp = 0;
           // 10 = swept-away sentinel, outside flood's 1-3 range; llLost is what it actually cost
           broadcast({ t: 'ev', k: 'flood_dmg', pid: p.id, q: nq, r: nr, intensity: 10, llLost: FLOOD_LL_DAMAGE });
@@ -2423,6 +2775,7 @@ function resolveDoomProximity(connected) {
     if (doom.awareness >= 100 && p.ll > 0) {
       p.ll = Math.max(0, p.ll - 1);
       llLost = 1;
+      eco.noteHurt(p.q, p.r);   // an injury: the daisies seed here (ecology.js)
       if (p.ll === 0) downPlayer(p);
     }
     broadcast({ t: 'ev', k: 'doom_act', pid: p.id, q: p.q, r: p.r, llLost });
@@ -2559,7 +2912,7 @@ function syncMsg(id) {
     t: 'sync',
     id,
     vr: surfaceVis(players[id]),
-    map: liveMapHex(players[id].q, players[id].r, surfaceVis(players[id])),
+    map: liveMapHex(players[id].q, players[id].r, surfaceVis(players[id]), id),
     p: Object.values(players).map(playerView),
     gs: { wp: weatherPhase, dc: dayCount, tc: threatClock },
     world: worldStateMsg(),
@@ -2621,7 +2974,8 @@ function dropResource(p, res, qty) {
 
   const k    = `${p.q}_${p.r}`;
   const cell = resources[k];
-  const onGround = !cell || cell.res === 0 || cell.res === res;
+  // Mould on the hex eats a pile at once (the blight, below), so it is lost.
+  const onGround = !eco.blightAt(p.q, p.r) && (!cell || cell.res === 0 || cell.res === res);
   let rem = 0;
   if (onGround) {
     const pile = (cell && cell.res === res ? cell.amt : 0) + take;
@@ -2633,9 +2987,26 @@ function dropResource(p, res, qty) {
 }
 
 // Respawn tick — broadcasts EVT_RESPAWN to all (no vision cull, mirrors fix).
+// The Understory's blight rides the same pass, as in tickGame
+// (actions_game_loop.hpp): a hex with visible mould loses its resource (an
+// rsp with res 0) and holds its respawn timer full until the mould dies back.
+// The board eats one hex per 100 ms tick, so ten per 1 s pass here.
 setInterval(() => {
+  let ate = 0;
   for (const k of Object.keys(resources)) {
     const cell = resources[k];
+    const [bq, br] = k.split('_').map(Number);
+    if (eco.blightAt(bq, br)) {
+      if (cell.res !== 0 && ate < 10) {
+        console.log(`[eco] blight ate res=${cell.res} amt=${cell.amt} at (${bq},${br})`);
+        cell.res = 0; cell.amt = 0; cell.respawnTimer = RESPAWN_TICKS;
+        eco.eaten++; ate++;
+        broadcast({ t: 'ev', k: 'rsp', q: bq, r: br, res: 0, amt: 0 });
+      } else if (cell.res === 0 && cell.respawnTimer > 0) {
+        cell.respawnTimer = RESPAWN_TICKS;
+      }
+      continue;
+    }
     if (cell.res === 0 && cell.respawnTimer > 0) {
       if (--cell.respawnTimer === 0) {
         cell.res = 1 + Math.floor(Math.random() * RES_MAX_TYPE);
@@ -2662,18 +3033,16 @@ setInterval(() => {
 }, 1000);
 
 function stateMsg() {
-  // Build dense p[] indexed 0..MAX_PLAYERS-1; missing slots = offline stub.
+  // Seated players only, each carrying its seat as "id" -- the firmware's
+  // broadcastState() shape (PROTO 4). Clients mark a missing seat offline.
   const p = [];
   for (let i = 0; i < MAX_PLAYERS; i++) {
+    if (!players[i]) continue;
     // Underground the direction mask is real (see tunnelValidMoves); on the
     // surface the mock still reports all six, since it models no terrain cost.
-    if (players[i]?.dp) players[i].vm = tunnelValidMoves(players[i]);
-    else if (players[i]) players[i].vm = 0x3F;
-    p[i] = (players[i] && playerView(players[i])) || { on: false, q: 0, r: 0, sc: 0, inv: [0,0,0,0,0], sp: 0,
-                           ll: 0, food: 0, water: 0, rad: 0,
-                           mp: 0, fth: 0, wth: 0, vm: 0, rt: 0, wnd: [0, 0],
-                           it: [], iq: [], eq: [0, 0, 0, 0, 0], enc: false,
-                           dp: 0, tq: 0, tr: 0 };
+    if (players[i].dp) players[i].vm = tunnelValidMoves(players[i]);
+    else players[i].vm = 0x3F;
+    p.push({ ...playerView(players[i]), id: i });
   }
   return { t: 's', p, gs: { wp: weatherPhase, dc: dayCount, tc: threatClock }, world: worldStateMsg() };
 }
@@ -2827,7 +3196,7 @@ function pickupGroundItem(p, gslot) {
 function pushVisDisk(ws, p) {
   if (p.dp) return;                       // underground vis is its own path
   const svr = surfaceVis(p);
-  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr) });
+  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, p.id) });
 }
 
 function equipItem(ws, id, msg) {
@@ -3120,6 +3489,9 @@ httpServer.on('upgrade', (req, socket, head) => {
 
 wss.on('connection', (ws) => {
   console.log('[WS] client connected');
+  // handleConnect's gate: seated + lobby sockets already at the cap -> full.
+  // The socket stays open but never joins the lobby, like the firmware.
+  if (sockets.size >= MAX_SEATED) { send(ws, { t: 'full' }); return; }
   sockets.set(ws, -1);
   // Tell client which slots are free
   send(ws, lobbyMsg());
@@ -3155,7 +3527,8 @@ wss.on('connection', (ws) => {
 
       case 'pick': {
         const id = msg.arch | 0;
-        if (id < 0 || id >= MAX_PLAYERS || players[id]) {
+        if (id < 0 || id >= MAX_PLAYERS || players[id] ||
+            Object.keys(players).length >= MAX_SEATED) {
           send(ws, lobbyMsg());
           break;
         }
@@ -3166,6 +3539,11 @@ wss.on('connection', (ws) => {
         sockets.set(ws, id);
         send(ws, { t: 'asgn', id });
         send(ws, syncMsg(id));
+        // The Understory rides the sync: scars first, then the living grid
+        // (sendSync -> ecoSendPublished). Then the bite -- a fresh survivor
+        // who spawns in the flowers pays the same 1 LL as walking into them.
+        if (eco.species) { send(ws, eco.scarMessage()); send(ws, eco.wireMessage()); }
+        ecoBite(players[id]);
         broadcast(stateMsg());
         break;
       }
@@ -3174,6 +3552,8 @@ wss.on('connection', (ws) => {
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p) break;
+        // handleMsg_move refuses a step mid-scene; a forced trap scene depends on it.
+        if (encounters[id]) { send(ws, { t: 'err', msg: 'Cannot move during encounter' }); break; }
         const [dq, dr] = DIR_DELTA[msg.d] || [0, 0];
         // ── Underground ──
         // Separate path, same as moveTunnel() in survival_state.hpp: the board
@@ -3181,8 +3561,10 @@ wss.on('connection', (ws) => {
         // TUNNEL_MC. This is also the only place the mock enforces terrain at
         // all -- the surface branch below still moves unconditionally.
         if (p.dp) {
-          const nq = p.tq + dq, nr = p.tr + dr;
+          const d = msg.d | 0;
+          const nq = p.tq + TUN_DQ[d], nr = p.tr + TUN_DR[d];
           if (!tunIn(nq, nr)) break;                 // walled, not toroidal
+          if (!tunOpen(p.tq, p.tr, d)) break;        // rock between the two cells
           if (tunnel[nr][nq].tt === 15) break;       // collapsed
           p.tq = nq; p.tr = nr;
           p.sp += 1;
@@ -3204,12 +3586,15 @@ wss.on('connection', (ws) => {
           if (stepUpIfShaft(ws, id, p)) { broadcast(stateMsg()); break; }
           const tvr = tunnelVis(p);
           send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr) });
+                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr, id),
+             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
+          trapOnArrival(ws, id, p);   // after the vis disk, so the board under it is fresh
           broadcast(stateMsg());
           break;
         }
         p.q = ((p.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
         p.r = ((p.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+        footprintMask.set(`${p.q}_${p.r}`, (footprintMask.get(`${p.q}_${p.r}`) || 0) | (1 << id));
         delete lastCaravanHex[id];  // moved — re-arm the caravan trade prompt
         p.sp += 1;
         if (p.mp > 0) p.mp -= 1;
@@ -3222,13 +3607,17 @@ wss.on('connection', (ws) => {
         if (laidTrack) caravanTracks.add(`${p.q}_${p.r}`);
         // EVT_MOVE first so client position updates before col event arrives.
         broadcast({ t: 'ev', k: 'mv', pid: id, q: p.q, r: p.r, radd: 0, rad: p.rad, exploD: 0, mp: p.mp, trk: laidTrack ? 1 : 0 });
+        ecoBite(p);   // bloomed Wasteland Daisies bite on entry, before the pickup, as movePlayer does
         tryCollect(p, ws);
         // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels.
         if (stepDownIfHatch(ws, id, p)) { broadcast(stateMsg()); break; }
         // Visdisk reflects current resource state (post-collection).
         const svr = surfaceVis(p);
-        const cells = buildVisDisk(p.q, p.r, svr);
+        const cells = buildVisDisk(p.q, p.r, svr, id);
         send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells });
+        // A booby trap under this hex fires now (traps.hpp trapOnArrival):
+        // after the pickup, as on the board, and after the vis disk.
+        trapOnArrival(ws, id, p);
         broadcast(stateMsg());
         break;
       }
@@ -3406,7 +3795,7 @@ wss.on('connection', (ws) => {
       case 'enc_start':  encStart(ws, sockets.get(ws), msg);  break;
       case 'enc_choice': encChoice(ws, sockets.get(ws), msg); break;
       case 'enc_bank':   encBank(ws, sockets.get(ws), msg);   break;
-      case 'enc_abort':  encAbort(sockets.get(ws));           break;
+      case 'enc_abort':  encAbort(sockets.get(ws), ws);       break;
 
       case 'equip_item':   equipItem(ws, sockets.get(ws), msg);   break;
       case 'unequip_item': unequipItem(ws, sockets.get(ws), msg); break;
@@ -3437,7 +3826,7 @@ wss.on('connection', (ws) => {
             // or whole-map read just resends a bigger vis-disk — capped well
             // under map size so the payload stays reasonable.
             const vr = Math.min(revealParam === 99 ? 30 : revealParam, 30);
-            const cells = buildVisDisk(p.q, p.r, vr);
+            const cells = buildVisDisk(p.q, p.r, vr, p.id);
             send(ws, { t: 'vis', q: p.q, r: p.r, vr, cells });
           }
         }
@@ -3523,6 +3912,28 @@ wss.on('connection', (ws) => {
       case 'dbg_force':   // Test-only: {"t":"dbg_force","out":0} forces the next roll to fail (1 = succeed)
         forcedOutcome = msg.out ? 1 : 0;
         break;
+
+      case 'dbg_trap': {
+        // Test-only: arm a booby trap on the hex in direction d (default 0)
+        // from the sender, on whichever board they are on. {"t":"dbg_trap",
+        // "d":0, "id":16, "known":1} -- id picks the file (default: random),
+        // known:1 puts it on the sender's map straight away (the icon).
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p || !TRAP_POOL) break;
+        const dp = p.dp ? 1 : 0;
+        // Underground, the firmware's real neighbours (TUN_DQ/TUN_DR).
+        const [dq, dr] = dp ? [TUN_DQ[msg.d | 0] ?? 1, TUN_DR[msg.d | 0] ?? 0]
+                            : (DIR_DELTA[msg.d | 0] || DIR_DELTA[0]);
+        const q = dp ? p.tq + dq : ((p.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+        const r = dp ? p.tr + dr : ((p.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+        if (dp && !tunIn(q, r)) break;
+        const enc = Math.max(1, Math.min(TRAP_POOL.count, (msg.id | 0) || (1 + Math.floor(Math.random() * TRAP_POOL.count))));
+        traps.set(trapKey(dp, q, r), { armed: true, known: msg.known ? (1 << id) : 0, enc });
+        if (msg.known) trapEvent(ws, id, dp, q, r, 'known');
+        console.log(`[trap] dbg armed dp=${dp} (${q},${r}) id=${enc}`);
+        break;
+      }
 
       case 'dbg_enc': {
         // Test-only: open a specific encounter regardless of position/POI.
@@ -3648,12 +4059,13 @@ wss.on('connection', (ws) => {
           sendTunnelSync(ws, p);
           const tvr = tunnelVis(p);
           send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr) });
+                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr, p.id),
+             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
         } else {
           p.dp = 0;
           p.q = bunkerHatches[h].sq;
           p.r = bunkerHatches[h].sr;
-          send(ws, { t: 'vis', q: p.q, r: p.r, vr: surfaceVis(p), cells: buildVisDisk(p.q, p.r, surfaceVis(p)) });
+          send(ws, { t: 'vis', q: p.q, r: p.r, vr: surfaceVis(p), cells: buildVisDisk(p.q, p.r, surfaceVis(p), p.id) });
         }
         broadcast(stateMsg());
         console.log(`[dbg_tunnel] pid=${id} -> hatch #${h} ` +
@@ -3668,14 +4080,14 @@ wss.on('connection', (ws) => {
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p || !p.dp) break;
-        const [dq, dr] = DIR_DELTA[msg.d | 0] || [0, 0];
-        const nq = p.tq + dq, nr = p.tr + dr;
+        const nq = p.tq + TUN_DQ[msg.d | 0], nr = p.tr + TUN_DR[msg.d | 0];
         if (!tunIn(nq, nr)) break;
         tunnel[nr][nq].tt = 15;
         broadcast({ t: 'ev', k: 'tun_collapse', q: nq, r: nr, amt: 15 });
         const tvr = tunnelVis(p);
         send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                   cells: buildTunnelVisDisk(p.tq, p.tr, tvr) });
+                   cells: buildTunnelVisDisk(p.tq, p.tr, tvr, p.id),
+             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
         broadcast(stateMsg());
         console.log(`[dbg_collapse] (${nq},${nr}) -> rock`);
         break;
@@ -3696,6 +4108,56 @@ wss.on('connection', (ws) => {
         floodGrid[key] = Math.max(floodGrid[key] || 0, 2);
         broadcast(stateMsg());
         console.log(`[flood] dbg_flood at (${p.q},${p.r}) by pid=${id}`);
+        break;
+      }
+
+      case 'dbg_eco': {
+        // Test-only: drive the Understory (mock-server/ecology.js).
+        //   {"t":"dbg_eco","act":"fruit"}                       every foraging colony fruits now
+        //   {"t":"dbg_eco","act":"burst"}                       every fruiting colony bursts now
+        //   {"t":"dbg_eco","act":"germinate"}                   every dormant spore wakes now
+        //   {"t":"dbg_eco","act":"daisy","stage":3,"count":3}   a patch on the sender's hex (or q/r)
+        //   {"t":"dbg_eco","act":"spore"}                       a spore two hexes east of the sender (or q/r), awake now
+        //   {"t":"dbg_eco","act":"speed","n":20}                eco clock multiplier
+        //   {"t":"dbg_eco","act":"regen","seed":123}            new species (seed 0 = random), scars cleared
+        //   {"t":"dbg_eco","act":"bite","on":0}                 the NVS eco/bite switch
+        //   {"t":"dbg_eco","act":"blight","on":0}               the NVS eco/blight switch
+        const id = sockets.get(ws);
+        const p  = players[id];
+        let info = '';
+        switch (msg.act) {
+          case 'fruit':     info = `fruit colonies=${eco.forceFruit()}`; break;
+          case 'burst':     info = `burst colonies=${eco.forceBurst()}`; break;
+          case 'germinate': eco.forceGerminate(); info = 'germinate'; break;
+          case 'daisy': {
+            const q = msg.q ?? p?.q, r = msg.r ?? p?.r;
+            if (q === undefined || r === undefined) { info = 'daisy: no hex'; break; }
+            const d = eco.plantDaisy(q | 0, r | 0, msg.stage ?? 3, msg.count ?? 3);
+            info = d ? `daisy at (${d.q},${d.r}) stage=${d.stage} count=${d.count}` : 'daisy: patch table full';
+            break;
+          }
+          case 'spore': {
+            const q = msg.q ?? (p ? (p.q + 2) % MAP_COLS : undefined), r = msg.r ?? p?.r;
+            if (q === undefined || r === undefined) { info = 'spore: no hex'; break; }
+            info = eco.plantSpore(q | 0, r | 0) ? `spore at (${q},${r})` : 'spore: refused (water or table full)';
+            break;
+          }
+          case 'speed':     ecoSetSpeed(msg.n); info = `speed=${ecoSpeedNow}`; break;
+          case 'regen':
+            if (msg.seed !== undefined) ecoPinnedSeed = (msg.seed | 0) >>> 0;
+            eco.clearScars();
+            eco.genesis(ecoPinnedSeed, ecoInputs());
+            info = `regen seed=${eco.species.seed} name=${eco.species.name}`;
+            break;
+          case 'bite':      eco.biteOn = (msg.on ?? 1) != 0; info = `bite=${eco.biteOn ? 1 : 0}`; break;
+          case 'blight':    eco.blightOn = (msg.on ?? 1) != 0; info = `blight=${eco.blightOn ? 1 : 0}`; break;
+          default:          info = `unknown act ${msg.act}`;
+        }
+        // Straight onto the wire rather than waiting for the clock -- and
+        // without a step in between: a forced burst's stage-3 bodies and
+        // spore flights live only until the next lifecycle pass.
+        ecoPublish();
+        console.log(`[eco] dbg_eco ${msg.act}: ${info}`);
         break;
       }
 
@@ -3797,6 +4259,79 @@ wss.on('connection', (ws) => {
     }
     console.log('[WS] client closed (id=' + id + ')');
   });
+});
+
+// ── The Understory (mock-server/ecology.js) ────────────────────────────────
+// The JS port of ecology.hpp's layers 1-3 plus the Wasteland Daisy, fed the
+// same inputs the firmware snapshots under G.mutex: terrain, footprints, tire
+// tracks, fire, flood, weather, day and the surface players. It is also the
+// tuning harness the spec asks for: --eco-speed=N (MOCK_ECO_SPEED) runs the
+// eco clock N times faster than the board's 5 s tick, so two hours of growth
+// fit in a few minutes; --eco-seed=N (MOCK_ECO_SEED) pins the genome the way
+// NVS eco/seed does. dbg_eco (above) forces the stages; /state reports it.
+const ECO_SPEED = Math.max(1, Number((process.argv.find(a => a.startsWith('--eco-speed=')) || '').slice(12) || process.env.MOCK_ECO_SPEED || 1));
+let ecoPinnedSeed = Number((process.argv.find(a => a.startsWith('--eco-seed=')) || '').slice(11) || process.env.MOCK_ECO_SEED || 0) >>> 0;
+let ecoSpeedNow = ECO_SPEED;
+const eco = new Ecology({ log: (s) => console.log(`[eco] ${s}`) });
+
+function ecoInputs() {
+  return {
+    terrainAt: (q, r) => terrainAt(q, r) & 0x7F,
+    footprintsAt: (q, r) => (parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6 + 2, 2), 16) | (footprintMask.get(`${q}_${r}`) || 0)) & 0x3F,
+    // No per-hex caravan trail age here (HexCell.track); the mock's tracks are
+    // the permanent tire-mark set, which is the ash/tire vector's food anyway.
+    trackAt: () => 0,
+    tireAt: (q, r) => (caravanTracks.has(`${q}_${r}`) ? 1 : 0),
+    fireAt: (q, r) => fireGrid[`${q}_${r}`] || 0,
+    floodAt: (q, r) => floodGrid[`${q}_${r}`] || 0,
+    weather: weatherPhase, day: dayCount,
+    players: Object.values(players).filter((p) => !p.dp).map((p) => ({ q: p.q, r: p.r })),
+    clients: sockets.size, heapFrac: 100,
+  };
+}
+
+// Bloomed Wasteland Daisies bite whoever enters their hex: 1 LL and a `dmg`
+// event with the DC_DAISY cause, and the bite is itself an injury that seeds
+// the patch again (ecoBiteCheck in ecology.hpp). Surface only; a downed
+// survivor is not bitten twice.
+function ecoBite(p) {
+  if (!eco.species || !eco.biteOn || !p || p.dp || p.ll <= 0 || !eco.bloomAt(p.q, p.r)) return false;
+  p.ll -= 1;
+  broadcast({ t: 'ev', k: 'dmg', pid: p.id, amt: 1, cause: 'wasteland daisy', ll: p.ll });
+  eco.noteHurt(p.q, p.r);
+  console.log(`[eco] bite pid=${p.id} at (${p.q},${p.r}) ll=${p.ll}`);
+  if (p.ll === 0) downPlayer(p);
+  return true;
+}
+
+function ecoPublish() {
+  if (!eco.species || sockets.size === 0) return;   // it grows unwatched, like the board's; it just says nothing
+  if (eco.scarMsgStale) broadcast(eco.scarMessage());
+  broadcast(eco.wireMessage());
+}
+function ecoTick() {
+  if (!eco.species) eco.genesis(ecoPinnedSeed, ecoInputs());
+  const { sub, ms } = eco.step(ecoInputs());
+  if (sockets.size === 0) return;
+  ecoPublish();
+  if (eco.tick % 12 === 0) {
+    const colonies = eco.colonies.filter((c) => c.stage).length;
+    console.log(`[eco] tick=${eco.tick} wave=${eco.wave} colonies=${colonies} agents=${eco.agents.length} coverage=${eco.coverage}% bodies=${eco.bodies.length} spores=${eco.spores.length} daisies=${eco.daisies.length} sub=${sub} ms=${ms}`);
+  }
+}
+
+let ecoTimer = null;
+function ecoSetSpeed(n) {
+  ecoSpeedNow = Math.max(1, Math.min(200, Number(n) || 1));
+  if (ecoTimer) clearInterval(ecoTimer);
+  ecoTimer = setInterval(ecoTick, Math.max(25, Math.round(ECO_TICK_MS / ecoSpeedNow)));
+}
+// Genesis after the module has finished evaluating: ecoInputs() reads grids
+// declared above, and the firmware too runs genesis once the world is up.
+setImmediate(() => {
+  eco.genesis(ecoPinnedSeed, ecoInputs());
+  ecoSetSpeed(ECO_SPEED);
+  console.log(`[eco] Something has taken root: ${eco.species.name} (seed ${eco.species.seed}, x${ecoSpeedNow} clock)`);
 });
 
 httpServer.listen(PORT, () => {

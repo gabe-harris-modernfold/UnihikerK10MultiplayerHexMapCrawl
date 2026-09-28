@@ -58,6 +58,10 @@ void saveGame() {
       // reads these blocks back in the same order; the ground-items block
       // still follows and is still read until EOF.
       mapBytes += f.write((uint8_t*)G.tunnel, TUNNEL_BYTES);
+      // v20: which sides of each tunnel cell are open (tunnels.hpp). The
+      // board's walls live here, not in HexCell, so without it every
+      // corridor would load sealed.
+      mapBytes += f.write((uint8_t*)G.tunnelOp, TUNNEL_OP_BYTES);
       for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!encounters[i].active) continue;
         G.map[encounters[i].hexR][encounters[i].hexQ].poi = savedPoi[i];
@@ -144,6 +148,9 @@ void saveGame() {
     } else {
       Log.error("SD OPEN FAIL (write): %s", SAVE_GND_F);
     }
+    // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
+    // task has published a change, and on this same serialised save path.
+    ecoSaveScarsIfDirty();
     xSemaphoreGive(G.mutex);
     Log.notice("saveGame complete took=%ums", (unsigned)(millis() - _t0));
   } else {
@@ -243,6 +250,11 @@ bool tryLoadSave() {
   // tunnels too) is the safe fallback.
   if (f.read((uint8_t*)G.tunnel, TUNNEL_BYTES) != TUNNEL_BYTES) {
     Log.warning("Save tunnel read short: %s", SAVE_MAP_F);
+    f.close(); return false;
+  }
+  // v20 open sides. Same rule: a board with no walls loaded is not a board.
+  if (f.read((uint8_t*)G.tunnelOp, TUNNEL_OP_BYTES) != TUNNEL_OP_BYTES) {
+    Log.warning("Save tunnel sides read short: %s", SAVE_MAP_F);
     f.close(); return false;
   }
   // Load ground items if present (appended after map data)

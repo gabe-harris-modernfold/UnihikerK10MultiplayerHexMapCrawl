@@ -167,7 +167,7 @@ function connect() {
     console.warn('%c[WS ▼] Closed', 'color:#fa0;font-weight:bold', `code=${ev.code} wasClean=${ev.wasClean} reason="${ev.reason}" msSinceEncStart=${msSinceEnc}`);
     showToast(CONN_LOST_QUIPS[Math.floor(Math.random() * CONN_LOST_QUIPS.length)]);
     Diag.onDisconnect(); setStatus('Reconnecting...');
-    // Exponential backoff + proportional jitter — spreads out up to 6 clients
+    // Exponential backoff + proportional jitter — spreads out up to 5 clients
     // reconnecting at once (e.g. right after a board reboot) instead of
     // hammering it in lockstep on a flat interval.
     const backoff = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
@@ -405,8 +405,14 @@ function _msgSync(msg) {
 
 function _msgState(msg) {
   if (!Array.isArray(msg.p)) return;
-  msg.p.forEach((pd, i) => {
+  // The firmware lists only seated survivors, each carrying its seat as "id"
+  // (PROTO 4): a seat missing from p is offline. A block without "id" is the
+  // old dense form, indexed by position.
+  const listed = new Array(MAX_PLAYERS).fill(false);
+  msg.p.forEach((pd, idx) => {
+    const i = pd.id ?? idx;
     if (i < 0 || i >= MAX_PLAYERS) return;
+    listed[i] = true;
     const p = players[i];
     const wasOn = p.on;
     p.on = pd.on; p.q = pd.q; p.r = pd.r; p.sc = pd.sc;
@@ -449,6 +455,7 @@ function _msgState(msg) {
       if (i === myId) setMyDepth(p.dp);
     }
   });
+  for (let i = 0; i < MAX_PLAYERS; i++) if (!listed[i]) players[i].on = 0;
   _packFullRearmCheck();   // fresh token totals — did the player free up room?
   // Sync can carry stale eq after item_result; refresh equipment grid only if open.
   // Do NOT call renderInventory here — sync fires on every tick and would hammer
@@ -513,7 +520,7 @@ function _msgVis(msg) {
     if (depth) { players[myId].tq = msg.q; players[myId].tr = msg.r; }
     else       { players[myId].q  = msg.q; players[myId].r  = msg.r; }
   }
-  applyVisDisk(msg.cells, depth);
+  applyVisDisk(msg.cells, depth, depth ? msg.op : null);
   if (myId >= 0) _handleSelfVis();
   updateTerrainCard();
   updateSidebar();
@@ -525,7 +532,7 @@ function _msgVis(msg) {
 // TUN_COLS/TUN_ROWS and the client just follows.
 function _msgTunnelSync(msg) {
   initTunnelMap(msg.cols | 0, msg.rows | 0);
-  parseMapFog(msg.map, tunnelMap, tunnelCols, tunnelRows, 'TUN');
+  parseMapFog(msg.map, tunnelMap, tunnelCols, tunnelRows, 'TUN', msg.op || null);
   if (msg.vr !== undefined) myVisionR = msg.vr;
   if (msg.q !== undefined && myId >= 0) {
     players[myId].tq = msg.q;
@@ -627,17 +634,22 @@ function handleMsg(msg) {
     case 'loot_result':   _msgLootResult(msg);   break;
     case 'item_result':   _evItemResult(msg);    break;
     case 'res_result':    _evResResult(msg);     break;
+    // The Understory (eco-field.js): one ~9 KB grid every 5 s, plus a rarer
+    // scar-only message. Indexed here, drawn by the terrain pass.
+    case 'eco':           ecoField?.applyMessage(msg); break;
     case 'full':
       console.warn('[RX] Server full — all slots taken');
       _bootHello?.();   // let the boot screen go so the SERVER FULL box shows
       document.getElementById('connect-box').innerHTML =
-        '<h2>SERVER FULL</h2><p>All 6 slots taken.<br>Try again later.</p>' +
+        '<h2>SERVER FULL</h2><p>All ' + MAX_SEATED + ' seats taken.<br>Try again later.</p>' +
         '<button onclick="location.reload()" class="server-full-retry-btn">\u21BA RETRY</button>';
       break;
     case 'wifi':    _msgWifi(msg); break;
     case 'enc_path':
       console.log('%c[ENC] enc_path received', 'color:#c0f;font-weight:bold', `biome=${msg.biome} id=${msg.id} msSinceEncStart=${globalThis._lastEncStartT ? Date.now()-globalThis._lastEncStartT : '—'}`);
-      globalThis._startEncounterFetch?.(msg.biome, msg.id);
+      // "trap": a booby trap under the step we just took opened this scene
+      // unasked (traps.hpp) -- the panel has no walk-away at its start.
+      globalThis._startEncounterFetch?.(msg.biome, msg.id, !!msg.trap);
       break;
     case 'enc_dbg':
       console.warn('[ENC] Server diagnostic:', msg.msg);
@@ -1092,6 +1104,23 @@ function _evFireDamage(ev) {
   }
 }
 
+// Protocol 2+ damage with no event of its own: the chem-storm and Strangle
+// Fog per-tick hazards, and the Wasteland Daisy's bite (ecology.hpp). The
+// storm hazards stay as silent here as they always were -- a line per tick
+// would bury the log -- but a bite is a moment, and the flowers snap.
+function _evDmg(ev) {
+  const p = players[ev.pid];
+  if (p && typeof ev.ll === 'number') p.ll = ev.ll;
+  if (ev.cause !== 'wasteland daisy') return;
+  const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
+  if (p) ecoField?.noteBite(p.q, p.r);
+  addLog(`<span class="log-check-fail">\u273F ${escHtml(who)} walk${ev.pid === myId ? '' : 's'} into the flowers, and they bite</span>`);
+  if (ev.pid === myId) {
+    showToast('\u273F The daisies snap shut on your ankle.');
+    updateSidebar();
+  }
+}
+
 function _evFloodWashout(ev) {
   // ev.intensity is NOT a flood intensity level here — it's the terrain id
   // the hex just became: 3 (Marsh, a swamped edge pushed under by the
@@ -1161,6 +1190,27 @@ function _evDoomTaunt(ev) {
 // banner is reserved for things that actually took a Life Level off you
 // (showBadAirWarning), and the whole point of this voice is that it is
 // commenting on a decision that mostly turned out fine.
+// A booby trap changed state (traps.hpp). "known" only ever reaches the
+// survivor who got back out of it -- it is still armed and now it is on
+// their map, for good. "sprung"/"spent" go to everyone so that whoever else
+// had it marked stops drawing a trap that is not there any more.
+function _evTrap(ev) {
+  const grid  = ev.dp ? tunnelMap : gameMap;
+  const c     = grid[ev.r]?.[ev.q];
+  const armed = ev.out === 'known' ? 1 : 0;
+  if (c) grid[ev.r][ev.q] = { ...c, trap: armed };
+  if (!ev.dp) {
+    const key = `${ev.q}_${ev.r}`;
+    const m = memoryCells.get(key);
+    if (m) m.trap = armed;
+    else if (c && armed) rememberCell(key, grid[ev.r][ev.q]);
+    scheduleMemorySave();
+  }
+  if (armed && ev.pid === myId) {
+    addLog(`<span class="log-check-fail">\u26A0 You got out. It is still there, and now you know where.</span>`);
+  }
+}
+
 function _evTunTaunt(ev) {
   const line = tunnelTauntLine(ev.idx);
   addLog(`<span class="log-tunnel-taunt">\u25BE ${escHtml(line)}</span>`);
@@ -1313,7 +1363,7 @@ function _evEncBank(ev) {
 
 function _evEncEnd(ev) {
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
-  const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected', regen: 'world remade' };
+  const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected', regen: 'world remade', escaped: 'backed out' };
   const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
   addLog(`<span class="log-check-fail">\u25a0 ${escHtml(who)} encounter ended (${reasonTxt})</span>`);
   if (ev.pid === myId) {
@@ -1324,6 +1374,7 @@ function _evEncEnd(ev) {
       downed:     '☠ You fall where you stand. The ruin keeps its secrets.',
       disconnect: '☠ The thread snaps. The scene dissolves around you.',
       regen:      '☠ The ground shifts. The place you were exploring no longer exists.',
+      escaped:    '⚠ You back out with nothing, and every limb you came in with.',
     };
     showToast(ENC_END_FLAVOR[ev.reason] ?? `☠ The scene closes: ${reasonTxt}.`);
     globalThis._onEncEnd?.(ev);
@@ -1404,6 +1455,7 @@ function handleEvent(ev) {
     case 'regen':
       showToast('☠ The wasteland reshapes itself. Every bearing is lost.');
       addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, survivor.</span>');
+      ecoField?.reset();   // the species died with its world; the next eco message regrows it
       break;
     case 'downed':      _evDowned(ev);     break;
     case 'left':
@@ -1428,16 +1480,26 @@ function handleEvent(ev) {
     case 'doom_act':    _evDoomAct(ev);    break;
     case 'doom_taunt':  _evDoomTaunt(ev);  break;
     case 'tun_taunt':   _evTunTaunt(ev);   break;
+    case 'trap':        _evTrap(ev);       break;
     case 'fire_spread':   _evFireSpread(ev);   break;
     case 'fire_dmg':      _evFireDamage(ev);   break;
     case 'flood_washout': _evFloodWashout(ev); break;
     case 'flood_dmg':     _evFloodDamage(ev);  break;
+    case 'dmg':           _evDmg(ev);          break;
     case 'item_result': _evItemResult(ev); break;
     case 'enc_start': {
-      // POI consumed — clear it from local map so eye disappears immediately
-      if (gameMap[ev.r]?.[ev.q])
-        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], poi: 0 };
       const encWho = players[ev.pid]?.nm || `P${ev.pid}`;
+      if (ev.trap) {
+        // A booby trap fired under someone (traps.hpp) -- there was no POI.
+        addLog(`<span class="log-check-fail">\u26A0 ${escHtml(ev.pid === myId ? 'You' : encWho)} set off a trap</span>`);
+        updateSidebar();
+        break;
+      }
+      // POI consumed — clear it from local map so eye disappears immediately.
+      // On the board it was on: "dp" names the tunnels.
+      const encGrid = ev.dp ? tunnelMap : gameMap;
+      if (encGrid[ev.r]?.[ev.q])
+        encGrid[ev.r][ev.q] = { ...encGrid[ev.r][ev.q], poi: 0 };
       addLog(`<span class="log-col">\u2299 ${escHtml(encWho)} enters encounter (${ev.q},${ev.r})</span>`);
       updateSidebar();
       break;

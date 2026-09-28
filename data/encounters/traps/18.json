@@ -1,0 +1,132 @@
+{
+  "id": "trap_orderly_queue",
+  "tier": 3,
+  "title": "The {{adjective}} Queue",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "It was a bank once, and whoever kept it has kept it as one: a brass counter, a single teller's window, and a rope-and-post queue that switchbacks from the door you came in by, red velvet on polished brass. A stand at its head says PLEASE WAIT TO BE SERVED. Behind the counter the vault door, a round tonne of steel, hangs in its frame from a chain that runs up over a pulley and down into the posts. Above the queue, three earlier customers hang from the ceiling by one ankle each, in a tidy row, like coats.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step back out through the door without touching the velvet",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "queue_jumping"
+        },
+        {
+          "label": "Find where the chain meets the posts and take the weight off it",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_counterweight"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You go back the way you came, not quite touching the velvet, like someone leaving a dinner party they have badly insulted. At the door you look back. The three customers turn gently on their ropes, patient as anything. Nobody has moved up. Nobody is ever going to move up.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You find the chain's tail where it threads the last post and lash it round a heating pipe, and the queue goes slack rope by rope, like a room letting its shoulders down. Overhead, the customers sink a hand's width. You walk the queue properly, every switchback, because it seems important. At the window, on duty behind the glass, sits the manager, a long time dead, his name badge still straight, a brass plaque in front of him: POSITION CLOSED. Nobody ever made it to the front. His float drawer is full.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 4] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 2, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Crawl under the raised vault door while the pipe holds",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_pipe"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The pipe groans and holds. You go under the door on your belly and come up in the vault among the safe deposit boxes, two hundred small steel doors with two hundred small brass numbers, and you have a pry bar and all the time in the world. Wedding rings. Pill bottles. A hip flask, full. Somebody's good tinned peaches, deposited for safekeeping, which is exactly what they have been.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 1, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": [
+        {
+          "label": "Open the big box at the back, the one with his name on it",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 2,
+          "success_node": "cache_3",
+          "hazard_id": "the_last_box"
+        }
+      ]
+    },
+    "cache_3": {
+      "text": "The big box is the manager's own, and it holds his ledger: every customer in a copperplate hand, with the date they came in and what they came in carrying, and in the last column what they left with, which is a long, neat column of nothing. Every customer a deposit. Under the ledger sits the branch reserve, what he actually lived on, sealed and dated and sorted by denomination. You take all of it. Then you find his pen, and at the bottom of the ledger, under the last of them, you write a new line in capitals: WITHDRAWAL. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 0, "qty": [2, 3] },
+        { "res": 1, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "queue_jumping": {
+      "text": "Your pack brushes the velvet, and the velvet is not velvet all the way through. A loop you never saw closes on your ankle with a sound like a purse snapping shut, the vault door drops a hand's width, and you go up. It is very fast and very undignified. Everything in your pockets leaves you on the way; your water leaves with particular enthusiasm. You hang there turning slowly beside the other customers, who are no help at all, until you can saw through the rope with your knife and come down, face first, on a brass post.",
+      "penalty": { "ll": [-2, -4], "water": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    },
+    "the_counterweight": {
+      "text": "The chain runs. You are holding it. Behind the counter a tonne of vault door starts downward, and at the other end of the arithmetic you start upward, fast, toward the pulley, and there is a long moment in which you understand exactly what is about to happen to your hand and can do nothing about it but watch. The door lands in its frame with a boom like the end of the world. You drop back onto the queue, taking three posts and most of the velvet with you, and lie there tangled up in the customers, who have all come down to see what the noise was, all over you.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "water": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_pipe": {
+      "text": "Halfway under the door you hear the heating pipe say something in a language older than you. It is the sound of very old copper deciding it has done enough. The door comes down — not all the way, the frame catches it a hand's width short — but it comes down across the backs of your legs and stays there, patient, a tonne of it, while you dig your fingers into the vault floor and drag yourself out of your own boots. You leave one of them behind. You leave some skin with it, and most of your dignity, and a long red signature on the threshold.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_last_box": {
+      "text": "The big box slides out a finger's width and stops, because it is attached to something, and the something is the wall. All two hundred boxes lean out together on one hinged frame, like a congregation standing up, and then they come down on you, full. Wedding rings. Deeds. Somebody's gold teeth. You are buried under the savings of an entire community while the vault door drops shut behind you with a noise you feel in your fillings. It takes an hour in the dark to dig out, and longer to find the release on the inside of the door, which of course he fitted, because he was a professional, and you leave a good deal of yourself on that floor. Call it a deposit.",
+      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-1, -3], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Orderly",
+      "Patient",
+      "Well-Behaved",
+      "Unhurried",
+      "Very Long"
+    ],
+    "irony": [
+      "In all those years of trading, the first one.",
+      "Thank you for waiting. You have been served.",
+      "The bank does not always win. It just nearly always does.",
+      "Your account, you feel, is now closed."
+    ]
+  }
+}

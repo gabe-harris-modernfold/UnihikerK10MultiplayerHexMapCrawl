@@ -17,7 +17,7 @@
 // somebody still on screen, the audience knows before the meter does. Every
 // bank below is present tense except OBIT_*, which is past tense throughout.
 //
-// NO PRONOUNS FOR SURVIVORS. Six slots, six arbitrary characters, nothing on
+// NO PRONOUNS FOR SURVIVORS. Five seats, five arbitrary characters, nothing on
 // the wire says who any of them are. Lines are written name-first and
 // pronoun-free; where a pronoun is unavoidable it is "they".
 //

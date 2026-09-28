@@ -7,6 +7,10 @@ const quakeField = (typeof QuakeField === 'undefined')
   ? null : new QuakeField();
 const fireField = (typeof FireField === 'undefined')
   ? null : new FireField();
+// The Understory (eco-field.js, docs/ecology-spec.md): veins, fruiting
+// bodies, daisies and scars, fed by the `eco` message in network.js.
+const ecoField = (typeof EcoField === 'undefined')
+  ? null : new EcoField();
 
 // Storm hexes ({x, y, spread, intensity} in screen space) collected during
 // this frame's terrain pass — consumed by renderWeatherOverlay() afterward
@@ -510,13 +514,26 @@ function drawTireTracks(cx, cy, cell) {
   drawGlyph(ctx, GLYPH.TIRE_TRACK, cx - sz / 2, cy - sz / 2, sz, '#000000', 0.75);
 }
 
+// A booby trap you got back out of (traps.hpp) -- the server only ever sets
+// cell.trap for the survivor who escaped it. Top-RIGHT at the rain glyph's
+// size: GLYPH.RAIN owns the top-left (drawCellOverlays), and a storm is
+// exactly when you least want this hidden. The dark copy a pixel down-right
+// keeps it legible on pale ground and under the explored-memory veil.
+const TRAP_MARK_COLOR = '#FF5A36';
+function drawTrapMark(cx, cy, alpha = 1) {
+  const sz = Math.max(8, Math.round(HEX_SZ * 0.28));
+  const x  = cx + HEX_SZ * 0.48 - sz;
+  const y  = cy - HEX_SZ * 0.48;
+  drawGlyph(ctx, GLYPH.TRAP, x + 1, y + 1, sz, '#000000', 0.7 * alpha);
+  drawGlyph(ctx, GLYPH.TRAP, x, y, sz, TRAP_MARK_COLOR, alpha);
+}
+
 function drawShelterIcon(cx, cy, cell, mapQ, mapR) {
-  const imgs = shelterImgs[0] ?? [];   // mock server never sends shelter variants
-  const v    = imgs.length > 0 ? (mapQ * 31 + mapR * 17) % imgs.length : -1;
-  const sImg = v >= 0 ? imgs[v] : null;
-  if (sImg?.loaded) {
+  const sp = shelterSprite(cell.shelter, mapQ, mapR);
+  if (sp) {
     const sz = HEX_SZ * 0.9;
-    ctx.drawImage(sImg, cx - sz / 2, cy - sz / 2, sz, sz);
+    if (sp.img) ctx.drawImage(sp.img, cx - sz / 2, cy - sz / 2, sz, sz);
+    else drawAtlasCell(ctx, sp.page, sp.sx, sp.sy, sp.s, sp.s, cx - sz / 2, cy - sz / 2, sz, sz);
   } else {
     // Upper-right corner of the hex; improved shelter = hut in steel blue, basic = tan tent
     const sz = Math.max(12, Math.round(HEX_SZ * 0.5));
@@ -608,15 +625,11 @@ function drawStormWash(cx, cy, mapQ, mapR) {
 
 function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
   if (cell.resource > 0) {
-    if (cell.resource === 2 && forrageAnimalImgs.length > 0) {
-      const v    = (mapQ * 31 + mapR * 17) % forrageAnimalImgs.length;
-      const fImg = forrageAnimalImgs[v];
-      if (fImg?.loaded) {
-        const sz = HEX_SZ * 0.45;
-        ctx.drawImage(fImg, cx - sz / 2, cy - sz / 2, sz, sz);
-      } else {
-        drawResourceIcon(ctx, cx, cy, HEX_SZ, cell.resource);
-      }
+    const fa = cell.resource === 2 ? forageSprite(mapQ, mapR) : null;
+    if (fa) {
+      const sz = HEX_SZ * 0.45;
+      if (fa.img) ctx.drawImage(fa.img, cx - sz / 2, cy - sz / 2, sz, sz);
+      else drawAtlasCell(ctx, fa.page, fa.sx, fa.sy, fa.s, fa.s, cx - sz / 2, cy - sz / 2, sz, sz);
     } else {
       drawResourceIcon(ctx, cx, cy, HEX_SZ, cell.resource);
     }
@@ -682,6 +695,16 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
       fireHexesThisFrame.push({ x: cx, y: cy, spread: HEX_SZ, intensity: fireIntensity, q: mapQ, r: mapR });
     }
   }
+
+  // The Understory (eco-field.js): scars, veins, fruiting bodies and the
+  // daisies. Over weather and fire -- a vein under a storm is still a vein,
+  // and a burning patch is the fire's to show -- and under the trap mark.
+  // Surface only, like the fire field: the grid is keyed by surface q/r.
+  if (ecoField && !myDepth) ecoField.drawHex(ctx, cx, cy, mapQ, mapR, HEX_SZ, weatherNow, players, renderPos);
+
+  // Last, over weather and fire alike: of everything on this hex, the trap
+  // is the one thing that must never be washed out.
+  if (cell.trap) drawTrapMark(cx, cy);
 }
 
 function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
@@ -709,11 +732,12 @@ function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
 // instead, and a peak at the edge of sight fades out with its own hex.
 function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
   ctx.globalAlpha = surveyed ? 0.7 : 1;
-  const tile = terrainTile(cell.terrain, cell.variant);
+  // Underground the art follows the cell's open sides (tunnelTile).
+  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant);
   if (tile) {
-    if (ghost > 0 && !tile.img) drawTileSplit(tile, cx, cy, 1 - ghost);
+    if (ghost > 0 && tile.diorama) drawTileSplit(tile, cx, cy, 1 - ghost);
     else drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
-    if (!tile.img) tiledHexes.add(`${mapQ}_${mapR}`);
+    if (tile.diorama || tile.tunnel) tiledHexes.add(`${mapQ}_${mapR}`);
   } else {
     if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, cell.resource > 0);
     if (cell.terrain === 11) drawRiverRipples(cx, cy);
@@ -732,8 +756,8 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
 // Remembered ground keeps to its own hex: under a 90% veil an overhang would
 // be a ghost of a ghost, and a hex-shaped veil could not cover it anyway.
 function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
-  const tile = terrainTile(cell.terrain, cell.variant);
-  if (tile?.img) {
+  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant);
+  if (tile && !tile.diorama) {
     drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
   } else if (tile) {
     drawTileSplit(tile, cx, cy, 0, true);
@@ -745,6 +769,9 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   drawHexPath(ctx, cx, cy, HEX_SZ - 1);
   ctx.fillStyle = EXPLORED_VEIL_FILL[weatherPhase] || EXPLORED_VEIL.fill;
   ctx.fill();
+  // Over the veil, not under it: a trap you escaped is the one remembered
+  // thing that should still read at a glance (docs/trap-system-spec.md).
+  if (cell.trap) drawTrapMark(cx, cy, 0.85);
 }
 
 // An atlas tile drawn in two parts: the hex itself solid, and the overhang
@@ -812,9 +839,10 @@ function renderHexTerrain(cam) {
       // Explored: seen once, out of sight now. gameMap still holds the cell
       // until a sync blanks it, so prefer that and fall back to the memory
       // store. Surface only — a remembered tunnel corridor you cannot see
-      // into is not the same promise as a ridge remembered on the horizon.
-      const remembered = (!visible && !surveyed && !myDepth)
-        ? (cell || memoryCells.get(key) || null)
+      // into is not the same promise as a ridge remembered on the horizon —
+      // except a corridor you escaped a trap in: that one you remember.
+      const remembered = (!visible && !surveyed)
+        ? (myDepth ? (cell?.trap ? cell : null) : (cell || memoryCells.get(key) || null))
         : null;
       // Survey peeks sit one ring past the edge and already read as "not here
       // right now" through their 0.7 alpha, so only live sight gets the ring
@@ -868,8 +896,8 @@ function renderHexTerrain(cam) {
 }
 
 // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ────────
-// Atlas tiles bake their own edge (see tiledHexes), so this only outlines
-// fog, flat-fill and per-file hexes.
+// Diorama atlas tiles bake their own edge (see tiledHexes), so this only
+// outlines fog, flat-fill and flat (sheet or per-file) tile hexes.
 function renderGridLines(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR } = cam;
   ctx.strokeStyle = 'rgba(50,50,50,0.5)';
@@ -1273,13 +1301,18 @@ const LAYERS = [
   // Surface coordinates, like the piles they mark -- a fall below lands on
   // the hatch above, so underground there is nothing of theirs on this board.
   { name: 'remains',      draw: (cam) => { if (!myDepth) renderRemains(cam); } },
-  { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   // The world system and the weather live on the surface map. Underground
   // their coordinates would land on the wrong board entirely, so skip them
   // rather than drawing a caravan in a bunker corridor. The quake is the one
   // exception: it is felt below, as grit sifting down (renderTunnelTremor).
+  // The caravan's convoy sticker spans most of its hex, so it goes UNDER the
+  // survivors: a pawn trading at the caravan stays on top of it.
   { name: 'caravan',      draw: (cam) => { if (!myDepth) renderCaravan(cam); } },
+  { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
+  // The Understory's spore flights and burst motes: in the air over the
+  // ground and the entities, under the weather (eco-field.js drawAir).
+  { name: 'eco_air',      draw: (cam) => { if (ecoField && !myDepth) ecoField.drawAir(ctx, cam, weatherNow, HEX_SZ, cssWidth, cssHeight); } },
   { name: 'weather',      draw: (_)   => { if (!myDepth) renderWeatherOverlay(); } },
   { name: 'quake',        draw: (_)   => { if (myDepth) renderTunnelTremor(); else renderQuakeOverlay(); } },
   // Ticks unconditionally — shared by weather (gated above) and quake dust

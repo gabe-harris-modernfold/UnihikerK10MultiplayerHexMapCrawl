@@ -4,10 +4,12 @@ Companion to [world-system-spec.md](world-system-spec.md). Covers the
 `trapped` hex attribute, the forced press-your-luck scene it opens, and who
 gets to see it afterwards.
 
-Status: **design agreed, nothing implemented.** Three reference encounter
-files exist (`data/encounters/traps/1-3.json`) as a tone and schema sample.
-No firmware, no worldgen placement, no client rendering, no mock-server or bot
-mirrors. Two open questions at the bottom are still blocking.
+Status: **implemented; firmware not yet compiled or flashed.** Firmware
+(`traps.hpp` + hooks), client, mock server, bots, the LCD cut scenes and their
+TV port are all in; the client and mock are browser-verified and the bot
+harness self-test passes. Still open: a firmware compile, a flash, and the
+bot-harness brush-rate pass (*Still to do*, at the bottom). Where the build
+differs from the design below, the section says **As built**.
 
 ---
 
@@ -105,6 +107,20 @@ remembered-not-seen look, and is already per-player. Escaping a trap also
 revealing what terrain you were standing in is narratively correct — you were
 *in there*. Zero new rendering rules.
 
+**As built — the premise was wrong.** The client's `surveyedCells` is rebuilt
+from scratch on every move and every sync, so nothing routed through it
+survives the next step. What does persist is the server's own knowledge
+mask plus the client's explored memory (`memoryCells` in `map-decoder.js`):
+
+- `HexCell.trap` bits 0-5 are the per-survivor "knows" mask, saved with the
+  map (`SAVE_VERSION` 19).
+- `encodeCell(..., pid)` sets TT bit 4 for the recipient alone, and
+  `encodeMapFog` / `encodeTunnelFog` send known traps **outside** vision in
+  `sync` / `tsync`, so a reconnect gets them back.
+- `ev trap out:"known"` is unicast to the escapee on the spot.
+- The renderer draws the glyph on live cells and on remembered ones
+  (`renderMemoryHex`, dimmed), in any weather, on both boards.
+
 ### Icon
 
 Glyph strip index 21 in `data/img/ui_glyphs.png` (next free after
@@ -147,6 +163,12 @@ without inventing a second loot source.
 outright, so even an authored tunnel pool could not load. Putting traps
 underground means fixing that path first.
 
+**As built.** Traps get a pool of their own, `ENC_POOL_TRAP` (= 16, past the
+terrain pools), and `encLoadFile(pool, idx)` now takes any pool with a count,
+so the tunnel pool is no longer the blocker. Tunnel traps sit on corridor
+floor (terrain 14), never on a shaft's junction hex — every descent steps onto
+one. Densities as agreed, 18% / 8% / 4% / 8% (tunnels), in `traps.hpp`.
+
 ---
 
 ## Content library
@@ -185,6 +207,11 @@ Reference files:
 Contiguous id ranges per tier, declared in `index.json` so the server can pick
 a tier without opening files. Ranges get assigned once the final counts are
 settled; the three reference files are 1-3 and will be renumbered.
+
+**As built:** `"traps": {"count": 20, "path": "traps", "tiers": [6, 9, 5]}` —
+cheap 1-6, mid 7-15, top 16-20. The old 2 and 3 became 7 and 16. Each world
+deals ids from a shuffled deck per tier, so repeats wait for the deck to run
+out.
 
 ---
 
@@ -265,6 +292,24 @@ If the bit cannot be found, the fallback is a sparse per-player
 `"trap":[[q,r]]` array, same idiom as `appendFireArray` / `appendFloodArray` —
 but that would need unicast rather than riding `broadcastState`.
 
+**As built (PROTO_VERSION 5):** terrain is TT bits 0-3 everywhere (firmware,
+`map-decoder.js`, the mock, `bots/mapdec.py`); bit 4 is the trap flag. No
+current terrain collides with the fog sentinel, since a known trap only rides
+a revealed cell. New wire, all additive:
+
+| Message | Field | Meaning |
+|---|---|---|
+| `enc_path` | `"trap":1` | the scene is a trap; the client opens it unprompted |
+| `ev enc_start` | `"trap":1`, `"dp"` | the chronicle / TV cue |
+| `ev enc_res` | `"trap":0/1` | a failed trap check (the bots' `booby trap` cause) |
+| `ev enc_end` | `reason:"escaped"` | backed out, or left with nothing |
+| `ev trap` | `q r dp out` | `known` (unicast to the escapee), `sprung`, `spent` |
+| `nack` | `"trap"` | `enc_abort` refused at a trap's start (the escape roll failed) |
+| `/state` | `encTrap`, `traps{armed,known,tunnel}`, view cell `trap` | observer + telemetry |
+
+Mock only: `dbg_trap {d, id, known}` arms trap file `id` on the hex in
+direction `d` (docs/dev-loop.md).
+
 ---
 
 ## Forced entry
@@ -291,35 +336,56 @@ Cases it has to survive:
 `collectResource()` before anything else, so you grab the bottle on your way
 into the punji pit. That ordering is intentional.
 
+**As built**, case by case:
+
+- **0 MP** — the scene needs none; `trapOnArrival()` runs after the step
+  whatever MP is left.
+- **Tunnels** — `moveTunnel()` calls it too. A shaft step (`tunnelStepDown()`
+  / `tunnelStepUp()`) lands on a junction, which never carries a trap.
+- **Dawn / disconnect mid-scene** — `trapSettle(TRAP_SETTLE_REARM)`: armed
+  again, exactly as it was, nobody told.
+- **Two survivors on one trap** — the trap is disarmed for as long as its
+  scene runs, so the second one walks over it. It re-arms if the first
+  escapes.
+- **Terrain conversion** — left in place. A flood or quake that turns the hex
+  impassable strands the trap harmlessly; settlement formation is the one
+  thing that clears it (safe ground).
+- **Caravan and Doom** — ignored, as designed.
+- **`enc_abort` at the start** is an escape roll (the back-out choice's own
+  check), not a walk-away: pass and it is an escape, fail and it nacks
+  `"trap"`. From a cache or a dead end it is a plain escape.
+
 ---
 
 ## Open questions
 
-**Q1 — density.** "Increase the trap count by 3 in each category" maps onto two
-different questions and they lead to different work:
+Both resolved:
 
-- *Density reading*: city-core 15% / outskirts 5% / elsewhere 1%, +3 points
-  each → **18% / 8% / 4%**. Roughly one trapped hex in five downtown, which
-  with forced entry makes crossing a city a gauntlet of 3-4 forced scenes.
-- *Type-count reading*: tiers 6/9/5 + 3 each → **9/12/8 = 29 trap files**.
-  Partly contradicts the separate "your defaults are good" on the 6/9/5 spread.
-
-**Q2 — `surveyedCells` for escaped traps.** Route escaped-trap hexes through
-`surveyedCells` so the icon persists (recommended, see *The fog problem*), or
-accept that the icon is a short-range proximity warning that disappears in
-weather?
+- **Q1 — density:** the density reading, **18% / 8% / 4%**, tiers kept at
+  6/9/5 = 20 trap files.
+- **Q2 — persistence:** yes — the icon persists outside vision and in
+  weather. See *As built* under *The fog problem* for how, since
+  `surveyedCells` could not carry it.
 
 ---
 
 ## Still to do
 
-1. Resolve Q1 and Q2.
-2. Schema additions in `encounter_engine.hpp` + mock + bots.
-3. `HexCell.trap`, `SAVE_VERSION` 18, `encodeCell(pid)`, decoder mask to `0x0F`.
-4. Worldgen placement phase, tier-by-richness, POI exclusion.
-5. Forced-entry path in `movePlayer()` and the client's unprompted panel open.
-6. Glyph 21 art, top-right draw, `surveyedCells` hook.
-7. Author the remaining traps to the agreed tier counts.
-8. Fix the tunnel encounter pool (`index.json` terrain 14, `encLoadFile`'s
-   `terrain >= 10` rejection) if traps go underground.
-9. Bot-harness pass on brush rate before flashing.
+Done: schema (`jsonRoll` ranges, `wound_max`, `escape`, `nextEscape`), mock
+and bots mirrors, `HexCell.trap` / `trapEnc` + `SAVE_VERSION` 19,
+`encodeCell(pid)` + the `0x0F` mask, worldgen placement with tier-by-richness
+and POI exclusion, forced entry on both boards, glyph 21, all 20 trap files,
+the trap pool (so tunnels work), and two LCD cut scenes — `FXK_TRIPWIRE`
+when one opens, `FXK_BEARTRAP` when one goes off — ported to the TV.
+
+1. **Compile the firmware.** The last attempts died on host memory
+   ("Insufficient quota"), not on the code.
+2. Flash, then a hardware round trip: a trap escaped, a save, a reboot, and
+   the icon still there.
+3. Bot-harness pass on brush rate before tuning anything (docs/bot-testing.md,
+   *Booby traps*): forced scenes per survivor-day, LL lost, deaths within a
+   day of a sprung trap.
+4. Content: open country holds most traps, and it deals from the six cheap
+   files, so a long run sees each one many times. More cheap files is the
+   fix if it reads as repetitive. Trap 1 still mentions a dead city and a
+   street, which reads oddly on open ground.

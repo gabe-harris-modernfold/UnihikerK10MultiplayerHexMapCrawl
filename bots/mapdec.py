@@ -8,7 +8,9 @@ the bots see exactly what the browser sees, bug-for-bug.
   Vis disk ("vis".cells) 10 hex chars per cell: QQ RR TT DD VV
 
   TT  terrain byte, 0xFF == fog (never revealed to this player)
-      bits 0-5 terrain id, bit 6 improved shelter, bit 7 caravan tire track
+      bits 0-3 terrain id, bit 4 an armed booby trap THIS player escaped
+      (traps.hpp -- the server sets it per recipient), bit 6 improved
+      shelter, bit 7 caravan tire track
   DD  bits 0-5 footprint bitmask (which players have stood here)
       bit 6 has shelter (any), bit 7 has POI
   VV  high nibble resource type (0 none, 1-5), low nibble art variant
@@ -30,6 +32,12 @@ class Cell:
     tire_track: bool
     resource: int       # 0 none, 1-5 (index into RES_NAME is resource-1)
     variant: int
+    trap: bool = False  # a booby trap we got back out of: stepping on it forces the scene again
+    # Tunnel cells only: which of the six sides are open (bit d = direction d,
+    # tunnels.hpp "Open sides"); -1 = not sent (the surface, or an older
+    # server).  A floor neighbour behind a closed side is rock to a walker --
+    # navigate.dijkstra reads this.
+    op: int = -1
 
     def visited_by(self, pid: int) -> bool:
         return bool(self.footprints & (1 << pid))
@@ -41,13 +49,14 @@ def decode_cell(tt: int, dd: int, vv: int) -> Cell | None:
         return None
     has_shelter = (dd >> 6) & 1
     return Cell(
-        terrain=tt & 0x3F,
+        terrain=tt & 0x0F,          # 0x0F: bit 4 is the trap flag now
         footprints=dd & 0x3F,
         shelter=(2 if (tt & 0x40) else 1) if has_shelter else 0,
         poi=bool((dd >> 7) & 1),
         tire_track=bool((tt >> 7) & 1),
         resource=(vv >> 4) & 0xF,
         variant=vv & 0xF,
+        trap=bool((tt >> 4) & 1),
     )
 
 
@@ -65,6 +74,12 @@ class WorldMap:
                  wraps: bool = True):
         self.rows, self.cols, self.wraps = rows, cols, wraps
         self.grid: list[list[Cell | None]] = [[None] * cols for _ in range(rows)]
+        # MP the pathfinder adds on top of the terrain for hazards the cell
+        # bytes do not carry -- today the Wasteland Daisy patches from the
+        # `eco` message (state.py fills it; navigate.dijkstra reads it).
+        # Keyed on wrapped (q, r).  A regen replaces the whole map, and with
+        # it this.
+        self.extra_cost: dict[tuple[int, int], int] = {}
 
     def in_bounds(self, q: int, r: int) -> bool:
         return self.wraps or (0 <= q < self.cols and 0 <= r < self.rows)
@@ -84,7 +99,7 @@ class WorldMap:
         self.rows, self.cols = rows, cols
         self.grid = [[None] * cols for _ in range(rows)]
 
-    def load_full(self, hex_str: str, merge: bool = False) -> dict:
+    def load_full(self, hex_str: str, merge: bool = False, ops: str | None = None) -> dict:
         """Parse a 'sync'.map / 'tsync'.map payload.  Returns counts.
 
         `merge` keeps cells we already knew where the new payload says fog.
@@ -93,6 +108,9 @@ class WorldMap:
         map the bot built on its last trip down and send it re-exploring
         ground it has already walked.  (The browser loses that memory; a bot
         that has to play for hours cannot afford to.)
+
+        `ops` is the tsync's "op": each cell's open sides, 2 hex chars apiece
+        in the same order.
         """
         revealed = fog = pois = shelters = resources = 0
         expect = self.rows * self.cols * 6
@@ -114,6 +132,9 @@ class WorldMap:
                 dd = int(hex_str[i + 2:i + 4], 16)
                 vv = int(hex_str[i + 4:i + 6], 16)
                 row[c] = decode_cell(tt, dd, vv)
+                if ops:
+                    j = (r * self.cols + c) * 2
+                    row[c].op = int(ops[j:j + 2], 16)
                 revealed += 1
                 if (dd >> 7) & 1:   pois += 1
                 if (dd >> 6) & 1:   shelters += 1
@@ -121,17 +142,21 @@ class WorldMap:
         return {"revealed": revealed, "fog": fog, "poi": pois,
                 "shelter": shelters, "resource": resources}
 
-    def apply_vis(self, cells: str) -> int:
-        """Apply a 'vis'.cells disk.  Returns the number of cells updated."""
+    def apply_vis(self, cells: str, ops: str | None = None) -> int:
+        """Apply a 'vis'.cells disk.  Returns the number of cells updated.
+        `ops`: a tunnel disk's "op", 2 hex chars per cell in cell order."""
         n = 0
-        for i in range(0, len(cells) - 9, 10):
+        for k, i in enumerate(range(0, len(cells) - 9, 10)):
             q  = int(cells[i:i + 2], 16)
             r  = int(cells[i + 2:i + 4], 16)
             tt = int(cells[i + 4:i + 6], 16)
             dd = int(cells[i + 6:i + 8], 16)
             vv = int(cells[i + 8:i + 10], 16)
             if 0 <= r < self.rows and 0 <= q < self.cols:
-                self.grid[r][q] = decode_cell(tt, dd, vv)
+                cell = decode_cell(tt, dd, vv)
+                if ops and cell is not None and len(ops) >= 2 * k + 2:
+                    cell.op = int(ops[2 * k:2 * k + 2], 16)
+                self.grid[r][q] = cell
                 n += 1
         return n
 

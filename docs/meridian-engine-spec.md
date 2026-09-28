@@ -470,7 +470,7 @@ expedition, and Array into the Beamline.
   the first 10 minutes.
 - **Warning:** about 60 seconds ahead, the K10 LEDs start a slow sweep and a
   tone plays, and phones show a warning. This is the part only this hardware
-  can do: six people in one room all get the jolt together.
+  can do: five people in one room all get the jolt together.
 - **At the pulse:**
   - Anyone within radius 2 of an **Awake or Active** node takes a radiation
     hit.

@@ -223,7 +223,9 @@ async def abort_encounter(ctx: Ctx) -> str:
         if c2.arch != slot:
             raise Skip("slot was taken before the probe could return")
         tick = await c2.wait_for(lambda m: m.get("t") == "s", 3.0)
-        me = (tick or {}).get("p", [{}] * 6)[slot] if tick else {}
+        # PROTO 4: "s" lists seated players only, each with its seat as "id".
+        me = next((d for d in (tick or {}).get("p", [])
+                   if d.get("id") == slot), {})
         ok = True
         if me.get("enc"):
             ok = False

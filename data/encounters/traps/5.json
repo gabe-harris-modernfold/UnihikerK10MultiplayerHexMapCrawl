@@ -1,0 +1,109 @@
+{
+  "id": "trap_party_for_one",
+  "tier": 1,
+  "title": "The {{adjective}} Birthday Party",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A table laid for a birthday. One chair, one paper plate, one paper hat, a party blower still in its cellophane. In the middle, under a glass cloche, a cake: dark, squat, iced white, with HAPPY BIRTHDAY {{name}} piped across it in careful blue. The tablecloth hangs to the floor, and in a neat ring around the cloche it sits in lumps — flat, regular, each the size of your hand. Where one lump has worn the cloth through, something steel and sprung is showing.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Leave the cake under its glass and back out the way you came",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_tablecloth"
+        },
+        {
+          "label": "Lift the cloth an inch at a time and spring them with a fork",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_ring"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You leave the party the way people have always left parties they were not invited to: quietly, backwards, and without the cake. The paper hat watches you go. Somebody went to a lot of trouble here, and it is not your birthday, and you know the sound a rat trap makes and would like to keep hearing it from a distance.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "Snap, snap, snap: twelve in all, sprung one by one on the end of a fork, each baited with a crumb of the cake. The traps are good steel; you pocket them. Then you lift the cloche. It is a fruitcake — dense, black, brandy-soaked — and it has come through the end of the world without a spot of mould, because nothing can hurt a fruitcake. Nobody ever wanted one. It is the best food you have seen in weeks. On the chair, a small present, ribboned.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Untie the ribbon on the present",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_present"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "No rat, no spring. Inside the box, in tissue paper: a pair of thick wool socks with the tags still on, a bag of boiled sweets and a box of matches. The gift tag reads FOR WHOEVER COMES. SORRY ABOUT THE TRAPS — THEY ARE FOR THE RATS. {{signoff}} The traps were never for you. The party was. Nobody has thrown you a party since the end of the world. You put the hat on.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 1] },
+        { "res": 2, "qty": [1, 2] }
+      ],
+      "loot_table": "scrub_oddity",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_tablecloth": {
+      "text": "Your hip snags the hem on the way past and you drag the cloth six inches, and six inches is plenty. The whole ring goes off like a string of firecrackers. Most of them snap shut on nothing. One leaves the table entirely, turns over twice in the air, and closes on your earlobe with total commitment. You wear it all the way to the door.",
+      "penalty": { "ll": -1 },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_ring": {
+      "text": "There are more traps than lumps. The first goes off under the fork and the second under your wrist, and you jerk back and take the tablecloth with you, and the rest go off in a rolling crackle up both arms. You sit down hard. There was one on the chair as well. You get up wearing seven rat traps and, somehow, the paper hat, and spend most of a roll of bandage on your fingers.",
+      "penalty": { "ll": [-1, -2], "med": -1 },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_present": {
+      "text": "The ribbon was holding the lid down, and the lid was holding in a rat. A fat one, who has been living in the present for some time. It comes out at face height, goes over your shoulder and down the back of your shirt, and in the thrashing your hand goes into the box and finds the trap the rat was too clever for. You scrub the thumb until your canteen is dry. You can still feel the rat.",
+      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Surprise",
+      "Quiet",
+      "Small",
+      "Exclusive",
+      "Private"
+    ],
+    "name": [
+      "YOU",
+      "WHOEVER",
+      "OUR GUEST",
+      "STRANGER",
+      "ANYONE"
+    ],
+    "signoff": [
+      "MANY HAPPY RETURNS.",
+      "IT'S NOT MUCH.",
+      "HAVE A LOVELY DAY.",
+      "YOU DESERVE IT, WHOEVER YOU ARE."
+    ]
+  }
+}

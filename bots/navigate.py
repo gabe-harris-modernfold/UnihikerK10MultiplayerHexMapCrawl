@@ -17,16 +17,37 @@ MAP_COLS/MAP_ROWS, because there are two of them.  The bunker tunnel board is
 16x10 and walled: `world.wraps` is False, and a neighbour outside it is a wall,
 not the far side.  Pass `obs.board` (or `obs.map` / `obs.tunnel` explicitly)
 and the same Dijkstra serves both.
+
+The tunnel board also has walls between cells: it is corridors one hex wide,
+and a cell's `op` names which of its sides are open (tunnels.hpp "Open
+sides").  A step through a closed side is refused server-side exactly like
+rock, so the search never takes one -- checked from both cells, since either
+may be the one we have seen.
 """
 import heapq
 
 from config import (DQ, DR, MAP_COLS, MAP_ROWS, TERRAIN_MC, IMPASSABLE,
-                    NUM_TERRAIN, tun_distance)
+                    NUM_TERRAIN, TERR_TUNNEL, tun_distance)
 
 # What an unrevealed cell is assumed to cost.  Slightly above the average
 # passable cost (1.50 measured over the real map) so a bot prefers a known
 # road to a gamble, but not so high it refuses to explore.
 UNKNOWN_COST = 2
+
+# The Wasteland Daisy (docs/ecology-spec.md): a bloomed patch bites for 1 LL
+# on entry, a bud blooms at the next dawn.  Priced as extra MP in
+# WorldMap.extra_cost rather than made impassable, so a bot still crosses
+# one when it is the only way through -- it just stops being the cheap way.
+# 6 MP is most of a day's movement: a detour of up to five hexes is taken
+# before a bite is.  Stage 1 shoots cost nothing; they are three dawns out.
+DAISY_BLOOM_COST = 6
+DAISY_BUD_COST = 1
+
+# A booby trap we escaped (traps.hpp): stepping on it forces the scene again,
+# with no walking away. Priced like a bloomed daisy and then some -- a detour
+# of most of a day is taken first -- but never impassable, since it may be
+# the only way out of a pocket.
+TRAP_KNOWN_COST = 8
 
 
 def step_cost(cell) -> int | None:
@@ -37,7 +58,21 @@ def step_cost(cell) -> int | None:
     if t >= NUM_TERRAIN:
         return None
     mc = TERRAIN_MC[t]
-    return None if mc == IMPASSABLE else mc
+    if mc == IMPASSABLE:
+        return None
+    return mc + (TRAP_KNOWN_COST if getattr(cell, "trap", False) else 0)
+
+
+def walled(here, there, direction) -> bool:
+    """True when a known closed side stands between two tunnel cells.  An
+    unknown side (fog, or a server that sends no `op`) is assumed open, the
+    same optimism unknown terrain gets."""
+    if here is not None and getattr(here, "op", -1) >= 0 and not (here.op >> direction) & 1:
+        return True
+    back = (direction + 3) % 6
+    if there is not None and getattr(there, "op", -1) >= 0 and there.terrain == TERR_TUNNEL             and not (there.op >> back) & 1:
+        return True
+    return False
 
 
 def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
@@ -63,6 +98,7 @@ def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
     wraps = getattr(world, "wraps", True)
     cols, rows = world.cols, world.rows
     cost = cost_fn or step_cost
+    extra = getattr(world, "extra_cost", None) or None
     while pq:
         d, q, r = heapq.heappop(pq)
         if d > dist.get((q, r), 1 << 30):
@@ -80,9 +116,13 @@ def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
                 nr %= rows
             elif not (0 <= nq < cols and 0 <= nr < rows):
                 continue        # walled board: off the edge is rock
+            if not wraps and walled(world[(q, r)], world[(nq, nr)], direction):
+                continue        # a wall between two cells, not a doorway
             c = cost(world[(nq, nr)])
             if c is None:
                 continue
+            if extra:
+                c += extra.get((nq, nr), 0)
             nd = d + c
             if nd < dist.get((nq, nr), 1 << 30):
                 dist[(nq, nr)] = nd

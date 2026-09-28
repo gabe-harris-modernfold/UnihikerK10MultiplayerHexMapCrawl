@@ -1,0 +1,103 @@
+{
+  "id": "trap_cold_room",
+  "tier": 2,
+  "title": "The {{adjective}} Butcher's",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A butcher's walk-in cold room, the steel door propped open on a rubber wedge. On its inside, where the big red mushroom handle should be — the one that means nobody gets shut in — is a sawn stump, neatly painted over. Overhead, a hook rail slopes from the back wall down to the doorway, and every hook has been run up to the high end and bunched on one steel pin. A cord runs from the pin along the rail to the wedge. Some hooks are still dressed, in something the colour of an old wallet.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step back over the wedge without so much as breathing on it",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_door"
+        },
+        {
+          "label": "Climb the shelving and lash the hooks to the pin before you cut anything",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_rail"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You lift one boot over the wedge as if it were sleeping, then the other, and then you are on the right side of a door with no handle on the inside. You look at that painted stump. Somebody sat down with a hacksaw and did it carefully, then painted it so it wouldn't rust. Up at the top of their rail, the hooks wait in a patient queue.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You go up the shelving like a ladder, lash the whole bunch of hooks to the pin with your belt, then come down and cut the cord at the wedge. Nothing moves. You breathe out for what feels like the first time since the door. The hooks are good steel, and what hangs on the ones nearest the vent has dried to something dark and hard you could shingle a roof with, which out here counts as dinner.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 2] },
+        { "res": 4, "qty": [2, 3] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Push through the hanging carcasses to the steel locker at the back",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "cache_2",
+          "hazard_id": "shut_in"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The locker is padlocked, and the key hangs on a hook of its own, labelled in grease pencil: LUNCH. Inside: tins. Chickpeas, lentils, butter beans, a jar of something brown marked NUT ROAST, and a cookbook so thumbed its spine has given up — VEGETABLE DISHES FOR EVERY SEASON, with BETTER THAN MEAT pencilled beside half the recipes. A cold room full of hooks and dead pig, rigged and painted and patiently maintained, to guard the lentils. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_door": {
+      "text": "Your heel ticks the wedge on the way over. The door comes round on its closer far faster than anything that heavy should, catches your pack in the frame and pins you there, half in and half out, while the whole rail of hooks comes rattling down the slope behind you. The first side of pork arrives on the back of your neck and stays there, cold and soft as a wet sleeping bag. You tear free. Some of your food does not.",
+      "penalty": { "ll": [-1, -2], "food": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_rail": {
+      "text": "The shelving shifts under your boot and your hand goes out to the rail, the one thing you had promised yourself not to touch. The pin hops out. Every hook comes down the slope at once, and one takes you under the collarbone like a coat going onto a peg, and you ride it the length of the room in a crowd of pig — some of it leathered, and some of it, horribly, not. Getting off the hook takes a long time. You do it with your teeth shut.",
+      "penalty": { "ll": [-2, -3], "med": [-1, -1] },
+      "wound": [0, 1],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "shut_in": {
+      "text": "The third carcass you shoulder past swings on its hook, and a cord you never saw runs from its trotter to the wedge. The steel door shuts with a soft, well-engineered thunk and the dark is total. No handle. Just the hooks, which swing when you walk into them, and the pig, which does not swing but gives. Getting the hinge pins out with a spoon takes hours, and you eat and drink everything you are carrying in there, next to the pig, to keep your hands busy.",
+      "penalty": { "ll": [-2, -4], "water": [-1, -2], "food": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Family",
+      "Traditional",
+      "Award-Winning",
+      "Locally Sourced",
+      "Old-Fashioned"
+    ],
+    "irony": [
+      "Thirty-one years behind the counter. Not one sausage.",
+      "The meat was only ever the fence.",
+      "Nobody ever thinks to check the butcher's lunch.",
+      "You eat a tin of chickpeas cold, standing up, and they are better than meat."
+    ]
+  }
+}

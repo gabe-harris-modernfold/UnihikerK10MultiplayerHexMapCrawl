@@ -80,6 +80,12 @@ check("carried sums inv", o.me.carried() == 15)
 o.apply({"t": "s", "tk": 9, "p": [{"sc": 999}]})
 check("broadcast patches in place", o.tick == 9 and o.players[0].score == 999)
 check("broadcast leaves sync-only fields", o.players[0].name == "Guide")
+o.apply({"t": "s", "tk": 10, "p": [{"id": 2, "on": 1, "sc": 77},
+                                   {"id": 4, "on": 1, "sc": 55}]})
+check("sparse broadcast lands by id",
+      (o.players[2].score, o.players[4].score) == (77, 55))
+check("sparse broadcast marks unlisted seats offline",
+      [p.connected for p in o.players] == [False, False, True, False, True, False])
 o.apply({"t": "err", "msg": "Cannot move during encounter"})
 check("err captured", o.last_error.startswith("Cannot move"))
 o.apply({"t": "vis", "dp": 1, "cells": "0A05020009"})
@@ -95,6 +101,28 @@ check("tsync without a map is tolerated",
       o.apply({"t": "tsync", "whatever": 1}) == "tsync")
 check("unknown type tolerated", o.apply({"t": "nosuchtype"}) == "nosuchtype")
 check("missing keys tolerated", o.apply({"t": "s"}) == "s")
+
+print("eco")
+from navigate import DAISY_BLOOM_COST, DAISY_BUD_COST
+eco = {"t": "eco", "tk": 40, "n": "ASH-VESSEL GREY", "h": 212, "g": 9, "w": 1,
+       "v": "0A" * (config.MAP_COLS * config.MAP_ROWS), "f": [[3, 4, 2, 77]],
+       "dz": [[10, 5, 3, 2, 7], [11, 5, 2, 1, 3], [12, 5, 1, 1, 3]], "sp": []}
+check("eco applies", o.apply(eco) == "eco" and o.eco_name == "ASH-VESSEL GREY")
+check("eco keeps the daisies", o.daisies[(10, 5)] == (3, 2) and (12, 5) in o.daisies)
+check("bloomed patch is priced", o.map.extra_cost.get((10, 5)) == DAISY_BLOOM_COST)
+check("bud is priced lower", o.map.extra_cost.get((11, 5)) == DAISY_BUD_COST)
+check("shoot costs nothing", (12, 5) not in o.map.extra_cost)
+check("scar-only eco message keeps the daisies",
+      o.apply({"t": "eco", "tk": 41, "s": "0" * 10}) == "eco" and (10, 5) in o.daisies)
+check("eco without dz keeps the daisies",
+      o.apply({"t": "eco", "tk": 42, "w": 2}) == "eco" and o.map.extra_cost)
+check("empty dz clears them", o.apply({"t": "eco", "tk": 43, "dz": []}) == "eco"
+      and not o.daisies and not o.map.extra_cost)
+o.apply(eco)
+o.apply({"t": "ev", "k": "regen"})
+check("regen clears the daisies", not o.daisies and not o.map.extra_cost)
+check("daisy bite is a known cause",
+      "wasteland daisy" in __import__("causes").CAUSE_ORDER)
 
 print("policy")
 check("move msg", Action("move", d=3).to_msg() == {"t": "m", "d": 3})
@@ -176,6 +204,14 @@ check("best_target returns a legal first dir", t[2] in range(6))
 check("distance wraps", navigate.hex_distance(0, 10, 74, 10) == 1)
 w.grid[10][12] = None
 check("frontier_bonus counts fog", navigate.frontier_bonus(w, 11, 10) == 1)
+# A bloomed daisy patch on (11,10): the straight line to (12,10) now costs
+# 1 + DAISY_BLOOM_COST + 1, so the three-step detour around it wins.
+w.grid[10][12] = mk()
+w.extra_cost = {(11, 10): navigate.DAISY_BLOOM_COST}
+dist, first = navigate.dijkstra(w, 10, 10, max_cost=20)
+check("a bloomed hex costs its bite", dist[(11, 10)] == 1 + navigate.DAISY_BLOOM_COST)
+check("the path goes around the flowers", dist[(12, 10)] == 3 and first[(12, 10)] != 0)
+w.extra_cost = {}
 
 print("encounters")
 import encounters as enc_mod
@@ -711,6 +747,28 @@ check("a later tsync does not forget the corridor",
       ot.tunnel[(3, 4)] is not None)
 ot.players[2].depth = 0
 check("surfacing puts us back on the surface board", ot.board is ot.map)
+
+# Walls between tunnel cells (tunnels.hpp "Open sides"): (3,3) and (4,3) sit
+# side by side with rock between them, so the way across is round by
+# (3,4) and (4,4).  op rides tsync as 2 hex chars a cell.
+_ops = {(3, 3): 1 << 5, (3, 4): (1 << 2) | (1 << 0),
+        (4, 4): (1 << 3) | (1 << 2), (4, 3): 1 << 5}
+ow = Observation()
+ow.pid = 2
+ow.apply(sync)
+ow.players[2].depth = 1
+ow.apply({"t": "tsync", "cols": 16, "rows": 10, "vr": 1, "q": 3, "r": 3,
+          "map": tun_payload({c: (TERR_TUNNEL, 0, 0) for c in _ops}),
+          "op": "".join("%02X" % _ops.get((qq, rr), 0)
+                        for rr in range(TUN_ROWS) for qq in range(TUN_COLS))})
+check("tsync decodes each cell's open sides", ow.tunnel[(3, 4)].op == 0b101)
+from navigate import dijkstra as _dj
+_d, _f = _dj(ow.tunnel, 3, 3)
+check("the pathfinder goes round a wall, not through it",
+      _d.get((4, 3)) == 3 * config.TERRAIN_MC[TERR_TUNNEL] and _f.get((4, 3)) == 5)
+ow.apply({"t": "vis", "dp": 1, "q": 3, "r": 3, "vr": 0, "cells": "0303" + "%02X0000" % TERR_TUNNEL,
+          "op": "21"})
+check("a tunnel vis disk carries op too", ow.tunnel[(3, 3)].op == 0x21)
 
 # Hatch pairings are never sent -- they are inferred from tun_in / tun_out.
 oh = Observation()
@@ -1895,7 +1953,7 @@ def _fw_value(name):
     return int(v)
 
 
-_mirrored = ["MAP_COLS", "MAP_ROWS", "MAX_PLAYERS", "TICK_MS", "DAY_TICKS",
+_mirrored = ["MAP_COLS", "MAP_ROWS", "MAX_PLAYERS", "MAX_SEATED", "TICK_MS", "DAY_TICKS",
              "NUM_TERRAIN", "INV_SLOTS_MAX", "EQUIP_SLOTS", "TUN_COLS", "TUN_ROWS",
              "MAX_HATCHES", "VENT_ASCEND_MP", "ITEM_BILE_FLARE", "TUNNEL_REST_LL_PCT",
              "DQ", "DR", "TERRAIN_MC", "TERRAIN_SV", "TERRAIN_FORAGE_DN",
@@ -2090,6 +2148,19 @@ _st.apply({"t": "item_result", "ok": True, "wc": 3, "kr": 1 << 18,
            "eq": [0, config.CANTEEN_ITEM, 0, 0, 0]})
 check("wc and kr ride an item_result",
       _st.me.water_cap == 3 and _st.me.known_recipes == 1 << 18)
+# gearcheck.py: the Canteen's water_cap is checked off `wc`, the way slots is
+# off `is`. It used to be left out entirely -- the report said the Canteen
+# "declares no stat mods at all", so no run ever tested it.
+_cw = [0] * 5
+_cw[config.EQUIPMENT[config.CANTEEN_ITEM]] = config.CANTEEN_ITEM
+_wcap = config.EQUIP_STATS[config.CANTEEN_ITEM]["water_cap"]
+_bare_wc = ("rx", 0, dict(_pack([0] * 5), wc=0))
+a = _audit([_bare_wc, ("rx", 0, dict(_pack(_cw), wc=_wcap))])
+check("gearcheck verifies the canteen's water_cap off `wc`",
+      a.ev[(config.CANTEEN_ITEM, "water_cap")]["pass"] == 1)
+a = _audit([_bare_wc, ("rx", 0, dict(_pack(_cw), wc=0))])
+check("and catches a canteen that grants nothing",
+      a.ev[(config.CANTEEN_ITEM, "water_cap")]["fail"] == 1)
 
 
 def canteen_obs(scrap=4, terrain=config.TERR_SETTLEMENT, kr=1 << 18,
@@ -2408,5 +2479,129 @@ for _name in (n for n in pmod.REGISTRY if n != "drunk"):
     check(f"{_name} on a grave yields valid actions",
           _kinds and _kinds <= {"move", "act", "noop", "loot", "pickup_item",
                                 "equip_item", "enc_start", "trade_offer"})
+
+print("booby traps (traps.hpp)")
+# TT bit 4 is the per-recipient "a trap you escaped" flag; terrain is 0-3.
+_tc = decode_cell(0x04 | 0x10, 0, 0)
+check("trap bit decodes off TT bit 4", _tc.trap is True and _tc.terrain == 4)
+check("terrain no longer reads the trap bit as terrain 20",
+      decode_cell(0x04 | 0x10 | 0x40 | 0x80, 0x40, 0).terrain == 4)
+check("no bit, no trap", decode_cell(0x04, 0, 0).trap is False)
+check("a known trap is priced, not walled off",
+      navigate.step_cost(_tc) == config.TERRAIN_MC[4] + navigate.TRAP_KNOWN_COST)
+_tw = WorldMap()
+for rr in range(config.MAP_ROWS):
+    for qq in range(config.MAP_COLS):
+        _tw.grid[rr][qq] = mk()
+_tw.grid[10][11] = mk()
+_tw.grid[10][11].trap = True
+_td, _tf = navigate.dijkstra(_tw, 10, 10, max_cost=20)
+check("the path goes around a trap we escaped",
+      _td[(12, 10)] == 3 and _tf[(12, 10)] != 0)
+
+_to = Observation()
+_to.pid = 2
+_to.map = _tw
+_to.apply({"t": "ev", "k": "trap", "pid": 2, "q": 13, "r": 10, "dp": 0, "out": "known"})
+check("ev trap known lands on our map", _tw.grid[10][13].trap is True)
+_to.apply({"t": "ev", "k": "trap", "pid": 4, "q": 13, "r": 10, "dp": 0, "out": "sprung"})
+check("anyone springing it clears it", _tw.grid[10][13].trap is False)
+_to.apply({"t": "ev", "k": "trap", "pid": 2, "q": 5, "r": 3, "dp": 1, "out": "known"})
+check("a trap below stays off the surface map", _tw.grid[3][5].trap is False)
+_to.apply({"t": "ev", "k": "trap", "pid": 2, "q": "x", "r": None, "out": "known"})
+check("a malformed trap event is tolerated", True)
+
+check("the trap pool is in index.json", lib.index.get("traps", {}).get("count") == 20)
+_tlib = [lib.get("traps", i) for i in range(1, 21)]
+check("all twenty trap files load", all(e and "nodes" in e for e in _tlib))
+_trun = enc_mod.EncounterRun(lib, "traps", 1)
+check("a trap run is not at an escape node yet", not _trun.at_escape)
+_esc, _wrk = _trun.escape_choice(), _trun.work_choice()
+check("a trap start has a way out and a way in",
+      _esc is not None and _wrk is not None and _esc != _wrk)
+# Every trap file: exactly one back-out at the start, and it leads to a node
+# flagged escape -- the rule the bot reads to know which door is which.
+_bad = []
+for _i in range(1, 21):
+    _r = enc_mod.EncounterRun(lib, "traps", _i)
+    _chs = _r.choices
+    if len(_chs) < 2 or _r.escape_choice() is None or _r.work_choice() is None or _r.can_bank():
+        _bad.append(_i)
+check("every trap start is back-out-or-work, never bankable", not _bad)
+
+
+def _trap_obs(ll=6, sk=(1, 1, 3, 1, 1), eid=1):
+    _o = surface_obs(ll=ll)
+    _o.players[2].skills = list(sk)
+    _o.encounter = {"t": "enc_path", "biome": "traps", "id": eid, "trap": 1}
+    return _o
+
+
+_sv = pmod.make("scoremax", random.Random(9)); _sv.set_pid(2)
+_o = _trap_obs()
+_a = _sv.decide(_o)
+check("a trap binds as a trap, not a POI",
+      _sv.run is not None and _sv.run.trap and _sv.stats["traps"] == 1
+      and _sv.stats["encounters_opened"] == 0)
+_pw = enc_mod.success_chance(_sv.run.choices[_sv.run.work_choice()], _o)
+check("good odds and LL to spare: work it",
+      _pw >= _sv.trap_nerve and _a.kind == "enc_choice" and _a.ci == _sv.run.work_choice())
+_sv.run.on_result({"out": 1})
+check("the work choice lands on the cache", _sv.run.can_bank())
+_a = _sv.decide(_o)
+check("from the cache it presses on or takes it",
+      _a.kind in ("enc_choice", "enc_bank"))
+_sv2 = pmod.make("scoremax", random.Random(9)); _sv2.set_pid(2)
+_o2 = _trap_obs(ll=3)
+_a = _sv2.decide(_o2)
+check("low on Life: back out", _a.kind == "enc_choice" and _a.ci == _sv2.run.escape_choice()
+      and _sv2.stats["trap_backouts"] == 1)
+_sv2.run.on_result({"out": 1})
+check("backing out lands on the escape node", _sv2.run.at_escape)
+_a = _sv2.decide(_o2)
+check("out of the escape node: enc_bank with nothing (it stays armed)",
+      _a.kind == "enc_bank" and not _sv2.run.banked)
+_cw = pmod.make("coward", random.Random(9)); _cw.set_pid(2)
+_a = _cw.decide(_trap_obs(ll=8, sk=(4, 4, 4, 4, 4)))
+check("the coward never works a trap",
+      _a.kind == "enc_choice" and _a.ci == _cw.run.escape_choice())
+for _name in (n for n in pmod.REGISTRY if n != "drunk"):
+    _pol = pmod.make(_name, random.Random(5)); _pol.set_pid(2)
+    _k = set()
+    for _ in range(6):
+        _act = _pol.decide(_trap_obs())
+        _k.add(_act.kind)
+        if _act.to_msg() is not None:
+            json.dumps(_act.to_msg())
+    check(f"{_name} in a trap never walks off or aborts",
+          _k <= {"enc_choice", "enc_bank"})
+
+from causes import DamageLedger as _DL
+_trows = [_ev(1.0, {"k": "enc_res", "pid": 1, "out": 0, "penLL": -2, "trap": 1}),
+          _ev(2.0, {"k": "enc_res", "pid": 1, "out": 0, "penLL": -1, "trap": 0})]
+_tl = _DL(_trows).loss_ledger()
+check("trap hazards are their own cause",
+      _tl.get("booby trap") == 2 and _tl.get("encounter hazard") == 1)
+
+from metrics import RunReport as _RR
+_mrows = [
+    {"ts": 0.0, "ch": "run", "arch": -1, "d": {"meta": 1}},
+    _ev(1.0, {"k": "enc_start", "pid": 1, "trap": 1}, arch=0),
+    _ev(1.0, {"k": "enc_start", "pid": 1, "trap": 1}, arch=1),
+    _ev(2.0, {"k": "enc_res", "pid": 1, "out": 0, "penLL": -2, "tot": 5, "dn": 8, "trap": 1}),
+    _ev(3.0, {"k": "enc_start", "pid": 3, "trap": 1}),
+    _ev(4.0, {"k": "trap", "pid": 3, "q": 1, "r": 1, "dp": 0, "out": "known"}),
+    _ev(5.0, {"k": "enc_start", "pid": 3}),
+]
+with tempfile.TemporaryDirectory() as _td_:
+    _p = Path(_td_) / "trap.jsonl"
+    _p.write_text("\n".join(json.dumps(r) for r in _mrows) + "\n", encoding="utf-8")
+    try:
+        _tr = _RR(_p).traps()
+    except Exception as _e:     # the reader's row format may differ; say so
+        _tr = {"error": repr(_e)}
+check("metrics counts trap scenes, once each, not POIs", _tr.get("opened") == 2)
+check("metrics reads what the traps took",
+      (_tr.get("sprung"), _tr.get("escaped"), _tr.get("ll_lost")) == (1, 1, 2))
 
 print(f"\n{ok} checks passed")

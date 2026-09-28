@@ -112,6 +112,22 @@ static int jsonArrLen(const char* arr) {
 
 static int  jsonNum(const char* v, int dflt = 0) { return v ? atoi(jsWs(v)) : dflt; }
 static bool jsonBool(const char* v) { v = v ? jsWs(v) : v; return v && strncmp(v, "true", 4) == 0; }
+
+// A penalty that is either a scalar or a 2-array range: "ll": -2 or
+// "ll": [-2, -4]. A range is rolled uniformly, inclusive, whichever way round
+// its ends are written -- the data writes losses as negatives, so [-2, -4]
+// reads "two to four" and must not be treated as an empty range. This is what
+// lets damage vary *within* one hazard rather than only across hazards
+// (docs/trap-system-spec.md, "Schema additions").
+static int jsonRoll(const char* v, int dflt = 0) {
+  if (!v) return dflt;
+  v = jsWs(v);
+  if (*v != '[') return jsonNum(v, dflt);
+  int a = jsonNum(jsonArrGet(v, 0), dflt);
+  int b = jsonNum(jsonArrGet(v, 1), a);
+  int lo = min(a, b), hi = max(a, b);
+  return lo + (hi > lo ? (int)(esp_random() % (uint32_t)(hi - lo + 1)) : 0);
+}
 static bool jsonCopyStr(const char* v, char* out, int cap) {
   out[0] = 0;
   if (!v) return false;
@@ -132,15 +148,21 @@ static char* encFileBuf = nullptr;
 // Load /data/encounters/<biome>/<id>.json into encFileBuf.  Returns the buffer
 // (NUL-terminated) or nullptr.  Caller holds G.mutex (SD access is serialised
 // behind it everywhere else in the firmware).
-static const char* encLoadFile(uint8_t terrain, uint8_t idx) {
-  if (terrain >= 10 || idx == 0) return nullptr;
+//
+// `pool` indexes encPools[]: a terrain id, or ENC_POOL_TRAP. This used to
+// refuse anything >= 10, which quietly made the bunker tunnel pool (14)
+// unloadable even once index.json defined it -- any pool index.json actually
+// filled in is legal now.
+static const char* encLoadFile(uint8_t pool, uint8_t idx) {
+  if (pool >= ENC_POOL_COUNT || idx == 0) return nullptr;
+  if (encPools[pool].count == 0 || !encPools[pool].path[0]) return nullptr;
   if (!encFileBuf) {
     encFileBuf = (char*)ps_malloc(ENC_FILE_CAP);
     if (!encFileBuf) encFileBuf = (char*)malloc(ENC_FILE_CAP);
     if (!encFileBuf) { Log.error("encLoadFile: buffer alloc FAIL"); return nullptr; }
   }
   char path[56];
-  snprintf(path, sizeof(path), "/data/encounters/%s/%d.json", encPools[terrain].path, (int)idx);
+  snprintf(path, sizeof(path), "/data/encounters/%s/%d.json", encPools[pool].path, (int)idx);
   File f = SD.open(path, FILE_READ);
   if (!f) { Log.error("encLoadFile: SD OPEN FAIL %s", path); return nullptr; }
   size_t sz = f.size();
@@ -167,6 +189,7 @@ struct EncChoice {
   char     nextKey[ENC_KEY_LEN];
   bool     nextCanBank;
   bool     nextTerminal;
+  bool     nextEscape;                    // destination carries "escape": true
   uint8_t  loot[5];                       // rolled resource loot on the destination node
   uint8_t  itemType[2], itemQty[2];       // rolled "item" loot entries (max two)
   uint8_t  recipeId;                      // "recipe" loot entry — a recipe learned on success
@@ -203,6 +226,7 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
   if (next) {
     out.nextCanBank  = jsonBool(jsonObjGet(next, "can_bank"));
     out.nextTerminal = (jsonArrLen(jsonObjGet(next, "choices")) == 0);
+    out.nextEscape   = jsonBool(jsonObjGet(next, "escape"));
     jsonCopyStr(jsonObjGet(next, "loot_table"), out.lootTable, sizeof(out.lootTable));
     const char* loot = jsonObjGet(next, "loot");
     int n = jsonArrLen(loot);
@@ -236,24 +260,51 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
     out.nextCanBank  = true;
   }
 
-  // Hazard on failure.
+  // Hazard on failure. Every number here may be a range (jsonRoll), and it is
+  // rolled now, once, whether or not the check then fails -- the resolved
+  // view is only read on the failure path, so an unused roll costs nothing.
   char hazId[ENC_KEY_LEN];
   if (jsonCopyStr(jsonObjGet(ch, "hazard_id"), hazId, sizeof(hazId)) && hazId[0]) {
     const char* haz = jsonObjGet(jsonObjGet(json, "hazards"), hazId);
     const char* pen = jsonObjGet(haz, "penalty");
-    out.hazLL  = jsonNum(jsonObjGet(pen, "ll"));
-    out.hazRad = jsonNum(jsonObjGet(pen, "radiation"));
+    out.hazLL  = jsonRoll(jsonObjGet(pen, "ll"));
+    out.hazRad = jsonRoll(jsonObjGet(pen, "radiation"));
     static const char* RES_KEYS[5] = { "water", "food", "fuel", "med", "scrap" };
     for (int i = 0; i < 5; i++) {
-      int v = jsonNum(jsonObjGet(pen, RES_KEYS[i]));
+      int v = jsonRoll(jsonObjGet(pen, RES_KEYS[i]));
       if (v < 0) out.hazRes[i] = (uint8_t)min(99, -v);   // data writes losses as negatives
     }
+    // "wound" is the floor per tier [minor, major]; the optional "wound_max"
+    // alongside it is the ceiling, and each tier rolls between the two. A
+    // separate key rather than nested arrays inside "wound", so every file
+    // written before it still reads exactly as it did.
     const char* wound = jsonObjGet(haz, "wound");
-    out.hazWMin = (uint8_t)constrain(jsonNum(jsonArrGet(wound, 0)), 0, (int)WOUND_MAX_EACH);
-    out.hazWMaj = (uint8_t)constrain(jsonNum(jsonArrGet(wound, 1)), 0, (int)WOUND_MAX_EACH);
+    const char* wmax  = jsonObjGet(haz, "wound_max");
+    int wlo[2], whi[2];
+    for (int t = 0; t < 2; t++) {
+      wlo[t] = constrain(jsonNum(jsonArrGet(wound, t)), 0, (int)WOUND_MAX_EACH);
+      whi[t] = wmax ? constrain(jsonNum(jsonArrGet(wmax, t), wlo[t]), 0, (int)WOUND_MAX_EACH) : wlo[t];
+      if (whi[t] < wlo[t]) whi[t] = wlo[t];
+      if (whi[t] > wlo[t]) wlo[t] += (int)(esp_random() % (uint32_t)(whi[t] - wlo[t] + 1));
+    }
+    out.hazWMin = (uint8_t)wlo[0];
+    out.hazWMaj = (uint8_t)wlo[1];
     out.hazEnds = jsonBool(jsonObjGet(haz, "ends_encounter"));
   }
   return true;
+}
+
+// Index of the first choice at nodeKey whose destination carries "escape":
+// true -- a trap's "back out" door -- or -1 when this node has none.
+static int encEscapeChoice(const char* json, const char* nodeKey) {
+  const char* choices = jsonObjGet(encNode(json, nodeKey), "choices");
+  int n = jsonArrLen(choices);
+  for (int i = 0; i < n; i++) {
+    char key[ENC_KEY_LEN];
+    jsonCopyStr(jsonObjGet(jsonArrGet(choices, i), "success_node"), key, sizeof(key));
+    if (key[0] && jsonBool(jsonObjGet(encNode(json, key), "escape"))) return i;
+  }
+  return -1;
 }
 
 // Read the start node of the loaded file into the ActiveEncounter.
@@ -261,6 +312,7 @@ static void encEnterStartNode(const char* json, ActiveEncounter& enc) {
   jsonCopyStr(jsonObjGet(json, "start_node"), enc.nodeKey, ENC_KEY_LEN);
   const char* node = encNode(json, enc.nodeKey);
   enc.canBank = jsonBool(jsonObjGet(node, "can_bank")) ? 1 : 0;
+  enc.escape  = jsonBool(jsonObjGet(node, "escape")) ? 1 : 0;
   if (jsonArrLen(jsonObjGet(node, "choices")) == 0) enc.active |= (1 << 7);
 }
 
@@ -272,6 +324,15 @@ static void endEncounter(int pid, uint8_t reason, bool restorePoi) {
   ActiveEncounter& enc = encounters[pid];
   if (!enc.active) return;
   uint8_t hq = enc.hexQ, hr = enc.hexR;
+  // A trap has no POI to put back; its hex state is traps.hpp's business.
+  // An involuntary end re-arms it exactly as it was (nobody learned
+  // anything), a hazard or a fall means it went off. ESCAPED was settled by
+  // the caller (the survivor now knows where it is); REGEN has no board left.
+  if (enc.trap) {
+    if (restorePoi) trapSettle(pid, TRAP_SETTLE_REARM);
+    else if (reason == ENC_END_HAZARD || reason == ENC_END_DOWNED) trapSettle(pid, TRAP_OUT_SPRUNG);
+    restorePoi = false;
+  }
   // Put the POI back on the board it came from. Without enc.depth a tunnel
   // encounter ended involuntarily (dawn, disconnect, hazard) would restore
   // its POI onto a surface hex that happens to share those coordinates.

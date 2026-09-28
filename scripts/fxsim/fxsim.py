@@ -27,7 +27,8 @@ FRAMES = os.path.join(OUT, "frames")
 EXE = os.path.join(OUT, "fxsim.exe")
 W, H = 240, 320
 SCENES = ["quake", "strike", "dawn", "eye", "hunt", "switch", "madness", "fire", "threat",
-          "chem", "storm", "join", "thrown", "act", "odds", "fog", "reprint", "below", "crafted", "crawl"]
+          "chem", "storm", "join", "thrown", "act", "odds", "fog", "reprint", "below", "crafted", "crawl",
+          "tripwire", "beartrap"]
 
 
 def find_vcvars():

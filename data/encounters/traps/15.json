@@ -1,0 +1,103 @@
+{
+  "id": "trap_feed_me",
+  "tier": 2,
+  "title": "The {{adjective}} Pet Shop",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A pet shop, gone quiet in the way pet shops never are. Every cage door stands open, each propped on a lolly stick, and each stick is tied off with fishing line running up to a cargo net rolled along the ceiling over the counter. The fish tanks are dry. The biggest has its lid shoved off from the inside and a label in wobbly felt-tip: FEED ME. Draped along the top of the shelving is a shed skin. It is as long as the shop.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back out between the shelves, elbows in, minding the lines",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_feeder_mice"
+        },
+        {
+          "label": "Cut the lines one at a time and work your way to the till",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_net"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You back out between the shelves with your elbows tucked in, stepping over fishing line, not looking up at the skin, and then very much looking up at the skin. Nothing drops. Nothing moves. The FEED ME tank sits there with its lid off and its label on, and you leave with the distinct and horrible impression that you were, for a moment, being considered.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You cut the lines one by one and let each lolly stick down gently, and the net stays rolled. The till has a float in it. Under the counter: worming tablets, a crate of dog food in tins, and a box of FISH ANTIBIOTICS — NOT FOR HUMAN USE, which out here is the kind of label that sells a thing. At the back, coiled against the stockroom door like a draught excluder, something as thick as your thigh shifts its weight.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 2] },
+        { "res": 1, "qty": [2, 3] }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Shake a bag of feeder mice and coax it off the stockroom door",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 1,
+          "success_node": "cache_2",
+          "hazard_id": "the_squeeze"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "It uncoils toward the rattling bag with the dignity of a retired colonel investigating a vol-au-vent, and you slip past into the stockroom. Pinned inside the door, in the same felt-tip: TINY. FEED ONCE A MONTH. NOT TOO MUCH OR HE GETS FAT. Below it, in an adult hand, a tally of what Tiny has had since, and very little of it is mice. The shelves are stacked with dog food. You sit on a crate and eat a whole tin with your fingers, and it is the best meal you have had in weeks. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_feeder_mice": {
+      "text": "Your shoulder brushes a line. A lolly stick drops, a cage door claps shut, and the bag hung above it tips a kilo of freeze-dried feeder mice over your head and down your collar. That part is survivable. Then come the rats — the shop's own, fat and free-range, who have waited years for somebody to tip those mice — and they go down your collar and into your pack after them with no regard at all for where the mice stop and you begin.",
+      "penalty": { "ll": [-1, -2], "food": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_net": {
+      "text": "The seventh line was the net's. It drops over the counter and over you, and you go down in it like a parcel, and from the back of the shop, unhurried, comes the owner of the skin. It does not bite. It wraps: three slow turns, net and all, tightening each time you breathe out, until a rib goes the way a biscuit goes. Then it opens its mouth over your boot, works up to the knee with slow, wet patience, reconsiders, and backs off you like a sock.",
+      "penalty": { "ll": [-2, -3], "med": [-1, -1] },
+      "wound": [0, 1],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "the_squeeze": {
+      "text": "It is not interested in the mice. It has not been interested in mice for years. It comes off the door in one long pour and has you round the middle before the bag lands, and while you are busy not breathing it takes a thoughtful look at your pack, unhinges, and swallows it with you still wearing one strap. You get out of the strap. The snake gives most of the pack back a while later, wetly, and a good deal lighter.",
+      "penalty": { "ll": [-2, -4], "food": [-1, -2], "water": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Friendly",
+      "Well-Stocked",
+      "Family-Run",
+      "Hungry",
+      "Always Open"
+    ],
+    "irony": [
+      "Somebody got fed today. It just wasn't Tiny.",
+      "FEED ME, the label said. It never said who.",
+      "Tiny watches you eat. Neither of you mentions the tally.",
+      "You have, technically, done exactly what the label asked."
+    ]
+  }
+}

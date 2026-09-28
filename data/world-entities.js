@@ -16,6 +16,10 @@
 
 const caravanRenderPos = { q: 0, r: 0 };
 let caravanRenderPosLive = false;
+// Which way the convoy points: -1 west as painted, +1 east (mirrored). Screen
+// x is 1.5*q on this flat-top grid, so the sign of the q still to travel is
+// the heading; a leg straight north or south keeps the last one.
+let caravanFacing = -1;
 
 function lerpCaravanPosition() {
   const c = worldState.caravan;
@@ -31,13 +35,16 @@ function lerpCaravanPosition() {
   while (caravanRenderPos.q - tq >  MAP_COLS / 2) tq += MAP_COLS;
   while (tr - caravanRenderPos.r >  MAP_ROWS / 2) tr -= MAP_ROWS;
   while (caravanRenderPos.r - tr >  MAP_ROWS / 2) tr += MAP_ROWS;
+  if (Math.abs(tq - caravanRenderPos.q) > 0.25) caravanFacing = Math.sign(tq - caravanRenderPos.q);
   caravanRenderPos.q += (tq - caravanRenderPos.q) * LERP_RATE;
   caravanRenderPos.r += (tr - caravanRenderPos.r) * LERP_RATE;
 }
 
-// No dedicated sprite asset (see dev-loop.md's image-cache budget note — the
-// PSRAM cache is nearly full) — a plain canvas icon, styled like
-// drawCharIcon()'s no-portrait fallback, keeps this from needing one.
+// The convoy sticker (caravanSprite(), engine.js) -- the user's APC leading a
+// cargo truck, cut out like the shelters and drawn over the terrain the same
+// way. A board without the caravan sheet gets the plain canvas badge below,
+// styled like drawCharIcon()'s no-portrait fallback.
+const CARAVAN_SPRITE_HEX = 1.5;   // sticker edge in HEX_SZ, = CARAVAN in hex_sheets.py
 function renderCaravan(cam) {
   lerpCaravanPosition();
   if (!worldState.caravan?.active) return;
@@ -47,6 +54,17 @@ function renderCaravan(cam) {
   const cx = pp.x + ox, cy = pp.y + oy;
   if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) return;
   if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) return;
+
+  const sp = caravanSprite();
+  if (sp) {
+    const sz = HEX_SZ * CARAVAN_SPRITE_HEX;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (caravanFacing > 0) ctx.scale(-1, 1);
+    drawAtlasCell(ctx, sp.page, sp.sx, sp.sy, sp.s, sp.s, -sz / 2, -sz / 2, sz, sz);
+    ctx.restore();
+    return;
+  }
 
   const r = Math.max(10, HEX_SZ * 0.28);
 
@@ -106,9 +124,9 @@ function doomDetectionRadius(awareness) {
 // Awareness (0-100, raw from the server, never shown as a number per spec)
 // drives a pulsing dread aura — bigger, darker and faster-pulsing the closer
 // Doom is to locking onto a player, rather than a single fixed-size wash, so
-// its threat level actually reads visually. Silhouette core (no sprite asset,
-// same image-cache-budget reasoning as the caravan) is deliberately dark and
-// blood-tinted, distinct from the caravan's friendly brown circle.
+// its threat level actually reads visually. Silhouette core (no sprite asset)
+// is deliberately dark and blood-tinted, distinct from the caravan's olive
+// convoy (or its friendly brown fallback circle).
 //
 // Drawn at every awareness including 0, matching the K10 map screen
 // (drawMapScreen() in ui-screens.hpp, which has a dormant colour for

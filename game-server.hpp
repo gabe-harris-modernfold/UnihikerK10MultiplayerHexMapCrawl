@@ -319,34 +319,44 @@ static void gameLoopTask(void* param) {
 }
 
 // ── Derive image variant counts from PSRAM imgCache ────────────
+// Reads the `"<key>":[a,b,...]` array out of the cached /img/tiles.json into
+// out[0..n-1], each clamped to `cap`. False when the manifest or the key is
+// missing. A plain scan, not a parser: the build writes these arrays flat.
+static bool atlasCounts(const char* key, uint8_t* out, int n, int cap) {
+  for (int i = 0; i < imgCacheCount; i++) {
+    if (strcmp(imgCache[i].name, "tiles.json") != 0) continue;
+    const char* s = (const char*)imgCache[i].buf;
+    const size_t len = imgCache[i].len;
+    const size_t kl = strlen(key);
+    for (size_t p = 0; p + kl <= len; p++) {
+      if (memcmp(s + p, key, kl) != 0) continue;
+      size_t q = p + kl;
+      for (int t = 0; t < n && q < len; t++) {
+        int v = 0;
+        while (q < len && s[q] >= '0' && s[q] <= '9') { v = v * 10 + (s[q] - '0'); q++; }
+        out[t] = (uint8_t)min(v, cap);
+        while (q < len && (s[q] == ',' || s[q] == ' ')) q++;
+        if (q >= len || s[q] == ']') break;
+      }
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 // Called from setup() after loadWebFilesToRAM(). Populates terrainVariantCount[],
 // shelterVariantCount[], and forrageAnimalCount by scanning cached filenames.
 static void setupVariantCounts() {
   Log.notice("Variant scan start: imgCacheCount=%d", (int)imgCacheCount);
-  // /img/tiles.json (scripts/tilegen/build_tiles.py) packs every terrain tile
-  // into a couple of atlas pages and carries the pool sizes as one
-  // "counts":[...] array. When it is on the card it wins; the per-file
-  // hex<Name><N>.png scan below is the fallback for a card without it.
-  bool fromAtlas = false;
-  for (int i = 0; i < imgCacheCount && !fromAtlas; i++) {
-    if (strcmp(imgCache[i].name, "tiles.json") != 0) continue;
-    const char* s = (const char*)imgCache[i].buf;
-    const size_t n = imgCache[i].len;
-    static const char KEY[] = "\"counts\":[";
-    const size_t kl = sizeof(KEY) - 1;
-    for (size_t p = 0; p + kl <= n && !fromAtlas; p++) {
-      if (memcmp(s + p, KEY, kl) != 0) continue;
-      size_t q = p + kl;
-      for (int t = 0; t < NUM_TERRAIN && q < n; t++) {
-        int v = 0;
-        while (q < n && s[q] >= '0' && s[q] <= '9') { v = v * 10 + (s[q] - '0'); q++; }
-        terrainVariantCount[t] = (uint8_t)min(v, 16);   // cell.variant is 4 bits on the wire
-        while (q < n && (s[q] == ',' || s[q] == ' ')) q++;
-        if (q >= n || s[q] == ']') break;
-      }
-      fromAtlas = true;
-    }
-  }
+  // /img/tiles.json (scripts/hex_sheets.py) packs each terrain's tiles and
+  // each shelter kind's sprites and the forage animals into one sheet each,
+  // and carries the pool sizes as flat "counts":[...], "shelterCounts":[...]
+  // and "forageCounts":[...] arrays. When it is on the card it wins; the
+  // per-file hex<Name><N>.png / shelter<Kind><N>.png / forrageAnimal<N>.png
+  // scans below are the fallback for a card without it.
+  const bool fromAtlas = atlasCounts("\"counts\":[", terrainVariantCount, NUM_TERRAIN,
+                                     16);   // cell.variant is 4 bits on the wire
   if (fromAtlas) Log.notice("Variant counts: terrain pools from tiles.json (atlas)");
   for (int i = 0; !fromAtlas && i < imgCacheCount; i++) {
     String fname = String(imgCache[i].name);
@@ -369,7 +379,8 @@ static void setupVariantCounts() {
     }
   }
   const char* SHELTER_PFX[2] = { "shelterBasic", "shelterImproved" };
-  for (int i = 0; i < imgCacheCount; i++) {
+  const bool sheltersFromAtlas = atlasCounts("\"shelterCounts\":[", shelterVariantCount, 2, 255);
+  for (int i = 0; !sheltersFromAtlas && i < imgCacheCount; i++) {
     String fname = String(imgCache[i].name);
     for (int s = 0; s < 2; s++) {
       String pfx = String(SHELTER_PFX[s]);
@@ -389,7 +400,8 @@ static void setupVariantCounts() {
       }
     }
   }
-  for (int i = 0; i < imgCacheCount; i++) {
+  const bool forageFromAtlas = atlasCounts("\"forageCounts\":[", &forrageAnimalCount, 1, 255);
+  for (int i = 0; !forageFromAtlas && i < imgCacheCount; i++) {
     String fname = String(imgCache[i].name);
     if (fname.startsWith("forrageAnimal") && fname.endsWith(".png")) {
       String numStr = fname.substring(13, fname.length() - 4);
@@ -411,6 +423,14 @@ static void setupVariantCounts() {
              (int)terrainVariantCount[6],(int)terrainVariantCount[7],(int)terrainVariantCount[8],
              (int)terrainVariantCount[9],(int)terrainVariantCount[10],(int)terrainVariantCount[11],
              (int)shelterVariantCount[0],(int)shelterVariantCount[1],(int)forrageAnimalCount);
+  // Bunker tunnel art (tunnels.hpp): [rooms, entrance, vent, cave-in]. No
+  // per-file fallback -- without the tunnel sheets there is no tunnel art to
+  // deal, and generateTunnels() deals index 0 to everything.
+  if (!atlasCounts("\"tunnelCounts\":[", tunnelArtCount, TUN_ART_KINDS, 32))
+    memset(tunnelArtCount, 0, sizeof(tunnelArtCount));
+  Log.notice("Variant counts: tunnel rooms=%d entrance=%d vent=%d cave=%d",
+             (int)tunnelArtCount[TUN_ART_ROOM], (int)tunnelArtCount[TUN_ART_ENTRANCE],
+             (int)tunnelArtCount[TUN_ART_VENT], (int)tunnelArtCount[TUN_ART_CAVE]);
 }
 
 // ── Cache-Control policy per asset ──────────────────────────────
@@ -874,7 +894,7 @@ static void setupWiFiAndServer() {
         j += "}";
       }
 
-      int shelters = 0, impShelters = 0, poiCount = 0;
+      int shelters = 0, impShelters = 0, poiCount = 0, trapCount = 0, trapKnown = 0;
       int resCnt[6] = {0,0,0,0,0,0};
       int terrCnt[NUM_TERRAIN] = {};
       for (int row = 0; row < MAP_ROWS; row++) {
@@ -885,12 +905,23 @@ static void setupWiFiAndServer() {
           if (c.resource > 0 && c.resource < 6) resCnt[c.resource] += c.amount;
           if (c.terrain < NUM_TERRAIN) terrCnt[c.terrain]++;
           if (c.poi) poiCount++;
+          if (c.trap & TRAP_ARMED) { trapCount++; if (c.trap & TRAP_KNOWN) trapKnown++; }
         }
       }
+      // Armed traps below too -- the tunnel board is 160 cells.
+      int trapTunnel = 0;
+      for (int row = 0; row < TUN_ROWS; row++)
+        for (int col = 0; col < TUN_COLS; col++)
+          if (G.tunnel[row][col].trap & TRAP_ARMED) trapTunnel++;
       j += ",\"map\":{\"cells\":"; j += (MAP_ROWS * MAP_COLS);
       j += ",\"shelters\":";    j += shelters;
       j += ",\"impShelters\":"; j += impShelters;
       j += ",\"pois\":";        j += poiCount;
+      // Booby traps (traps.hpp): armed on the surface, how many of those
+      // somebody has escaped and so has on their map, and armed below.
+      j += ",\"traps\":{\"armed\":"; j += trapCount;
+      j += ",\"known\":";  j += trapKnown;
+      j += ",\"tunnel\":"; j += trapTunnel; j += "}";
       j += ",\"res\":{\"water\":";  j += resCnt[1];
       j += ",\"food\":";  j += resCnt[2];
       j += ",\"fuel\":";  j += resCnt[3];
@@ -958,6 +989,8 @@ static void setupWiFiAndServer() {
               // is how POI_ART finds its one fixed image.
               j += ",\"variant\":";    j += cell.variant;
               j += ",\"poi\":";        j += cell.poi ? "true" : "false";
+              // Only a trap THIS survivor knows about -- same rule as the wire.
+              if (trapKnownBy(cell, vpid)) j += ",\"trap\":true";
               j += "}";
             }
           }
@@ -1027,9 +1060,10 @@ static void setupWiFiAndServer() {
             uint8_t et = encounters[i].terrain;
             j += ",\"encId\":";     j += encounters[i].encIdx;
             j += ",\"encBiome\":\"";
-            if (et < NUM_TERRAIN) j += encPools[et].path;
+            if (et < ENC_POOL_COUNT) j += encPools[et].path;   // "traps" for a booby trap
             j += "\"";
           }
+          j += ",\"encTrap\":";    j += encounters[i].trap ? "true" : "false";
           j += ",\"encCanBank\":"; j += encounters[i].canBank ? "true" : "false";
           j += ",\"encLoot\":[";
           for (int s = 0; s < 5; s++) { if (s) j += ","; j += encounters[i].pendingLoot[s]; }
@@ -1041,6 +1075,16 @@ static void setupWiFiAndServer() {
       // The panels the LCD cut in, and how close the Doom is, so the observer
       // screen can cut in on the same beats (ui-fx.hpp, data/observer-fx.js).
       fxCueLogJson(j);
+      // The Understory (ecology.hpp): species, wave, coverage, daisies, the
+      // two switches. ?ecoseed=N pins the genome for the next genesis (0 =
+      // roll); ?ecobite=0|1 and ?ecoblight=0|1 flip the two mechanical
+      // effects at once. All three are NVS keys and all are reported here so
+      // a run can prove them.
+      if (req->hasParam("ecoseed") || req->hasParam("ecobite") || req->hasParam("ecoblight"))
+        ecoSetPrefs(req->hasParam("ecoseed") ? (long)req->getParam("ecoseed")->value().toInt() : -1L,
+                    req->hasParam("ecobite") ? (int)req->getParam("ecobite")->value().toInt() : -1,
+                    req->hasParam("ecoblight") ? (int)req->getParam("ecoblight")->value().toInt() : -1);
+      ecoStateJson(j);
       j += "}";
       xSemaphoreGive(G.mutex);
     } else {

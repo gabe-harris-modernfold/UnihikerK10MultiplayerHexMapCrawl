@@ -139,7 +139,7 @@ static void drainEvents() {
 
   if (snapCount > 0) LOG_VERBOSE("drainEvents: %d pending", snapCount);
 
-  // Longest payload is enc_res at ~207 chars worst case; 288 leaves headroom.
+  // Longest payload is enc_res at ~216 chars worst case; 288 leaves headroom.
   char buf[288];
   bool saveAfterDrain = false;   // a fall left piles on the ground -- persist them
   for (int i = 0; i < snapCount; i++) {
@@ -267,7 +267,7 @@ static void drainEvents() {
           (int)ev.dawnUnfuelled);
         evTextAll(buf, len);
         sndDawn((uint16_t)ev.dawnDay);   // the call, the roll call, "day N" -- once a day (ui-audio.hpp)
-        // Chronicle — only once per day (pid==0 guards double-logging for 6-player dawn)
+        // Chronicle — only once per day (pid==0 guards double-logging: dawn fires once per player)
         if (ev.pid == 0) {
           char lb[48];
           snprintf(lb, sizeof(lb),
@@ -508,21 +508,45 @@ static void drainEvents() {
       }
 
       case EVT_ENC_START:
-        Log.notice("EVT enc_start pid=%d q=%d r=%d",
-                   (int)ev.pid, (int)ev.q, (int)ev.r);
-        len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
-          ev.pid, (int)ev.q, (int)ev.r);
-         
+        Log.notice("EVT enc_start pid=%d q=%d r=%d dp=%d trap=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.depth, (int)ev.amt);
+        // amt = 1: a booby trap fired under a step (traps.hpp). It rides as
+        // "trap" so every client can tell a door opened from a floor giving
+        // way; "dp" as everywhere else, omitted on the surface. Broadcasting
+        // a trap's q/r gives nothing away: it is not armed while a scene runs
+        // (and nobody can see it who was not already standing there).
+        if (ev.amt)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":%d,\"trap\":1}",
+            ev.pid, (int)ev.q, (int)ev.r, (int)ev.depth);
+        else if (ev.depth)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":1}",
+            ev.pid, (int)ev.q, (int)ev.r);
+        else
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d}",
+            ev.pid, (int)ev.q, (int)ev.r);
+
         evTextAll(buf, len);
-         
-        k10LogAdd(K10_SAY("steps off the map and into the dark.",
-                          "goes in where the light stops.",
-                          "crosses the threshold alone."),
-                  (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+
+        if (ev.amt) {
+          // The LCD cuts to the wire parting (ui-fx.hpp section 13b); the
+          // caption is this same sentence.
+          const char* tl = K10_SAY("puts a foot down and hears it click.",
+                                   "finds the wire the hard way.",
+                                   "steps on something that was waiting.");
+          k10LogAdd(tl, (int8_t)ev.pid, TONE_ILL, GLY_CLASH);
+          fxCue(FXK_TRIPWIRE, (int8_t)ev.pid, tl);
+        } else {
+          k10LogAdd(K10_SAY("steps off the map and into the dark.",
+                            "goes in where the light stops.",
+                            "crosses the threshold alone."),
+                    (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        }
 
         sndStory(SS_ENC_START, ev.pid);
-         
+
         break;
 
       case EVT_ENC_RESULT: {
@@ -538,7 +562,7 @@ static void drainEvents() {
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"it2\":%d,\"iq2\":%d,\"penLL\":%d,\"penRad\":%d,"
           "\"penRes\":[%d,%d,%d,%d,%d],\"penWnd\":[%d,%d],"
-          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d],\"rec\":%d}",
+          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d],\"rec\":%d,\"trap\":%d}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
@@ -550,7 +574,7 @@ static void drainEvents() {
           (int)ev.encEnds,
           (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
           (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5],
-          (int)ev.encRecipe);
+          (int)ev.encRecipe, (int)ev.amt);
         evTextAll(buf, len);
         // Success reads through the skill that carried it.
         static const char* ENC_WON[5] = {
@@ -567,6 +591,16 @@ static void drainEvents() {
           // the LONG ODDS commendation below is pressed at.
           if (ev.encDN >= 8) fxCue(FXK_LONGODDS, (int8_t)ev.pid, wl);
           sndStory(SS_ENC_WIN, ev.pid, ev.encDN >= 8);   // the long odds also get "that is correct"
+        } else if (ev.encEnds && ev.amt) {
+          // A trap went off on them (amt = 1, traps.hpp). It never takes the
+          // last point of LL, so this is always the line for someone who is
+          // still breathing -- just not walking well.
+          const char* tl = K10_SAY("is caught and held while it bites.",
+                                   "sets it off, and it does what it was built for.",
+                                   "gets out of it. Most of them does.");
+          k10LogAdd(tl, (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
+          fxCue(FXK_BEARTRAP, (int8_t)ev.pid, tl);   // the jaws (ui-fx.hpp section 13b), not WHAM
+          sndStory(SS_ENC_THROWN, ev.pid);
         } else if (ev.encEnds) {
           const char* tl = K10_SAY("is thrown back into daylight, bleeding.",
                                    "comes out the way they went in, worse.");
@@ -643,7 +677,7 @@ static void drainEvents() {
       }
 
       case EVT_ENC_END: {
-        static const char* REASON[ENC_END_COUNT] = {"hazard","abort","dawn","downed","disconnect","regen"};
+        static const char* REASON[ENC_END_COUNT] = {"hazard","abort","dawn","downed","disconnect","regen","escaped"};
         const char* reason = (ev.encOut < ENC_END_COUNT) ? REASON[ev.encOut] : "?";
         if (ev.encOut == ENC_END_DOWNED || ev.encOut == ENC_END_DISCONNECT)
           Log.warning("EVT enc_end pid=%d reason=%s", (int)ev.pid, reason);
@@ -665,6 +699,32 @@ static void drainEvents() {
           k10LogAdd(K10_SAY("does not come out standing.",
                             "falls in there, and the dark keeps it."),
                     (int8_t)ev.pid, TONE_ILL, GLY_DEATH);
+        } else if (ev.encOut == ENC_END_ESCAPED) {
+          k10LogAdd(K10_SAY("backs out of it with nothing, and all ten toes.",
+                            "gets out the way they came, very slowly."),
+                    (int8_t)ev.pid, TONE_PLAIN, GLY_DEPART);
+        }
+        break;
+      }
+
+      case EVT_TRAP: {
+        // amt = TRAP_OUT_*. "known" is the escapee's alone -- the whole of
+        // the trap design is that nobody else gets told where it is -- so it
+        // is unicast to them; "sprung" and "spent" are broadcast so anyone
+        // who knew about it stops drawing a trap that is not there any more.
+        // The chronicle already has these beats from enc_res / enc_bank /
+        // enc_end, so nothing is logged here.
+        static const char* TOUT[3] = { "known", "sprung", "spent" };
+        const char* out = (ev.amt < 3) ? TOUT[ev.amt] : "?";
+        Log.notice("EVT trap pid=%d q=%d r=%d dp=%d out=%s",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.depth, out);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"trap\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":%d,\"out\":\"%s\"}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.depth, out);
+        if (ev.amt == TRAP_OUT_KNOWN) {
+          if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
+        } else {
+          evTextAll(buf, len);
         }
         break;
       }
@@ -850,7 +910,7 @@ static void drainEvents() {
         // Unicast, which is the one place this differs from the Doom.
         // EVT_DOOM_TAUNT is broadcast because the party watching it single
         // somebody out IS the effect; this is a survivor's own second
-        // thoughts about where they bedded down, and in a six-player game
+        // thoughts about where they bedded down, and in a five-player game
         // with three of them underground, broadcasting would be three
         // streams of somebody else's doubt in everyone's log.
         Log.notice("EVT tun_taunt pid=%d wsId=%u", (int)ev.pid, (unsigned)ev.evWsId);
@@ -916,13 +976,21 @@ static void drainEvents() {
       }
 
       case EVT_DAMAGE: {
-        // LL lost to a hazard with no event of its own (chem storm, fog).
+        // LL lost to a hazard with no event of its own (chem storm, fog, the
+        // Wasteland Daisy's bite).
         Log.notice("EVT dmg pid=%d amt=%d cause=%s ll=%d",
                    (int)ev.pid, (int)ev.amt, dcName(ev.res), (int)ev.actNewLL);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dmg\",\"pid\":%d,\"amt\":%d,\"cause\":\"%s\",\"ll\":%d}",
           (int)ev.pid, (int)ev.amt, dcName(ev.res), (int)ev.actNewLL);
         evTextAll(buf, len);
+        // The bite gets a line in the book; the storm hazards are constant
+        // enough that a line per tick would bury it.
+        if (ev.res == DC_DAISY)
+          k10LogAdd(K10_SAY("walks into the flowers, and they bite.",
+                            "is bitten by something pale and pretty.",
+                            "steps in the daisies. Teeth, in the middle."),
+                    (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
         break;
       }
 

@@ -392,9 +392,36 @@ static void tickGame() {
   }
 
   // ── Resource respawn ────────────────────────────────────────────────────────
+  // The Understory's blight (ecology.hpp, ecoBlightMap): a surface hex with
+  // visible mould on it loses its resource and grows none back. One hex is
+  // eaten per tick (10/s) so a spreading wave can't flood the 64-slot event
+  // queue or the clients' 8-deep socket queues; the rest wait a tick or two.
+  // While the mould stays, an armed timer is held full, so the usual
+  // RESPAWN_TICKS count starts only once it has died back. Surface only: the
+  // tunnel board (G.tunnel) is never read here.
+  const uint8_t* blight = ecoBlightMap();
+  bool blightAte = false;
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int c = 0; c < MAP_COLS; c++) {
       HexCell& cell = G.map[r][c];
+      if (ecoBlightAt(blight, c, r)) {
+        if (cell.resource != 0 && !blightAte) {
+          Log.notice("eco blight ate res=%d amt=%d at (%d,%d)",
+                     (int)cell.resource, (int)cell.amount, c, r);
+          cell.resource     = 0;
+          cell.amount       = 0;
+          cell.respawnTimer = RESPAWN_TICKS;
+          ecoNoteEaten();
+          // An rsp with res 0: every client clears the hex (network.js 'rsp').
+          GameEvent rev = {};
+          rev.type = EVT_RESPAWN; rev.q = (int16_t)c; rev.r = (int16_t)r;
+          enqEvt(rev);
+          blightAte = true;
+        } else if (cell.resource == 0 && cell.respawnTimer > 0) {
+          cell.respawnTimer = RESPAWN_TICKS;
+        }
+        continue;
+      }
       if (cell.resource == 0 && cell.respawnTimer > 0) {
         if (--cell.respawnTimer == 0) {
           uint32_t rnd  = esp_random();
@@ -452,6 +479,7 @@ static void tickGame() {
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) {
           p.ll--; ledFlash(0, 100, 0); k10Play(MOTIF_ACID_DRIP);
+          ecoNoteHurt(pid, DC_CHEM);   // a chem burn is an injury: the daisies seed here (ecology.hpp)
           GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
           dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg);
         }
@@ -756,6 +784,8 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
     if (countConnectedPlayersOn(q, r) >= 3 && !isHatchTerrain(G.map[r][q].terrain)) {
       G.map[r][q].shelter  = 0;
       G.map[r][q].terrain  = 9;
+      G.map[r][q].trap     = 0;   // a settlement is the one safe ground (traps.hpp)
+      G.map[r][q].trapEnc  = 0;
       settle.fired         = true;
       settle.removedCount  = 1;
       settle.remQ[0] = q; settle.remR[0] = r;
@@ -773,6 +803,8 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
           if (isHatchTerrain(G.map[triR[pick]][triQ[pick]].terrain)) pick = (uint8_t)((pick + 1) % 3);
         for (uint8_t i = 0; i < 3; i++) G.map[triR[i]][triQ[i]].shelter = 0;
         G.map[triR[pick]][triQ[pick]].terrain = 9;
+        G.map[triR[pick]][triQ[pick]].trap    = 0;   // safe ground, as above
+        G.map[triR[pick]][triQ[pick]].trapEnc = 0;
         settle.fired        = true;
         settle.removedCount = 3;
         for (uint8_t i = 0; i < 3; i++) { settle.remQ[i] = triQ[i]; settle.remR[i] = triR[i]; }

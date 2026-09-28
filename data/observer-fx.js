@@ -1002,7 +1002,8 @@
   }
 
   // ── 9. The cue catalogue: FX_STYLE in ui-fx.hpp. MIRRORED-IN ui-fx.hpp ──
-  const F = { FOCUS: 0, SPEED: 1, HAZARD: 2, KRACKLE: 3, RAIN: 4, SUN: 5, EYES: 6, DARK: 7, NEST: 8, MEDAL: 9 };
+  const F = { FOCUS: 0, SPEED: 1, HAZARD: 2, KRACKLE: 3, RAIN: 4, SUN: 5, EYES: 6, DARK: 7, NEST: 8, MEDAL: 9,
+              WIRE: 10, JAWS: 11 };
   const FL = { NONE: 0, WHITE: 1, NEG: 2, BOTH: 3 };
   const E = { CRACKS: 1, BOLT: 2, FIRE: 4, RAIN: 8, SPLAT: 16, VROLL: 32, TEAR: 64, DRIPS: 128,
               CRESC: 256, NOBAND: 512, BGLINES: 1024, BLOOD: 2048 };
@@ -1030,6 +1031,9 @@
     BELOW:     { sfx: 'KRUNCH',    fill: F.NEST,    prio: 2, trauma: 0,   flash: FL.NONE, ex: E.BLOOD | E.DRIPS, hold: 6800, cool: 180000, size: 100 },
     CRAFTED:   { sfx: 'THUNK',     fill: F.MEDAL,   prio: 2, trauma: 0,   flash: FL.NONE, ex: 0, hold: 5900, cool: 120000, size: 100 },
     CRAWL:     { sfx: null,        fill: F.DARK,    prio: 1, trauma: 0,   flash: FL.NONE, ex: E.NOBAND, hold: 0, cool: 60000, size: 100 },
+    // The traps (section 13b): the wire parting, and the jaws.
+    TRIPWIRE:  { sfx: 'SNAP!',     fill: F.WIRE,    prio: 2, trauma: 0,   flash: FL.NONE, ex: 0, hold: 2900, cool: 90000, size: 100 },
+    BEARTRAP:  { sfx: 'KA-CHUNK',  fill: F.JAWS,    prio: 2, trauma: 0,   flash: FL.NONE, ex: E.BLOOD | E.DRIPS, hold: 4300, cool: 120000, size: 100 },
   };
   // A cut scene holds the panel for seconds, draws no band, and takes the
   // whole screen down; only a catastrophe may cut one short.
@@ -1085,7 +1089,8 @@
     if (sfx) {
       const ink = (st.ex & E.BLOOD) ? INK_BLOOD : (st.fill === F.RAIN ? INK_COLD : INK_HOT);
       const drips = (st.ex & E.DRIPS) !== 0 || (q.kind === 'THREAT' && (q.arg | 0) >= 4);
-      const box = st.fill === F.NEST ? [W * 0.36, H * 0.14] : (st.fill === F.MEDAL ? [110, 30] : [W * 0.62, C.h * 0.66]);
+      const box = st.fill === F.NEST ? [W * 0.36, H * 0.14] : (st.fill === F.MEDAL ? [110, 30]
+                : ((st.fill === F.WIRE || st.fill === F.JAWS) ? [W * 0.38, H * 0.17] : [W * 0.62, C.h * 0.66]));
       C.word = buildWord(sfx, box[0], box[1], st.size / 100, ink, (st.ex & E.CRESC) !== 0, drips, seed);
     }
     if (q.cap) {
@@ -1110,6 +1115,8 @@
     if (st.ex & E.SPLAT) { splatGen((seed + 31) >>> 0); Splat.t0 = now; Splat.on = true; }
     if (st.fill === F.NEST) nestBegin(C);
     if (st.fill === F.MEDAL) medalBegin(C, q);
+    if (st.fill === F.WIRE) wireBegin(C);
+    if (st.fill === F.JAWS) jawsBegin(C);
     if (q.kind === 'CRAWL') crawlBegin(seed, now);
     FX.lastKind[q.kind] = now;
     Cut = (st.ex & E.NOBAND) ? null : C;
@@ -1237,6 +1244,8 @@
     if (t >= END) { Cut = null; FX.cutEnd = now; return; }
     if (st.fill === F.NEST) { nestFrame(C, t, now, shx, shy); return; }
     if (st.fill === F.MEDAL) { medalFrame(C, t, now, shx, shy); return; }
+    if (st.fill === F.WIRE) { wireFrame(C, t, now, shx, shy); return; }
+    if (st.fill === F.JAWS) { jawsFrame(C, t, now, shx, shy); return; }
     if ((st.ex & E.BGLINES) && t < 700)
       focusLines(W * 0.5 + shx, C.yc + shy, W * 0.34, H * 0.17, 64, (C.seed + 5) >>> 0, (t / 80) | 0, PAL[t < 350 ? P.LINE : P.DIM], 3);
     if (t < SPLIT) {
@@ -1902,6 +1911,672 @@
     halfN = 0;
   }
 
+  // ── 13b. The traps (section 13b of ui-fx.hpp) ───────────────────
+  // The wire and the jaws, and the boot both of them are about. The same
+  // drawing as the LCD's, rig for rig -- the boot's outline, its baked leather
+  // relief, the cloth round the leg -- scaled by nk() and laid out wide: the
+  // wire runs the width of the screen, the trap sits in the middle of it.
+  const B_UU = [-20.5, -22.2, -21.6, -18.4, -16.4, -16.6, -14.6, -7, 1.5, 5.4, 5.0, 4.0, 6.0, 11.0, 18.0, 25.0,
+                30.2, 33.6, 34.4, 15, -3];
+  const B_UV = [-5, -11.5, -20.5, -30, -42, -52, -57, -58.5, -57.5, -54.5, -46.5, -37.5, -30.5, -25.5, -21.2,
+                -17.6, -14.2, -10.2, -6.2, -4.8, -4.8];
+  const B_LEATHER = [[-6.0, -38.0, 11.5, 24.0, 7.0], [-14.5, -13.0, 8.5, 11.0, 6.0], [9.0, -14.0, 13.0, 8.0, 4.0],
+                     [25.0, -10.0, 11.0, 6.5, 7.0], [-5.5, -55.0, 12.0, 4.0, 4.0]];
+  const B_FOLDS = [[-2.0, -57.0, 0.94, -0.34, 13.0, 3.2, 3.0], [1.5, -64.0, 0.96, 0.28, 12.0, 3.0, 2.8],
+                   [-4.0, -71.0, 0.98, -0.20, 12.0, 3.0, 2.4], [3.0, -79.0, 0.94, 0.34, 10.0, 2.8, 2.0],
+                   [-5.0, -88.0, 0.97, -0.24, 9.0, 2.6, 1.6], [-6.0, -112.0, 0.12, -0.99, 26.0, 3.5, 2.2],
+                   [5.0, -134.0, 0.27, -0.96, 22.0, 3.0, 1.8]];
+  const B_TOEX = 35, B_TOEY = -6, B_G = 64, B_GU0 = -26, B_GV0 = -62;
+  let bootSlope = null;                     // Int8Array(B_G * B_G * 2), baked once
+  const legAxis = (lean, v) => -5 + lean * (v + 50);
+  const legHalf = (v) => 14.5 - (v + 50) * 0.05;
+  const bootAt = (X, u, v) => [X.x + (u * X.c - v * X.s) * X.k, X.y + (u * X.s + v * X.c) * X.k];
+  const bootToe = (x, y, rot, k) => [x + (B_TOEX * Math.cos(rot) - B_TOEY * Math.sin(rot)) * k,
+                                     y + (B_TOEX * Math.sin(rot) + B_TOEY * Math.cos(rot)) * k];
+  // A closed Catmull-Rom curve through the points, `per` samples a span.
+  function curve(cu, cv, per) {
+    const n = cu.length, ou = [], ov = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i + n - 1) % n, b = i, c = (i + 1) % n, d = (i + 2) % n;
+      for (let k = 0; k < per; k++) {
+        const t = k / per, t2 = t * t, t3 = t2 * t;
+        const wa = -0.5 * t3 + t2 - 0.5 * t, wb = 1.5 * t3 - 2.5 * t2 + 1, wc = -1.5 * t3 + 2 * t2 + 0.5 * t, wd = 0.5 * t3 - 0.5 * t2;
+        ou.push(cu[a] * wa + cu[b] * wb + cu[c] * wc + cu[d] * wd);
+        ov.push(cv[a] * wa + cv[b] * wb + cv[c] * wc + cv[d] * wd);
+      }
+    }
+    return [ou, ov];
+  }
+  // An outline in the boot's frame, filled even-odd a pixel at a time, `shade`
+  // choosing each pixel's ink from where it is on the boot (or all `col`).
+  function bootFill(ou, ov, X, shade, col, seed) {
+    const n = ou.length, px = new Array(n), py = new Array(n);
+    let ymin = 1e9, ymax = -1e9;
+    for (let i = 0; i < n; i++) { const p = bootAt(X, ou[i], ov[i]); px[i] = p[0]; py[i] = p[1]; ymin = Math.min(ymin, p[1]); ymax = Math.max(ymax, p[1]); }
+    const y0 = Math.max(0, Math.ceil(ymin - 0.5)), y1 = Math.min(H, Math.ceil(ymax - 0.5)), ik = 1 / X.k, xs = [];
+    for (let y = y0; y < y1; y++) {
+      const yc = y + 0.5;
+      xs.length = 0;
+      for (let i = 0; i < n; i++) {
+        const j = i + 1 === n ? 0 : i + 1, ya = py[i], yb = py[j];
+        if ((ya <= yc && yb > yc) || (yb <= yc && ya > yc)) xs.push(px[i] + (yc - ya) * (px[j] - px[i]) / (yb - ya));
+      }
+      xs.sort((a, b) => a - b);
+      for (let a = 0; a + 1 < xs.length; a += 2) {
+        const xa = Math.max(0, Math.ceil(xs[a] - 0.5)), xb = Math.min(W, Math.ceil(xs[a + 1] - 0.5));
+        if (!shade) { span(y, xa, xb, col); continue; }
+        const dy = (yc - X.y) * ik;
+        for (let x = xa; x < xb; x++) {
+          const dx = (x + 0.5 - X.x) * ik;
+          put(x, y, shade(X, dx * X.c + dy * X.s, -dx * X.s + dy * X.c, x, y, seed));
+        }
+      }
+    }
+  }
+  // The house edge: faint all round, lit up and to the left; the fill covers the rest.
+  function bootEdge(ou, ov, X, rim, lit) {
+    const n = ou.length;
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? -lit : 0, w = pass ? 2.4 : 2.8, col = PAL[pass ? rim : rim - 2];
+      let q0 = bootAt(X, ou[n - 1], ov[n - 1]);
+      for (let i = 0; i < n; i++) {
+        const q1 = bootAt(X, ou[i], ov[i]);
+        stroke(q0[0] + o, q0[1] + o, q1[0] + o, q1[1] + o, w, w, col);
+        q0 = q1;
+      }
+    }
+  }
+  function bootSwell(u, v) {
+    let h2 = 0;
+    for (const B of B_LEATHER) {
+      const du = (u - B[0]) / B[2], dv = (v - B[1]) / B[3], q = du * du + dv * dv;
+      if (q < 1) h2 += B[4] * B[4] * (1 - q);
+    }
+    return Math.sqrt(h2);
+  }
+  // The upper as one form: its outline on a 64x64 grid, a chamfer distance to
+  // the edge, a pillow off that with the swellings stood proud, and the slope.
+  function bootBake(ou, ov) {
+    const G = B_G, n = ou.length, d = new Int16Array(G * G), h = new Float32Array(G * G);
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const u = B_GU0 + i + 0.5, v = B_GV0 + j + 0.5;
+      let inside = false;
+      for (let a = 0, b = n - 1; a < n; b = a++)
+        if ((ov[a] > v) !== (ov[b] > v) && u < ou[b] + (v - ov[b]) * (ou[a] - ou[b]) / (ov[a] - ov[b])) inside = !inside;
+      d[j * G + i] = inside ? 30000 : 0;
+    }
+    chamfer(d, G, G);
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const dd = d[j * G + i] / 3;
+      if (dd > 0) {
+        const e = Math.min(dd / 6.5, 1);
+        h[j * G + i] = Math.trunc((6.5 * (1 - (1 - e) * (1 - e)) + 0.55 * bootSwell(B_GU0 + i + 0.5, B_GV0 + j + 0.5)) * 64) / 64;
+      }
+    }
+    bootSlope = new Int8Array(G * G * 2);
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const il = Math.max(0, i - 1), ir = Math.min(G - 1, i + 1), jt = Math.max(0, j - 1), jb = Math.min(G - 1, j + 1);
+      const gu = (h[j * G + ir] - h[j * G + il]) / (ir - il), gv = (h[jb * G + i] - h[jt * G + i]) / (jb - jt);
+      bootSlope[(j * G + i) * 2] = Math.trunc(clamp(gu * 32, -127, 127));
+      bootSlope[(j * G + i) * 2 + 1] = Math.trunc(clamp(gv * 32, -127, 127));
+    }
+  }
+  // Black leather the way a comic inks it: black off the light, a screen
+  // thickening toward it, a solid core where it is square on.
+  function shadeLeather(X, u, v, x, y, seed) {
+    let gu = 0, gv = 0;
+    const fu = u - B_GU0 - 0.5, fv = v - B_GV0 - 0.5, i = Math.floor(fu), j = Math.floor(fv);
+    if (bootSlope && i >= 0 && j >= 0 && i + 1 < B_G && j + 1 < B_G) {
+      const tu = fu - i, tv = fv - j, a = (j * B_G + i) * 2, b = a + 2, c = a + B_G * 2, d = c + 2, S = bootSlope;
+      gu = ((S[a] * (1 - tu) + S[b] * tu) * (1 - tv) + (S[c] * (1 - tu) + S[d] * tu) * tv) / 32;
+      gv = ((S[a + 1] * (1 - tu) + S[b + 1] * tu) * (1 - tv) + (S[c + 1] * (1 - tu) + S[d + 1] * tu) * tv) / 32;
+    }
+    const inv = 1 / Math.sqrt(gu * gu + gv * gv + 1), dl = (-gu * X.lx - gv * X.ly + X.lz) * inv;
+    const grain = (hash2(x * 7 + y * 1031, seed) & 31) - 16, dot = DOT[(y & 7) * 8 + (x & 7)];
+    if (dl > 0.93) return PAL[P.HDR];
+    const tone = ((dl - 0.62) * 900 | 0) + grain;
+    if (tone > dot) return PAL[tone > 190 ? P.BRICK : P.RUST];
+    return PAL[P.INK];
+  }
+  // Matte cloth round a tube that leans back, creased by the folds.
+  function shadeCloth(X, u, v, x, y, seed) {
+    const uc = legAxis(X.lean, v), Wd = legHalf(v), a = clamp((u - uc) / Wd, -0.96, 0.96), r = Math.sqrt(1 - a * a);
+    let gu = -a / r, gv = a / r * X.lean;
+    for (const F of B_FOLDS) {
+      const ru = u - (F[0] + legAxis(X.lean, F[1])), rv = v - F[1], al = (ru * F[2] + rv * F[3]) / F[4];
+      if (al <= -1 || al >= 1) continue;
+      const s = (-ru * F[3] + rv * F[2]) / F[5];
+      if (s <= -1 || s >= 1) continue;
+      const db = F[6] * (1 - al * al) * 2 * (1 - s * s) * (-2 * s) / F[5];
+      gu += db * -F[3]; gv += db * F[2];
+    }
+    const d = (-gu * X.lx - gv * X.ly + X.lz) / Math.sqrt(gu * gu + gv * gv + 1);
+    const weave = (hash2((x >> 1) * 13 + (y >> 1) * 977, seed) & 31) - 16, dot = DOT[(y & 7) * 8 + (x & 7)];
+    const tone = ((d - 0.5) * 620 | 0) + weave;
+    if (tone > 150 && (tone - 150) * 2 > dot) return PAL[P.EMBER];
+    if (tone > dot) return PAL[P.LINE];
+    return PAL[P.INK];
+  }
+  // A work boot, the trouser leg over it, its laces tied off.
+  function bootDraw(x, y, rot, k, seed, lean, t) {
+    const X = { x, y, c: Math.cos(rot), s: Math.sin(rot), k, lean: lean || 0 };
+    const Lx = -0.52, Ly = -0.62, Lz = 0.59;
+    X.lx = Lx * X.c + Ly * X.s; X.ly = -Lx * X.s + Ly * X.c; X.lz = Lz;
+    const at = (u, v) => bootAt(X, u, v);
+    const seg = (u0, v0, u1, v1, col) => { const a = at(u0, v0), b = at(u1, v1); line(a[0], a[1], b[0], b[1], col); return [a, b]; };
+    // The upper.
+    let [ou, ov] = curve(B_UU, B_UV, 4);
+    if (!bootSlope) bootBake(ou, ov);
+    bootEdge(ou, ov, X, P.BRICK, 1.5);
+    bootFill(ou, ov, X, shadeLeather, 0, seed);
+    // The sole, its toe sprung up, a heel block and lugs.
+    ou = [-22.5, 27.0, 32.5, 35.5, 36.0, 34.0]; ov = [-5.8, -5.8, -6.8, -5.2, -2.6, -0.6];
+    for (let lu = 31.5; lu > -7; lu -= 3.7) { ou.push(lu, lu - 0.4, lu - 2.5, lu - 2.9); ov.push(0.6, 2.6, 2.6, 0.6); }
+    ou.push(-7.5); ov.push(0.6);
+    for (let lu = -8; lu > -21; lu -= 3.4) { ou.push(lu, lu - 0.4, lu - 2.4, lu - 2.8); ov.push(2.4, 4.4, 4.4, 2.4); }
+    ou.push(-22, -23); ov.push(2.4, -1.5);
+    bootEdge(ou, ov, X, P.BRICK, 1.3);
+    bootFill(ou, ov, X, null, PAL[P.INK], seed);
+    seg(-21, -2.4, 33, -2.4, PAL[P.LINE]);
+    for (let su = -20; su < 30; su += 2.6) seg(su, -6.6, su + 1.3, -6.6, PAL[P.EMBER]);
+    // Seams round the toe cap and up the heel counter, stitched.
+    const TU = [17.5, 16.0, 16.6, 19.5], TV = [-20.5, -15.0, -9.5, -6.0], HU = [-8.5, -10.5, -13.0, -18.0], HV = [-6.0, -16.0, -25.0, -31.0];
+    for (let sm = 0; sm < 2; sm++) {
+      const Uu = sm ? HU : TU, Vv = sm ? HV : TV;
+      for (let i = 0; i < 3; i++) {
+        const [a, b] = seg(Uu[i], Vv[i], Uu[i + 1], Vv[i + 1], PAL[P.INK]);
+        line(a[0] - 1, a[1] - 1, b[0] - 1, b[1] - 1, PAL[P.RUST]);
+        put(((a[0] + b[0]) * 0.5 | 0) + 1, (a[1] + b[1]) * 0.5 | 0, PAL[P.EMBER]);
+      }
+    }
+    // Flex creases over the instep.
+    for (let i = 0; i < 2; i++) {
+      const cu = 6.5 + i * 3.5, cvv = -21.5 + i * 2.2;
+      const [a, b] = seg(cu - 3, cvv - 1.4, cu + 3.2, cvv + 1.6, PAL[P.INK]);
+      line(a[0] - 1, a[1], b[0] - 1, b[1], PAL[P.BRICK]);
+    }
+    // The speculars, by hand.
+    const SS = [[-13.8, -47.0, -14.6, -36.0, 1.8, 1.0], [-14.9, -32.5, -15.8, -23.0, 1.4, 0.7], [-19.0, -18.5, -19.6, -10.0, 1.3, 0.7]];
+    SS.forEach((q, i) => { const a = at(q[0], q[1]), b = at(q[2], q[3]); stroke(a[0], a[1], b[0], b[1], q[4] * k, q[5] * k, PAL[i === 2 ? P.BRICK : P.HDR]); });
+    { const a = at(22.5, -16.4), b = at(30.5, -12.6); stroke(a[0], a[1], b[0], b[1], 1.2 * k, 1.9 * k, PAL[P.GLOW]); put(b[0] | 0, b[1] | 0, PAL[P.WHITE]); }
+    // Scuffs on the toe.
+    for (let i = 0; i < 4; i++) {
+      const h = hash2(i, (seed + 5) >>> 0), su = 18 + U(h) * 12, sv = -13 + U(hash(h + 1)) * 6, sl = 1.5 + U(hash(h + 2)) * 2.5;
+      seg(su, sv, su + sl, sv + S1(hash(h + 3)) * 1.2, PAL[(h & 1) ? P.BRICK : P.HDR]);
+    }
+    // Eyelets and the lace between them.
+    const EU = [4.2, 2.6, 1.6, 1.8, 2.2], EV = [-26.5, -32.0, -37.5, -43.0, -48.5], E_ = EU.map((u, i) => at(u, EV[i]));
+    for (let i = 0; i + 1 < 5; i++) {
+      const f0 = at(EU[i] + 2.4, EV[i] - 0.5), f1 = at(EU[i + 1] + 2.4, EV[i + 1] - 0.5);
+      stroke(E_[i][0] + 0.6, E_[i][1] + 0.7, f1[0] + 0.6, f1[1] + 0.7, 3, 3, PAL[P.INK]);
+      stroke(f0[0] + 0.6, f0[1] + 0.7, E_[i + 1][0] + 0.6, E_[i + 1][1] + 0.7, 3, 3, PAL[P.INK]);
+      stroke(E_[i][0], E_[i][1], f1[0], f1[1], 1.7, 1.7, PAL[P.OK]);
+      stroke(f0[0], f0[1], E_[i + 1][0], E_[i + 1][1], 1.7, 1.7, PAL[P.HDR]);
+    }
+    E_.forEach((e) => { disc(e[0], e[1], 2.2, PAL[P.INK]); disc(e[0] - 0.4, e[1] - 0.4, 1.3, PAL[P.CRIT]); });
+    // The trouser leg over it, torn at the hem.
+    {
+      const SV = [-50, -72, -100, -135, -170], lu = [], lv = [];
+      for (let i = 0; i < 5; i++) { lu.push(legAxis(X.lean, SV[i]) - legHalf(SV[i]) - (i === 1 ? 1.2 : 0)); lv.push(SV[i]); }
+      for (let i = 4; i >= 0; i--) { lu.push(legAxis(X.lean, SV[i]) + legHalf(SV[i]) + (i === 1 ? 1.5 : 0)); lv.push(SV[i]); }
+      for (let i = 1; i < 8; i++) {
+        const h = hash2(i, (seed + 23) >>> 0);
+        lu.push(legAxis(X.lean, -50) + legHalf(-50) - i * (2 * legHalf(-50) / 8)); lv.push(-49 + U(h) * 3.2 - ((i & 1) ? 1.4 : 0));
+      }
+      const [cu, cv] = curve(lu, lv, 2);
+      bootEdge(cu, cv, X, P.RUST, 1.6);
+      bootFill(cu, cv, X, shadeCloth, 0, (seed + 31) >>> 0);
+      // The folds, inked: creases that bow and thin to nothing, lit on the lip.
+      B_FOLDS.forEach((F, i) => {
+        const h = hash2(i, (seed + 37) >>> 0), cu0 = F[0] + legAxis(X.lean, F[1]), cv0 = F[1] + F[5] * 0.35;
+        const L = F[4] * (0.62 + 0.25 * U(h)), bow = F[5] * 0.45 * S1(hash(h + 1)), pts = [];
+        for (let q = 0; q < 4; q++) {
+          const tt = (q / 3) * 2 - 1, sag = bow * (1 - tt * tt);
+          pts.push(at(cu0 + F[2] * L * tt - F[3] * sag, cv0 + F[3] * L * tt + F[2] * sag));
+        }
+        const WW = [0.4, 1.9, 1.7, 0.4];
+        for (let q = 0; q < 3; q++) {
+          stroke(pts[q][0] - 0.8, pts[q][1] - 0.9, pts[q + 1][0] - 0.8, pts[q + 1][1] - 0.9, WW[q] * 0.7, WW[q + 1] * 0.7, PAL[i < 5 ? P.RUST : P.EMBER]);
+          stroke(pts[q][0], pts[q][1], pts[q + 1][0], pts[q + 1][1], WW[q], WW[q + 1], PAL[P.INK]);
+        }
+      });
+      // A patch over a hole in the shin, running stitch round it.
+      const pu = legAxis(X.lean, -104) - 2, pv = -104, PU = [-5.5, 5.0, 5.8, -5.0], PV = [-6.0, -7.0, 6.0, 6.5];
+      const Q = PU.map((u, i) => at(pu + u, pv + PV[i]));
+      { const s0 = stip, ss0 = stipSeed; stip = Math.max(s0, 150); stipSeed = (seed + 41) >>> 0; poly(Q.map((q) => q[0]), Q.map((q) => q[1]), PAL[P.DIM]); stip = s0; stipSeed = ss0; }
+      for (let i = 0; i < 4; i++) {
+        const j = (i + 1) & 3;
+        for (let d = 0; d < 5; d++) {
+          const f0 = (d + 0.15) / 5, f1 = (d + 0.6) / 5;
+          line(lerp(Q[i][0], Q[j][0], f0), lerp(Q[i][1], Q[j][1], f0), lerp(Q[i][0], Q[j][0], f1), lerp(Q[i][1], Q[j][1], f1), PAL[P.LINE]);
+        }
+      }
+      for (let i = 0; i < 4; i++) {
+        const h = hash2(i, (seed + 43) >>> 0), a = at(legAxis(X.lean, -50) - 12 + U(h) * 22, -47.5);
+        line(a[0], a[1], a[0] + S1(hash(h + 1)) * 1.5, a[1] + 2 + ((h >>> 7) % 4), PAL[P.RUST]);
+      }
+    }
+    // The bow, tied under the hem; its ends hang the way the screen says down is.
+    {
+      const kn = at(6.5, -42), sw = (noise1((t || 0) * 0.004, (seed + 51) >>> 0) - 0.5) * 0.8;
+      for (let lp = 0; lp < 2; lp++) {
+        const la = (lp ? 0.35 : -0.55) + sw * 0.3, lr = 3.2 * k, lx = kn[0] + Math.cos(la) * lr, ly = kn[1] + Math.sin(la) * lr * 0.7;
+        blob(lx, ly, Math.cos(la), Math.sin(la), lr * 0.95, lr * 0.55, (seed + 53 + lp) >>> 0, PAL[P.INK]);
+        blob(lx - 0.5, ly - 0.5, Math.cos(la), Math.sin(la), lr * 0.72, lr * 0.34, (seed + 53 + lp) >>> 0, PAL[P.OK]);
+        blob(lx, ly, Math.cos(la), Math.sin(la), lr * 0.45, lr * 0.14, (seed + 55 + lp) >>> 0, PAL[P.INK]);
+      }
+      for (let e = 0; e < 2; e++) {
+        const ea = Math.PI * 0.5 + (e ? 0.22 : -0.12) + sw, el = (e ? 7.5 : 9.5) * k;
+        const tx = kn[0] + Math.cos(ea) * el, ty = kn[1] + Math.sin(ea) * el;
+        stroke(kn[0] + 0.6, kn[1] + 0.6, tx + 0.6, ty + 0.6, 2.6, 2.2, PAL[P.INK]);
+        stroke(kn[0], kn[1], tx, ty, 1.4, 1.2, PAL[e ? P.OK : P.HDR]);
+        disc(tx, ty, 1.4, PAL[P.INK]); put(tx | 0, ty | 0, PAL[P.GLOW]);
+      }
+      disc(kn[0], kn[1], 1.8, PAL[P.INK]); disc(kn[0] - 0.3, kn[1] - 0.3, 1.0, PAL[P.OK]);
+    }
+  }
+  function dustDraw(x, y, t, spread, seed, dur) {
+    dur = dur || 700;
+    if (t < 0 || t > dur) return;
+    const p = t / dur, s0 = stip, ss0 = stipSeed;
+    stip = Math.max(s0, p * p * 255 | 0); stipSeed = (seed + 3) >>> 0;
+    for (let i = 0; i < 7; i++) {
+      const h = hash2(i, seed), a = -Math.PI + U(h) * Math.PI;
+      const d = spread * (0.3 + 0.7 * U(hash(h + 1))) * cubicOut(p), r = (3 + 6 * U(hash(h + 2))) * (0.5 + p) * nk();
+      blob(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.55 - p * 10, 1, 0, r, r * 0.8, h, PAL[(h & 1) ? P.DIM : P.LINE]);
+    }
+    stip = s0; stipSeed = ss0;
+  }
+  function sceneCaption(C, t, shx, shy) {
+    if (!C.cap.length || t < 250) return;
+    const p = clamp((t - 250) / 150, 0, 1), bw = C.capW + 14, bh = C.cap.length * 16 + 8;
+    const x = (10 + shx) | 0, y = (10 + shy - (1 - backOut(p)) * 22) | 0;
+    rect(x + 3, y + 3, x + bw + 3, y + bh + 3, PAL[P.INK]); rect(x, y, x + bw, y + bh, PAL[P.INK]);
+    rect(x + 1, y + 1, x + bw - 1, y + 2, PAL[P.EMBER]); rect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, PAL[P.EMBER]);
+    C.cap.forEach((l, i) => f2(l, x + 7, y + 4 + i * 16, PAL[P.OK]));
+  }
+
+  // The wire.
+  const WB = { STEP: 120, TOUCH: 700, SNAP: 880, DOWN: 1330, LOOM: 1450, FADE: 2650 };
+  const WIRE_N = 16, WIRE_TOUCHROT = -0.08, WIRE_STEPMS = 2;
+  let Wire = null;
+  function wireBegin(C) {
+    const R = new Rng((C.seed ^ 0x7B1A3E5) >>> 0), k = nk();
+    const Wr = { seed: R.next(), ax: 6, ay: H * (0.62 + R.u() * 0.05), bx: W - 7, by: H * (0.72 + R.u() * 0.05),
+                 K: 1.45 * k, snapped: false, down: false, simT: 0, q: null, rest: [0, 0], snapX: 0, snapY: 0 };
+    const f = 0.45 + 0.1 * R.u();
+    Wr.hx = lerp(Wr.ax, Wr.bx, f); Wr.hy = lerp(Wr.ay, Wr.by, f);
+    Wr.sx = -90 * k; Wr.sy = H * 0.24 + R.u() * 30 * k;
+    Wire = Wr;
+  }
+  function wireBoot(Wr, t) {
+    if (t < WB.STEP) return null;
+    const c = Math.cos(WIRE_TOUCHROT), s = Math.sin(WIRE_TOUCHROT), K = Wr.K;
+    const ox = Wr.hx - (B_TOEX * c - B_TOEY * s) * K, oy = Wr.hy - (B_TOEX * s + B_TOEY * c) * K;
+    if (t < WB.TOUCH) {
+      const e = cubicOut((t - WB.STEP) / (WB.TOUCH - WB.STEP)), qx = (Wr.sx + ox) * 0.5, qy = Math.min(Wr.sy, oy) - 34 * nk(), u = 1 - e;
+      return [u * u * Wr.sx + 2 * u * e * qx + e * e * ox, u * u * Wr.sy + 2 * u * e * qy + e * e * oy, lerp(-0.45, WIRE_TOUCHROT, e)];
+    }
+    if (t < WB.SNAP) {
+      const e = cubicOut((t - WB.TOUCH) / (WB.SNAP - WB.TOUCH));
+      return [ox + 11 * e * nk(), oy + 5 * e * nk(), WIRE_TOUCHROT + 0.06 * e];
+    }
+    const u = (t - WB.SNAP) / 520;
+    if (u > 1.3) return null;
+    return [ox + (11 + 128 * u) * nk(), oy + (5 + 22 * u + 150 * u * u) * nk(), WIRE_TOUCHROT + 0.06 + 1.05 * Math.min(u, 1)];
+  }
+  function wireStep(Wr, ts) {
+    const dt = WIRE_STEPMS, KS = 0.0032, G = 0.0008, DAMP = 1 - 0.0055 * WIRE_STEPMS, VMAX = 2.2;
+    for (let sd = 0; sd < 2; sd++) {
+      const Q = Wr.q[sd];
+      if (sd === 0) { Q.x[0] = Wr.ax; Q.y[0] = Wr.ay; }
+      else { Q.x[0] = Wr.bx; Q.y[0] = Wr.by - (Wr.by + 90) * cubicIn(clamp((ts - 30) / 320, 0, 1)); }
+      const ax = new Float64Array(WIRE_N), ay = new Float64Array(WIRE_N).fill(G);
+      for (let i = 0; i + 1 < WIRE_N; i++) {
+        const dx = Q.x[i + 1] - Q.x[i], dy = Q.y[i + 1] - Q.y[i], d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 0.001) continue;
+        const f = KS * (d - Wr.rest[sd]) / d;
+        ax[i] += f * dx; ay[i] += f * dy; ax[i + 1] -= f * dx; ay[i + 1] -= f * dy;
+      }
+      for (let i = 1; i < WIRE_N; i++) {
+        Q.vx[i] = clamp((Q.vx[i] + ax[i] * dt) * DAMP, -VMAX, VMAX);
+        Q.vy[i] = clamp((Q.vy[i] + ay[i] * dt) * DAMP, -VMAX, VMAX);
+        Q.x[i] += Q.vx[i] * dt; Q.y[i] += Q.vy[i] * dt;
+      }
+    }
+  }
+  function wireSeg(x0, y0, x1, y1, lit) {
+    stroke(x0 + 0.6, y0 + 0.8, x1 + 0.6, y1 + 0.8, 3.4, 3.4, PAL[P.INK]);
+    stroke(x0, y0, x1, y1, 1.7, 1.7, PAL[lit]);
+  }
+  function wireFrame(C, t, now, shx, shy) {
+    const Wr = Wire;
+    if (!Wr) return;
+    const k = nk(), fade = t > WB.FADE ? Math.min(255, ((t - WB.FADE) * 255 / 520) | 0) : 0;
+    if (fade) { stip = fade; stipSeed = (C.seed + 1) >>> 0; }
+    const boot = wireBoot(Wr, t);
+    let tx = Wr.hx, ty = Wr.hy;
+    if (boot && t >= WB.TOUCH && t < WB.SNAP) [tx, ty] = bootToe(boot[0], boot[1], boot[2], Wr.K);
+    if (t >= WB.SNAP && !Wr.snapped) {
+      Wr.snapped = true; Wr.snapX = tx; Wr.snapY = ty; Wr.q = [];
+      for (let sd = 0; sd < 2; sd++) {
+        const x0 = sd ? Wr.bx : Wr.ax, y0 = sd ? Wr.by : Wr.ay, Q = { x: [], y: [], vx: [], vy: [] };
+        for (let i = 0; i < WIRE_N; i++) { const u = i / (WIRE_N - 1); Q.x.push(lerp(x0, tx, u)); Q.y.push(lerp(y0, ty, u)); Q.vx.push(0); Q.vy.push(0); }
+        Q.vy[WIRE_N - 1] = -0.45;
+        Wr.rest[sd] = Math.hypot(tx - x0, ty - y0) / (WIRE_N - 1) * 0.3;
+        Wr.q.push(Q);
+      }
+      Wr.simT = 0;
+      impact(0.5); flash(FL.WHITE); tearBurst(now, 1, 14, 160);
+    }
+    if (Wr.snapped) { const ts = t - WB.SNAP; let g = 0; while (Wr.simT + WIRE_STEPMS <= ts && g++ < 200) { Wr.simT += WIRE_STEPMS; wireStep(Wr, Wr.simT); } }
+    if (t >= WB.DOWN && !Wr.down) { Wr.down = true; impact(0.3); }
+    // The nail's post and the eye-screw's.
+    rect((shx - 2) | 0, (Wr.ay - 30 * k + shy) | 0, (shx + 8) | 0, (Wr.ay + 40 * k + shy) | 0, PAL[P.INK]);
+    rect((shx + 7) | 0, (Wr.ay - 30 * k + shy) | 0, (shx + 8) | 0, (Wr.ay + 40 * k + shy) | 0, PAL[P.RUST]);
+    rect((W - 6 + shx) | 0, (shy - 2) | 0, (W + 2 + shx) | 0, (Wr.by + 46 * k + shy) | 0, PAL[P.INK]);
+    rect((W - 6 + shx) | 0, (shy - 2) | 0, (W - 5 + shx) | 0, (Wr.by + 46 * k + shy) | 0, PAL[P.RUST]);
+    disc(Wr.ax + 1 + shx, Wr.ay + shy, 3, PAL[P.INK]); disc(Wr.ax + 0.5 + shx, Wr.ay - 0.5 + shy, 1.8, PAL[P.HDR]);
+    const eyeY = Wr.snapped ? Wr.q[1].y[0] : Wr.by;
+    if (eyeY > -10) wireSeg(Wr.bx - 1 + shx, Math.min(eyeY, Wr.by) + shy, Wr.bx - 1 + shx, -2 + shy, P.OK);
+    if (!Wr.snapped) {
+      const lit = t >= WB.TOUCH + 90 ? P.WHITE : P.GLOW;
+      wireSeg(Wr.ax + shx, Wr.ay + shy, tx + shx, ty + shy, lit);
+      wireSeg(tx + shx, ty + shy, Wr.bx + shx, Wr.by + shy, lit);
+      const g = ((t * 0.22) % 300) / 300;
+      if (g < 0.9) { const gx = lerp(Wr.ax, Wr.bx, g), gy = lerp(Wr.ay, Wr.by, g); stroke(gx - 4 + shx, gy - 0.5 + shy, gx + 4 + shx, gy + 0.5 + shy, 1.6, 1.6, PAL[P.WHITE]); }
+      if (t >= WB.TOUCH + 60) {
+        const boil = (t / 60) | 0;
+        for (let q = 0; q < 4; q++) {
+          const h = hash2(q, (boil + C.seed) >>> 0), a = Math.PI * 2 * (0.55 + 0.4 * U(h)) + ((q & 1) ? Math.PI : 0);
+          const r0 = (6 + 3 * U(hash(h + 1))) * k, r1 = r0 + (5 + 4 * U(hash(h + 2))) * k;
+          stroke(tx + Math.cos(a) * r0 + shx, ty + Math.sin(a) * r0 + shy, tx + Math.cos(a) * r1 + shx, ty + Math.sin(a) * r1 + shy, 1.8, 0.8, PAL[P.WHITE]);
+        }
+      }
+    } else {
+      for (let sd = 0; sd < 2; sd++) {
+        const Q = Wr.q[sd];
+        for (let i = 0; i + 1 < WIRE_N; i++) wireSeg(Q.x[i] + shx, Q.y[i] + shy, Q.x[i + 1] + shx, Q.y[i + 1] + shy, P.GLOW);
+        const ex = Q.x[WIRE_N - 1], ey = Q.y[WIRE_N - 1], dx = ex - Q.x[WIRE_N - 2], dy = ey - Q.y[WIRE_N - 2];
+        const a0 = Math.hypot(dx, dy) > 0.01 ? Math.atan2(dy, dx) : 0;
+        for (let q = 0; q < 4; q++) {
+          const h = hash2(q + sd * 8, (Wr.seed + ((t / 70) | 0)) >>> 0), a = a0 + (q - 1.5) * 0.42 + S1(h) * 0.2, l = (4 + 5 * U(hash(h + 1))) * k;
+          line(ex + shx, ey + shy, ex + Math.cos(a) * l + shx, ey + Math.sin(a) * l + shy, PAL[(q & 1) ? P.HOT : P.GLOW]);
+        }
+      }
+      const ts = t - WB.SNAP;
+      if (ts < 110) {
+        for (let pass = 0; pass < 2; pass++) {
+          const SP = 14;
+          let ox = 0, oy = 0;
+          for (let q = 0; q <= SP; q++) {
+            const h = hash2(q % SP, (Wr.seed + 61) >>> 0), a = ((q % SP) + S1(h) * 0.3) * Math.PI * 2 / SP;
+            const r = ((q & 1) ? 9 : 20 + 14 * U(hash(h + 1))) * (pass ? 1 : 1.25) * (1.2 - ts / 220) * k;
+            const px = Wr.snapX + Math.cos(a) * r + shx, py = Wr.snapY + Math.sin(a) * r * 0.8 + shy;
+            if (q) tri(Wr.snapX + shx, Wr.snapY + shy, ox, oy, px, py, PAL[pass ? P.WHITE : P.INK]);
+            ox = px; oy = py;
+          }
+        }
+      }
+      if (ts < 200) {
+        const q = ts / 200, R = new Rng((Wr.seed + 5) >>> 0);
+        for (let j = 0; j < 10; j++) {
+          const a = R.u() * Math.PI * 2, r0 = (3 + 20 * q * R.u()) * k, r1 = r0 + (5 + 9 * R.u()) * (1 - q) * k;
+          stroke(Wr.snapX + Math.cos(a) * r0 + shx, Wr.snapY + Math.sin(a) * r0 + shy, Wr.snapX + Math.cos(a) * r1 + shx, Wr.snapY + Math.sin(a) * r1 + shy,
+                 2.6 * (1 - q) + 0.6, 0.6, PAL[P.WHITE]);
+        }
+        disc(Wr.snapX + shx, Wr.snapY + shy, 6 * (1 - q) * k, PAL[P.WHITE]);
+      }
+    }
+    if (boot) {
+      if (t >= WB.SNAP && t < WB.SNAP + 380) {
+        const pb = wireBoot(Wr, Math.max(WB.SNAP, t - 60));
+        if (pb) {
+          const dx = boot[0] - pb[0], dy = boot[1] - pb[1], d = Math.hypot(dx, dy);
+          if (d > 0.5) speedLines(boot[0] - dx / d * 40 * k + shx, boot[1] - 30 * k - dy / d * 40 * k + shy, 30 * k, dx / d, dy / d, 16,
+                                  (C.seed + 7) >>> 0, t * 1.6, PAL[P.GLOW], PAL[P.WHITE]);
+        }
+      }
+      let jx = 0, jy = 0;
+      if (t >= WB.TOUCH && t < WB.SNAP) { const h = hash2(FX.frame, (C.seed + 11) >>> 0); jx = S1(h) * 0.8; jy = S1(hash(h + 1)) * 0.8; }
+      bootDraw(boot[0] + jx + shx, boot[1] + jy + shy, boot[2], Wr.K, Wr.seed, 0.30, t);
+    }
+    if (Wr.down) {
+      const ox = Wr.hx - (B_TOEX * Math.cos(WIRE_TOUCHROT) - B_TOEY * Math.sin(WIRE_TOUCHROT)) * Wr.K;
+      dustDraw(Math.min(W - 20, ox + 150 * k) + shx, H - 6 + shy, t - WB.DOWN, 70 * k, (Wr.seed + 21) >>> 0);
+    }
+    if (C.word && t >= WB.SNAP) wordSlam(C, C.word, t - WB.SNAP - 10, clamp(Wr.snapX, W * 0.3, W * 0.7) + shx, Wr.snapY - 62 * k + shy, -0.12, 45, (t / 80) | 0);
+    // What it was holding comes down over the top: black, a ragged foot of
+    // planks and junk, grit falling ahead of it.
+    if (t >= WB.LOOM) {
+      const p = cubicIn(clamp((t - WB.LOOM) / 800, 0, 1));
+      let ymax = 0;
+      for (let x = 0; x < W; x++) {
+        const n = noise1((x - shx) * 0.045, (Wr.seed + 31) >>> 0) - 0.5, e = (-24 + (H + 60) * p + n * 30 * k + shy) | 0;
+        bandT[x] = -1; bandB[x] = e; if (e > ymax) ymax = e;
+      }
+      colT = bandT; colB = bandB; colY0 = 0; colY1 = Math.min(H, ymax);
+      rect(0, 0, W, Math.min(H, ymax), PAL[P.INK]);
+      colT = colB = null;
+      for (let x = 0; x < W; x++) { const e = bandB[x]; put(x, e - 1, PAL[P.RUST]); if (hash2(x, Wr.seed) % 3 === 0) put(x, e - 2, PAL[P.EMBER]); }
+      const planks = Math.ceil(W / 54);
+      for (let q = 0; q < planks; q++) {
+        const h = hash2(q, (Wr.seed + 51) >>> 0), px = clamp((12 + q * 54 + S1(h) * 14) | 0, 0, W - 1);
+        const a = S1(hash(h + 1)) * 0.45, L = (30 + 22 * U(hash(h + 2))) * k, cy = bandB[px] - 4, ca = Math.cos(a), sa = Math.sin(a);
+        const x0 = px - ca * L * 0.5, y0 = cy - sa * L * 0.5, x1 = px + ca * L * 0.5, y1 = cy + sa * L * 0.5;
+        stroke(x0, y0, x1, y1, 10 * k, 9 * k, PAL[P.EMBER]);
+        stroke(x0 - 0.8, y0 - 1.3, x1 - 0.8, y1 - 1.3, 8.4 * k, 7.6 * k, PAL[P.BRICK]);
+        stroke(x0, y0, x1, y1, 8 * k, 7.2 * k, PAL[P.INK]);
+        line(x0 + 3, y0 - 2.2, x1 - 3, y1 - 2.2, PAL[P.RUST]);
+        if (h & 1) disc(x1 - ca * 5, y1 - sa * 5, 1.2, PAL[P.HDR]);
+      }
+      const grits = Math.ceil(16 * W / 240);
+      for (let q = 0; q < grits; q++) {
+        const h = hash2(q, (Wr.seed + 41) >>> 0), x = (U(h) * W) | 0;
+        const fall = (t * (0.2 + 0.2 * U(hash(h + 1))) + U(hash(h + 2)) * 60) % 60, y = bandB[x] + 6 + (fall | 0);
+        if (h & 4) blob(x, y, 1, 0, 2.2, 1.6, h, PAL[P.LINE]); else line(x, y, x, y + 3, PAL[(h & 1) ? P.LINE : P.DIM]);
+      }
+    }
+    sceneCaption(C, t, shx, shy);
+    stip = 0;
+  }
+
+  // The jaws.
+  const JB = { BOOT: 380, STEP: 860, SLAM: 1000, TAUT: 1030, RUN: 1250, FADE: 3650 };
+  const J_SY = 0.62, J_CZ = 0.79, J_SHUT = 1.35, J_TEETH = 9;
+  let Jaws = null;
+  function jawsBegin(C) {
+    const R = new Rng((C.seed ^ 0x3AC4B71) >>> 0), k = nk();
+    const J = { seed: R.next(), R: 64 * k, cx: W * 0.5 + R.sgn() * 4 * k, cy: H * 0.74 + R.sgn() * 6 * k, landed: false, slammed: false };
+    J.bootX = J.cx - 5 * k; J.bootY = J.cy - 4 * J_CZ * k; J.chX = W + 30; J.chY = H + 30; J.K = 1.3 * k;
+    Jaws = J;
+  }
+  const jawP = (J, X, Y, Z, shx, shy) => [J.cx + X + shx, J.cy - Y * J_SY - Z * J_CZ + shy];
+  function jawsAngle(t) {
+    const ts = t - JB.SLAM;
+    if (ts <= 0) return 0;
+    if (ts < 70) { const u = ts / 70; return J_SHUT * u * u; }
+    const tb = ts - 70;
+    return J_SHUT - 0.13 * Math.exp(-tb / 70) * Math.abs(Math.sin(tb * 0.047));
+  }
+  function jawDraw(J, j, phi, shx, shy, pass) {
+    const R = J.R, cp = Math.cos(phi), sp = Math.sin(phi), Lt = R * 0.21, N = 18, k = nk(), w = 5 * k, hp = [];
+    for (let i = 0; i <= N; i++) { const th = Math.PI * i / N; hp.push(jawP(J, R * Math.cos(th), j * R * Math.sin(th) * cp, R * Math.sin(th) * sp, shx, shy)); }
+    for (let i = 0; i < N; i++) {
+      const a = hp[i], b = hp[i + 1];
+      if (pass === 0) {
+        stroke(a[0], a[1], b[0], b[1], w + 1.6, w + 1.6, PAL[P.EMBER]);
+        stroke(a[0] - 1.1, a[1] - 1.1, b[0] - 1.1, b[1] - 1.1, w + 0.4, w + 0.4, PAL[P.BRICK]);
+      } else if (pass === 1) {
+        stroke(a[0], a[1], b[0], b[1], w, w, PAL[P.INK]); disc(b[0], b[1], w * 0.5, PAL[P.INK]);
+      } else if ((i & 1) === 0) {
+        const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+        if (L < 1) continue;
+        let nx = -dy / L, ny = dx / L;
+        if (nx + ny > 0) { nx = -nx; ny = -ny; }
+        line(a[0] + nx * 1.3, a[1] + ny * 1.3, b[0] + nx * 1.3, b[1] + ny * 1.3, PAL[P.CRIT]);
+      }
+    }
+    const step = Math.PI / (J_TEETH + 0.5), half = step * 0.34;
+    for (let q = 0; q < J_TEETH; q++) {
+      const th = step * (q + (j < 0 ? 0.75 : 1.25));
+      const b0 = jawP(J, R * Math.cos(th - half), j * R * Math.sin(th - half) * cp, R * Math.sin(th - half) * sp, shx, shy);
+      const b1 = jawP(J, R * Math.cos(th + half), j * R * Math.sin(th + half) * cp, R * Math.sin(th + half) * sp, shx, shy);
+      const tp = jawP(J, R * Math.cos(th), j * R * Math.sin(th) * cp - j * sp * Lt, R * Math.sin(th) * sp + cp * Lt, shx, shy);
+      if (pass === 0) {
+        const mx = (b0[0] + b1[0] + tp[0]) / 3, my = (b0[1] + b1[1] + tp[1]) / 3;
+        const V = [b0, b1, tp].map((v) => { const dx = v[0] - mx, dy = v[1] - my, d = Math.hypot(dx, dy) + 0.01; return [v[0] + dx / d * 1.4, v[1] + dy / d * 1.4]; });
+        tri(V[0][0], V[0][1], V[1][0], V[1][1], V[2][0], V[2][1], PAL[P.EMBER]);
+        tri(b0[0] - 1.1, b0[1] - 1.1, b1[0] - 1.1, b1[1] - 1.1, tp[0] - 1.1, tp[1] - 1.1, PAL[P.BRICK]);
+      } else if (pass === 1) {
+        tri(b0[0], b0[1], b1[0], b1[1], tp[0], tp[1], PAL[P.INK]);
+      } else {
+        line(b0[0], b0[1], tp[0], tp[1], PAL[P.HDR]);
+        if (hash2(q, (J.seed + j + 3) >>> 0) % 3 === 0) put(tp[0] | 0, tp[1] | 0, PAL[P.WHITE]);
+      }
+    }
+  }
+  function jawTip(J, j, q, phi, shx, shy) {
+    const R = J.R, cp = Math.cos(phi), sp = Math.sin(phi), Lt = R * 0.21, th = Math.PI / (J_TEETH + 0.5) * (q + (j < 0 ? 0.75 : 1.25));
+    return jawP(J, R * Math.cos(th), j * R * Math.sin(th) * cp - j * sp * Lt, R * Math.sin(th) * sp + cp * Lt, shx, shy);
+  }
+  function jawsBase(J, t, shx, shy) {
+    const R = J.R, k = nk(), ts = t - JB.SLAM, lift = ts <= 0 ? 0 : 8 * k * (1 - Math.exp(-ts / 45) * Math.cos(ts * 0.03));
+    let eye = [0, 0];
+    for (let pass = 0; pass < 2; pass++) {
+      for (let sd = -1; sd <= 1; sd += 2) {
+        for (let leaf = -1; leaf <= 1; leaf += 2) {
+          const a = jawP(J, sd * R, leaf * 5 * k, 0, shx, shy), b = jawP(J, sd * (R + 44 * k), leaf * 3 * k, lift, shx, shy);
+          if (pass === 0) { stroke(a[0], a[1], b[0], b[1], 5 * k, 5 * k, PAL[P.EMBER]); stroke(a[0] - 1, a[1] - 1, b[0] - 1, b[1] - 1, 3.8 * k, 3.8 * k, PAL[P.BRICK]); }
+          else stroke(a[0], a[1], b[0], b[1], 3.4 * k, 3.4 * k, PAL[P.INK]);
+        }
+        const e = jawP(J, sd * (R + 50 * k), 0, lift, shx, shy);
+        if (pass === 0) { disc(e[0], e[1], 7 * k, PAL[P.EMBER]); disc(e[0] - 1, e[1] - 1, 6 * k, PAL[P.BRICK]); }
+        else { disc(e[0], e[1], 5.4 * k, PAL[P.INK]); disc(e[0], e[1], 2.6 * k, PAL[P.SOOT]); }
+        if (sd > 0) eye = e;
+        const hn = jawP(J, sd * R, 0, 0, shx, shy);
+        if (pass === 0) disc(hn[0] - 1, hn[1] - 1, 6.4 * k, PAL[P.BRICK]); else disc(hn[0], hn[1], 5.2 * k, PAL[P.INK]);
+      }
+      const a = jawP(J, -R, 0, 0, shx, shy), b = jawP(J, R, 0, 0, shx, shy);
+      if (pass === 0) stroke(a[0] - 1, a[1] - 1, b[0] - 1, b[1] - 1, 5.4 * k, 5.4 * k, PAL[P.BRICK]);
+      else stroke(a[0], a[1], b[0], b[1], 4.6 * k, 4.6 * k, PAL[P.INK]);
+    }
+    const pp = jawP(J, 0, 0, (t >= JB.STEP ? 1 : 4) * k, shx, shy), pr = R * 0.33;
+    blobLit(pp[0], pp[1], 1, 0, pr, pr * J_SY, (J.seed + 3) >>> 0, 0, P.BRICK);
+    blobLit(pp[0], pp[1], 1, 0, pr, pr * J_SY, (J.seed + 3) >>> 0, 1, P.BRICK);
+    stroke(pp[0] - pr * 0.7, pp[1] - pr * J_SY * 0.55, pp[0] - pr * 0.1, pp[1] - pr * J_SY * 0.85, 1.6, 0.8, PAL[P.HDR]);
+    if (t < JB.SLAM) { const d = jawP(J, 0, -R, 0, shx, shy); line(pp[0], pp[1] + pr * J_SY, d[0], d[1], PAL[P.RUST]); }
+    return eye;
+  }
+  function jawsChain(J, t, e, shx, shy) {
+    const k = nk(), ts = t - JB.TAUT;
+    let sag = 24 * k, rattle = 0;
+    if (ts > 0) {
+      sag = (3 + 21 * Math.exp(-ts / 60) - 5 * Math.exp(-ts / 180) * Math.abs(Math.sin(ts * 0.02))) * k;
+      rattle = 1.6 * Math.exp(-ts / 520);
+    }
+    const x1 = J.chX + shx, y1 = J.chY + shy, links = Math.max(11, Math.round(Math.hypot(x1 - e[0], y1 - e[1]) / (11.5 * k)));
+    for (let i = links - 1; i >= 0; i--) {
+      const u = (i + 0.5) / links, u2 = (i + 0.9) / links;
+      let x = lerp(e[0], x1, u), y = lerp(e[1], y1, u) + sag * 4 * u * (1 - u);
+      const xb = lerp(e[0], x1, u2), yb = lerp(e[1], y1, u2) + sag * 4 * u2 * (1 - u2);
+      if (rattle > 0.05) { const h = hash2(i, (((t / 50) | 0) + J.seed) >>> 0); x += S1(h) * rattle; y += S1(hash(h + 1)) * rattle; }
+      const dx = xb - x, dy = yb - y, d = Math.hypot(dx, dy) + 0.01, c = dx / d, s = dy / d;
+      if ((i & 1) === 0) {
+        blob(x, y, c, s, 6.2 * k, 4 * k, (J.seed + i) >>> 0, PAL[P.INK]);
+        blob(x - 0.8, y - 0.8, c, s, 5.2 * k, 3.2 * k, (J.seed + i) >>> 0, PAL[P.BRICK]);
+        blob(x, y, c, s, 3.2 * k, 1.3 * k, (J.seed + i + 7) >>> 0, PAL[P.INK]);
+      } else {
+        stroke(x - c * 5.5 * k, y - s * 5.5 * k, x + c * 5.5 * k, y + s * 5.5 * k, 4.2 * k, 4.2 * k, PAL[P.INK]);
+        line(x - c * 4.5 * k - s * 1.2, y - s * 4.5 * k + c * 1.2, x + c * 4.5 * k - s * 1.2, y + s * 4.5 * k + c * 1.2, PAL[P.GLOW]);
+      }
+    }
+  }
+  function jawsGround(J, shx, shy) {
+    const k = nk(), cx = J.cx + shx, cy = J.cy + 6 * k + shy, ry = J.R * J_SY + 34 * k, rx = J.R + 78 * k;
+    for (let y = (cy - ry) | 0; y < ((cy + ry) | 0); y++) {
+      const q = (y + 0.5 - cy) / ry, w = rx * Math.sqrt(Math.max(0, 1 - q * q)) * (0.86 + 0.26 * noise1(y * 0.33, (J.seed + 9) >>> 0));
+      span(y, (cx - w) | 0, (cx + w) | 0, PAL[P.INK]);
+    }
+    for (let i = 0; i < 36; i++) {
+      const h = hash2(i, (J.seed + 17) >>> 0), a = U(h) * Math.PI * 2, d = Math.sqrt(U(hash(h + 1))) * 0.92;
+      const x = cx + Math.cos(a) * rx * d, y = cy + Math.sin(a) * ry * d, r = (1 + 2.2 * U(hash(h + 2))) * k;
+      blob(x, y, 1, 0, r, r * 0.7, h, PAL[P.TRACK]); put((x - r * 0.4) | 0, (y - r * 0.5) | 0, PAL[P.LINE]);
+    }
+    for (let i = 0; i < 13; i++) {
+      const h = hash2(i, (J.seed + 29) >>> 0), a = U(h) * Math.PI * 2, x = cx + Math.cos(a) * rx * 0.9, y = cy + Math.sin(a) * ry * 0.85;
+      for (let b = 0; b < 3; b++) {
+        const ba = -Math.PI * 0.5 + (b - 1) * 0.35 + S1(hash(h + b)) * 0.15, l = (5 + 5 * U(hash(h + 5 + b))) * k;
+        line(x, y, x + Math.cos(ba) * l, y + Math.sin(ba) * l, PAL[(b & 1) ? P.LINE : P.EMBER]);
+      }
+    }
+  }
+  function jawsFrame(C, t, now, shx, shy) {
+    const J = Jaws;
+    if (!J) return;
+    const k = nk(), ts = t - JB.SLAM, fade = t > JB.FADE ? Math.min(255, ((t - JB.FADE) * 255 / 650) | 0) : 0;
+    if (t >= JB.STEP && !J.landed) { J.landed = true; impact(0.18); }
+    if (t >= JB.SLAM && !J.slammed) { J.slammed = true; impact(0.8); flash(FL.BOTH); tearBurst(now, 3, 22, 260); vroll(now, 0, 380); }
+    if (ts > 0 && ts < 520) focusLines(J.cx + shx, J.cy - 24 * k + shy, W * 0.3, H * 0.3, 70, (C.seed + 5) >>> 0, (t / 70) | 0, PAL[ts < 260 ? P.LINE : P.DIM], 3.5);
+    stip = Math.max(fade, 255 - Math.min(255, (t * 255 / 320) | 0)); stipSeed = (C.seed + 1) >>> 0;
+    jawsGround(J, shx, shy);
+    stip = fade;
+    const phi = jawsAngle(t);
+    for (let pass = 0; pass < 3; pass++) jawDraw(J, 1, phi, shx, shy, pass);
+    const eye = jawsBase(J, t, shx, shy);
+    jawsChain(J, t, eye, shx, shy);
+    if (t >= JB.BOOT) {
+      let by = J.bootY, br = 0, bx = J.bootX;
+      if (t < JB.STEP) { const p = (t - JB.BOOT) / (JB.STEP - JB.BOOT); by = lerp(-120 * k, J.bootY, cubicIn(p)); br = -0.2 * (1 - p); }
+      else if (ts < 0) by = J.bootY + 1.5 * k * (1 - (t - JB.STEP) / (JB.SLAM - JB.STEP));
+      else {
+        const tug = Math.max(0, noise1(t * 0.0045, (J.seed + 51) >>> 0) - 0.52) * 2;
+        by = J.bootY - (5 * Math.exp(-ts / 110) + 3.2 * tug) * k;
+        br = 0.06 * (noise1(t * 0.003, (J.seed + 53) >>> 0) - 0.5) + 0.03 * tug;
+        bx += S1(hash2((t / 60) | 0, J.seed)) * 0.7 * tug;
+      }
+      bootDraw(bx + shx, by + shy, br, J.K, (J.seed + 61) >>> 0, 0.06, t);
+      if (J.landed && t < JB.STEP + 160) {
+        const q = (t - JB.STEP) / 160;
+        for (let i = 0; i < 10; i++) {
+          const h = hash2(i, (J.seed + 71) >>> 0), sd = (i & 1) ? 1 : -1, a = -0.25 - 0.9 * U(h);
+          const ox = bx + (sd > 0 ? 40 : -26) * k + shx, oy = J.bootY + shy, r0 = (3 + 22 * q * (0.5 + U(hash(h + 1)))) * k, r1 = r0 + 3 * k;
+          const cx = Math.cos(a) * sd, sy = Math.sin(a), drop = q * q * 12 * k;
+          line(ox + cx * r0, oy + sy * r0 + drop, ox + cx * r1, oy + sy * r1 + drop, PAL[(h & 2) ? P.LINE : P.EMBER]);
+        }
+      }
+    }
+    for (let pass = 0; pass < 3; pass++) jawDraw(J, -1, phi, shx, shy, pass);
+    if (ts > 60) {
+      const g = cubicOut(clamp((ts - 60) / 90, 0, 1)), SP = [[-26, 30, 6], [20, 36, 4.5], [-6, 44, 3.2]];
+      SP.forEach((s, i) => {
+        const x = J.cx + s[0] * k + shx, y = J.cy + s[1] * k + shy, r = s[2] * g * k;
+        blob(x, y, 1, 0, r + 1.2, (r + 1.2) * 0.6, (J.seed + 81 + i) >>> 0, PAL[P.INK]);
+        blob(x, y, 1, 0, r, r * 0.6, (J.seed + 81 + i) >>> 0, PAL[P.BLOOD]);
+      });
+    }
+    if (t >= JB.RUN) {
+      for (let d = 0; d < 3; d++) {
+        const tp = jawTip(J, -1, 3 + d, phi, shx, shy), x = tp[0], y = tp[1];
+        const len = 26 * k * cubicOut(clamp((t - JB.RUN - d * 170) / 1500, 0, 1)) * (0.6 + 0.25 * d);
+        if (len <= 0.5) continue;
+        stroke(x, y - 1, x, y + len, 5.2 * k, 3.8 * k, PAL[P.INK]); disc(x, y + len, 3.6 * k, PAL[P.INK]);
+        stroke(x, y - 1, x, y + len, 3 * k, 1.8 * k, PAL[P.BLOOD]); disc(x, y + len, 2.4 * k, PAL[P.BLOOD]);
+        line(x - 1, y, x - 1, y + len * 0.75, PAL[P.BRICK]); put((x - 1) | 0, (y + len - 1) | 0, PAL[P.HOT]);
+      }
+    }
+    if (ts > 0 && ts < 900) {
+      const boil = (t / 90) | 0, ax = J.bootX + 4 * k + shx, ay = J.bootY - 34 * k + shy;
+      for (let q = 0; q < 7; q++) {
+        const h = hash2(q, (boil + C.seed) >>> 0), a = -Math.PI + U(h) * Math.PI, r0 = (36 + 6 * U(hash(h + 1))) * k, r1 = r0 + (7 + 6 * U(hash(h + 2))) * k;
+        stroke(ax + Math.cos(a) * r0, ay + Math.sin(a) * r0, ax + Math.cos(a) * r1, ay + Math.sin(a) * r1, 2.4, 0.8, PAL[P.WHITE]);
+      }
+    }
+    if (C.word && ts >= 0) wordSlam(C, C.word, ts - 10, W * 0.5 + shx, J.cy - 132 * k + shy, 0.08, 40, (t / 80) | 0);
+    sceneCaption(C, t, shx, shy);
+    stip = 0;
+  }
+
   // ── 14. Madness (section 14 of ui-fx.hpp) ───────────────────────
   const WHISPER = [
     ['KEEP WALKING', 'WE SEE YOU', 'STAY'],
@@ -2261,6 +2936,8 @@
     THROWN: ['is thrown back into daylight, bleeding.', 'comes out the way they went in, worse.'],
     FLOOD: ['is swept off their feet by the flash flood.', 'loses their footing as the ground gives way.', 'goes under for a moment in the rising water.'],
     BELOW: ['goes down into the dark.', 'climbs down. Something below moves.', 'drops through the hatch, into the dark.'],
+    TRIPWIRE: ['puts a foot down and hears it click.', 'finds the wire the hard way.', 'steps on something that was waiting.'],
+    BEARTRAP: ['is caught and held while it bites.', 'sets it off, and it does what it was built for.', 'gets out of it. Most of them does.'],
   };
   const WX_PROSE = ['The sky clears. Small mercy, and brief.', 'Rain comes in thin and cold.', 'A storm walks in off the flats.',
                     'The rain turns wrong. Chem burn.', 'Strangle fog settles in the low ground.', "Fog closes the world to arm's length."];
@@ -2305,6 +2982,7 @@
         case 'ESCALATION': { const lv = TC_STEPS.indexOf(e.data.step) + 1; if (lv > 0) cue('THREAT', '', TC_LINE[lv], '', lv); break; }
         case 'ARRIVED': cue('JOIN', name(e), say(LINES.JOIN)); break;
         case 'EXIT':
+          if (trapHurt.has(name(e))) break;              // the jaws have it (fromTrap)
           if (e.data.reason === 'hazard') cue('THROWN', name(e), say(LINES.THROWN));
           else if (e.data.reason === 'banked' && (e.data.score | 0) >= 13) cue('CLEARED', name(e), 'clears the place out entire. +' + e.data.score + '.');
           break;
@@ -2321,6 +2999,26 @@
         case 'PRICE': if ((e.data.ll | 0) >= 2) { impact(0.45); splatGen(hash(Date.now() >>> 0)); Splat.t0 = Date.now(); Splat.on = true; kick(); } break;
         default: break;
       }
+    }
+  }
+  // Without the ring, /state's `encTrap` says a scene is a booby trap: one
+  // opening is the wire parting under someone (the tripwire), and one that
+  // closes with Life gone went off on them (the jaws) -- which is also an
+  // EXIT on a hazard, so the plain THROWN panel stands down for it.
+  const trapSeen = new Map(), trapHurt = new Set();
+  function fromTrap(raw) {
+    trapHurt.clear();
+    for (const p of (raw && raw.players) || []) {
+      if (!p.conn) continue;
+      const key = p.pid + ':' + (p.connectMs | 0), on = !!(p.encActive && p.encTrap), was = trapSeen.get(key);
+      // Wounds as well as Life: a trap never takes the last point, so on 1 LL
+      // the wounds are the only sign it went off.
+      const wn = Array.isArray(p.wounds) ? (p.wounds[0] | 0) + (p.wounds[1] | 0) : 0;
+      const keep = on && was && was.on;
+      trapSeen.set(key, { on, ll: keep ? was.ll : p.ll | 0, wn: keep ? was.wn : wn });
+      if (!was) continue;
+      if (on && !was.on) cue('TRIPWIRE', p.name || '', say(LINES.TRIPWIRE));
+      else if (!on && was.on && ((p.ll | 0) < was.ll || wn > was.wn)) { cue('BEARTRAP', p.name || '', say(LINES.BEARTRAP)); trapHurt.add(p.name || ''); }
     }
   }
   // Without the ring, /state's `dp` still says who is below: up last poll and
@@ -2359,7 +3057,7 @@
   // Called by observer.js handle() once per poll, after the roster has had its say.
   function onPoll(events, snap, raw) {
     if (FX.level === 0 || !mount()) return;
-    if (!fromRing(raw && raw.fx, snap)) { fromEvents(events, snap); fromDepth(raw); }
+    if (!fromRing(raw && raw.fx, snap)) { fromTrap(raw); fromEvents(events, snap); fromDepth(raw); }
     setDread(dreadFrom(snap, raw));
     FX.takeover = !!(D.getElementById('takeover') && root.getComputedStyle(D.getElementById('takeover')).display !== 'none');
     kick();
@@ -2379,6 +3077,7 @@
     ['THREAT', '', 'The clock has run out of patience with us.', '', 4], ['DOWNED', 'Kell', ''],
     ['BELOW', 'Mox', 'goes down into the dark.'], ['CRAWL', 'Vera', ''],
     ['CRAFTED', 'Quartermaster1', 'Sock Puppet Bandage', '', 2],
+    ['TRIPWIRE', 'Mox', 'puts a foot down and hears it click.'], ['BEARTRAP', 'Vera', 'is caught and held while it bites.'],
   ];
   function reel(i) {
     if (!mount()) { setTimeout(() => reel(i), 500); return; }

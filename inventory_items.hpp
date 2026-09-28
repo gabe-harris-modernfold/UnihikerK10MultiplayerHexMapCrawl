@@ -154,6 +154,7 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
       }
       G.players[pid].q = tq;
       G.players[pid].r = tr;
+      ecoBiteCheck(pid);   // arriving is entering: bloomed daisies bite (ecology.hpp)
     }
   }
 }

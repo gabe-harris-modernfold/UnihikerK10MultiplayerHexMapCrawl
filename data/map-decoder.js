@@ -4,17 +4,24 @@
 // written into and its dimensions differ.
 //
 // 3 bytes per cell (6 hex chars) — mirrors encodeCell() in hex-map.hpp:
-//   TT = terrain byte (0x00-0x0B) or 0xFF (fog); bit 6 (0x40) = improved
-//        shelter, bit 7 (0x80) = caravan has driven through (tire track)
+//   TT = terrain byte (0x00-0x0F) or 0xFF (fog); bit 4 (0x10) = an armed
+//        booby trap YOU know about (the server sets it per recipient, see
+//        traps.hpp), bit 5 unused, bit 6 (0x40) = improved shelter,
+//        bit 7 (0x80) = caravan has driven through (tire track)
 //   DD = bits 0-5: footprint bitmask, bit 6: has shelter (any), bit 7: has POI
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
+// Tunnel cells also carry an "op" byte beside the cells string (tunnels.hpp,
+// "Open sides"): bits 0-5 = open sides, bit 6 = bit 4 of the art index, bit 7
+// = a room. The client draws the corridor art from it (tunnel-board.js).
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   const hasShelter = (dataByte >> 6) & 1;
   const cell = {
-    // 0x3F, not 0x0F: terrain now runs 0-15 (the four bunker tunnel types
-    // took NUM_TERRAIN to 16) and bits 6/7 are the shelter/track flags.
-    terrain:    terrainByte & 0x3F,
+    // 0x0F: terrain runs 0-15 (the four bunker tunnel types took
+    // NUM_TERRAIN to 16). Bit 4 is the trap flag now, and bits 6/7 the
+    // shelter/track flags, so every bit above the nibble means something.
+    terrain:    terrainByte & 0x0F,
+    trap:       (terrainByte >> 4) & 1,    // bit 4 of TT: a trap you escaped is still armed here
     footprints: dataByte & 0x3F,           // bits 0-5: which players visited (bitmask)
     shelter:    hasShelter ? ((terrainByte & 0x40) ? 2 : 1) : 0,  // 0 none, 1 basic, 2 improved
     poi:        (dataByte >> 7) & 1,       // bit 7: 0=none, 1=has POI encounter
@@ -26,8 +33,8 @@ function decodeCell(terrainByte, dataByte, variantByte = 0) {
 }
 
 // grid/cols/rows default to the surface map; the tsync handler passes the
-// tunnel board instead.
-function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, label = 'MAP') {
+// tunnel board instead, and its "op" string (2 hex chars a cell, same order).
+function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, label = 'MAP', ops = null) {
   let revealed = 0, fog = 0, poiCount = 0, shelterCount = 0, resourceCount = 0;
   // Surface only — the tunnel board is transient and gets no memory.
   const surface = (grid === gameMap);
@@ -39,6 +46,7 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
       const dd  = Number.parseInt(hexStr.substr(idx + 2, 2), 16);
       const vv  = Number.parseInt(hexStr.substr(idx + 4, 2), 16);
       grid[r][c] = decodeCell(tt, dd, vv);
+      if (ops && grid[r][c]) grid[r][c].op = Number.parseInt(ops.substr((r * cols + c) * 2, 2), 16) || 0;
       if (tt === 0xFF) { fog++; }
       else {
         revealed++;
@@ -60,6 +68,11 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
       console.log(`%c[MAP] explored memory dropped — ${memoryCells.size} remembered cells disagree with a fresh sync (board regenerated?)`, 'color:#f60;font-weight:bold');
       memoryCells.clear();
     }
+    // The sync carries every trap this survivor knows about, wherever it is,
+    // so it is the whole truth about traps: forget the remembered ones first.
+    // Otherwise a trap someone else sprang while we were away -- or one the
+    // seat this browser played last time knew about -- would stay drawn.
+    for (const m of memoryCells.values()) m.trap = 0;
     samples.forEach(s2 => rememberCell(s2.key, s2.cell));
     scheduleMemorySave();
   }
@@ -68,11 +81,12 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
 // ── Apply vis-disk update ────────────────────────────────────────
 // Format: "QQRRTTDDVV..." — 10 hex chars per cell (5 bytes)
 //   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
-// depth 0 writes the surface map, 1 the bunker tunnel board. The collected-
+// depth 0 writes the surface map, 1 the bunker tunnel board, whose disks
+// carry "op" -- each cell's open sides, 2 hex chars apiece in cell order. The collected-
 // resource guard and the amount carry-forward below are surface-only: they
 // exist to reconcile a `col` event racing a visdisk, and the tunnel board has
 // no such history to preserve on a fresh descend.
-function applyVisDisk(cells, depth = 0) {
+function applyVisDisk(cells, depth = 0, ops = null) {
   const grid = depth ? tunnelMap  : gameMap;
   const cols = depth ? tunnelCols : MAP_COLS;
   const rows = depth ? tunnelRows : MAP_ROWS;
@@ -87,6 +101,7 @@ function applyVisDisk(cells, depth = 0) {
     const vv = Number.parseInt(cells.substr(i + 8, 2), 16);
     if (r < rows && q < cols) {
       const cell = decodeCell(tt, dd, vv);
+      if (ops && cell) cell.op = Number.parseInt(ops.substr((i / 10) * 2, 2), 16) || 0;
       const key  = `${q}_${r}`;
       if (!depth && collectedCells.has(key)) {
         if (cell && cell.resource > 0) {
@@ -118,6 +133,7 @@ function applyVisDisk(cells, depth = 0) {
         if (cell.resource)                        flags.push(`res=${cell.resource}`);
         if (cell.footprints)                      flags.push(`fp=0x${cell.footprints.toString(16)}`);
         if (cell.tireTrack)                        flags.push('tireTrack');
+        if (cell.trap)                            flags.push('TRAP');
         if (cell.variant)                         flags.push(`var=${cell.variant}`);
         if (flags.length) notable.push(`(q${q},r${r}) T=${tt.toString(16).padStart(2,'0')} [${flags.join(' ')}]`);
       }
@@ -145,7 +161,8 @@ function applyVisDisk(cells, depth = 0) {
 // whole grid with 0xFF outside your current disk) and a page reload.
 //
 // Terrain is memory; resources are sight. Only the fields that stay true
-// while you are not looking are kept — terrain, art variant, shelter, POI.
+// while you are not looking are kept — terrain, art variant, shelter, POI,
+// and a trap you got out of (you do not forget where that was).
 // Resource type and amount, footprints and tire tracks are live intel that
 // depletes, respawns or decays server-side, and remembering them would not be
 // generous, it would be wrong.
@@ -153,7 +170,7 @@ const MEMORY_STORE_KEY     = 'wl.explored.v1';
 const MEMORY_SAVE_DELAY_MS = 1500;  // debounce: a move can rewrite ~40 cells
 const MEMORY_MIN_SAMPLES   = 8;     // below this a sync says nothing useful
 const MEMORY_MISMATCH_TOL  = 0.25;  // see memoryAgreesWith()
-const memoryCells = new Map();      // "q_r" -> {terrain, variant, shelter, poi}
+const memoryCells = new Map();      // "q_r" -> {terrain, variant, shelter, poi, trap}
 
 function rememberCell(key, cell) {
   if (!cell) return;
@@ -162,6 +179,7 @@ function rememberCell(key, cell) {
     variant: cell.variant,
     shelter: cell.shelter,
     poi:     cell.poi,
+    trap:    cell.trap ? 1 : 0,
   });
 }
 
@@ -197,7 +215,7 @@ function serializeMemory() {
     for (let q = 0; q < MAP_COLS; q++) {
       const m = memoryCells.get(`${q}_${r}`);
       if (!m) { out += 'FF0000'; continue; }
-      out += _mhex2(m.terrain | (m.shelter >= 2 ? 0x40 : 0)) +
+      out += _mhex2(m.terrain | (m.trap ? 0x10 : 0) | (m.shelter >= 2 ? 0x40 : 0)) +
              _mhex2(((m.shelter ? 1 : 0) << 6) | (m.poi ? 0x80 : 0)) +
              _mhex2(m.variant & 0x0F);
     }

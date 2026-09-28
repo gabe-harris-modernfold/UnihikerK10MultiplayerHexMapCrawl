@@ -1501,12 +1501,14 @@ enum FxKind : uint8_t {
   FXK_BELOW,      // someone went down a hatch into the tunnels: the nest
   FXK_CRAFTED,    // someone made something: the Committee's commendation
   FXK_CRAWL,      // someone came back up, and one of the small ones came with them
+  FXK_TRIPWIRE,   // someone walked onto a trap and it fired: the wire parts (section 13b)
+  FXK_BEARTRAP,   // a trap went off on someone: the jaws (section 13b)
   FXK_COUNT
 };
-// Band fills. The last two are not bands at all but cut scenes: the nest
-// (section 12) and the commendation (section 13).
+// Band fills. The last four are not bands at all but cut scenes: the nest
+// (section 12), the commendation (section 13), and the two traps (13b).
 enum : uint8_t { FXF_FOCUS = 0, FXF_SPEED, FXF_HAZARD, FXF_KRACKLE, FXF_RAIN, FXF_SUN, FXF_EYES, FXF_DARK,
-                 FXF_NEST, FXF_MEDAL };
+                 FXF_NEST, FXF_MEDAL, FXF_WIRE, FXF_JAWS };
 // Impact flashes: a white-out frame, a negative frame, or both in that order.
 enum : uint8_t { FXFL_NONE = 0, FXFL_WHITE = 1, FXFL_NEG = 2, FXFL_BOTH = 3 };
 // Extras.
@@ -1559,6 +1561,11 @@ static const FxStyleDef FX_STYLE[FXK_COUNT] = {
   // Not a panel either: one small spider let loose on the glass, which walks
   // over whatever else is on it (fxCrawlFrame).
   /* CRAWL     */ { nullptr,    FXF_DARK,    1,   0, FXFL_NONE, FXE_NOBAND, 0, 60000, 100 },
+  // The traps. Short, and they come often: at the density traps.hpp arms
+  // them, a party trips one every few minutes of play, so the wire waits a
+  // minute and a half between showings and the jaws two.
+  /* TRIPWIRE  */ { "SNAP!",    FXF_WIRE,    2,   0, FXFL_NONE, 0, 2900, 90000, 100 },
+  /* BEARTRAP  */ { "KA-CHUNK", FXF_JAWS,    2,   0, FXFL_NONE, FXE_BLOOD | FXE_DRIPS, 4300, 120000, 100 },
 };
 // A cut scene rather than a band: it holds the panel for seconds, draws no
 // band, and takes the whole screen down into the dark behind it.
@@ -1588,7 +1595,7 @@ static uint8_t  fxQn = 0;
 static const char* const FX_KIND_NAME[FXK_COUNT] = {
   "", "QUAKE", "STRIKE", "STORM", "CHEM", "FOG", "WEATHER", "DOOM_EYE", "DOOM_HUNT",
   "DOOM_ACT", "DOOM_LOST", "DOWNED", "DAWN", "JOIN", "THREAT", "LONGODDS", "THROWN",
-  "CLEARED", "FIRE", "FLOOD", "BELOW", "CRAFTED", "CRAWL",
+  "CLEARED", "FIRE", "FLOOD", "BELOW", "CRAFTED", "CRAWL", "TRIPWIRE", "BEARTRAP",
 };
 struct FxLogEnt { uint16_t n; uint8_t kind; int8_t who; uint16_t arg; char cap[56]; };
 static const int FX_LOG_N = 6;
@@ -1670,6 +1677,7 @@ static struct FxState {
   uint32_t lastKind[FXK_COUNT];
   bool     takeover;              // a full-screen takeover (the skull) owns the panel
   uint32_t toastUntil;
+  char     toastMsg[24];          // what the toast says (Button A: the volume)
   // Screen switch: the old frame is cut along a line and the halves slide off.
   bool     sw;
   uint32_t swT0;
@@ -1738,6 +1746,10 @@ static void fxNestFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy
 static void fxMedalBegin(FxCut& C, const FxCueReq& q);                    // section 13
 static void fxMedalFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
 static void fxCrawlBegin(uint32_t seed, uint32_t now);                    // section 12
+static void fxWireBegin(FxCut& C);                                        // section 13b
+static void fxWireFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
+static void fxJawsBegin(FxCut& C);
+static void fxJawsFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
 
 static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   const FxStyleDef& st = FX_STYLE[q.kind];
@@ -1771,12 +1783,13 @@ static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   else if (st.sfx)                   strncpy(sfx, st.sfx, sizeof(sfx) - 1), sfx[sizeof(sfx) - 1] = 0;
   C.hasWord = false;
   const bool nest = st.fill == FXF_NEST, medal = st.fill == FXF_MEDAL;
+  const bool trap = st.fill == FXF_WIRE || st.fill == FXF_JAWS;
   if (sfx[0]) {
     const FxInk& ink = (st.extras & FXE_BLOOD) ? FX_INK_BLOOD : (st.fill == FXF_RAIN ? FX_INK_COLD : FX_INK_HOT);
     bool drips = (st.extras & FXE_DRIPS) != 0 || (q.kind == FXK_THREAT && q.arg >= 4);
     // A scene's word is one noise in it, not the panel's headline.
-    C.hasWord = fxBuildWord(C.word, sfx, nest ? 150.0f : (medal ? 110.0f : 200.0f),
-                            nest ? 40.0f : (medal ? 30.0f : C.h * 0.66f),
+    C.hasWord = fxBuildWord(C.word, sfx, nest ? 150.0f : (medal ? 110.0f : (trap ? 176.0f : 200.0f)),
+                            nest ? 40.0f : (medal ? 30.0f : (trap ? 50.0f : C.h * 0.66f)),
                             st.size / 100.0f, ink, (st.extras & FXE_CRESC) != 0, drips, C.seed);
   }
 
@@ -1816,6 +1829,8 @@ static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   if (st.extras & FXE_NOBAND) C.on = false;
   if (nest)  fxNestBegin(C);
   if (medal) fxMedalBegin(C, q);
+  if (st.fill == FXF_WIRE) fxWireBegin(C);
+  if (st.fill == FXF_JAWS) fxJawsBegin(C);
   if (q.kind == FXK_CRAWL) fxCrawlBegin(C.seed, now);
   FX.lastKind[q.kind] = now ? now : 1;
 }
@@ -2029,6 +2044,8 @@ static void fxCutFrame(uint32_t now, float shx, float shy) {
   if (t >= END) { C.on = false; FX.cutEnd = now ? now : 1; return; }
   if (st.fill == FXF_NEST)  { fxNestFrame(C, t, now, shx, shy); return; }
   if (st.fill == FXF_MEDAL) { fxMedalFrame(C, t, now, shx, shy); return; }
+  if (st.fill == FXF_WIRE)  { fxWireFrame(C, t, now, shx, shy); return; }
+  if (st.fill == FXF_JAWS)  { fxJawsFrame(C, t, now, shx, shy); return; }
 
   // Speed lines across the whole screen behind a big hit, for its first beat.
   if ((st.extras & FXE_BGLINES) && t < 700)
@@ -3065,6 +3082,1179 @@ static void fxMedalFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float sh
   fxHalfN = 0;
 }
 
+// ── 13b. The traps ───────────────────────────────────────────────────────────
+// Two cut scenes for the booby traps (traps.hpp, docs/trap-system-spec.md).
+//
+// THE WIRE (FXK_TRIPWIRE): someone walked onto a trapped hex and it fired. A
+// wire is strung across the glass from a nail to an eye-screw, and runs on up
+// the right edge to whatever it is holding. A boot comes down out of the top
+// left mid-stride and finds it with its toe. The wire bows, takes the strain,
+// and parts -- a white-out, the two halves whipping back to their anchors with
+// their ends frayed, the right half yanked up through its eye and gone. The
+// boot, with nothing left to push against, goes out from under its owner. And
+// then whatever the wire was holding comes down over the top of the glass.
+//
+// THE JAWS (FXK_BEARTRAP): a trap went off on someone -- a check failed inside
+// the scene. A jaw trap lies open on a patch of dirt, seen from above and in
+// front, its teeth up round the pan and its chain run off the corner. A boot
+// comes down on the pan. The jaws come up and meet round the ankle and the
+// whole terminal jolts; the chain snaps taut and rattles, the boot pulls and
+// cannot lift, and the teeth start to run.
+//
+// Rigs, like the nest's cast. The boot is one drawing, lit the way every thick
+// thing on this glass is lit (black, a faint edge all round, a lit rim toward
+// the top-left light, a specular stripe). The trap is its own geometry, turned
+// on its hinges and projected. The wire is a string of springs that is simply
+// let go of.
+
+// ── The boot, and the leg in it ──
+// Drawn, not stamped. Every shape is a closed curve through a few hand-set
+// points, filled even-odd (the instep is a hollow, and a boot pitching over
+// is no longer convex a row at a time), and shaded as the thing it is:
+//
+//  * Leather is a relief of five swellings -- the shaft, the heel counter,
+//    the instep, the toe box and the padded collar -- lit from the top left
+//    of the glass and a little from in front, as every SFX on it is. It is
+//    set in screentone: solid black in the shadow, rust dots where the light
+//    falls, a hot sheen where it catches, and a grain so it is not a mirror.
+//  * The trouser leg is matte cloth round a tube that leans back the way a
+//    shin does in mid-stride, with folds bunched where it breaks over the
+//    boot and a crease up the shin. Duller than the leather on purpose, so
+//    the two read apart.
+//
+// Both keep the house's edge: a faint line all round and a lit rim toward the
+// light, drawn under the fill. The boot's own frame: +u toward the toe, +v
+// down, the origin on the sole under the ball of the foot, `k` px to the unit.
+struct FxBootXf {
+  float x, y, c, s, k, lean;
+  float lx, ly, lz;                               // the light, in the boot's frame
+  float hx, hy, hz;                               // and the half-way vector for the sheen
+};
+static inline void fxBootFwd(const FxBootXf& X, float u, float v, float* sx, float* sy) {
+  *sx = X.x + (u * X.c - v * X.s) * X.k;
+  *sy = X.y + (u * X.s + v * X.c) * X.k;
+}
+static inline void fxBootAt(float x, float y, float c, float s, float k, float ux, float uy, float* X, float* Y) {
+  *X = x + (ux * c - uy * s) * k;
+  *Y = y + (ux * s + uy * c) * k;
+}
+static const float FXB_TOEX = 35.0f, FXB_TOEY = -6.0f;   // the tip of the toe
+static void fxBootToe(float x, float y, float rot, float k, float* tx, float* ty) {
+  fxBootAt(x, y, cosf(rot), sinf(rot), k, FXB_TOEX, FXB_TOEY, tx, ty);
+}
+
+// A closed Catmull-Rom curve through n points, `per` samples a span.
+static int fxCurve(const float* cu, const float* cv, int n, int per, float* ou, float* ov, int cap) {
+  int m = 0;
+  for (int i = 0; i < n && m < cap; i++) {
+    const int a = (i + n - 1) % n, b = i, c = (i + 1) % n, d = (i + 2) % n;
+    for (int k = 0; k < per && m < cap; k++) {
+      float t = (float)k / per, t2 = t * t, t3 = t2 * t;
+      float wa = -0.5f * t3 + t2 - 0.5f * t, wb = 1.5f * t3 - 2.5f * t2 + 1.0f;
+      float wc = -1.5f * t3 + 2.0f * t2 + 0.5f * t, wd = 0.5f * t3 - 0.5f * t2;
+      ou[m] = cu[a] * wa + cu[b] * wb + cu[c] * wc + cu[d] * wd;
+      ov[m] = cv[a] * wa + cv[b] * wb + cv[c] * wc + cv[d] * wd;
+      m++;
+    }
+  }
+  return m;
+}
+
+typedef uint16_t (*FxShadeFn)(const FxBootXf& X, float u, float v, int x, int y, uint32_t seed);
+static const int FXB_PTS = 96;
+
+// Fill an outline given in the boot's frame, even-odd, a pixel at a time:
+// `shade` picks each pixel's ink from where it is on the boot, or, without
+// one, the whole thing is `col`.
+static void fxBootFill(const float* ou, const float* ov, int n, const FxBootXf& X, FxShadeFn shade,
+                       uint16_t col, uint32_t seed) {
+  float px[FXB_PTS], py[FXB_PTS];
+  n = fxMinI(n, FXB_PTS);
+  float ymin = 1e9f, ymax = -1e9f;
+  for (int i = 0; i < n; i++) {
+    fxBootFwd(X, ou[i], ov[i], &px[i], &py[i]);
+    ymin = fminf(ymin, py[i]); ymax = fmaxf(ymax, py[i]);
+  }
+  const int y0 = fxMaxI(0, (int)ceilf(ymin - 0.5f)), y1 = fxMinI(FX_H, (int)ceilf(ymax - 0.5f));
+  const float ik = 1.0f / X.k;
+  for (int y = y0; y < y1; y++) {
+    const float yc = y + 0.5f;
+    float xs[20];
+    int m = 0;
+    for (int i = 0; i < n && m < 20; i++) {
+      const int j = (i + 1 == n) ? 0 : i + 1;
+      const float ya = py[i], yb = py[j];
+      if ((ya <= yc && yb > yc) || (yb <= yc && ya > yc)) xs[m++] = px[i] + (yc - ya) * (px[j] - px[i]) / (yb - ya);
+    }
+    for (int a = 1; a < m; a++) {
+      float t = xs[a]; int b = a - 1;
+      while (b >= 0 && xs[b] > t) { xs[b + 1] = xs[b]; b--; }
+      xs[b + 1] = t;
+    }
+    for (int a = 0; a + 1 < m; a += 2) {
+      const int xa = fxMaxI(0, (int)ceilf(xs[a] - 0.5f)), xb = fxMinI(FX_W, (int)ceilf(xs[a + 1] - 0.5f));
+      if (!shade) { fxSpan(y, xa, xb, col); continue; }
+      const float dy = (yc - X.y) * ik;
+      for (int x = xa; x < xb; x++) {
+        const float dx = (x + 0.5f - X.x) * ik;
+        fxPut(x, y, shade(X, dx * X.c + dy * X.s, -dx * X.s + dy * X.c, x, y, seed));
+      }
+    }
+  }
+}
+
+// The house edge round an outline: a faint line all round, and the lit one
+// a little up and to the left. Drawn first; the fill covers all but the rim.
+static void fxBootEdge(const float* ou, const float* ov, int n, const FxBootXf& X, uint8_t rim, float lit) {
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? -lit : 0.0f, w = pass ? 2.4f : 2.8f;
+    const uint16_t col = FX_PAL[pass ? rim : rim - 2];
+    float x0, y0;
+    fxBootFwd(X, ou[n - 1], ov[n - 1], &x0, &y0);
+    for (int i = 0; i < n; i++) {
+      float x1, y1;
+      fxBootFwd(X, ou[i], ov[i], &x1, &y1);
+      fxStroke(x0 + o, y0 + o, x1 + o, y1 + o, w, w, col);
+      x0 = x1; y0 = y1;
+    }
+  }
+}
+
+// Leather: the swelling a pixel sits on, its slope, and the light on it.
+struct FxBump { float cu, cv, a, b, h; };
+static const FxBump FXB_LEATHER[5] = {
+  { -6.0f, -38.0f, 11.5f, 24.0f, 7.0f },        // the shaft
+  { -14.5f, -13.0f, 8.5f, 11.0f, 6.0f },        // the heel counter
+  {  9.0f, -14.0f, 13.0f,  8.0f, 4.0f },        // the instep
+  { 25.0f, -10.0f, 11.0f,  6.5f, 7.0f },        // the toe box, stood proud
+  { -5.5f, -55.0f, 12.0f,  4.0f, 4.0f },        // the collar, padded
+};
+// The whole upper as one form, baked once from its own outline: rasterised
+// in the boot's frame on a 64x64 grid (a unit a cell), a distance to the
+// edge (the SFX lettering's chamfer), a pillow off that -- steep at the edge,
+// flat across the top, the way stitched leather rounds over -- with the
+// swellings above standing proud of it, and the slope of the lot. Lit, the
+// light rolls along the edges of the whole shape as one thing, not five.
+static const int   FXB_G = 64;
+static const float FXB_GU0 = -26.0f, FXB_GV0 = -62.0f;
+static int8_t*     fxBootSlope = nullptr;         // [FXB_G * FXB_G * 2], x32, PSRAM
+static bool        fxBootBaked = false;
+
+static float fxBootSwell(float u, float v) {      // the swellings, softly unioned
+  float h2 = 0.0f;
+  for (int i = 0; i < 5; i++) {
+    const FxBump& B = FXB_LEATHER[i];
+    const float du = (u - B.cu) / B.a, dv = (v - B.cv) / B.b, q = du * du + dv * dv;
+    if (q < 1.0f) h2 += B.h * B.h * (1.0f - q);
+  }
+  return sqrtf(h2);
+}
+
+// Bakes into the SFX lettering's SDF scratch, which is free between words: a
+// scene's word is built when its cue begins, before the first boot is drawn.
+static void fxBootBake(const float* ou, const float* ov, int n) {
+  if (!fxBootSlope || !fxSdfA || !fxSdfB) return;
+  const int G = FXB_G;
+  for (int j = 0; j < G; j++)
+    for (int i = 0; i < G; i++) {
+      const float u = FXB_GU0 + i + 0.5f, v = FXB_GV0 + j + 0.5f;
+      bool in = false;
+      for (int a = 0, b = n - 1; a < n; b = a++)
+        if ((ov[a] > v) != (ov[b] > v) && u < ou[b] + (v - ov[b]) * (ou[a] - ou[b]) / (ov[a] - ov[b])) in = !in;
+      fxSdfA[j * G + i] = in ? 30000 : 0;
+    }
+  fxChamfer(fxSdfA, G, G);
+  for (int j = 0; j < G; j++)
+    for (int i = 0; i < G; i++) {
+      const float d = fxSdfA[j * G + i] / 3.0f;
+      float h = 0.0f;
+      if (d > 0.0f) {
+        const float e = fminf(d / 6.5f, 1.0f);
+        h = 6.5f * (1.0f - (1.0f - e) * (1.0f - e)) + 0.55f * fxBootSwell(FXB_GU0 + i + 0.5f, FXB_GV0 + j + 0.5f);
+      }
+      fxSdfB[j * G + i] = (int16_t)(h * 64.0f);
+    }
+  for (int j = 0; j < G; j++)
+    for (int i = 0; i < G; i++) {
+      const int il = fxMaxI(0, i - 1), ir = fxMinI(G - 1, i + 1), jt = fxMaxI(0, j - 1), jb = fxMinI(G - 1, j + 1);
+      const float gu = (fxSdfB[j * G + ir] - fxSdfB[j * G + il]) / (64.0f * (ir - il));
+      const float gv = (fxSdfB[jb * G + i] - fxSdfB[jt * G + i]) / (64.0f * (jb - jt));
+      fxBootSlope[(j * G + i) * 2]     = (int8_t)fxClampF(gu * 32.0f, -127.0f, 127.0f);
+      fxBootSlope[(j * G + i) * 2 + 1] = (int8_t)fxClampF(gv * 32.0f, -127.0f, 127.0f);
+    }
+  fxBootBaked = true;
+}
+
+static uint16_t fxShadeLeather(const FxBootXf& X, float u, float v, int x, int y, uint32_t seed) {
+  // The baked slope, bilinear, so the screen grades rather than steps.
+  float gu = 0.0f, gv = 0.0f;
+  const float fu = u - FXB_GU0 - 0.5f, fv = v - FXB_GV0 - 0.5f;
+  const int i = (int)floorf(fu), j = (int)floorf(fv);
+  if (fxBootBaked && i >= 0 && j >= 0 && i + 1 < FXB_G && j + 1 < FXB_G) {
+    const float tu = fu - i, tv = fv - j;
+    const int8_t* a = fxBootSlope + (j * FXB_G + i) * 2;
+    const int8_t* b = a + 2;
+    const int8_t* c = a + FXB_G * 2;
+    const int8_t* d = c + 2;
+    gu = ((a[0] * (1 - tu) + b[0] * tu) * (1 - tv) + (c[0] * (1 - tu) + d[0] * tu) * tv) * (1.0f / 32.0f);
+    gv = ((a[1] * (1 - tu) + b[1] * tu) * (1 - tv) + (c[1] * (1 - tu) + d[1] * tu) * tv) * (1.0f / 32.0f);
+  }
+  const float inv = 1.0f / sqrtf(gu * gu + gv * gv + 1.0f);
+  const float dl = (-gu * X.lx - gv * X.ly + X.lz) * inv;
+  // Black leather the way a comic inks it: black wherever the light is not
+  // square on it, a screen that thickens as it turns toward the light, and
+  // a solid core where it is. The grain keeps the screen from looking ruled.
+  const int grain = (int)(fxHash2((uint32_t)(x * 7 + y * 1031), seed) & 31) - 16;
+  const int dot   = FX_DOT[(y & 7) * 8 + (x & 7)];
+  if (dl > 0.93f) return FX_PAL[FXP_HDR];
+  const int tone = (int)((dl - 0.62f) * 900.0f) + grain;
+  if (tone > dot) return FX_PAL[tone > 190 ? FXP_BRICK : FXP_RUST];
+  return FX_PAL[FXP_INK];
+}
+
+// Cloth: a tube round the leg's axis (which leans back by X.lean a unit
+// up), creased by folds -- ridges across the tube where the hem breaks over
+// the boot, and along it up the shin. Folds sit in the leg's own terms: an
+// offset from its axis, a height, a heading, a length, a width, a depth.
+struct FxFold { float pu, pv, du, dv, len, w, amp; };
+static const FxFold FXB_FOLDS[7] = {
+  { -2.0f, -57.0f, 0.94f, -0.34f, 13.0f, 3.2f, 3.0f },
+  {  1.5f, -64.0f, 0.96f,  0.28f, 12.0f, 3.0f, 2.8f },
+  { -4.0f, -71.0f, 0.98f, -0.20f, 12.0f, 3.0f, 2.4f },
+  {  3.0f, -79.0f, 0.94f,  0.34f, 10.0f, 2.8f, 2.0f },
+  { -5.0f, -88.0f, 0.97f, -0.24f,  9.0f, 2.6f, 1.6f },
+  { -6.0f, -112.0f, 0.12f, -0.99f, 26.0f, 3.5f, 2.2f },
+  {  5.0f, -134.0f, 0.27f, -0.96f, 22.0f, 3.0f, 1.8f },
+};
+static inline float fxLegAxis(float lean, float v) { return -5.0f + lean * (v + 50.0f); }
+static inline float fxLegHalf(float v) { return 14.5f - (v + 50.0f) * 0.05f; }
+
+static uint16_t fxShadeCloth(const FxBootXf& X, float u, float v, int x, int y, uint32_t seed) {
+  const float uc = fxLegAxis(X.lean, v), W = fxLegHalf(v);
+  float a = fxClampF((u - uc) / W, -0.96f, 0.96f);
+  const float r = sqrtf(1.0f - a * a);
+  float gu = -a / r, gv = a / r * X.lean;        // the tube's slope (h = W r)
+  for (int i = 0; i < 7; i++) {
+    const FxFold& F = FXB_FOLDS[i];
+    const float ru = u - (F.pu + fxLegAxis(X.lean, F.pv)), rv = v - F.pv;
+    const float al = (ru * F.du + rv * F.dv) / F.len;
+    if (al <= -1.0f || al >= 1.0f) continue;
+    const float s = (-ru * F.dv + rv * F.du) / F.w;
+    if (s <= -1.0f || s >= 1.0f) continue;
+    const float t = 1.0f - s * s, taper = 1.0f - al * al;
+    const float db = F.amp * taper * 2.0f * t * (-2.0f * s) / F.w;   // slope across the ridge
+    gu += db * -F.dv;
+    gv += db *  F.du;
+  }
+  const float inv = 1.0f / sqrtf(gu * gu + gv * gv + 1.0f);
+  const float d = (-gu * X.lx - gv * X.ly + X.lz) * inv;
+  // Matte: a broad screen with no core, a rung or two under the leather's.
+  const int weave = (int)(fxHash2((uint32_t)((x >> 1) * 13 + (y >> 1) * 977), seed) & 31) - 16;
+  const int dot   = FX_DOT[(y & 7) * 8 + (x & 7)];
+  const int tone  = (int)((d - 0.50f) * 620.0f) + weave;
+  if (tone > 150 && (tone - 150) * 2 > dot) return FX_PAL[FXP_EMBER];
+  if (tone > dot) return FX_PAL[FXP_LINE];
+  return FX_PAL[FXP_INK];
+}
+
+// The upper, heel to toe along the welt and back up the front; the sole with
+// its lugs is built in fxBootDraw.
+static const float FXB_UU[21] = { -20.5f, -22.2f, -21.6f, -18.4f, -16.4f, -16.6f, -14.6f, -7, 1.5f, 5.4f, 5.0f,
+                                  4.0f, 6.0f, 11.0f, 18.0f, 25.0f, 30.2f, 33.6f, 34.4f, 15, -3 };
+static const float FXB_UV[21] = { -5, -11.5f, -20.5f, -30, -42, -52, -57, -58.5f, -57.5f, -54.5f, -46.5f,
+                                  -37.5f, -30.5f, -25.5f, -21.2f, -17.6f, -14.2f, -10.2f, -6.2f, -4.8f, -4.8f };
+
+// A work boot, the trouser leg over it, and its laces tied off. `lean` tilts
+// the leg back (a shin in mid-stride); `t` (ms) swings the lace ends.
+static void fxBootDraw(float x, float y, float rot, float k, uint32_t seed, float lean = 0.0f, float t = 0.0f) {
+  FxBootXf X;
+  X.x = x; X.y = y; X.c = cosf(rot); X.s = sinf(rot); X.k = k; X.lean = lean;
+  {
+    const float Lx = -0.52f, Ly = -0.62f, Lz = 0.59f;           // the glass's light, top left and in front
+    X.lx = Lx * X.c + Ly * X.s; X.ly = -Lx * X.s + Ly * X.c; X.lz = Lz;
+    float hx = X.lx, hy = X.ly, hz = X.lz + 1.0f, hl = 1.0f / sqrtf(hx * hx + hy * hy + hz * hz);
+    X.hx = hx * hl; X.hy = hy * hl; X.hz = hz * hl;
+  }
+  float ou[FXB_PTS], ov[FXB_PTS], ax, ay, bx, by;
+
+  // The upper.
+  int n = fxCurve(FXB_UU, FXB_UV, 21, 4, ou, ov, FXB_PTS);
+  if (!fxBootBaked) fxBootBake(ou, ov, n);
+  fxBootEdge(ou, ov, n, X, FXP_BRICK, 1.5f);
+  fxBootFill(ou, ov, n, X, fxShadeLeather, 0, seed);
+
+  // The sole: a welt, a toe that springs up, a heel block, and lugs.
+  {
+    int m = 0;
+    ou[m] = -22.5f; ov[m++] = -5.8f;
+    ou[m] = 27.0f;  ov[m++] = -5.8f;
+    ou[m] = 32.5f;  ov[m++] = -6.8f;
+    ou[m] = 35.5f;  ov[m++] = -5.2f;
+    ou[m] = 36.0f;  ov[m++] = -2.6f;
+    ou[m] = 34.0f;  ov[m++] = -0.6f;
+    for (float lu = 31.5f; lu > -7.0f && m < FXB_PTS - 12; lu -= 3.7f) {   // the forefoot's lugs
+      ou[m] = lu;        ov[m++] = 0.6f;
+      ou[m] = lu - 0.4f; ov[m++] = 2.6f;
+      ou[m] = lu - 2.5f; ov[m++] = 2.6f;
+      ou[m] = lu - 2.9f; ov[m++] = 0.6f;
+    }
+    ou[m] = -7.5f;  ov[m++] = 0.6f;
+    for (float lu = -8.0f; lu > -21.0f && m < FXB_PTS - 6; lu -= 3.4f) {  // the heel's, deeper
+      ou[m] = lu;        ov[m++] = 2.4f;
+      ou[m] = lu - 0.4f; ov[m++] = 4.4f;
+      ou[m] = lu - 2.4f; ov[m++] = 4.4f;
+      ou[m] = lu - 2.8f; ov[m++] = 2.4f;
+    }
+    ou[m] = -22.0f; ov[m++] = 2.4f;
+    ou[m] = -23.0f; ov[m++] = -1.5f;
+    fxBootEdge(ou, ov, m, X, FXP_BRICK, 1.3f);
+    fxBootFill(ou, ov, m, X, nullptr, FX_PAL[FXP_INK], seed);
+  }
+  // The rubber's sidewall catching the light, and the welt's stitching.
+  fxBootAt(x, y, X.c, X.s, k, -21.0f, -2.4f, &ax, &ay);
+  fxBootAt(x, y, X.c, X.s, k, 33.0f, -2.4f, &bx, &by);
+  fxLine((int)ax, (int)ay, (int)bx, (int)by, FX_PAL[FXP_LINE]);
+  for (float su = -20.0f; su < 30.0f; su += 2.6f) {
+    fxBootAt(x, y, X.c, X.s, k, su, -6.6f, &ax, &ay);
+    fxBootAt(x, y, X.c, X.s, k, su + 1.3f, -6.6f, &bx, &by);
+    fxLine((int)ax, (int)ay, (int)bx, (int)by, FX_PAL[FXP_EMBER]);
+  }
+  // Seams: round the toe cap, and up the back of the heel counter, stitched.
+  {
+    static const float TU[4] = { 17.5f, 16.0f, 16.6f, 19.5f }, TV[4] = { -20.5f, -15.0f, -9.5f, -6.0f };
+    static const float HU[4] = { -8.5f, -10.5f, -13.0f, -18.0f }, HV[4] = { -6.0f, -16.0f, -25.0f, -31.0f };
+    for (int sm = 0; sm < 2; sm++) {
+      const float* U = sm ? HU : TU; const float* V = sm ? HV : TV;
+      for (int i = 0; i < 3; i++) {
+        fxBootAt(x, y, X.c, X.s, k, U[i], V[i], &ax, &ay);
+        fxBootAt(x, y, X.c, X.s, k, U[i + 1], V[i + 1], &bx, &by);
+        fxLine((int)ax, (int)ay, (int)bx, (int)by, FX_PAL[FXP_INK]);
+        fxLine((int)ax - 1, (int)ay - 1, (int)bx - 1, (int)by - 1, FX_PAL[FXP_RUST]);
+        fxPut((int)((ax + bx) * 0.5f) + 1, (int)((ay + by) * 0.5f), FX_PAL[FXP_EMBER]);
+      }
+    }
+  }
+  // Where it flexes: two creases over the instep, dark with a lit lip.
+  for (int i = 0; i < 2; i++) {
+    const float cu = 6.5f + i * 3.5f, cv = -21.5f + i * 2.2f;
+    fxBootAt(x, y, X.c, X.s, k, cu - 3.0f, cv - 1.4f, &ax, &ay);
+    fxBootAt(x, y, X.c, X.s, k, cu + 3.2f, cv + 1.6f, &bx, &by);
+    fxLine((int)ax, (int)ay, (int)bx, (int)by, FX_PAL[FXP_INK]);
+    fxLine((int)ax - 1, (int)ay, (int)bx - 1, (int)by, FX_PAL[FXP_BRICK]);
+  }
+  // The speculars, put in by hand: a broken streak down the back of the
+  // shaft, a glint along the toe cap, a catch on the heel.
+  {
+    static const float SS[3][6] = { { -13.8f, -47.0f, -14.6f, -36.0f, 1.8f, 1.0f },
+                                    { -14.9f, -32.5f, -15.8f, -23.0f, 1.4f, 0.7f },
+                                    { -19.0f, -18.5f, -19.6f, -10.0f, 1.3f, 0.7f } };
+    for (int i = 0; i < 3; i++) {
+      fxBootAt(x, y, X.c, X.s, k, SS[i][0], SS[i][1], &ax, &ay);
+      fxBootAt(x, y, X.c, X.s, k, SS[i][2], SS[i][3], &bx, &by);
+      fxStroke(ax, ay, bx, by, SS[i][4] * k, SS[i][5] * k, FX_PAL[i == 2 ? FXP_BRICK : FXP_HDR]);
+    }
+    fxBootAt(x, y, X.c, X.s, k, 22.5f, -16.4f, &ax, &ay);
+    fxBootAt(x, y, X.c, X.s, k, 30.5f, -12.6f, &bx, &by);
+    fxStroke(ax, ay, bx, by, 1.2f * k, 1.9f * k, FX_PAL[FXP_GLOW]);
+    fxPut((int)bx, (int)by, FX_PAL[FXP_WHITE]);
+  }
+  // Scuffs on the toe, where it has kicked a few things.
+  for (int i = 0; i < 4; i++) {
+    uint32_t h = fxHash2((uint32_t)i, seed + 5);
+    float su = 18.0f + fxU(h) * 12.0f, sv = -13.0f + fxU(fxHash(h + 1)) * 6.0f, sl = 1.5f + fxU(fxHash(h + 2)) * 2.5f;
+    fxBootAt(x, y, X.c, X.s, k, su, sv, &ax, &ay);
+    fxBootAt(x, y, X.c, X.s, k, su + sl, sv + fxS(fxHash(h + 3)) * 1.2f, &bx, &by);
+    fxLine((int)ax, (int)ay, (int)bx, (int)by, FX_PAL[(h & 1) ? FXP_BRICK : FXP_HDR]);
+  }
+  // Eyelets up the front, and the lace criss-crossing between them.
+  float ex[5], ey[5];
+  static const float EU[5] = { 4.2f, 2.6f, 1.6f, 1.8f, 2.2f }, EV[5] = { -26.5f, -32.0f, -37.5f, -43.0f, -48.5f };
+  for (int i = 0; i < 5; i++) fxBootAt(x, y, X.c, X.s, k, EU[i], EV[i], &ex[i], &ey[i]);
+  for (int i = 0; i + 1 < 5; i++) {
+    float fx0, fy0, fx1, fy1;
+    fxBootAt(x, y, X.c, X.s, k, EU[i] + 2.4f, EV[i] - 0.5f, &fx0, &fy0);
+    fxBootAt(x, y, X.c, X.s, k, EU[i + 1] + 2.4f, EV[i + 1] - 0.5f, &fx1, &fy1);
+    fxStroke(ex[i] + 0.6f, ey[i] + 0.7f, fx1 + 0.6f, fy1 + 0.7f, 3.0f, 3.0f, FX_PAL[FXP_INK]);
+    fxStroke(fx0 + 0.6f, fy0 + 0.7f, ex[i + 1] + 0.6f, ey[i + 1] + 0.7f, 3.0f, 3.0f, FX_PAL[FXP_INK]);
+    fxStroke(ex[i], ey[i], fx1, fy1, 1.7f, 1.7f, FX_PAL[FXP_OK]);
+    fxStroke(fx0, fy0, ex[i + 1], ey[i + 1], 1.7f, 1.7f, FX_PAL[FXP_HDR]);
+  }
+  for (int i = 0; i < 5; i++) {
+    fxDisc(ex[i], ey[i], 2.2f, FX_PAL[FXP_INK]);
+    fxDisc(ex[i] - 0.4f, ey[i] - 0.4f, 1.3f, FX_PAL[FXP_CRIT]);
+  }
+
+  // The trouser leg, over the top of it. Its hem is torn, not cut.
+  {
+    const float lean2 = lean;
+    int m = 0;
+    static const float SV[5] = { -50.0f, -72.0f, -100.0f, -135.0f, -170.0f };
+    for (int i = 0; i < 5; i++) {                              // up the back
+      ou[m] = fxLegAxis(lean2, SV[i]) - fxLegHalf(SV[i]) - (i == 1 ? 1.2f : 0.0f);
+      ov[m++] = SV[i];
+    }
+    for (int i = 4; i >= 0; i--) {                             // down the front
+      ou[m] = fxLegAxis(lean2, SV[i]) + fxLegHalf(SV[i]) + (i == 1 ? 1.5f : 0.0f);
+      ov[m++] = SV[i];
+    }
+    for (int i = 1; i < 8; i++) {                              // the hem, front to back
+      uint32_t h = fxHash2((uint32_t)i, seed + 23);
+      float hu = fxLegAxis(lean2, -50.0f) + fxLegHalf(-50.0f) - i * (2.0f * fxLegHalf(-50.0f) / 8.0f);
+      ou[m] = hu; ov[m++] = -49.0f + fxU(h) * 3.2f - ((i & 1) ? 1.4f : 0.0f);
+    }
+    // Hand the sampled outline to the curve, so its sides swell a little.
+    float cu[FXB_PTS], cv[FXB_PTS];
+    int nc = fxCurve(ou, ov, m, 2, cu, cv, FXB_PTS);
+    fxBootEdge(cu, cv, nc, X, FXP_RUST, 1.6f);
+    fxBootFill(cu, cv, nc, X, fxShadeCloth, 0, seed + 31);
+    // The folds inked the way a hand does it: each a crease that bows a
+    // little and thins to nothing at both ends, with the light on its lip.
+    // The shading already turns the cloth over them; the line says where.
+    for (int i = 0; i < 7; i++) {
+      const FxFold& F = FXB_FOLDS[i];
+      const uint32_t h = fxHash2((uint32_t)i, seed + 37);
+      const float cu0 = F.pu + fxLegAxis(lean2, F.pv), cv0 = F.pv + F.w * 0.35f;
+      const float L = F.len * (0.62f + 0.25f * fxU(h)), bow = F.w * 0.45f * fxS(fxHash(h + 1));
+      float px[4], py[4];
+      for (int q = 0; q < 4; q++) {
+        const float t = (q / 3.0f) * 2.0f - 1.0f, sag = bow * (1.0f - t * t);
+        fxBootAt(x, y, X.c, X.s, k, cu0 + F.du * L * t - F.dv * sag, cv0 + F.dv * L * t + F.du * sag, &px[q], &py[q]);
+      }
+      static const float WW[4] = { 0.4f, 1.9f, 1.7f, 0.4f };
+      for (int q = 0; q < 3; q++) {
+        fxStroke(px[q] - 0.8f, py[q] - 0.9f, px[q + 1] - 0.8f, py[q + 1] - 0.9f, WW[q] * 0.7f, WW[q + 1] * 0.7f,
+                 FX_PAL[i < 5 ? FXP_RUST : FXP_EMBER]);
+        fxStroke(px[q], py[q], px[q + 1], py[q + 1], WW[q], WW[q + 1], FX_PAL[FXP_INK]);
+      }
+    }
+    // A patch sewn over a hole in the shin, running stitch round it.
+    const float pu = fxLegAxis(lean2, -104.0f) - 2.0f, pv = -104.0f;
+    static const float PU[4] = { -5.5f, 5.0f, 5.8f, -5.0f }, PV[4] = { -6.0f, -7.0f, 6.0f, 6.5f };
+    float qx[4], qy[4];
+    for (int i = 0; i < 4; i++) fxBootAt(x, y, X.c, X.s, k, pu + PU[i], pv + PV[i], &qx[i], &qy[i]);
+    {
+      const uint8_t st0 = fxStip; const uint32_t ss0 = fxStipSeed;
+      fxStip = (uint8_t)fxMaxI((int)st0, 150); fxStipSeed = seed + 41;
+      fxPoly(qx, qy, 4, FX_PAL[FXP_DIM]);
+      fxStip = st0; fxStipSeed = ss0;
+    }
+    for (int i = 0; i < 4; i++) {
+      const int j = (i + 1) & 3;
+      for (int d = 0; d < 5; d++) {
+        float f0 = (d + 0.15f) / 5.0f, f1 = (d + 0.6f) / 5.0f;
+        fxLine((int)fxLerp(qx[i], qx[j], f0), (int)fxLerp(qy[i], qy[j], f0),
+               (int)fxLerp(qx[i], qx[j], f1), (int)fxLerp(qy[i], qy[j], f1), FX_PAL[FXP_LINE]);
+      }
+    }
+    // Threads off the torn hem.
+    for (int i = 0; i < 4; i++) {
+      uint32_t h = fxHash2((uint32_t)i, seed + 43);
+      float hu = fxLegAxis(lean2, -50.0f) - 12.0f + fxU(h) * 22.0f;
+      fxBootAt(x, y, X.c, X.s, k, hu, -47.5f, &ax, &ay);
+      fxLine((int)ax, (int)ay, (int)(ax + fxS(fxHash(h + 1)) * 1.5f), (int)(ay + 2.0f + (h >> 7) % 4), FX_PAL[FXP_RUST]);
+    }
+  }
+
+  // The bow, tied at the top eyelet just under the hem: two loops and two
+  // ends, and the ends hang the way the glass says down is, whatever the
+  // boot is doing, swinging a little behind it.
+  {
+    float kx, ky;
+    fxBootAt(x, y, X.c, X.s, k, 6.5f, -42.0f, &kx, &ky);
+    const float sw = (fxNoise1(t * 0.004f, seed + 51) - 0.5f) * 0.8f;
+    for (int lp = 0; lp < 2; lp++) {
+      float la = (lp ? 0.35f : -0.55f) + sw * 0.3f, lr = 3.2f * k;
+      float lx = kx + cosf(la) * lr, ly = ky + sinf(la) * lr * 0.7f;
+      fxBlob(lx, ly, cosf(la), sinf(la), lr * 0.95f, lr * 0.55f, seed + 53 + (uint32_t)lp, FX_PAL[FXP_INK]);
+      fxBlob(lx - 0.5f, ly - 0.5f, cosf(la), sinf(la), lr * 0.72f, lr * 0.34f, seed + 53 + (uint32_t)lp, FX_PAL[FXP_OK]);
+      fxBlob(lx, ly, cosf(la), sinf(la), lr * 0.45f, lr * 0.14f, seed + 55 + (uint32_t)lp, FX_PAL[FXP_INK]);
+    }
+    for (int e = 0; e < 2; e++) {
+      float ea = FX_TAU * 0.25f + (e ? 0.22f : -0.12f) + sw, el = (e ? 7.5f : 9.5f) * k;
+      float tx2 = kx + cosf(ea) * el, ty2 = ky + sinf(ea) * el;
+      fxStroke(kx + 0.6f, ky + 0.6f, tx2 + 0.6f, ty2 + 0.6f, 2.6f, 2.2f, FX_PAL[FXP_INK]);
+      fxStroke(kx, ky, tx2, ty2, 1.4f, 1.2f, FX_PAL[e ? FXP_OK : FXP_HDR]);
+      fxDisc(tx2, ty2, 1.4f, FX_PAL[FXP_INK]);                  // the aglet
+      fxPut((int)tx2, (int)ty2, FX_PAL[FXP_GLOW]);
+    }
+    fxDisc(kx, ky, 1.8f, FX_PAL[FXP_INK]);
+    fxDisc(kx - 0.3f, ky - 0.3f, 1.0f, FX_PAL[FXP_OK]);
+  }
+}
+
+// Dust kicked up where something heavy lands: clots that swell, lift and go
+// grainy over `dur` ms. `t` ms since the landing.
+static void fxDustDraw(float x, float y, float t, float spread, uint32_t seed, float dur = 700.0f) {
+  if (t < 0 || t > dur) return;
+  const float p = t / dur;
+  const uint8_t oldStip = fxStip;
+  const uint32_t oldSeed = fxStipSeed;
+  fxStip = (uint8_t)fxMaxI((int)oldStip, (int)(p * p * 255.0f));
+  fxStipSeed = seed + 3;
+  for (int i = 0; i < 7; i++) {
+    uint32_t h = fxHash2((uint32_t)i, seed);
+    float a = -FX_TAU * 0.5f + fxU(h) * FX_TAU * 0.5f;             // up and out
+    float d = spread * (0.3f + 0.7f * fxU(fxHash(h + 1))) * fxCubicOut(p);
+    float r = (3.0f + 6.0f * fxU(fxHash(h + 2))) * (0.5f + p);
+    fxBlob(x + cosf(a) * d, y + sinf(a) * d * 0.55f - p * 10.0f, 1.0f, 0.0f, r, r * 0.8f,
+           h, FX_PAL[(h & 1) ? FXP_DIM : FXP_LINE]);
+  }
+  fxStip = oldStip;
+  fxStipSeed = oldSeed;
+}
+
+// The caption, the nest's way: one quiet box in the top left.
+static void fxSceneCaption(const FxCut& C, float t, float shx, float shy) {
+  if (!C.capN || t < 250.0f) return;
+  float p = fxClampF((t - 250.0f) / 150.0f, 0.0f, 1.0f);
+  int bw = C.capW + 14, bh = C.capN * 16 + 8;
+  int x = (int)(8 + shx), y = (int)(8 + shy - (1.0f - fxBackOut(p)) * 22.0f);
+  fxRect(x + 3, y + 3, x + bw + 3, y + bh + 3, FX_PAL[FXP_INK]);
+  fxRect(x, y, x + bw, y + bh, FX_PAL[FXP_INK]);
+  fxRect(x + 1, y + 1, x + bw - 1, y + 2, FX_PAL[FXP_EMBER]);
+  fxRect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, FX_PAL[FXP_EMBER]);
+  for (int i = 0; i < C.capN; i++) fxF2(C.cap[i], x + 7, y + 4 + i * 16, FX_PAL[FXP_OK]);
+}
+
+// ── The wire ──
+enum : uint16_t {             // the beats, ms into the scene; FX_STYLE's holdMs is 2900
+  FXW_STEP  = 120,            // the boot swings in
+  FXW_TOUCH = 700,            // its toe finds the wire
+  FXW_SNAP  = 880,            // and it parts
+  FXW_DOWN  = 1330,           // the boot hits the ground, just off the glass
+  FXW_LOOM  = 1450,           // what the wire was holding comes down
+  FXW_FADE  = 2650,           // everything dissolves
+};
+static const int   FXW_N = 16;                    // points in each half of the wire, once it has parted
+static const float FXW_K = 1.45f;                 // the boot's scale
+static const float FXW_TOUCHROT = -0.08f;         // how the boot is turned when it finds the wire
+static const float FXW_STEPMS = 2.0f;             // the parted wire is simulated in steps this long
+struct FxWire {
+  float ax, ay, bx, by;                           // the nail, the eye-screw
+  float hx, hy;                                   // where the toe finds it
+  float sx, sy;                                   // where the boot swings in from
+  float qx[2][FXW_N], qy[2][FXW_N];               // the halves: [0] off the nail, [1] off the eye
+  float vx[2][FXW_N], vy[2][FXW_N];
+  float rest[2];                                  // their springs' rest length, per segment
+  float simT;                                     // ms of the parted wire simulated so far
+  float snapX, snapY;                             // where it parted
+  bool  snapped, down;
+  uint32_t seed;
+};
+static FxWire* fxWire = nullptr;                  // PSRAM
+
+static void fxWireBegin(FxCut& C) {
+  if (!fxWire) { C.on = false; return; }
+  FxWire& Wr = *fxWire;
+  memset(&Wr, 0, sizeof(Wr));
+  FxRng R; R.s = C.seed ^ 0x7B1A3E5U;
+  Wr.seed = R.next();
+  Wr.ax = 6.0f;           Wr.ay = 196.0f + R.u() * 14.0f;
+  Wr.bx = FX_W - 7.0f;    Wr.by = 222.0f + R.u() * 14.0f;
+  const float f = 0.45f + 0.1f * R.u();
+  Wr.hx = fxLerp(Wr.ax, Wr.bx, f);
+  Wr.hy = fxLerp(Wr.ay, Wr.by, f);
+  Wr.sx = -80.0f;         Wr.sy = 70.0f + R.u() * 30.0f;
+}
+
+// Where the boot is (the origin of its frame) and how it is turned, at t.
+// Closed-form, so the frame rate never changes the stride.
+static bool fxWireBoot(const FxWire& Wr, float t, float* x, float* y, float* rot) {
+  if (t < FXW_STEP) return false;
+  const float c = cosf(FXW_TOUCHROT), s = sinf(FXW_TOUCHROT);
+  const float ox = Wr.hx - (FXB_TOEX * c - FXB_TOEY * s) * FXW_K;   // the boot, toe on the wire
+  const float oy = Wr.hy - (FXB_TOEX * s + FXB_TOEY * c) * FXW_K;
+  if (t < FXW_TOUCH) {
+    // A stride: fast off the back foot, slowing to set this one down, swung
+    // on an arc over a point above and between.
+    float e = fxCubicOut((t - FXW_STEP) / (float)(FXW_TOUCH - FXW_STEP));
+    float qx = (Wr.sx + ox) * 0.5f, qy = fminf(Wr.sy, oy) - 34.0f, u = 1.0f - e;
+    *x   = u * u * Wr.sx + 2.0f * u * e * qx + e * e * ox;
+    *y   = u * u * Wr.sy + 2.0f * u * e * qy + e * e * oy;
+    *rot = fxLerp(-0.45f, FXW_TOUCHROT, e);
+    return true;
+  }
+  if (t < FXW_SNAP) {
+    // Pushing into it: a few px, and slowing -- the wire is giving less.
+    float e = fxCubicOut((t - FXW_TOUCH) / (float)(FXW_SNAP - FXW_TOUCH));
+    *x = ox + 11.0f * e; *y = oy + 5.0f * e; *rot = FXW_TOUCHROT + 0.06f * e;
+    return true;
+  }
+  // Nothing to push against: the foot shoots on, and the rest of them goes
+  // over it, toe first.
+  float u = (t - FXW_SNAP) / 520.0f;
+  if (u > 1.3f) return false;
+  *x = ox + 11.0f + 128.0f * u;
+  *y = oy + 5.0f + 22.0f * u + 150.0f * u * u;
+  *rot = FXW_TOUCHROT + 0.06f + 1.05f * fminf(u, 1.0f);
+  return true;
+}
+
+// The two halves, once it has parted: springs between neighbours with a rest
+// length far shorter than the wire was stretched to, so each half snaps back
+// toward whatever still holds it and overshoots, lashing; then the damping
+// and the weight of it bring it down. The eye end is being hauled up through
+// the eye the whole time, by whatever the wire was holding.
+static void fxWireStep(FxWire& Wr, float ts) {
+  const float dt = FXW_STEPMS, KS = 0.0032f, G = 0.0008f, DAMP = 1.0f - 0.0055f * FXW_STEPMS, VMAX = 2.2f;
+  for (int sd = 0; sd < 2; sd++) {
+    float* qx = Wr.qx[sd]; float* qy = Wr.qy[sd]; float* vx = Wr.vx[sd]; float* vy = Wr.vy[sd];
+    if (sd == 0) { qx[0] = Wr.ax; qy[0] = Wr.ay; }
+    else {
+      qx[0] = Wr.bx;
+      qy[0] = Wr.by - (Wr.by + 90.0f) * fxCubicIn(fxClampF((ts - 30.0f) / 320.0f, 0.0f, 1.0f));
+    }
+    float ax[FXW_N], ay[FXW_N];
+    for (int i = 0; i < FXW_N; i++) { ax[i] = 0.0f; ay[i] = G; }
+    for (int i = 0; i + 1 < FXW_N; i++) {
+      float dx = qx[i + 1] - qx[i], dy = qy[i + 1] - qy[i], d = sqrtf(dx * dx + dy * dy);
+      if (d < 0.001f) continue;
+      float f = KS * (d - Wr.rest[sd]) / d;
+      ax[i] += f * dx;     ay[i] += f * dy;
+      ax[i + 1] -= f * dx; ay[i + 1] -= f * dy;
+    }
+    for (int i = 1; i < FXW_N; i++) {
+      vx[i] = fxClampF((vx[i] + ax[i] * dt) * DAMP, -VMAX, VMAX);
+      vy[i] = fxClampF((vy[i] + ay[i] * dt) * DAMP, -VMAX, VMAX);
+      qx[i] += vx[i] * dt;
+      qy[i] += vy[i] * dt;
+    }
+  }
+}
+
+// A wire: black under it so it reads over the lit screen, the lit hairline
+// over that.
+static void fxWireSeg(float x0, float y0, float x1, float y1, uint8_t lit) {
+  fxStroke(x0 + 0.6f, y0 + 0.8f, x1 + 0.6f, y1 + 0.8f, 3.4f, 3.4f, FX_PAL[FXP_INK]);
+  fxStroke(x0, y0, x1, y1, 1.7f, 1.7f, FX_PAL[lit]);
+}
+
+static void fxWireFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy) {
+  FxWire& Wr = *fxWire;
+  const float tf = (float)t;
+  const uint8_t fade = t > FXW_FADE ? (uint8_t)fxMinI(255, (int)((t - FXW_FADE) * 255 / 520)) : 0;
+  if (fade) { fxStip = fade; fxStipSeed = C.seed + 1; }
+
+  float bx = 0, by = 0, br = 0;
+  const bool boot = fxWireBoot(Wr, tf, &bx, &by, &br);
+  float tx = Wr.hx, ty = Wr.hy;
+  if (boot && t >= FXW_TOUCH && t < FXW_SNAP) fxBootToe(bx, by, br, FXW_K, &tx, &ty);
+
+  // It parts.
+  if (t >= FXW_SNAP && !Wr.snapped) {
+    Wr.snapped = true;
+    Wr.snapX = tx; Wr.snapY = ty;
+    for (int sd = 0; sd < 2; sd++) {
+      const float x0 = sd ? Wr.bx : Wr.ax, y0 = sd ? Wr.by : Wr.ay;
+      for (int i = 0; i < FXW_N; i++) {
+        float u = (float)i / (FXW_N - 1);
+        Wr.qx[sd][i] = fxLerp(x0, tx, u);
+        Wr.qy[sd][i] = fxLerp(y0, ty, u);
+        Wr.vx[sd][i] = Wr.vy[sd][i] = 0.0f;
+      }
+      float L = sqrtf((tx - x0) * (tx - x0) + (ty - y0) * (ty - y0));
+      Wr.rest[sd] = L / (FXW_N - 1) * 0.30f;
+      Wr.vy[sd][FXW_N - 1] = -0.45f;                 // the ends leap as the strain goes
+    }
+    Wr.simT = 0.0f;
+    fxImpact(0.5f);
+    fxFlash(FXFL_WHITE);
+    fxTearBurst(now, 1, 14, 160);
+  }
+  if (Wr.snapped) {
+    const float ts = tf - FXW_SNAP;
+    int guard = 0;
+    while (Wr.simT + FXW_STEPMS <= ts && guard++ < 200) { Wr.simT += FXW_STEPMS; fxWireStep(Wr, Wr.simT); }
+  }
+  if (t >= FXW_DOWN && !Wr.down) { Wr.down = true; fxImpact(0.3f); }
+
+  // The nail's post on the left, the eye-screw's on the right.
+  fxRect((int)(shx - 2), (int)(Wr.ay - 30 + shy), (int)(shx + 8), (int)(Wr.ay + 40 + shy), FX_PAL[FXP_INK]);
+  fxRect((int)(shx + 7), (int)(Wr.ay - 30 + shy), (int)(shx + 8), (int)(Wr.ay + 40 + shy), FX_PAL[FXP_RUST]);
+  fxRect((int)(FX_W - 6 + shx), (int)(shy - 2), (int)(FX_W + 2 + shx), (int)(Wr.by + 46 + shy), FX_PAL[FXP_INK]);
+  fxRect((int)(FX_W - 6 + shx), (int)(shy - 2), (int)(FX_W - 5 + shx), (int)(Wr.by + 46 + shy), FX_PAL[FXP_RUST]);
+  fxDisc(Wr.ax + 1 + shx, Wr.ay + shy, 3.0f, FX_PAL[FXP_INK]);
+  fxDisc(Wr.ax + 0.5f + shx, Wr.ay - 0.5f + shy, 1.8f, FX_PAL[FXP_HDR]);
+
+  // The wire above the eye, up to what it is holding; it is being hauled up
+  // through the eye once the wire has gone.
+  float eyeY = Wr.by;
+  if (Wr.snapped) eyeY = Wr.qy[1][0];
+  if (eyeY > -10.0f) fxWireSeg(Wr.bx - 1 + shx, fminf(eyeY, Wr.by) + shy, Wr.bx - 1 + shx, -2 + shy, FXP_OK);
+
+  if (!Wr.snapped) {
+    // Taut. A glint rides along it, the way a wire under strain catches light.
+    const uint8_t lit = (t >= FXW_TOUCH + 90) ? FXP_WHITE : FXP_GLOW;
+    fxWireSeg(Wr.ax + shx, Wr.ay + shy, tx + shx, ty + shy, lit);
+    fxWireSeg(tx + shx, ty + shy, Wr.bx + shx, Wr.by + shy, lit);
+    float g = fmodf(tf * 0.22f, 300.0f) / 300.0f;
+    if (g < 0.9f) {
+      float gx = fxLerp(Wr.ax, Wr.bx, g), gy = fxLerp(Wr.ay, Wr.by, g);
+      fxStroke(gx - 4 + shx, gy - 0.5f + shy, gx + 4 + shx, gy + 0.5f + shy, 1.6f, 1.6f, FX_PAL[FXP_WHITE]);
+    }
+    // The strain: ticks either side of the toe, jumping.
+    if (t >= FXW_TOUCH + 60) {
+      uint32_t boil = t / 60;
+      for (int k = 0; k < 4; k++) {
+        uint32_t h = fxHash2((uint32_t)k, boil + C.seed);
+        float a = FX_TAU * (0.55f + 0.4f * fxU(h)) + (k & 1 ? FX_TAU * 0.5f : 0.0f);
+        float r0 = 6.0f + 3.0f * fxU(fxHash(h + 1)), r1 = r0 + 5.0f + 4.0f * fxU(fxHash(h + 2));
+        fxStroke(tx + cosf(a) * r0 + shx, ty + sinf(a) * r0 + shy, tx + cosf(a) * r1 + shx, ty + sinf(a) * r1 + shy,
+                 1.8f, 0.8f, FX_PAL[FXP_WHITE]);
+      }
+    }
+  } else {
+    // The two halves, and their frayed ends.
+    for (int sd = 0; sd < 2; sd++) {
+      const float* qx = Wr.qx[sd]; const float* qy = Wr.qy[sd];
+      for (int i = 0; i + 1 < FXW_N; i++) fxWireSeg(qx[i] + shx, qy[i] + shy, qx[i + 1] + shx, qy[i + 1] + shy, FXP_GLOW);
+      float ex = qx[FXW_N - 1], ey = qy[FXW_N - 1];
+      float dx = ex - qx[FXW_N - 2], dy = ey - qy[FXW_N - 2], d = sqrtf(dx * dx + dy * dy);
+      float a0 = d > 0.01f ? atan2f(dy, dx) : 0.0f;
+      for (int k = 0; k < 4; k++) {
+        uint32_t h = fxHash2((uint32_t)(k + sd * 8), Wr.seed + (uint32_t)(t / 70));
+        float a = a0 + (k - 1.5f) * 0.42f + fxS(h) * 0.2f, l = 4.0f + 5.0f * fxU(fxHash(h + 1));
+        fxLine((int)(ex + shx), (int)(ey + shy), (int)(ex + cosf(a) * l + shx), (int)(ey + sinf(a) * l + shy),
+               FX_PAL[(k & 1) ? FXP_HOT : FXP_GLOW]);
+      }
+    }
+    // The spark where it went: a burst for two frames, chips flying off the
+    // break, and a white point.
+    const float ts = tf - FXW_SNAP;
+    if (ts < 110.0f) {
+      for (int pass = 0; pass < 2; pass++) {
+        const int SP = 14;                       // even, so the spikes alternate all the way round
+        float ox = 0, oy = 0;
+        for (int k = 0; k <= SP; k++) {
+          uint32_t h = fxHash2((uint32_t)(k % SP), Wr.seed + 61);
+          float a = ((k % SP) + fxS(h) * 0.3f) * FX_TAU / SP;
+          float r = ((k & 1) ? 9.0f : 20.0f + 14.0f * fxU(fxHash(h + 1))) * (pass ? 1.0f : 1.25f) * (1.2f - ts / 220.0f);
+          float px = Wr.snapX + cosf(a) * r + shx, py = Wr.snapY + sinf(a) * r * 0.8f + shy;
+          if (k) fxTri(Wr.snapX + shx, Wr.snapY + shy, ox, oy, px, py, FX_PAL[pass ? FXP_WHITE : FXP_INK]);
+          ox = px; oy = py;
+        }
+      }
+    }
+    if (ts < 200.0f) {
+      const float q = ts / 200.0f;
+      FxRng R; R.s = Wr.seed + 5;
+      for (int k = 0; k < 10; k++) {
+        float a = R.u() * FX_TAU, r0 = 3.0f + 20.0f * q * R.u(), r1 = r0 + (5.0f + 9.0f * R.u()) * (1.0f - q);
+        fxStroke(Wr.snapX + cosf(a) * r0 + shx, Wr.snapY + sinf(a) * r0 + shy,
+                 Wr.snapX + cosf(a) * r1 + shx, Wr.snapY + sinf(a) * r1 + shy, 2.6f * (1.0f - q) + 0.6f, 0.6f,
+                 FX_PAL[FXP_WHITE]);
+      }
+      fxDisc(Wr.snapX + shx, Wr.snapY + shy, 6.0f * (1.0f - q), FX_PAL[FXP_WHITE]);
+    }
+  }
+
+  // The boot, and the speed it leaves at.
+  if (boot) {
+    if (t >= FXW_SNAP && t < FXW_SNAP + 380) {
+      float px, py, pr;
+      fxWireBoot(Wr, fmaxf((float)FXW_SNAP, tf - 60.0f), &px, &py, &pr);
+      float dx = bx - px, dy = by - py, d = sqrtf(dx * dx + dy * dy);
+      if (d > 0.5f)
+        fxSpeedLines(bx - dx / d * 40.0f + shx, by - 30.0f - dy / d * 40.0f + shy, 30.0f, dx / d, dy / d, 16,
+                     C.seed + 7, tf * 1.6f, FX_PAL[FXP_GLOW], FX_PAL[FXP_WHITE]);
+    }
+    float jx = 0, jy = 0;
+    if (t >= FXW_TOUCH && t < FXW_SNAP) {
+      uint32_t h = fxHash2(FX.frame, C.seed + 11);
+      jx = fxS(h) * 0.8f; jy = fxS(fxHash(h + 1)) * 0.8f;
+    }
+    fxBootDraw(bx + jx + shx, by + jy + shy, br, FXW_K, Wr.seed, 0.30f, tf);
+  }
+  if (Wr.down) {
+    float ox = Wr.hx - (FXB_TOEX * cosf(FXW_TOUCHROT) - FXB_TOEY * sinf(FXW_TOUCHROT)) * FXW_K;
+    fxDustDraw(fminf(FX_W - 20.0f, ox + 150.0f) + shx, FX_H - 6.0f + shy, tf - FXW_DOWN, 70.0f, Wr.seed + 21);
+  }
+
+  // Its word, on the break.
+  if (C.hasWord && t >= FXW_SNAP) {
+    fxWordSlam(C.word, (int32_t)(t - FXW_SNAP) - 10, fxClampF(Wr.snapX, 96.0f, 144.0f) + shx,
+               Wr.snapY - 62.0f + shy, -0.12f, 45, t / 80);
+  }
+
+  // And what it was holding. A dead weight of black with a ragged foot comes
+  // down over the top of the glass, grit falling ahead of it.
+  if (t >= FXW_LOOM) {
+    const float p = fxCubicIn(fxClampF((tf - FXW_LOOM) / 800.0f, 0.0f, 1.0f));
+    int ymax = 0;
+    for (int x = 0; x < FX_W; x++) {
+      float n = fxNoise1((x - shx) * 0.045f, Wr.seed + 31) - 0.5f;
+      int e = (int)(-24.0f + (FX_H + 60.0f) * p + n * 30.0f + shy);
+      fxBT[x] = -1; fxBB[x] = (int16_t)e;
+      if (e > ymax) ymax = e;
+    }
+    fxColT = fxBT; fxColB = fxBB; fxColY0 = 0; fxColY1 = fxMinI(FX_H, ymax);
+    fxRect(0, 0, FX_W, fxMinI(FX_H, ymax), FX_PAL[FXP_INK]);
+    fxColT = fxColB = nullptr;
+    for (int x = 0; x < FX_W; x++) {
+      int e = fxBB[x];
+      fxPut(x, e - 1, FX_PAL[FXP_RUST]);
+      if (fxHash2((uint32_t)x, Wr.seed) % 3 == 0) fxPut(x, e - 2, FX_PAL[FXP_EMBER]);
+    }
+    // Its foot is timber and junk: planks at all angles, lit along the top,
+    // and chunks, riding down on it.
+    for (int k = 0; k < 5; k++) {
+      uint32_t h = fxHash2((uint32_t)k, Wr.seed + 51);
+      int px = (int)(12.0f + k * 54.0f + fxS(h) * 14.0f);
+      px = fxMaxI(0, fxMinI(FX_W - 1, px));
+      float a = fxS(fxHash(h + 1)) * 0.45f, L = 30.0f + 22.0f * fxU(fxHash(h + 2));
+      float cy = (float)fxBB[px] - 4.0f, ca = cosf(a), sa = sinf(a);
+      float x0 = px - ca * L * 0.5f, y0 = cy - sa * L * 0.5f, x1 = px + ca * L * 0.5f, y1 = cy + sa * L * 0.5f;
+      fxStroke(x0, y0, x1, y1, 10.0f, 9.0f, FX_PAL[FXP_EMBER]);
+      fxStroke(x0 - 0.8f, y0 - 1.3f, x1 - 0.8f, y1 - 1.3f, 8.4f, 7.6f, FX_PAL[FXP_BRICK]);
+      fxStroke(x0, y0, x1, y1, 8.0f, 7.2f, FX_PAL[FXP_INK]);
+      fxLine((int)(x0 + 3), (int)(y0 - 2.2f), (int)(x1 - 3), (int)(y1 - 2.2f), FX_PAL[FXP_RUST]);
+      if (h & 1) fxDisc(x1 - ca * 5.0f, y1 - sa * 5.0f, 1.2f, FX_PAL[FXP_HDR]);   // a nail head
+    }
+    for (int k = 0; k < 16; k++) {
+      uint32_t h = fxHash2((uint32_t)k, Wr.seed + 41);
+      int x = (int)(fxU(h) * FX_W);
+      float fall = fmodf(tf * (0.2f + 0.2f * fxU(fxHash(h + 1))) + fxU(fxHash(h + 2)) * 60.0f, 60.0f);
+      int y = fxBB[x] + 6 + (int)fall;
+      if (h & 4) fxBlob((float)x, (float)y, 1.0f, 0.0f, 2.2f, 1.6f, h, FX_PAL[FXP_LINE]);
+      else       fxLine(x, y, x, y + 3, FX_PAL[(h & 1) ? FXP_LINE : FXP_DIM]);
+    }
+  }
+  fxSceneCaption(C, tf, shx, shy);
+  fxStip = 0;
+}
+
+// ── The jaws ──
+enum : uint16_t {             // the beats, ms into the scene; FX_STYLE's holdMs is 4300
+  FXJ_BOOT  = 380,            // the boot comes down
+  FXJ_STEP  = 860,            // onto the pan
+  FXJ_SLAM  = 1000,           // and the jaws come up
+  FXJ_TAUT  = 1030,           // the chain takes it
+  FXJ_RUN   = 1250,           // the teeth start to run
+  FXJ_FADE  = 3650,           // everything dissolves
+};
+static const float FXJ_SY   = 0.62f;              // the camera: how much depth shows on the glass,
+static const float FXJ_CZ   = 0.79f;              // and height
+static const float FXJ_SHUT = 1.35f;              // how far the jaws come up before their teeth meet, rad
+static const float FXJ_K    = 1.30f;              // the boot's scale
+static const int   FXJ_TEETH = 9;                 // per jaw
+struct FxJaws {
+  float cx, cy, R;                                // the trap's centre on the glass, its jaws' radius
+  float bootX, bootY;                             // where the boot stands on the pan
+  float chX, chY;                                 // where the chain goes off the glass
+  bool  landed, slammed;
+  uint32_t seed;
+};
+static FxJaws* fxJaws = nullptr;                  // PSRAM
+
+static void fxJawsBegin(FxCut& C) {
+  if (!fxJaws) { C.on = false; return; }
+  FxJaws& J = *fxJaws;
+  memset(&J, 0, sizeof(J));
+  FxRng R; R.s = C.seed ^ 0x3AC4B71U;
+  J.seed = R.next();
+  J.R  = 64.0f;
+  J.cx = 120.0f + R.sgn() * 4.0f;
+  J.cy = 236.0f + R.sgn() * 6.0f;
+  J.bootX = J.cx - 5.0f;
+  J.bootY = J.cy - 4.0f * FXJ_CZ;
+  J.chX = FX_W + 30.0f;
+  J.chY = FX_H + 30.0f;
+}
+
+static inline void fxJawP(const FxJaws& J, float X, float Y, float Z, float shx, float shy, float* x, float* y) {
+  *x = J.cx + X + shx;
+  *y = J.cy - Y * FXJ_SY - Z * FXJ_CZ + shy;
+}
+
+// How far up the jaws are at t: nothing, then all the way in seventy
+// milliseconds, accelerating the whole way -- and the two of them bounce off
+// each other's teeth a hair, and settle.
+static float fxJawsAngle(float t) {
+  float ts = t - FXJ_SLAM;
+  if (ts <= 0) return 0.0f;
+  if (ts < 70.0f) { float u = ts / 70.0f; return FXJ_SHUT * u * u; }
+  float tb = ts - 70.0f;
+  return FXJ_SHUT - 0.13f * expf(-tb / 70.0f) * fabsf(sinf(tb * 0.047f));
+}
+
+// One jaw: a toothed half-hoop hinged at (+-R, 0, 0), turned `phi` up off the
+// ground; j = -1 the front one, +1 the back. Its teeth point the way it
+// closes -- straight up while it lies open, at the other jaw once it is shut
+// -- and sit half a tooth along from the other jaw's, so the two mesh.
+// Passes as the legs': 0 edges, 1 ink, 2 shine.
+static void fxJawDraw(const FxJaws& J, int j, float phi, float shx, float shy, int pass) {
+  const float R = J.R, cp = cosf(phi), sp = sinf(phi), Lt = R * 0.21f;
+  const int N = 18;
+  float hx[N + 1], hy[N + 1];
+  for (int i = 0; i <= N; i++) {
+    float th = FX_TAU * 0.5f * (float)i / N;
+    fxJawP(J, R * cosf(th), j * R * sinf(th) * cp, R * sinf(th) * sp, shx, shy, &hx[i], &hy[i]);
+  }
+  const float w = 5.0f;
+  for (int i = 0; i < N; i++) {
+    if (pass == 0) {
+      fxStroke(hx[i], hy[i], hx[i + 1], hy[i + 1], w + 1.6f, w + 1.6f, FX_PAL[FXP_EMBER]);
+      fxStroke(hx[i] - 1.1f, hy[i] - 1.1f, hx[i + 1] - 1.1f, hy[i + 1] - 1.1f, w + 0.4f, w + 0.4f, FX_PAL[FXP_BRICK]);
+    } else if (pass == 1) {
+      fxStroke(hx[i], hy[i], hx[i + 1], hy[i + 1], w, w, FX_PAL[FXP_INK]);
+      fxDisc(hx[i + 1], hy[i + 1], w * 0.5f, FX_PAL[FXP_INK]);
+    } else if ((i & 1) == 0) {
+      float dx = hx[i + 1] - hx[i], dy = hy[i + 1] - hy[i], L = sqrtf(dx * dx + dy * dy);
+      if (L < 1.0f) continue;
+      float nx = -dy / L, ny = dx / L;
+      if (nx + ny > 0) { nx = -nx; ny = -ny; }              // toward the light
+      fxLine((int)(hx[i] + nx * 1.3f), (int)(hy[i] + ny * 1.3f),
+             (int)(hx[i + 1] + nx * 1.3f), (int)(hy[i + 1] + ny * 1.3f), FX_PAL[FXP_CRIT]);
+    }
+  }
+  const float step = FX_TAU * 0.5f / (FXJ_TEETH + 0.5f), half = step * 0.34f;
+  for (int k = 0; k < FXJ_TEETH; k++) {
+    const float th = step * ((float)k + (j < 0 ? 0.75f : 1.25f));
+    float bx0, by0, bx1, by1, tx, ty;
+    fxJawP(J, R * cosf(th - half), j * R * sinf(th - half) * cp, R * sinf(th - half) * sp, shx, shy, &bx0, &by0);
+    fxJawP(J, R * cosf(th + half), j * R * sinf(th + half) * cp, R * sinf(th + half) * sp, shx, shy, &bx1, &by1);
+    fxJawP(J, R * cosf(th), j * R * sinf(th) * cp - j * sp * Lt, R * sinf(th) * sp + cp * Lt, shx, shy, &tx, &ty);
+    if (pass == 0) {
+      float mx = (bx0 + bx1 + tx) / 3.0f, my = (by0 + by1 + ty) / 3.0f;
+      float px[3] = { bx0, bx1, tx }, py[3] = { by0, by1, ty };
+      for (int v = 0; v < 3; v++) {
+        float dx = px[v] - mx, dy = py[v] - my, d = sqrtf(dx * dx + dy * dy) + 0.01f;
+        px[v] += dx / d * 1.4f; py[v] += dy / d * 1.4f;
+      }
+      fxTri(px[0], py[0], px[1], py[1], px[2], py[2], FX_PAL[FXP_EMBER]);
+      fxTri(bx0 - 1.1f, by0 - 1.1f, bx1 - 1.1f, by1 - 1.1f, tx - 1.1f, ty - 1.1f, FX_PAL[FXP_BRICK]);
+    } else if (pass == 1) {
+      fxTri(bx0, by0, bx1, by1, tx, ty, FX_PAL[FXP_INK]);
+    } else {
+      fxLine((int)bx0, (int)by0, (int)tx, (int)ty, FX_PAL[FXP_HDR]);
+      if (fxHash2((uint32_t)k, J.seed + (uint32_t)(j + 3)) % 3 == 0) fxPut((int)tx, (int)ty, FX_PAL[FXP_WHITE]);
+    }
+  }
+}
+
+// Where a tooth's point is, for the blood.
+static void fxJawTip(const FxJaws& J, int j, int k, float phi, float shx, float shy, float* x, float* y) {
+  const float R = J.R, cp = cosf(phi), sp = sinf(phi), Lt = R * 0.21f;
+  const float step = FX_TAU * 0.5f / (FXJ_TEETH + 0.5f), th = step * ((float)k + (j < 0 ? 0.75f : 1.25f));
+  fxJawP(J, R * cosf(th), j * R * sinf(th) * cp - j * sp * Lt, R * sinf(th) * sp + cp * Lt, shx, shy, x, y);
+}
+
+// The frame the jaws hinge on, its two leaf springs (pressed flat while it is
+// set, kicked up when it goes) and the pan in the middle.
+static void fxJawsBase(const FxJaws& J, float t, float shx, float shy, float* eyeX, float* eyeY) {
+  const float R = J.R, ts = t - FXJ_SLAM;
+  const float lift = ts <= 0 ? 0.0f : 8.0f * (1.0f - expf(-ts / 45.0f) * cosf(ts * 0.03f));
+  float x0, y0, x1, y1;
+  for (int pass = 0; pass < 2; pass++) {
+    for (int sd = -1; sd <= 1; sd += 2) {
+      for (int leaf = -1; leaf <= 1; leaf += 2) {
+        fxJawP(J, sd * R, leaf * 5.0f, 0.0f, shx, shy, &x0, &y0);
+        fxJawP(J, sd * (R + 44.0f), leaf * 3.0f, lift, shx, shy, &x1, &y1);
+        if (pass == 0) {
+          fxStroke(x0, y0, x1, y1, 5.0f, 5.0f, FX_PAL[FXP_EMBER]);
+          fxStroke(x0 - 1.0f, y0 - 1.0f, x1 - 1.0f, y1 - 1.0f, 3.8f, 3.8f, FX_PAL[FXP_BRICK]);
+        } else {
+          fxStroke(x0, y0, x1, y1, 3.4f, 3.4f, FX_PAL[FXP_INK]);
+        }
+      }
+      fxJawP(J, sd * (R + 50.0f), 0.0f, lift, shx, shy, &x1, &y1);
+      if (pass == 0) { fxDisc(x1, y1, 7.0f, FX_PAL[FXP_EMBER]); fxDisc(x1 - 1.0f, y1 - 1.0f, 6.0f, FX_PAL[FXP_BRICK]); }
+      else { fxDisc(x1, y1, 5.4f, FX_PAL[FXP_INK]); fxDisc(x1, y1, 2.6f, FX_PAL[FXP_SOOT]); }
+      if (sd > 0) { *eyeX = x1; *eyeY = y1; }
+      fxJawP(J, sd * R, 0.0f, 0.0f, shx, shy, &x0, &y0);
+      if (pass == 0) fxDisc(x0 - 1.0f, y0 - 1.0f, 6.4f, FX_PAL[FXP_BRICK]);
+      else           fxDisc(x0, y0, 5.2f, FX_PAL[FXP_INK]);
+    }
+    fxJawP(J, -R, 0.0f, 0.0f, shx, shy, &x0, &y0);
+    fxJawP(J,  R, 0.0f, 0.0f, shx, shy, &x1, &y1);
+    if (pass == 0) fxStroke(x0 - 1.0f, y0 - 1.0f, x1 - 1.0f, y1 - 1.0f, 5.4f, 5.4f, FX_PAL[FXP_BRICK]);
+    else           fxStroke(x0, y0, x1, y1, 4.6f, 4.6f, FX_PAL[FXP_INK]);
+  }
+  // The pan: down a hair once something stands on it.
+  const float panZ = t >= FXJ_STEP ? 1.0f : 4.0f;
+  float px, py;
+  fxJawP(J, 0.0f, 0.0f, panZ, shx, shy, &px, &py);
+  const float pr = R * 0.33f;
+  fxBlobLit(px, py, 1.0f, 0.0f, pr, pr * FXJ_SY, J.seed + 3, 0, FXP_BRICK);
+  fxBlobLit(px, py, 1.0f, 0.0f, pr, pr * FXJ_SY, J.seed + 3, 1, FXP_BRICK);
+  fxStroke(px - pr * 0.7f, py - pr * FXJ_SY * 0.55f, px - pr * 0.1f, py - pr * FXJ_SY * 0.85f, 1.6f, 0.8f, FX_PAL[FXP_HDR]);
+  // The dog that holds the front jaw down, until it does not.
+  if (t < FXJ_SLAM) {
+    float dx, dy;
+    fxJawP(J, 0.0f, -R, 0.0f, shx, shy, &dx, &dy);
+    fxLine((int)px, (int)(py + pr * FXJ_SY), (int)dx, (int)dy, FX_PAL[FXP_RUST]);
+  }
+}
+
+// The chain, eye to off the corner: slack in the dirt until the trap goes,
+// then snapped straight, and rattling.
+static void fxJawsChain(const FxJaws& J, float t, float ex, float ey, float shx, float shy) {
+  const float ts = t - FXJ_TAUT;
+  float sag = 24.0f, rattle = 0.0f;
+  if (ts > 0) {
+    sag = 3.0f + 21.0f * expf(-ts / 60.0f) - 5.0f * expf(-ts / 180.0f) * fabsf(sinf(ts * 0.02f));
+    rattle = 1.6f * expf(-ts / 520.0f);
+  }
+  const int LINKS = 11;
+  const float x1 = J.chX + shx, y1 = J.chY + shy;
+  for (int i = LINKS - 1; i >= 0; i--) {
+    float u = (i + 0.5f) / LINKS, u2 = (i + 0.9f) / LINKS;
+    float x = fxLerp(ex, x1, u), y = fxLerp(ey, y1, u) + sag * 4.0f * u * (1.0f - u);
+    float xb = fxLerp(ex, x1, u2), yb = fxLerp(ey, y1, u2) + sag * 4.0f * u2 * (1.0f - u2);
+    if (rattle > 0.05f) {
+      uint32_t h = fxHash2((uint32_t)i, (uint32_t)(t / 50) + J.seed);
+      x += fxS(h) * rattle; y += fxS(fxHash(h + 1)) * rattle;
+    }
+    float dx = xb - x, dy = yb - y, d = sqrtf(dx * dx + dy * dy) + 0.01f, c = dx / d, s = dy / d;
+    if ((i & 1) == 0) {
+      fxBlob(x, y, c, s, 6.2f, 4.0f, J.seed + (uint32_t)i, FX_PAL[FXP_INK]);
+      fxBlob(x - 0.8f, y - 0.8f, c, s, 5.2f, 3.2f, J.seed + (uint32_t)i, FX_PAL[FXP_BRICK]);
+      fxBlob(x, y, c, s, 3.2f, 1.3f, J.seed + (uint32_t)i + 7, FX_PAL[FXP_INK]);
+    } else {
+      fxStroke(x - c * 5.5f, y - s * 5.5f, x + c * 5.5f, y + s * 5.5f, 4.2f, 4.2f, FX_PAL[FXP_INK]);
+      fxLine((int)(x - c * 4.5f - s * 1.2f), (int)(y - s * 4.5f + c * 1.2f),
+             (int)(x + c * 4.5f - s * 1.2f), (int)(y + s * 4.5f + c * 1.2f), FX_PAL[FXP_GLOW]);
+    }
+  }
+}
+
+// The dirt it is set in: a ragged pool of black, pebbles, a few dry stalks.
+static void fxJawsGround(const FxJaws& J, float shx, float shy) {
+  const float cx = J.cx + shx, cy = J.cy + 6.0f + shy, ry = J.R * FXJ_SY + 34.0f, rx = J.R + 78.0f;
+  for (int y = (int)(cy - ry); y < (int)(cy + ry); y++) {
+    float q = (y + 0.5f - cy) / ry;
+    float w = rx * sqrtf(fmaxf(0.0f, 1.0f - q * q)) * (0.86f + 0.26f * fxNoise1(y * 0.33f, J.seed + 9));
+    fxSpan(y, (int)(cx - w), (int)(cx + w), FX_PAL[FXP_INK]);
+  }
+  for (int i = 0; i < 26; i++) {
+    uint32_t h = fxHash2((uint32_t)i, J.seed + 17);
+    float a = fxU(h) * FX_TAU, d = sqrtf(fxU(fxHash(h + 1))) * 0.92f;
+    float x = cx + cosf(a) * rx * d, y = cy + sinf(a) * ry * d, r = 1.0f + 2.2f * fxU(fxHash(h + 2));
+    fxBlob(x, y, 1.0f, 0.0f, r, r * 0.7f, h, FX_PAL[FXP_TRACK]);
+    fxPut((int)(x - r * 0.4f), (int)(y - r * 0.5f), FX_PAL[FXP_LINE]);
+  }
+  for (int i = 0; i < 9; i++) {
+    uint32_t h = fxHash2((uint32_t)i, J.seed + 29);
+    float a = fxU(h) * FX_TAU, x = cx + cosf(a) * rx * 0.9f, y = cy + sinf(a) * ry * 0.85f;
+    for (int b = 0; b < 3; b++) {
+      float ba = -FX_TAU * 0.25f + (b - 1) * 0.35f + fxS(fxHash(h + (uint32_t)b)) * 0.15f;
+      float l = 5.0f + 5.0f * fxU(fxHash(h + 5 + (uint32_t)b));
+      fxLine((int)x, (int)y, (int)(x + cosf(ba) * l), (int)(y + sinf(ba) * l), FX_PAL[(b & 1) ? FXP_LINE : FXP_EMBER]);
+    }
+  }
+}
+
+static void fxJawsFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy) {
+  FxJaws& J = *fxJaws;
+  const float tf = (float)t, ts = tf - FXJ_SLAM;
+  const uint8_t fade = t > FXJ_FADE ? (uint8_t)fxMinI(255, (int)((t - FXJ_FADE) * 255 / 650)) : 0;
+
+  if (t >= FXJ_STEP && !J.landed) { J.landed = true; fxImpact(0.18f); }
+  if (t >= FXJ_SLAM && !J.slammed) {
+    J.slammed = true;
+    fxImpact(0.8f);
+    fxFlash(FXFL_BOTH);
+    fxTearBurst(now, 3, 22, 260);
+    fxVroll(now, 0, 380);
+  }
+
+  // The hit, for its first half second: concentration lines at the trap.
+  if (ts > 0 && ts < 520.0f)
+    fxFocusLines(J.cx + shx, J.cy - 24.0f + shy, 128.0f, 84.0f, 60, C.seed + 5, t / 70,
+                 FX_PAL[ts < 260.0f ? FXP_LINE : FXP_DIM], 3.5f);
+
+  // The dirt comes up out of the dark first.
+  fxStip = (uint8_t)fxMaxI((int)fade, 255 - fxMinI(255, (int)(tf * 255.0f / 320.0f)));
+  fxStipSeed = C.seed + 1;
+  fxJawsGround(J, shx, shy);
+  fxStip = fade;
+
+  const float phi = fxJawsAngle(tf);
+  float eyeX = 0, eyeY = 0;
+  for (int pass = 0; pass < 3; pass++) fxJawDraw(J, 1, phi, shx, shy, pass);
+  fxJawsBase(J, tf, shx, shy, &eyeX, &eyeY);
+  fxJawsChain(J, tf, eyeX, eyeY, shx, shy);
+
+  // The boot: stamped down onto the pan; then held, pulling.
+  if (t >= FXJ_BOOT) {
+    float by = J.bootY, br = 0.0f, bx = J.bootX;
+    if (t < FXJ_STEP) {
+      float p = (tf - FXJ_BOOT) / (float)(FXJ_STEP - FXJ_BOOT);
+      by = fxLerp(-120.0f, J.bootY, fxCubicIn(p));
+      br = -0.2f * (1.0f - p);
+    } else if (ts < 0) {
+      by = J.bootY + 1.5f * (1.0f - (tf - FXJ_STEP) / (float)(FXJ_SLAM - FXJ_STEP));
+    } else {
+      // A jerk up that the jaws stop dead, then tugs that go nowhere.
+      float tug = fmaxf(0.0f, fxNoise1(tf * 0.0045f, J.seed + 51) - 0.52f) * 2.0f;
+      by = J.bootY - 5.0f * expf(-ts / 110.0f) - 3.2f * tug;
+      br = 0.06f * (fxNoise1(tf * 0.003f, J.seed + 53) - 0.5f) + 0.03f * tug;
+      bx += fxS(fxHash2((uint32_t)(t / 60), J.seed)) * 0.7f * tug;
+    }
+    fxBootDraw(bx + shx, by + shy, br, FXJ_K, J.seed + 61, 0.06f, tf);
+    // Grit kicked out from under the sole as it lands: flecks, not a cloud
+    // (a puff of dust this small reads as wheels, and inside the jaws as mud).
+    if (J.landed && t < FXJ_STEP + 160) {
+      const float q = (tf - FXJ_STEP) / 160.0f;
+      for (int i = 0; i < 10; i++) {
+        uint32_t h = fxHash2((uint32_t)i, J.seed + 71);
+        float sd = (i & 1) ? 1.0f : -1.0f, a = -0.25f - 0.9f * fxU(h);
+        float ox = bx + (sd > 0 ? 40.0f : -26.0f) + shx, oy = J.bootY + shy;
+        float r0 = 3.0f + 22.0f * q * (0.5f + fxU(fxHash(h + 1))), r1 = r0 + 3.0f;
+        float cx = cosf(a) * sd, sy = sinf(a);
+        fxLine((int)(ox + cx * r0), (int)(oy + sy * r0 + q * q * 12.0f), (int)(ox + cx * r1), (int)(oy + sy * r1 + q * q * 12.0f),
+               FX_PAL[(h & 2) ? FXP_LINE : FXP_EMBER]);
+      }
+    }
+  }
+
+  for (int pass = 0; pass < 3; pass++) fxJawDraw(J, -1, phi, shx, shy, pass);
+
+  // It bites. The ground takes a spatter, and the middle teeth start to run.
+  if (ts > 60.0f) {
+    const float g = fxCubicOut(fxClampF((ts - 60.0f) / 90.0f, 0.0f, 1.0f));
+    static const float SP[3][3] = { { -26.0f, 30.0f, 6.0f }, { 20.0f, 36.0f, 4.5f }, { -6.0f, 44.0f, 3.2f } };
+    for (int i = 0; i < 3; i++) {
+      float x = J.cx + SP[i][0] + shx, y = J.cy + SP[i][1] + shy, r = SP[i][2] * g;
+      fxBlob(x, y, 1.0f, 0.0f, r + 1.2f, (r + 1.2f) * 0.6f, J.seed + 81 + (uint32_t)i, FX_PAL[FXP_INK]);
+      fxBlob(x, y, 1.0f, 0.0f, r, r * 0.6f, J.seed + 81 + (uint32_t)i, FX_PAL[FXP_BLOOD]);
+    }
+  }
+  if (t >= FXJ_RUN) {
+    for (int d = 0; d < 3; d++) {
+      const int k = 3 + d;
+      float x, y;
+      fxJawTip(J, -1, k, phi, shx, shy, &x, &y);
+      float len = 26.0f * fxCubicOut(fxClampF((tf - FXJ_RUN - d * 170.0f) / 1500.0f, 0.0f, 1.0f)) * (0.6f + 0.25f * d);
+      if (len <= 0.5f) continue;
+      fxStroke(x, y - 1.0f, x, y + len, 5.2f, 3.8f, FX_PAL[FXP_INK]);
+      fxDisc(x, y + len, 3.6f, FX_PAL[FXP_INK]);
+      fxStroke(x, y - 1.0f, x, y + len, 3.0f, 1.8f, FX_PAL[FXP_BLOOD]);
+      fxDisc(x, y + len, 2.4f, FX_PAL[FXP_BLOOD]);
+      fxLine((int)(x - 1.0f), (int)y, (int)(x - 1.0f), (int)(y + len * 0.75f), FX_PAL[FXP_BRICK]);   // it is wet
+      fxPut((int)(x - 1.0f), (int)(y + len - 1.0f), FX_PAL[FXP_HOT]);
+    }
+  }
+  // The pain of it, drawn the way a comic draws it: marks flying off the ankle.
+  if (ts > 0 && ts < 900.0f) {
+    uint32_t boil = t / 90;
+    const float ax = J.bootX + 4.0f + shx, ay = J.bootY - 34.0f + shy;
+    for (int k = 0; k < 7; k++) {
+      uint32_t h = fxHash2((uint32_t)k, boil + C.seed);
+      float a = -FX_TAU * 0.5f + fxU(h) * FX_TAU * 0.5f, r0 = 36.0f + 6.0f * fxU(fxHash(h + 1));
+      float r1 = r0 + 7.0f + 6.0f * fxU(fxHash(h + 2));
+      fxStroke(ax + cosf(a) * r0, ay + sinf(a) * r0, ax + cosf(a) * r1, ay + sinf(a) * r1, 2.4f, 0.8f,
+               FX_PAL[FXP_WHITE]);
+    }
+  }
+
+  if (C.hasWord && ts >= 0) {
+    fxWordSlam(C.word, (int32_t)ts - 10, 120.0f + shx, J.cy - 132.0f + shy, 0.08f, 40, t / 80);
+  }
+  fxSceneCaption(C, tf, shx, shy);
+  fxStip = 0;
+}
+
 // ── 14. Madness ──────────────────────────────────────────────────────────────
 // The ambient layer. None of it is scripted; it is scheduled off `madness`
 // with every interval jittered, so it never falls into a beat you could tap.
@@ -3550,11 +4740,9 @@ static void fxCompose(const uint16_t* src, const uint16_t* prev, uint16_t* out, 
     for (int i = 0; i < FX_W * FX_H; i++) out[i] = out[i] ? fxBoost(out[i], 400) : FX_PAL[FXP_TRACK];
   }
 
-  // The FX-level toast (button A).
+  // The toast (button A: the volume).
   if ((int32_t)(FX.toastUntil - now) > 0) {
-    static const char* const LV[3] = { "OFF", "RESTRAINED", "MADNESS" };
-    char b[32];
-    snprintf(b, sizeof(b), "LCD FX  %s", LV[FX.level < 3 ? FX.level : 2]);
+    const char* b = FX.toastMsg;
     int w = (int)strlen(b) * 12 + 16;
     int x = (FX_W - w) / 2;
     fxRect(x, 132, x + w, 160, FX_PAL[FXP_INK]);
@@ -3637,8 +4825,11 @@ static bool fxAllocPools() {
   if (!fxInvH)    fxInvH    = (float*)fxAlloc(sizeof(float) * FX_W);
   if (!fxNest)    fxNest    = (FxNest*)fxAlloc(sizeof(FxNest));
   if (!fxMedal)   fxMedal   = (FxMedal*)fxAlloc(sizeof(FxMedal));
+  if (!fxWire)    fxWire    = (FxWire*)fxAlloc(sizeof(FxWire));
+  if (!fxJaws)    fxJaws    = (FxJaws*)fxAlloc(sizeof(FxJaws));
+  if (!fxBootSlope) fxBootSlope = (int8_t*)fxAlloc(FXB_G * FXB_G * 2);
   return fxPool && fxSdfA && fxSdfB && fxCrk && fxRowHash && fxHeat && fxSubWord && fxTone && fxInvH &&
-         fxNest && fxMedal;
+         fxNest && fxMedal && fxWire && fxJaws && fxBootSlope;
 }
 
 // ── 18. The board ────────────────────────────────────────────────────────────
@@ -3646,10 +4837,10 @@ static bool fxAllocPools() {
 // sprites, the present call the loop makes instead of canvas.pushSprite(), the
 // dread feed. Button A's handler (checkFxButton) sits with Button B's in
 // ui-screens.hpp, because it needs the audio helpers included after this.
+// Button A now steps the speaker volume and only borrows this file's toast.
 //
-// Button A (unused once boot is past the USB-drive check) cycles the level:
-// MADNESS -> RESTRAINED -> OFF -> MADNESS, persisted with the other K10 prefs
-// ("fx" in the "k10" namespace). RESTRAINED keeps every panel and the shake
+// The level -- MADNESS, RESTRAINED, OFF -- is persisted with the other K10
+// prefs ("fx" in the "k10" namespace). RESTRAINED keeps every panel and the shake
 // but caps the ambient layer at a mild flicker, with no whispers and no eyes;
 // OFF is the plain screens and the old tube-dropout switch, exactly as before
 // this file existed.

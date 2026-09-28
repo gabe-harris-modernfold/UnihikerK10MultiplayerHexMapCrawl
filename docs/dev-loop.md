@@ -167,7 +167,7 @@ task touches the buffer (the WS handlers all run on async_tcp; `drainEvents`
 only on GameLoop), or where one lock is held across *every* use of it —
 including the `client->text()` that copies it out. `sendSync`'s 40 KB `buf`
 is the second kind: it runs on async_tcp (`pick`) and GameLoop (regen
-resync), so it sends before releasing `G.mutex`. `sendTunnelSync`'s 1.3 KB
+resync), so it sends before releasing `G.mutex`. `sendTunnelSync`'s 1.4 KB
 `buf` stays on the stack for the same reason — it is reached from both tasks
 via `sendSync`.
 
@@ -254,9 +254,12 @@ the upload screen and the FX-off switch transition are the only raw pushes.
   `checkScoreAudio()` stay on their own 10 Hz tick — the lamp shapes count
   loop ticks. Serial prints `LCD FX: n frames/30s compose avg=… push avg=…`
   every 30 s while anything animated: that is the real frame budget.
-- **Button A** (free after the boot USB check) cycles MADNESS → RESTRAINED →
-  OFF, toasted on screen, saved as `fx` in the `k10` NVS namespace. OFF is the
-  pre-FX behaviour exactly, including the old tube-dropout switch.
+- **Level** MADNESS / RESTRAINED / OFF is saved as `fx` in the `k10` NVS
+  namespace (default MADNESS). OFF is the pre-FX behaviour exactly, including
+  the old tube-dropout switch. There is no in-play control for it any more.
+- **Button A** (free after the boot USB check) steps the speaker volume LOW
+  (2) → MED (5) → HIGH (9) → OFF (0), toasted on screen, saved as `vol` — the
+  same 0..9 the web slider sends (`checkFxButton`, `ui-screens.hpp`).
 - **Memory:** ~430 KB PSRAM (two sprites, sticker pool, SDF scratch), ~4.5 KB
   internal `.bss`. `fxBegin()` forces OFF if any allocation fails.
 - **The observer mirrors it:** `/state` carries `fx` (the last six cues, with
@@ -274,6 +277,8 @@ the upload screen and the FX-off switch transition are the only raw pushes.
   | `FXK_BELOW` | `EVT_TUNNEL_ENTER` | the nest (section 12): fly, web, giant legs, skitterers, the widow on its thread, eight eyes | 7.1 s / 3 min |
   | `FXK_CRAFTED` | `EVT_ACTION`, CRAFT success | the commendation (section 13): guilloche certificate, order star, typed citation, rubber stamp | 6.2 s / 2 min |
   | `FXK_CRAWL` | `EVT_TUNNEL_EXIT` | one small spider walks across the live screen (not a scene: an `FXE_NOBAND` overlay that takes no turn in the queue) | ~4.5 s / 1 min |
+  | `FXK_TRIPWIRE` | `EVT_ENC_START` with `amt` 1 (a booby trap fired, `traps.hpp`) | the wire (section 13b): a boot finds a wire nail-to-eye, it parts, the halves whip back frayed, the boot goes out from under, a deadfall of planks comes down over the glass | 3.2 s / 90 s |
+  | `FXK_BEARTRAP` | `EVT_ENC_RESULT` failed + `encEnds` + `amt` 1 (a trap went off) | the jaws (section 13b): an open jaw trap in the dirt, a boot on the pan, the jaws shut round the ankle, chain snaps taut, teeth run | 4.7 s / 2 min |
 
   `FXK_CRAFTED` is the one cue whose `cap` is not the chronicle's sentence:
   it is the recipe's **name**, which the certificate cites. `FxStyleDef::coolMs`
@@ -291,6 +296,7 @@ look at is what gets flashed:
 python scripts/fxsim/fxsim.py                 # every scene
 python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
 python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
+python scripts/fxsim/fxsim.py tripwire beartrap      # the traps' two
 ```
 
 Output lands in `scripts/fxsim/out/` (gitignored): `<scene>.gif` at 2x with
@@ -546,9 +552,94 @@ If the game page stops loading part-way and the board stops answering:
 
 ## Art assets (`data/img/`)
 
-Two scripts, both dry-run by default and both needing only Pillow + numpy.
-Neither changes a filename, an extension or a route, so no firmware, engine.js
-or MIME change is involved.
+**Hex terrain tiles, shelters and forage animals are sheets**: one per
+terrain, one per shelter kind and one for the forage animals, not one file
+each:
+
+```bash
+python scripts/hex_sheets.py build --check      # validate + sizes, write nothing
+python scripts/hex_sheets.py build              # art/hex-sheets/*.png -> data/img/hex<Name>.webp + tiles.json
+python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, for per-tile tools
+```
+
+- **Edit the masters, not `data/img/`.** The lossless master is
+  `art/hex-sheets/hex<Name>.png`, outside `data/` so `sync_data` never pushes
+  it. The grid is 256 px cells, 4 across, with 32 px of clear space around
+  and between each cell. Cell N is variant N, so order a sheet from common to
+  rare: `pickVariant()` weights slot 0 heaviest. A fully transparent cell is
+  empty, and the pool ends at the first empty cell.
+- **Landmarks** are the cells from a terrain's first pinned sentinel on
+  (`LANDMARKS` in the script). Open Scrub cell 10 is Jack's Chopper, and
+  Broken Urban cells 10–12 are the downtown core, not painted yet. They go to
+  `tiles.json` `poi` and stay out of `counts`.
+- **Shelters** are two sheets: `art/hex-sheets/shelterBasic.png` for
+  `cell.shelter` 1 and `shelterImproved.png` for 2.
+  - The grid is 224 px cells with a 16 px gutter.
+  - The art is the user's 2026-09-27 AI re-render
+    (`art/hex-sheets/src/shelter-sheet-improved.png`), cut back into cells.
+  - `tiles.json` carries `shelterCounts` (the firmware's `sv`),
+    `shelterCell` and `shelters`.
+- **Forage animals** are one sheet, `art/hex-sheets/forrageAnimal.png`. They
+  are drawn on food (resource 2) hexes.
+  - The grid is 80 px cells with a 16 px gutter.
+  - `tiles.json` carries `forageCounts` (the firmware's `forrageAnimalCount`,
+    `fa` on the wire), `forageCell` and `forage`.
+- **The caravan** is one sheet, `art/hex-sheets/caravan.png`: a single
+  sticker of the user's APC leading a cargo truck, drawn by `renderCaravan()`
+  (world-entities.js) as a 1.5×HEX_SZ square, under the survivor pawns.
+  - The grid is 384 px cells with a 16 px gutter, lossy (q90, 25 KB).
+  - The source is `art/hex-sheets/src/caravan-convoy-src.png` (two painted
+    hexes). Both vehicles were matted off the sage ground with their halftone
+    shadow kept as dots, like the shelters.
+  - The art heads towards the viewer's lower left. The client mirrors it
+    while the caravan travels east (`caravanFacing`).
+  - `tiles.json` carries `caravanCounts` (the firmware ignores it),
+    `caravanCell` and `caravan`. Without the sheet the client falls back to
+    the old brown canvas badge.
+- Neither shelters nor forage have a variant on the wire. The client picks a
+  sprite by position, so order doesn't matter. Both draw through
+  `drawAtlasCell()` in engine.js, which switches to the half- or
+  quarter-size copy once a sprite is shrunk past 2×.
+- **`build`** writes one WebP page per sheet.
+  - **Terrain pages are lossy**, with the alpha kept lossless. For each sheet
+    it picks the lowest of q90/92/95 that keeps the worst tile inside the 3.5
+    visible-RMSE bar. Settlement tops out at q95 / 3.95, because 4:2:0 chroma
+    smears the yellow school bus.
+  - **Shelter pages are lossy too.** At 224 px the re-rendered art passes
+    the bar at q92 (Basic) and q90 (Improved).
+  - **The forage page is lossless.** Its small ink-outlined sprites never
+    get under the bar lossy. The old 112 px shelters were 4.2 even at q100.
+- **`build` also writes `tiles.json`.** It holds `counts`, `shelterCounts`,
+  `forageCounts`, `version`, `flat` and where each cell sits.
+  - The same manifest feeds `setupVariantCounts()`, the mock's
+    `scanVariantCounts()`, engine.js (`loadTerrainVariants()`,
+    `shelterSprite()`, `forageSprite()`) and the observer.
+  - The sheets add up to 18 files and 1.62 MB. Shelters are 165 KB of that,
+    and forage is 55 KB.
+- **To take in a re-render of a sheet:**
+  1. Cut it into `<name><N>.png` cells.
+  2. Run `hex_sheets.py import --src <dir> --force`. That re-seeds every
+     master that has files in `<dir>`.
+  3. Run `build`.
+  4. Keep the source out of `data/`, because everything under `data/img`
+     syncs to the board and takes a PSRAM slot.
+- **`flat: true`** marks painted tiles, which draw exactly like the old
+  per-file ones: a 2×HEX_SZ square with the grid stroked over it. Without it,
+  a manifest means build_tiles.py's 3/4 dioramas (`tile.diorama` in
+  renderer.js).
+- **No `sw.js` bump for sheet edits.** Pages are fetched with `?v=<version>`,
+  and every build changes the version.
+- **Stale per-file tiles stay on the SD, harmlessly.** `sync_data` never
+  deletes anything from the card. `boot-assets.hpp` skips `hex*.png`,
+  `poi_*.png`, `shelter*.png`, `forrageAnimal*.png` and the unused
+  `basicShelter*.png` whenever
+  `tiles.json` is on the card.
+- **Don't run `scripts/tilegen/build_tiles.py`.** It is the rejected
+  procedural generator, and it overwrites `tiles.json`.
+
+Two more scripts, both dry-run by default and both needing only Pillow +
+numpy. Neither changes a filename, an extension or a route, so no firmware,
+engine.js or MIME change is involved.
 
 ```bash
 python scripts/optimize_art.py                  # dry run: prints the table
@@ -570,7 +661,9 @@ python scripts/gen_missing_tiles.py --apply     # fill empty variant slots
   re-quantising a quantised image scores its error against the *degraded*
   version and will shave another 10% every time you run it, which is visible
   banding after a few passes. `--force` if you really mean it.
-- **`gen_missing_tiles.py`** fills empty `hex<Name><N>.png` slots with flat
+- **`gen_missing_tiles.py`** refuses to run while `data/img/tiles.json`
+  exists. The per-file slots it fills are gone, so a placeholder now means
+  painting a sheet cell. What it did: it filled empty `hex<Name><N>.png` slots with flat
   labelled placeholders — terrain name, variant number and the target filename
   printed on the tile, ~4.3 KB each. It only appends at the next free index,
   so it cannot open a gap in the numbering that `setupVariantCounts()` would
@@ -648,6 +741,37 @@ exercise the upload pipeline without a board:
 .\scripts\sync_data.ps1 localhost:8765
 ```
 
+### The Understory in the mock
+
+`mock-server/ecology.js` is the JS port of the slime mould and the Wasteland
+Daisy ([ecology-spec.md](ecology-spec.md)); `server.js` ticks it, broadcasts
+the `eco` message, bites on entry, seeds daisies at every LL-loss site and
+reports `eco` in `/state` exactly as the firmware does. It is also the tuning
+harness the spec asks for:
+
+```bash
+node mock-server/server.js --eco-speed=20        # 20x the board's 5 s eco tick
+node mock-server/server.js --eco-seed=12345      # pin the genome (MOCK_ECO_SEED)
+```
+
+Drive the stages from the browser console (`socket.send(JSON.stringify(…))`):
+
+```json
+{"t":"dbg_eco","act":"fruit"}                         every foraging colony fruits
+{"t":"dbg_eco","act":"burst"}                         every fruiting body bursts (spore flights)
+{"t":"dbg_eco","act":"germinate"}                     every dormant spore wakes
+{"t":"dbg_eco","act":"daisy","stage":3,"count":3}     a bloomed patch on your hex (or q/r) — step off and back to be bitten
+{"t":"dbg_eco","act":"speed","n":50}                  eco clock multiplier
+{"t":"dbg_eco","act":"regen","seed":0}                new species, scars cleared
+{"t":"dbg_eco","act":"bite","on":0}                   the NVS eco/bite switch
+{"t":"dbg_eco","act":"blight","on":0}                 the NVS eco/blight switch
+```
+
+`/state?ecobite=0`, `/state?ecoblight=0` and `/state?ecoseed=N` do the same as
+on the board (`eco.eaten` counts resources the blight has eaten). The
+mock's `eco` block adds `speed` and `pinnedSeed`. Nothing here is persisted:
+scars live for the mock's process only.
+
 ### Encounter dialog dev loop
 
 Stepping onto a POI hex (the eye icon) in the mock triggers the real
@@ -687,7 +811,28 @@ send({ t: 'dbg_tunnel', h: 2, below: 1, mp: 0 }); // ...underground on that shaf
 send({ t: 'dbg_collapse', d: 0 });                // cave in the tunnel hex in direction d from the sender
 send({ t: 'dbg_die' });                           // the sender's survivor goes down on the spot (death drops, below)
 send({ t: 'dbg_age', days: 29 });                 // age every ground pile + remains by N days, then run the dawn sweep
+send({ t: 'dbg_trap', d: 0, id: 16, known: 1 });  // arm trap file #id (default random) on the hex in direction d; known:1 = its icon on your map now
 ```
+
+### Booby traps in the mock
+
+Design and wire: [trap-system-spec.md](trap-system-spec.md); firmware:
+[traps.hpp](../traps.hpp). The mock places traps at worldgen with the
+firmware's bands and rates (`[trap] placed core=... open=... tunnels=...` in
+the console), but its map is a baked stripe with no real cities, so the
+counts are a stand-in — use `dbg_trap` to put one where you want it, then
+step onto it. What to check:
+
+- The panel opens **unprompted** (`enc_path` carries `"trap":1`), with the
+  rust frame, no Walk Away, and the two doors — back out / work it.
+- Backing out, or leaving a cache with nothing, is `enc_end reason:"escaped"`
+  plus a unicast `ev trap out:"known"`: the glyph (strip index 21, top-right of
+  the hex) appears, stays when you walk away (dimmed, from explored memory),
+  and shows through weather. Stepping back on forces the scene again.
+- Banking anything: `ev trap out:"spent"`, and the glyph is gone for good. A
+  failed check: `out:"sprung"`, LL never below 1, and the scene ends.
+- The TV's `TRIPWIRE` / `BEARTRAP` cut scenes come off `/state`'s `encTrap`
+  when there is no fx ring (the mock has none).
 
 Encounter JSON `skill` ids use the firmware's 5-skill enum — 0 NAVIGATE,
 1 FORAGE, 2 SCAVENGE, 3 SHELTER, 4 ENDURE. (The files were originally
@@ -785,7 +930,7 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
   These six take the root to 36 files / ~132 KB. There is headroom, but it is
   no longer generous — a seventh observer file is a real cost, which is part
   of why the synthetic feed is one file and not three.
-- **`?feed=fake`** replaces `fetch` with a scripted six-player run that walks
+- **`?feed=fake`** replaces `fetch` with a scripted five-player run that walks
   a real encounter file three different ways and kills everybody by a
   different cause. Use it to tune line banks with no hardware; `?t=N` jumps
   to a beat.
@@ -799,7 +944,7 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
     anonymous and the prose, choices and hazards are all unreachable.
   - `variant` on each `view.cells[]` entry, plus top-level `vc`/`sv` counts.
     Without them the vision disk can only draw flat `TERRAIN[]` colours; with
-    them it draws the same `/img/hex<Name><N>.png` tiles the players see.
+    them it draws the same terrain sheets (`/img/tiles.json`) the players see.
     A terrain with no art (River Channel) still falls back to flat colour.
 
 **Gotcha this screen is uniquely exposed to:** the ways a bot run fails
@@ -862,8 +1007,10 @@ look like a scene that simply never opens, with no error anywhere.
 - **Don't `git add mock-server/uploads/` or `node_modules/`.** Both are
   ignored at the repo root.
 - **Every file under `data/img/` (one subdir deep) is loaded into the PSRAM
-  image cache at boot, capped at `MAX_IMG_CACHE = 160` (currently 114 used,
-  1116 KB).** Anything past the cap is silently skipped and served as 204.
+  image cache at boot, capped at `MAX_IMG_CACHE = 160`.** 44 slots are used,
+  because the ~80 hex tiles, 13 shelter files and 6 forage animals are now
+  18 sheets. Anything
+  past the cap is silently skipped and served as 204.
   That count is *files*, not images — the three `*_PROMPTS.md` / `IMAGES_NEEDED.md`
   notes under `data/img/` burn three slots and ~29 KB of PSRAM for text the
   board never serves. Pixel glyphs

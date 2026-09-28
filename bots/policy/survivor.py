@@ -153,6 +153,16 @@ class SurvivorPolicy(Policy):
     # Backpack's slots gives them up for the water.
     craft_canteen = True
 
+    # Booby traps (traps.hpp): a forced scene with two doors. Work it -- the
+    # Scavenge door -- when the odds are at least `trap_nerve` and LL is at
+    # least `trap_min_ll`; otherwise back out. From a cache, press on once when
+    # the next check is at least `trap_push` and LL has a point to spare.
+    # Deliberately a player's judgement, not "always the first choice": the
+    # brush-rate question is about what traps do to people who engage them.
+    trap_nerve = 0.60
+    trap_push = 0.60
+    trap_min_ll = 4
+
     def __init__(self, rng, library: EncounterLibrary | None = None):
         super().__init__(rng)
         self.lib = library if library is not None else EncounterLibrary()
@@ -175,7 +185,10 @@ class SurvivorPolicy(Policy):
                       "crafted": 0,
                       # Death drops, as decided (not as acked): loot messages
                       # sent, and steps taken walking back to a grave of ours.
-                      "loots": 0, "recover_moves": 0}
+                      "loots": 0, "recover_moves": 0,
+                      # Booby traps: forced scenes, which door, and how they ended.
+                      "traps": 0, "trap_backouts": 0, "trap_worked": 0,
+                      "trap_banked": 0, "trap_sprung": 0}
         self._craft_sent = 0.0      # monotonic time of the last CRAFT we sent
         self._equip_sent: dict[tuple[int, int], float] = {}   # (slot, item) -> t
         self._pickup_sent: dict[tuple[int, int], float] = {}  # (gslot, item) -> t
@@ -185,7 +198,7 @@ class SurvivorPolicy(Policy):
     # --- event plumbing -------------------------------------------------
     def on_event(self, ev):
         # ev goes to every client via ws.textAll(), so without this filter a
-        # bot counts all six survivors' rolls as its own.
+        # bot counts every seated survivor's rolls as its own.
         if self.pid >= 0 and ev.get("pid") not in (None, self.pid):
             return
         k = ev.get("k")
@@ -193,6 +206,8 @@ class SurvivorPolicy(Policy):
             self.stats["rolls"] += 1
             if ev.get("out"):
                 self.stats["rolls_won"] += 1
+            elif ev.get("trap"):
+                self.stats["trap_sprung"] += 1
             if ev.get("rec"):
                 self.stats["recipes"] += 1
             if self.run is not None:
@@ -938,7 +953,8 @@ class SurvivorPolicy(Policy):
             return
         if self.run is None or (self.run.biome, self.run.eid) != (biome, eid):
             self.run = EncounterRun(self.lib, biome, eid)
-            self.stats["encounters_opened"] += 1
+            self.run.trap = bool(enc.get("trap"))
+            self.stats["traps" if self.run.trap else "encounters_opened"] += 1
             if self.run.node_key:
                 self.stats["nodes_seen"].add(f"{biome}/{eid}/{self.run.node_key}")
 
@@ -949,6 +965,8 @@ class SurvivorPolicy(Policy):
             # No local copy (new content, or a biome path we do not know).
             # Banking keeps whatever was already won rather than gambling blind.
             return Action("enc_bank", why="unknown encounter, bank out")
+        if run.trap:
+            return self.decide_trap(obs, run)
 
         # Drive straight down the first branch until the node is bankable,
         # then take the haul.  Deliberately simple, and deliberately not
@@ -971,6 +989,41 @@ class SurvivorPolicy(Policy):
         p = success_chance(choices[0], obs)
         return Action("enc_choice", ci=0,
                       why=f"first option at {run.node_key} (p={p:.2f})")
+
+    def decide_trap(self, obs, run) -> Action:
+        """A booby trap (traps.hpp): there is no walking away at the start.
+
+        Back out (Navigate) or work it (Scavenge) at the start; from a cache,
+        bank -- taking anything disarms it -- or press on once; out of an
+        escape node, leave with nothing (it stays armed, and on our map).
+        enc_bank out of an escape node is what the client sends too."""
+        me = obs.me
+        if run.at_escape or not run.choices:
+            if run.can_bank():
+                run.banked = True
+                self.stats["trap_banked"] += 1
+            return Action("enc_bank", why=f"trap: out at {run.node_key}")
+        if run.can_bank():
+            p = success_chance(run.choices[0], obs)
+            if run.pushed < 1 and me.ll > self.trap_min_ll and p >= self.trap_push:
+                run.pushed += 1
+                run.choose(0)
+                return Action("enc_choice", ci=0, why=f"trap: press on from {run.node_key} (p={p:.2f})")
+            run.banked = True
+            self.stats["trap_banked"] += 1
+            return Action("enc_bank", why=f"trap: take it from {run.node_key}")
+        esc, work = run.escape_choice(), run.work_choice()
+        if work is not None:
+            pw = success_chance(run.choices[work], obs)
+            if me.ll >= self.trap_min_ll and pw >= self.trap_nerve:
+                run.choose(work)
+                self.stats["trap_worked"] += 1
+                return Action("enc_choice", ci=work, why=f"trap: work it (p={pw:.2f})")
+        ci = esc if esc is not None else 0
+        run.choose(ci)
+        self.stats["trap_backouts"] += 1
+        return Action("enc_choice", ci=ci,
+                      why=f"trap: back out (p={success_chance(run.choices[ci], obs):.2f})")
 
     # --- crossing back to the surface -----------------------------------
     def climb_out(self, obs, prefer=None, why: str = "climbing out",

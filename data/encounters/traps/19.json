@@ -1,0 +1,131 @@
+{
+  "id": "trap_christmas_grotto",
+  "tier": 3,
+  "title": "The {{adjective}} Grotto",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "Someone has built a Christmas grotto in here and has not skimped. Cotton-wool snow gone the grey of old teeth, a winding path of painted snowflakes, a fence of tinsel strung on little ceramic insulators, and a hand-lettered sign: HAVE YOU BEEN GOOD THIS YEAR? Four elves line the path with their heads cocked, nail guns taped into their mittens, jump leads running from each under the snow to a car battery beneath the throne. Santa, on the throne, is the only figure without leads. He is not animatronic. He has just been sitting very still for a very long time.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back out along the path the way you came, between the elves",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "stocking_filler"
+        },
+        {
+          "label": "Crawl to the throne and pull a clamp off the battery",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_carol"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You back down the path one snowflake at a time with your hands up, as though the elves might accept a surrender, and they watch you all the way with their heads on one side. At the door something in the grotto clicks and a worn-out tape croaks HO, HO, and then thinks better of the third one. Santa does not wave. Santa has never waved.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You go the last metre on your belly under the elves' sightlines, get a hand round the clamp and pull, and the whole grotto sighs. The elves' heads droop onto their chests. Only the tree keeps humming. The battery is a good one, topped up with care, and behind it he kept the elves' spare nail strips, a jerrycan for the charger, and a tin of festive biscuits, still sealed, with a robin on the lid.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 3] },
+        { "res": 2, "qty": [1, 2] },
+        { "res": 1, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "The tree is still humming. Go through the presents under it.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_fairy_lights"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The tree has its own battery wired in behind the trunk, which is so exactly the kind of thing he would do that you feel almost fond of him, and you find it before it finds you. The presents are real. Every one is wrapped with a careful bow and a tag reading TO: YOU, FROM: SANTA, and every one has something in it. A tin of peaches. A roll of bandage. A bottle of water with a ribbon round its neck.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 1, "qty": [1, 2] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": [
+        {
+          "label": "Santa has a sack on his lap. Lift it off him.",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 2,
+          "success_node": "cache_3",
+          "hazard_id": "the_big_man"
+        }
+      ]
+    },
+    "cache_3": {
+      "text": "Under the red coat, where the belly should be, is a third battery, the big one. You unclip it with two fingers and an apology, and the sack comes away, and Santa stays exactly where he is. Pinned to the sack is his list in two columns: NAUGHTY on the left, very long, and NICE on the right, blank. Everyone who ever came down that path was a looter, and he knew it, and he got them all something anyway. You open the sack. It is coal. A whole sack of good dry coal, the naughty-list present, and it is the best thing anyone has given you in years. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [3, 5] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "stocking_filler": {
+      "text": "Your sleeve touches the tinsel. The fence is live — some cheerful farm energiser ticking away off the battery — and the jolt throws you sideways into the nearest elf, which takes it as a request. It turns its head to you with a noise like a pepper grinder and empties its mittens into your hip and the top of your thigh: eight nails, neatly grouped, at a range of about a foot. You leave the grotto on one good leg, with the other one bristling like a pincushion somebody was very angry with.",
+      "penalty": { "ll": [-2, -4], "med": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    },
+    "the_carol": {
+      "text": "Your knee comes down on a painted snowflake that is not only paint. All four elves turn their heads to you at once, with the soft whirr of a toy shop at closing time, and open up in sequence, and there is a rhythm to it — he programmed a rhythm into it — that is almost, but not quite, a carol you know. You lie in the snow and take it, verse after verse. By the end you are nailed to the grotto floor by one sleeve, one boot, and a quantity of the space in between, and the snow is no longer grey.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "water": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_fairy_lights": {
+      "text": "You find the tree's battery by finding the fairy lights first. They are wound round every present in a festive spiral, bare wire where the bulbs used to be, and the current takes you by both hands and will not let go. Your arms lock. Your jaw locks. You stand under the tree lit up from the inside, humming in harmony with it, while your fillings get warm and a smell like Christmas dinner fills the grotto, and you realise, with a slow and terrible clarity, that it is you.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_big_man": {
+      "text": "The sack comes off his lap and Santa comes with it, forward, into your arms, and under the red coat, where the belly should be, a third battery wakes up. It was never the elves' job to guard it. It was his. Every elf in the grotto jerks upright on his current, the tinsel spits, the tree blazes, and you and Santa go round in a slow terrible waltz in the middle of it all, the pair of you conducting, nails coming in from four directions, his beard in your mouth. He is wetter than he looks. He is heavier than he looks. He does not let go until his battery does.",
+      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-1, -3], "fuel": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Festive",
+      "Magical",
+      "Enchanted",
+      "Very Merry",
+      "Seasonal"
+    ],
+    "irony": [
+      "He checked it twice.",
+      "Out here, the naughty list is the good list.",
+      "He did say everyone would get something.",
+      "You have been very, very bad, and tonight you will be warm."
+    ]
+  }
+}

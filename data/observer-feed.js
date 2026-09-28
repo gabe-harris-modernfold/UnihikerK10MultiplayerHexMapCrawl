@@ -1,5 +1,5 @@
 // ── The synthetic feed (?feed=fake) ──────────────────────────────
-// A scripted six-player run that walks players through a REAL encounter file
+// A scripted five-player run that walks players through a REAL encounter file
 // (data/encounters/urban/1.json — the pharmacy) and kills everybody on a
 // timer. It is the only way to test the five acts, the greed meter, the exit
 // inference and the obituaries deterministically, and the only way to tune

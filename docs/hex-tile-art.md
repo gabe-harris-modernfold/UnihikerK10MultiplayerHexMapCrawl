@@ -9,12 +9,27 @@ This is how the hex terrain tiles are being redrawn:
 
 **Status (2026-09-23):**
 
-- **Open Scrub:** 10 of its 43 tiles are in `data/img`, one per variant slot,
-  as `hexOpenScrub0–9.png`. The other 33 are waiting for alternates support;
+- **Open Scrub:** 10 of its 43 tiles ship, one per variant slot, as cells 0–9
+  of the Open Scrub sheet. The other 33 are waiting for alternates support;
   see [Integration](#integration).
-- **Marsh:** 6 tiles in `data/img` as `hexMarsh0–5.png`. These are whole
+- **Marsh:** 6 tiles ship as cells 0–5 of the Marsh sheet. These are whole
   painted hexes, reshaped and regraded; see [Marsh](#marsh).
 - **Other terrains:** not started.
+- **Delivery (2026-09-27):** every terrain is one sheet now, not one file per
+  tile. Paint into `art/hex-sheets/hex<Name>.png`, then run
+  `python scripts/hex_sheets.py build`. See [Integration](#integration).
+  Wherever this doc says `hex<Name><N>.png`, read "cell N of that terrain's
+  sheet".
+- **Shelters and forage animals too (2026-09-27):**
+  - Shelters: `art/hex-sheets/shelterBasic.png` and `shelterImproved.png`,
+    224 px cells. The art is the user's AI re-render of the old shelters,
+    kept in `art/hex-sheets/src/`.
+  - Forage animals: `art/hex-sheets/forrageAnimal.png`, 80 px cells.
+  - See `docs/dev-loop.md`, "Art assets".
+- **Tunnels (2026-09-27):** the bunker board is drawn from the user's
+  underground sheets now: 17 overhead corridor pieces turned onto each cell's
+  open sides, 18 angled rooms, and shaft and cave-in interiors. See
+  [Tunnels](#tunnels).
 
 ## For AI coding agents (read first)
 
@@ -338,6 +353,29 @@ standarize the palette and get them shaped properly".
 is bumped to `img-v8`. Checked in the mock: the log shows 6 Marsh variants and
 all six load at 256 px. Not synced to the board.
 
+## Flooded District cells 5-6 (2026-09-27)
+
+Two whole painted hexes from the user, fitted and graded to cells 0-4 (the
+Ash Dunes cell 4 method: `fit_ash.py` palette, transfer 1.0, snap 0.5).
+Script: `fit_flood.py` + `fitlib.py` in scratchpad
+`76cb17bd-cfc7-4769-be22-fe6bdb2d6c4b`, pasted sources in `..\images\`.
+
+| Cell | Source | Fit |
+|---|---|---|
+| 5 | slab: storefronts, traffic light, rain rings | bottom vertices lifted 13 px (the painted side), inset 7, 6-triangle fan |
+| 6 | 1.84:1 wide: poles, two cars, barrier, planks | "FLOODED DISTRICT" label inpainted (Telea), then a per-row fit |
+
+- **Wide hexes:** a fan warp at 1.84:1 compresses the top/bottom sectors to
+  0.31 of the vertical scale and the side sectors to 0.39 with shear, so poles
+  kink on the centre->vertex seams. Cell 6 maps each target row edge to edge
+  onto the same source row through u_s = 0.75u + 0.25u^3: the centre (cars,
+  barrier) keeps ~0.8 of its proportions, the poles at the rim take the squeeze,
+  and nothing is cropped. The alternative, `fit_uniform(rel=0.8)`, has truer
+  proportions but loses the right poles and a plank.
+- Every warp is 4x supersampled, then area-averaged down.
+- Page: 7 tiles, q90, 128 KB, worst visible RMSE 3.11. Mock-verified in the
+  map (both drawn by the real renderer). Not synced.
+
 ## Integration
 
 **Done (2026-09-23): the 10 shipped tiles.**
@@ -357,27 +395,127 @@ all six load at 256 px. Not synced to the board.
   copies in the scratchpad's `bak/orig_scrub/`, not `data/img`. Rebuilding from
   those copies is byte-identical.
 
+**Done (2026-09-27): one sheet per terrain.** The user asked for "a hex sheet
+not individual hexes" and said to "leave space between each hex".
+
+- **Masters:** `art/hex-sheets/hex<Name>.png`. They are lossless RGBA, in a
+  grid of 256 px cells, 4 across, with 32 px of clear space around and
+  between each cell. Cell N is variant N.
+  - Old tiles smaller than 256 px (such as the 108×96 Ridge tile) are baked
+    stretched to 256×256, the same stretch the renderer always applied to
+    them.
+  - Open Scrub cell 10 is Jack's Chopper, the old `poi_jacks_chopper.png`.
+    Cells from a terrain's pinned sentinel on are landmarks (`LANDMARKS` in
+    the script).
+  - All 79 cells were checked pixel for pixel against the per-file tiles
+    they replaced.
+- **Shipped:** `data/img/hex<Name>.webp`, 15 pages and 1.4 MB in total. The
+  per-file tiles they replaced were 1.31 MB.
+  - Each page is lossy with lossless alpha. `hex_sheets.py build` picks the
+    lowest of q90/92/95 that keeps the page's worst tile at visible
+    RMSE ≤ 3.5.
+  - Settlement is the exception: it tops out at q95 / 3.95, because the
+    yellow school bus hits the 4:2:0 chroma floor. That is invisible at game
+    size, and only slightly soft at 3× zoom.
+- **Manifest:** `data/img/tiles.json`, the same format the old atlas plumbing
+  used, plus a `flat: true` flag.
+  - `flat` keeps the painted tiles drawing exactly as the per-file ones did:
+    grid stroked over them, no overhang split, and remembered hexes
+    unclipped (`tile.diorama` in renderer.js).
+  - Readers: `engine.js`, `observer.js`, the mock's `scanVariantCounts()`
+    and the firmware's `setupVariantCounts()`.
+- **Where it's been checked:** mock-verified on 2026-09-27. The client and the
+  observer fetch only the 15 sheets, the mock logs identical variant counts,
+  and landmark lookup works: `0_10` resolves to Open Scrub cell 10, and
+  `4_1x` wraps into the pool.
+- **Not checked on the board.** It hasn't been synced to the board. The
+  firmware atlas path (the `tiles.json` counts, the `hex*.png` skip in
+  `boot-assets.hpp`) is in HEAD but has never run with a real `tiles.json`
+  on the card.
+- **The per-file tiles are gone from `data/img`.** Only git has them now: the
+  shipped versions in HEAD before 2026-09-27, and the originals in `5d9a9ea`.
+
 **Not done:**
 
 1. **Alternates picker.**
    - Map (terrain, variant, q, r) to an alternate using the hash above.
    - Do it in `terrainTile()` in `data/engine.js`, and match it in `Art.tile`
      in `data/observer.js`.
-2. **Delivery.**
-   - WebP at quality 80 is about 10 KB per tile, so Open Scrub is about 430 KB.
-   - The working tree has uncommitted atlas plumbing: `data/img/tiles.json`
-     plus `tiles<N>.webp` pages.
-     - Loaded by `engine.js`, `renderer.js` and `observer.js`.
-     - Counted by `game-server.hpp` and `mock-server/server.js`.
-     - `boot-assets.hpp` skips the per-file tiles when `tiles.json` exists.
-   - Without `tiles.json`, everything falls back to per-file
-     `hex<Name><N>.png`.
-   - The firmware side has never been compiled or flashed.
-   - Atlas versus per-file is still undecided.
-3. **Jack's Chopper.**
+   - The 33 Open Scrub alternates already sit in `data/img/tile-alts0.webp`,
+     with `tile-alts.json`. They are a separate 264 px-stride sheet that
+     nothing loads yet.
+2. **Jack's Chopper.**
    - Its POI art, `poi_jacks_chopper.png`, is a gas station, but
      `data/encounters/scrub/19.json` describes a crashed military helicopter.
    - The Huey (`gi26_12`) has been proposed for it. That's still undecided.
+
+## Tunnels
+
+The user asked for "rooms and corridors" using "as many hexes as possible".
+All 41 hexes on their underground sheets are used.
+
+**Source art (`D:\`):**
+
+| Sheet | Hexes | Used as |
+|---|---|---|
+| `generated-image (1).png` | 8 angled, **pointy-top** | stairwell (entrance), catwalk pit, crate store, shelving, command dome, blast door, cable tunnel, sewer outflow (vent) |
+| `generated-image (2).png` | 6 angled | generator, barracks, washroom, HVAC fan (vent), vault door (entrance), hydroponics |
+| `addtional/generated-image.png` | 6 angled, black rock corners | junction, slab collapse (cave-in), rusted door, flooded floor, wall vents (vent), cave-in |
+| `addtional/generated-image (3).png` | 6 angled, black rock corners | infirmary, server racks, mess hall, elevator (entrance), water tanks, guard booth |
+| `addtional/generated-image (4).png` | 9 overhead, grey | 2 straights, the bend (used twice), a T, 4 crossings, the Y (also used for a second T) |
+| `addtional/generated-image (5).png` | 6 overhead, olive | 4 straights (chevrons, dashes, alcove, S-curve), 2 crossings |
+
+**How they were made (scratchpad `tun/`, session 35fecc17):**
+
+- The painted checkerboard is found locally: a pixel is background where its
+  31 px neighbourhood is mostly the sheet's two checker greys (the dark grey
+  drifts down the sheet on `(3).png`). A regular hexagon is fitted to each
+  cell by IoU; the grid split comes from projection minima.
+- Every cell is affine-fitted to the game hex at the 1.035 bleed. Pointy-top
+  cells take the *inscribed* flat hex, so nothing bends. The painted white
+  vignette rim is then never sampled: a soft radial remap reads radius
+  0.78–0.90 for output 0.78–1.05.
+- **Overhead corridors are square-grid art** (east–west runs through the hex
+  corners, 45° diagonals, "+" crossings). Each arm is found on a ring at 0.86
+  of the hex radius, then warped so it leaves through a flat-top edge midpoint
+  with a 62 px mouth. Straights are rotated and scaled rigidly, with their
+  ends mirror-filled along the axis. Everything else goes through a fan of
+  affine triangles from the centre, with knots at every arm wall and hex
+  vertex. A crossing keeps its vertical run and tilts the other by 30°.
+- **One palette (`unify.py`).** The user: "at least 3 different palettes in
+  play. we just need one palette". The olive corridor sheet is first graded
+  to the grey one. Then every tile is graded per *source sheet* toward the
+  pooled target of all six, each weighted equally, so no one sheet is the
+  palette:
+  - lightness mean and contrast, linear, at 0.75 strength. A quantile map
+    stretched the corridors' narrow rock peak into camouflage blotches;
+  - the tint at every lightness band, so shadow, midtone and highlight tint
+    each land on the shared one, with the chroma stretch capped at 0.6–1.35×;
+  - a hue snap (0.45) toward one shared 32-colour k-means palette, which
+    gives one green, one rust and one black;
+  - **one rock:** the graded corridor rock is measured, and anything darker,
+    or up to 12 L above it, is pulled onto it. The a0/a3 rooms' pure-black
+    corners become that same rock, and rock is kept out of the snap.
+  Measured after: every sheet sits at L ≈ 40 ± 18, chroma ≈ 6.2, b ≈ 6.1.
+  Before, they spread over L 33–43, chroma 5.5–7.1 and b 5.2–7.0.
+- Plain rock (`tunFixture` cell 8) is that graded rock colour, the one
+  generated cell: it only has to disappear into the rock around a corridor.
+
+**Shipped:** `art/hex-sheets/tunCorridor.png` + `tunCorridor.json` (the open
+sides each piece is drawn with), `tunRoom.png` + `tunRoom.json` (the
+corridor-like "chamber" rooms), `tunFixture.png` + `tunFixture.json`
+(entrance, vent, cave and rock cells). `hex_sheets.py build` writes three
+pages (about 600 KB) and the manifest's `tunnel` and `tunnelCounts`. The
+placeholder `hexTunnelFloor` / `hexTunnelCollapsed` sheets are gone. The
+surface Bunker Entrance and Vent Shaft art is untouched: the interiors are
+drawn only underground.
+
+**How the art is chosen:** the board has walls now (tunnels.hpp, "Open
+sides"). Each cell's `op` byte rides the wire next to it. The client turns
+and mirrors a corridor piece onto the open sides (`tunnelTile()` in
+`data/tunnel-board.js`). Rooms, shafts and cave-ins are dealt an art index by
+the firmware and drawn upright, which is why they always hang above their
+corridor: the open front of an angled room faces down.
 
 ## Where the tools are
 
@@ -426,4 +564,5 @@ copies of `clip_assets.py`, `encode_tile.py` and the rest.
    stop.**
 4. Make candidate features, graded, one per tile. **Show them and stop.**
 5. Draft the slot allocation and a map patch. **Show them and stop.**
-6. Integrate only after an explicit go.
+6. Integrate only after an explicit go: paint the tiles into the terrain's
+   sheet in `art/hex-sheets/`, then run `python scripts/hex_sheets.py build`.

@@ -295,6 +295,13 @@ def main():
                          "identical to 8 here for 14%% more bytes")
     args = ap.parse_args()
 
+    # The per-file tiles gave way to one sheet per terrain (scripts/hex_sheets.py):
+    # data/img/ holds none, so every slot would look empty and each written
+    # file would be ignored by the board and the client alike.
+    if os.path.exists(os.path.join(OUT, "tiles.json")):
+        sys.exit("data/img/tiles.json exists: the tiles are cells of the sheets in "
+                 "art/hex-sheets/ now (scripts/hex_sheets.py). Paint into a sheet cell.")
+
     total = 0
     for t, (img_name, disp_name, fill, stroke) in enumerate(TERRAIN):
         if t == RIVER and not args.include_river:

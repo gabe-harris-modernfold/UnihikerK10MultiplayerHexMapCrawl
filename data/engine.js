@@ -153,7 +153,7 @@ function sightFadeLevel(dist, vr) {
 const WIFI_CREDS_SEND_DELAY_MS = 300; // delay before auto-sending WiFi creds
 
 // Reconnect backoff: base * 2^attempts, capped, ± jitter — spreads out up to
-// 6 clients reconnecting at once (e.g. right after a board reboot) instead of
+// 5 clients reconnecting at once (e.g. right after a board reboot) instead of
 // all retrying in lockstep on a flat interval.
 const RECONNECT_BASE_MS       = 1000;
 const RECONNECT_MAX_MS        = 8000;
@@ -230,17 +230,19 @@ async function artSettled(onProgress) {
 const glyphImg = createImageWithLoadTracking('/' + GLYPH_SHEET);
 
 // ── Terrain tiles ─────────────────────────────────────────────────
-// scripts/tilegen/build_tiles.py bakes every hex tile into a couple of atlas
-// pages (/img/tiles<N>.webp) plus /img/tiles.json, which says where each
-// terrain's variants and each pinned landmark sit. Two requests instead of
-// ~70, and two PSRAM cache slots on the K10 instead of ~70 -- the firmware
-// reads the same manifest's `counts` to size pickVariant().
+// scripts/hex_sheets.py packs each terrain's tiles into one sheet
+// (/img/hex<Name>.webp, from the masters in art/hex-sheets/) plus
+// /img/tiles.json, which says where each terrain's variants and each pinned
+// landmark sit. 15 requests and PSRAM cache slots on the K10 instead of ~80 --
+// the firmware reads the same manifest's `counts` to size pickVariant().
 //
-// Tiles are 3/4 dioramas: a cell is taller than its hex, the hex sits at the
-// bottom, and the headroom above holds whatever stands up into the hex behind
-// (a peak, a water tower, a tail fin). renderHexTerrain() draws rows back to
-// front, so an overhang lands on a neighbour that is already there. The hex
-// edge line is baked into each tile, which is why the grid pass skips them.
+// Sheet tiles are `flat`: a square cell with the hex at full width, drawn
+// exactly like the per-file tiles were (grid over them, nothing overhangs).
+// The manifest format also carries the rejected 3/4 dioramas of
+// scripts/tilegen/build_tiles.py: a cell taller than its hex, the headroom
+// above holding whatever stands up into the hex behind, the hex edge baked in
+// -- tile.diorama, for which renderer.js splits the overhang off and skips
+// the grid.
 //
 // No manifest (an older board, or a failed fetch) falls back to the per-file
 // /img/hex<Name><N>.png tiles the board counted into `vc`.
@@ -252,7 +254,16 @@ const TERRAIN_IMG_NAMES = [
 ];
 const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);   // legacy per-file tiles
 // state: idle -> loading -> atlas | legacy. cell/anchor/radius are atlas px.
-const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {} };
+// shelters: [basic, improved] lists of [page, sx, sy]; forage: one such list.
+// Null when the manifest has none (then they load per file, see
+// loadShelterVariants / loadForrageAnimalImgs).
+// caravan: one such list too, the convoy sticker (caravanSprite). Null
+// without it: renderCaravan() falls back to its plain canvas badge.
+// tunnel: the bunker board's corridor/room/fixture cells (tiles.json "tunnel",
+// drawn through tunnelTile() in tunnel-board.js), null without them.
+const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {}, flat: false,
+                    shelters: null, shelterCell: [224, 224], forage: null, forageCell: [80, 80],
+                    caravan: null, caravanCell: [384, 384], tunnel: null };
 
 function loadTerrainVariants(vc) {
   // Counts are static for the whole session (fixed at boot from the SD card)
@@ -265,7 +276,11 @@ function loadTerrainVariants(vc) {
     : fetch('/img/tiles.json', { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r; });
   tilesQueued = req.then(r => r.json()).then(m => {
     if (!m || !Array.isArray(m.pages) || !m.pages.length) throw new Error('tiles.json lists no pages');
-    Object.assign(tileAtlas, { cell: m.cell, anchor: m.anchor, radius: m.radius, tiles: m.tiles || [], poi: m.poi || {} });
+    Object.assign(tileAtlas, { cell: m.cell, anchor: m.anchor, radius: m.radius, tiles: m.tiles || [], poi: m.poi || {}, flat: !!m.flat,
+                               shelters: Array.isArray(m.shelters) ? m.shelters : null, shelterCell: m.shelterCell || tileAtlas.shelterCell,
+                               forage: Array.isArray(m.forage?.[0]) ? m.forage[0] : null, forageCell: m.forageCell || tileAtlas.forageCell,
+                               caravan: m.caravan?.[0]?.length ? m.caravan[0] : null, caravanCell: m.caravanCell || tileAtlas.caravanCell,
+                               tunnel: Array.isArray(m.tunnel?.corridor) ? m.tunnel : null });
     tileAtlas.pages = m.pages.map(p => {
       // ?v= is the atlas hash: /img/* is cached forever (sw.js, and the
       // board's immutable Cache-Control), so a rebuilt atlas is a new URL.
@@ -321,8 +336,8 @@ function poiArtFor(terrain, variant) {
 }
 
 // The tile to draw for a cell, or null (no art, or not decoded yet: the
-// caller draws the flat fallback). Atlas tiles are { page, sx, sy }; the
-// per-file fallback is { img }.
+// caller draws the flat fallback). Atlas tiles are { page, sx, sy, diorama };
+// the per-file fallback is { img }.
 function terrainTile(terrain, variant) {
   if (tileAtlas.state === 'atlas') {
     const pool = tileAtlas.tiles[terrain];
@@ -331,7 +346,7 @@ function terrainTile(terrain, variant) {
     const at = tileAtlas.poi[`${terrain}_${variant}`] ||
                (pool?.length ? pool[((variant % pool.length) + pool.length) % pool.length] : null);
     const page = at && tileAtlas.pages[at[0]];
-    return page?.loaded ? { page, sx: at[1], sy: at[2] } : null;
+    return page?.loaded ? { page, sx: at[1], sy: at[2], diorama: !tileAtlas.flat } : null;
   }
   const _tv = terrainImgVariants[terrain];
   const img = poiArtFor(terrain, variant) ||
@@ -352,16 +367,36 @@ function drawTerrainTile(g, tile, cx, cy, size) {
     return;
   }
   const [cw, ch] = tileAtlas.cell;
+  if (tile.rot || tile.mirror) {
+    // A tunnel corridor piece turned onto its cell (tunnelTile): rot steps of
+    // 60 degrees and a mirror, about the hex centre. A flat-top hex maps onto
+    // itself under both, so the piece still fills its hex exactly.
+    g.save();
+    g.translate(cx, cy);
+    if (tile.rot) g.rotate(-tile.rot * Math.PI / 3);
+    if (tile.mirror) g.scale(-1, 1);
+    const b = tileBox(0, 0, size);
+    drawAtlasCell(g, tile.page, tile.sx, tile.sy, cw, ch, b.x, b.y, b.w, b.h);
+    g.restore();
+    return;
+  }
   const b = tileBox(cx, cy, size);
-  const px = (b.w / cw) * (window.devicePixelRatio || 1);   // atlas px per device px
-  const mips = tile.page.mips;
+  drawAtlasCell(g, tile.page, tile.sx, tile.sy, cw, ch, b.x, b.y, b.w, b.h);
+}
+
+// One sw x sh cell of an atlas page into (dx, dy, dw, dh). Shrunk past 2x it
+// samples the half- or quarter-size copy instead (buildTileMips), which is
+// why every sheet's cells sit on multiples of 4.
+function drawAtlasCell(g, page, sx, sy, sw, sh, dx, dy, dw, dh) {
+  const px = (dw / sw) * (window.devicePixelRatio || 1);   // device px per atlas px
+  const mips = page.mips;
   if (mips?.length && px < 0.5) {
     const lvl = (px < 0.25 && mips[1]) ? 1 : 0;
     const f = 2 << lvl;
-    g.drawImage(mips[lvl], tile.sx / f, tile.sy / f, cw / f, ch / f, b.x, b.y, b.w, b.h);
+    g.drawImage(mips[lvl], sx / f, sy / f, sw / f, sh / f, dx, dy, dw, dh);
     return;
   }
-  g.drawImage(tile.page, tile.sx, tile.sy, cw, ch, b.x, b.y, b.w, b.h);
+  g.drawImage(page, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 
 // ── Survivor pawn portrait images ────────────────────────────────
@@ -371,33 +406,91 @@ const pawnImgs = ARCHETYPES.map(a =>
 );
 
 // ── Forage animal images ──────────────────────────────────────────
-// Naming: /img/forrageAnimal<N>.png  — shown on cells with food resource (type 2)
+// Shown on cells with food resource (type 2). One sheet,
+// /img/forrageAnimal.webp (scripts/hex_sheets.py), placed by tiles.json
+// `forage`; without it (an older board) /img/forrageAnimal<N>.png per file.
 let forrageAnimalImgs = [];
+let forageAsked = false;
 const collectedCells = new Set(); // cells cleared by 'col' — guards against vis disk overwrite
 
 function loadForrageAnimalImgs(count) {
-  if (forrageAnimalImgs.length) return;  // static for the session — see loadTerrainVariants
-  forrageAnimalImgs = Array.from(
-    { length: count },
-    (_, v) => createImageWithLoadTracking(`/img/forrageAnimal${v}.png`)
-  );
+  if (forageAsked) return;  // static for the session — see loadTerrainVariants
+  forageAsked = true;
+  tilesQueued.then(() => {  // after tiles.json has had its say, as loadShelterVariants
+    if (tileAtlas.forage) return;
+    forrageAnimalImgs = Array.from(
+      { length: count },
+      (_, v) => createImageWithLoadTracking(`/img/forrageAnimal${v}.png`)
+    );
+  });
+}
+
+// The forage animal for a food hex, or null (none, or not decoded yet),
+// picked by position. Sheet sprites are { page, sx, sy, s }; per file { img }.
+function forageSprite(q, r) {
+  const pick = n => (((q * 31 + r * 17) % n) + n) % n;
+  if (tileAtlas.forage) {
+    const pool = tileAtlas.forage;
+    const at = pool.length ? pool[pick(pool.length)] : null;
+    const page = at && tileAtlas.pages[at[0]];
+    return page?.loaded ? { page, sx: at[1], sy: at[2], s: tileAtlas.forageCell[0] } : null;
+  }
+  const img = forrageAnimalImgs.length ? forrageAnimalImgs[pick(forrageAnimalImgs.length)] : null;
+  return img?.loaded ? { img } : null;
 }
 
 // ── Shelter images ────────────────────────────────────────────────
-// Naming: /img/shelterBasic<N>.png, /img/shelterImproved<N>.png
-// shelterImgs[0] = basic variants, shelterImgs[1] = improved variants
+// One sheet per kind (/img/shelterBasic.webp, /img/shelterImproved.webp, from
+// scripts/hex_sheets.py), placed by tiles.json `shelters`. Without them (an
+// older board) they load per file: /img/shelterBasic<N>.png and
+// /img/shelterImproved<N>.png, shelterImgs[0] = basic, [1] = improved.
 const shelterImgs = [];
 const SHELTER_IMG_NAMES = ['shelterBasic', 'shelterImproved'];
+let sheltersAsked = false;
 
 function loadShelterVariants(sv) {
-  if (shelterImgs.some(a => a?.length)) return;  // static for the session — see loadTerrainVariants
-  for (let s = 0; s < 2; s++) {
-    const count = sv?.[s] || 0;
-    shelterImgs[s] = Array.from(
-      { length: count },
-      (_, v) => createImageWithLoadTracking(`/img/${SHELTER_IMG_NAMES[s]}${v}.png`)
-    );
+  if (sheltersAsked) return;  // static for the session — see loadTerrainVariants
+  sheltersAsked = true;
+  // After tiles.json has had its say: the lobby asks for terrain first.
+  tilesQueued.then(() => {
+    if (tileAtlas.shelters) return;
+    for (let s = 0; s < 2; s++) {
+      const count = sv?.[s] || 0;
+      shelterImgs[s] = Array.from(
+        { length: count },
+        (_, v) => createImageWithLoadTracking(`/img/${SHELTER_IMG_NAMES[s]}${v}.png`)
+      );
+    }
+  });
+}
+
+// The shelter sprite for a hex, or null (none, or not decoded yet). kind is
+// cell.shelter: 1 basic, 2 improved. There is no variant on the wire, so the
+// pick is by position. Sheet sprites are { page, sx, sy, s }; the per-file
+// fallback is { img }.
+function shelterSprite(kind, q, r) {
+  const pick = n => (((q * 31 + r * 17) % n) + n) % n;
+  if (tileAtlas.shelters) {
+    const pool = tileAtlas.shelters[kind - 1];
+    const at = pool?.length ? pool[pick(pool.length)] : null;
+    const page = at && tileAtlas.pages[at[0]];
+    return page?.loaded ? { page, sx: at[1], sy: at[2], s: tileAtlas.shelterCell[0] } : null;
   }
+  const imgs = shelterImgs[kind - 1];
+  const img = imgs?.length ? imgs[pick(imgs.length)] : null;
+  return img?.loaded ? { img } : null;
+}
+
+// ── Caravan sticker ───────────────────────────────────────────────
+// /img/caravan.webp (scripts/hex_sheets.py), placed by tiles.json
+// `caravan`: the APC-led convoy, painted heading towards the viewer's lower
+// left. Only on a board synced with the sheets -- there is no per-file
+// fallback, renderCaravan() draws its canvas badge instead. Returns
+// { page, sx, sy, s } or null (none, or not decoded yet).
+function caravanSprite() {
+  const at = tileAtlas.caravan?.[0];
+  const page = at && tileAtlas.pages[at[0]];
+  return page?.loaded ? { page, sx: at[1], sy: at[2], s: tileAtlas.caravanCell[0] } : null;
 }
 
 // ── State ───────────────────────────────────────────────────────

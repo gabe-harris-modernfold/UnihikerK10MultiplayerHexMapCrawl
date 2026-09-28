@@ -1,7 +1,8 @@
 // ── Constants (must match .ino) ─────────────────────────────────
 const MAP_COLS    = 75;
 const MAP_ROWS    = 57;
-const MAX_PLAYERS = 6;
+const MAX_PLAYERS = 6;   // seats, one per archetype -- see MAX_SEATED
+const MAX_SEATED  = 5;   // the game is for five: at most this many seated at once
 const CARAVAN_PID = 254;  // sentinel trade partner id — matches world-system.hpp
 const DOOM_BASE_RADIUS = 6;  // Creeping Doom scent radius at awareness 0 — matches world-system.hpp
 // Creeping Doom's voice, indexed by the tier on the doom_taunt event
@@ -281,7 +282,7 @@ const RES_NAMES = ['','Water','Food','Fuel','Medicine','Scrap'];
 // Indices 0..11 match TERRAIN order; the rest are named here.
 const GLYPH_SHEET = 'img/ui_glyphs.png';
 const GLYPH_CELL  = 16;
-const GLYPH = { WATER:12, FUEL:13, MED:14, SCRAP:15, FOOTPRINT:16, TENT:17, HUT:18, RAIN:19, TIRE_TRACK:20 };
+const GLYPH = { WATER:12, FUEL:13, MED:14, SCRAP:15, FOOTPRINT:16, TENT:17, HUT:18, RAIN:19, TIRE_TRACK:20, TRAP:21 };
 // Canvas glyph per resource type (-1 = none; food uses the forage-animal PNG instead)
 const RES_GLYPH = [-1, GLYPH.WATER, -1, GLYPH.FUEL, GLYPH.MED, GLYPH.SCRAP];
 // Resource badge class names (matches .hi-badge.res-X in style.css)
@@ -407,6 +408,16 @@ function actAvailable(actId, terrainIdx) {
   }
 }
 
+// Starting resource tokens, inv[] order (water, food, fuel, med, scrap).
+// Mirrors resetSurvivor() in inventory_items.hpp: everyone walks out with
+// SURVIVOR_KIT plus their archetype's kitBonus. Display only (the lobby's pack
+// preview) -- the server hands out the real kit.
+const SURVIVOR_KIT = [2, 1, 1, 1, 1];
+function archKit(arch) {
+  const b = arch?.kitBonus ?? [];
+  return SURVIVOR_KIT.map((n, i) => n + (b[i] || 0));
+}
+
 // ── Survivor archetypes (§9.4 Synergy Roles) ─────────────────────
 // Indices 0-5 mirror server ARCHETYPE_NAME[] and slot assignment.
 // skills: [Navigate, Forage, Scavenge, Shelter, Endure]  0=none 1=trained 2=expert
@@ -428,6 +439,7 @@ const ARCHETYPES = [
     trait: 'In a Camp (2+ survivors sharing your hex), every 2 Food/Water consumed restores\u00a01\u00a0extra.',
     skills: [0, 2, 1, 1, 0],
     invSlots: 8,
+    kitBonus: [0, 1, 0, 0, 0],
     desc: 'Supply expert. Stretches the group\'s rations when camped with other survivors. Trait is inactive when travelling solo.',
     flavor: 'Stretches rations until they\u2019re unrecognizable. Survival tastes like cardboard.'
   },
@@ -438,6 +450,7 @@ const ARCHETYPES = [
     trait: 'May TREAT a Major Wound anywhere at DN\u00a09. Others must stand in a Settlement.',
     skills: [0, 0, 1, 0, 2],
     invSlots: 8,
+    kitBonus: [0, 0, 0, 1, 0],
     desc: 'Field surgeon. Can stabilise Major Wounds anywhere, at 2\u00a0MP and 1\u00a0Medicine a time.',
     flavor: 'Patches survivors back together. What remains is... functional.'
   },
@@ -445,10 +458,11 @@ const ARCHETYPES = [
     name: 'MULE',
     icon: '\u26BF',   // ⚿ key
     color: '#A07828',
-    trait: '12\u00a0inventory slots \u2014 hauls twice the standard load.',
+    trait: '12\u00a0inventory slots \u2014 half again the standard\u00a08.',
     skills: [0, 1, 2, 1, 1],
     invSlots: 12,
-    desc: 'Pack carrier. Hauls twice the standard load.',
+    kitBonus: [0, 1, 0, 1, 1],
+    desc: 'Pack carrier. Hauls half again the standard load, and walks out with the most supplies.',
     flavor: 'Carries everything. Even the weight of everyone\u2019s poor decisions.'
   },
   {
@@ -880,6 +894,13 @@ function getItemIcon(id, px = 26) {
   if (drawn) return drawn;
   const item = getItemById(id);
   return item ? item.icon : ITEM_ICON_PLACEHOLDER;
+}
+
+// Badge for a resource token, res 1..5 (RES_NAMES order). item-icons.js draws
+// them as ids 900 + res, clear of every item id. '' without that script --
+// callers fall back to the .dot-* swatch.
+function getResIcon(res, px = 26) {
+  return typeof ItemIcons !== 'undefined' ? ItemIcons.url(900 + res, px) : '';
 }
 
 // Short skill labels for display

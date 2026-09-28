@@ -94,6 +94,82 @@ function caravanSharesMyHex() {
   return !!(me && !myDepth && c?.active && c.q === me.q && c.r === me.r);
 }
 
+// ── Tunnel art ────────────────────────────────────────────────────
+// The board is corridors one hex wide with rooms off them, and a cell is not
+// open to every floor cell it touches -- each cell's `op` byte (tunnels.hpp,
+// "Open sides") says which of its six sides are open: bits 0-5, direction d
+// in the firmware's DQ/DR order. Bit 7 marks a room, bit 6 is bit 4 of a
+// room's art index (the low nibble is the variant).
+//
+// tiles.json "tunnel" (scripts/hex_sheets.py) holds the art:
+//   corridor  overhead pieces, each [page, x, y, mask drawn]: turned and
+//             mirrored onto the cell's own mask, so one piece serves every
+//             orientation, and the cell's variant picks among the ones that fit
+//   room      angled rooms, drawn upright; the firmware deals the index
+//   chamber   the corridor-like rooms, for a corridor shape no piece covers
+//   entrance / vent   shaft interiors, by variant
+//   cave / rock       Collapsed Tunnel: variant 0 is plain rock, 1+ a cave-in
+// Directions sit at screen angle 30 - 60*d degrees, so turning the art 60
+// degrees anticlockwise moves side d to d+1, and a left-right mirror sends
+// d to 4-d.
+function _tunTurn(m, k) {
+  let o = 0;
+  for (let d = 0; d < 6; d++) if ((m >> d) & 1) o |= 1 << ((d + k) % 6);
+  return o;
+}
+function _tunFlip(m) {
+  let o = 0;
+  for (let d = 0; d < 6; d++) if ((m >> d) & 1) o |= 1 << ((10 - d) % 6);
+  return o;
+}
+// open-side mask -> [{ at, rot, mirror }] of every corridor piece that fits.
+const _tunFits = new Map();
+function _tunPiecesFor(want) {
+  let fits = _tunFits.get(want);
+  if (fits) return fits;
+  fits = [];
+  for (const at of tileAtlas.tunnel.corridor) {
+    const have = at[3];
+    let found = null;
+    for (let mirror = 0; mirror < 2 && !found; mirror++) {
+      const m = mirror ? _tunFlip(have) : have;
+      for (let rot = 0; rot < 6; rot++)
+        if (_tunTurn(m, rot) === want) { found = { at, rot, mirror: !!mirror }; break; }
+    }
+    if (found) fits.push(found);
+  }
+  _tunFits.set(want, fits);
+  return fits;
+}
+
+// The tile for a tunnel cell, or null (no tunnel art, no op byte from this
+// server, or the page not decoded yet -- the caller falls back to
+// terrainTile()). tunnel: true keeps the grid off it: corridors run across
+// the hex edges, and a line over every seam would cut them up.
+function tunnelTile(cell) {
+  const t = tileAtlas.tunnel;
+  if (!t || tileAtlas.state !== 'atlas' || cell.op === undefined) return null;
+  const op = cell.op | 0, v = cell.variant | 0;
+  const pick = (pool, i) => (pool?.length ? pool[((i % pool.length) + pool.length) % pool.length] : null);
+  let at = null, rot = 0, mirror = false;
+  switch (cell.terrain) {
+    case 12: at = pick(t.entrance, v); break;
+    case 13: at = pick(t.vent, v); break;
+    case 15: at = v ? pick(t.cave, v - 1) : pick(t.rock, 0); break;
+    case 14:
+      if (op & 0x80) {
+        at = pick(t.room, v | ((op & 0x40) ? 0x10 : 0));
+      } else {
+        const fit = pick(_tunPiecesFor(op & 0x3F), v);
+        if (fit) ({ at, rot, mirror } = fit);
+        else at = pick(t.chamber || t.room, v);   // a shape no piece draws: a corridor-like room
+      }
+      break;
+  }
+  const page = at && tileAtlas.pages[at[0]];
+  return page?.loaded ? { page, sx: at[1], sy: at[2], rot, mirror, tunnel: true } : null;
+}
+
 // ── Where to draw a player ────────────────────────────────────────
 // null = they are on the other board and should not be drawn at all.
 function playerViewPos(i) {

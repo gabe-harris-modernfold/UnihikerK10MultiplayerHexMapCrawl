@@ -31,6 +31,32 @@ static void broadcastWifiNets() {
 static uint32_t lastWsAliveMs[MAX_PLAYERS] = {0};
 static constexpr uint32_t WS_REAP_GRACE_MS = 8000;
 
+// Free a seat whose socket is gone.  Caller holds G.mutex.  One body for
+// handleDisconnect and both reapers, so a DISCONNECT that was missed gets the
+// same cleanup as one that wasn't: encounter back on the hex, trade offer
+// disarmed, EVT_LEFT so clients drop the icon.
+static void releaseSeatLocked(int slot) {
+  Player& p = G.players[slot];
+  p.connected  = false;
+  p.wsClientId = 0;
+  p.resting    = false;
+  lastWsAliveMs[slot] = 0;
+  if (G.connectedCount > 0) G.connectedCount--;
+  // Involuntary, so the POI goes back on the hex; unbanked loot is forfeit.
+  if (encounters[slot].active) {
+    Log.warning("Encounter ended by disconnect slot=%d q=%u r=%u",
+                slot, encounters[slot].hexQ, encounters[slot].hexR);
+    endEncounter(slot, ENC_END_DISCONNECT, /*restorePoi=*/true);
+  }
+  // Kill any outstanding offer this slot made. Slots are reused by
+  // archetype (see handleMsg_pick) — without this, a stale offer could
+  // still be armed once a new, unrelated player inherits the slot.
+  tradeOffers[slot].active = false;
+  lastCaravanHex[slot].q = -1; lastCaravanHex[slot].r = -1;  // same reuse hazard as tradeOffers above
+  { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev);
+    LOG_VERBOSE("Enq EVT_LEFT pid=%d", slot); }
+}
+
 // Called every tick from gameLoop(). Snapshots under G.mutex, then does the
 // ws.client() lookups after releasing it: ws.client() takes AsyncWebSocket's
 // own recursive_mutex, and taking that while holding G.mutex would introduce
@@ -47,7 +73,36 @@ static void refreshWsLiveness() {
 
   uint32_t now = millis();
   for (int i = 0; i < MAX_PLAYERS; i++) {
-    if (conn[i] && ids[i] && ws.client(ids[i])) lastWsAliveMs[i] = now;
+    if (!conn[i]) continue;
+    if ((ids[i] && ws.client(ids[i])) || lastWsAliveMs[i] == 0) lastWsAliveMs[i] = now;
+  }
+
+  // Backstop reap.  handleDisconnect only gets G.mutex if it frees up within
+  // its timeout, and the reap in handleConnect only runs when somebody new
+  // connects -- so a dropped DISCONNECT left the seat "connected" on a dead
+  // socket until then.  The ghost never rests, which holds early dawn hostage
+  // for everyone else (tickGame's allResting): the 2026-09-24 5-bot run sat
+  // frozen on exactly that.  Here, unseen for the whole grace window = gone.
+  // Decided from lastWsAliveMs alone, so no ws.client() under G.mutex.
+  static uint32_t lastReapMs = 0;
+  if (now - lastReapMs < 1000) return;
+  lastReapMs = now;
+  bool freedAny = false;
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    Player& p = G.players[i];
+    if (!conn[i] || !p.connected || p.wsClientId != ids[i]) continue;  // changed since the snapshot
+    int32_t unseen = (int32_t)(now - lastWsAliveMs[i]);  // signed: pick stamps from another task
+    if (unseen < (int32_t)WS_REAP_GRACE_MS) continue;
+    Log.warning("Reaped ghost seat slot=%d oldWsId=%u (unseen for %dms, DISCONNECT missed)",
+                i, (unsigned)p.wsClientId, (int)unseen);
+    releaseSeatLocked(i);
+    freedAny = true;
+  }
+  xSemaphoreGive(G.mutex);
+  if (freedAny) {
+    broadcastLobbyUpdate();
+    requestSave();
   }
 }
 
@@ -88,10 +143,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
         Log.warning("Reaped stale player slot=%d oldWsId=%u (ungraceful close, "
                     "unseen for %lums)", i, (unsigned)p.wsClientId,
                     (unsigned long)(seen ? nowMs - seen : 0));
-        p.connected  = false;
-        p.wsClientId = 0;
-        lastWsAliveMs[i] = 0;
-        if (G.connectedCount > 0) G.connectedCount--;
+        releaseSeatLocked(i);
         freedAny = true;
       }
       xSemaphoreGive(G.mutex);
@@ -115,7 +167,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
   // found nothing to clear, so that id sits in lobbyIds forever.
   //
   // Each leaked entry permanently costs one seat, because the capacity gate
-  // below is `connectedCount + lobbySize >= MAX_PLAYERS`. Measured on a
+  // below is `connectedCount + lobbySize >= MAX_SEATED`. Measured on a
   // freshly rebooted board: a 5-bot arena produced 92 "full" rejections in
   // 180s with only 3-4 bots ever seated, and the locked-out client's retry
   // storm then drove 9 seat losses among the ones that had got in. That is
@@ -147,7 +199,7 @@ static void handleConnect(AsyncWebSocketClient* client) {
   taskEXIT_CRITICAL(&evtMux);
   if (lobbyPruned) broadcastLobbyUpdate();
 
-  if (connectedCount + lobbySize >= MAX_PLAYERS) {
+  if (connectedCount + lobbySize >= MAX_SEATED) {
     Log.warning("WS REJECT id=%u reason=full connected=%d lobby=%d",
                 (unsigned)client->id(), connectedCount, lobbySize);
     client->text("{\"t\":\"full\"}");
@@ -235,7 +287,7 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
   uint8_t  ll = 0, food = 0, water = 0, rad = 0;
   uint32_t connMs  = 0;
 
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
     slot = findSlot(client->id());
     if (slot >= 0) {
       Player& p = G.players[slot];
@@ -243,26 +295,15 @@ static void handleDisconnect(AsyncWebSocketClient* client) {
       steps   = p.steps;   score   = p.score; connMs = p.connectMs;
       ll      = p.ll;      food    = p.food;  water  = p.water;
       rad     = p.radiation;
-      p.connected  = false;
-      p.wsClientId = 0;
-      p.resting    = false;
-      G.connectedCount--;
-      // Clear active encounter on disconnect.  Involuntary, so the POI goes
-      // back on the hex; unbanked loot is forfeit.
-      if (encounters[slot].active) {
-        Log.warning("Encounter ended by disconnect slot=%d q=%u r=%u",
-                    slot, encounters[slot].hexQ, encounters[slot].hexR);
-        endEncounter(slot, ENC_END_DISCONNECT, /*restorePoi=*/true);
-      }
-      // Kill any outstanding offer this slot made. Slots are reused by
-      // archetype (see handleMsg_pick) — without this, a stale offer could
-      // still be armed once a new, unrelated player inherits the slot.
-      tradeOffers[slot].active = false;
-      lastCaravanHex[slot].q = -1; lastCaravanHex[slot].r = -1;  // same reuse hazard as tradeOffers above
-      { GameEvent ev = {}; ev.type = EVT_LEFT; ev.pid = (uint8_t)slot; enqEvt(ev);
-        LOG_VERBOSE("Enq EVT_LEFT pid=%d", slot); }
+      releaseSeatLocked(slot);
     }
     xSemaphoreGive(G.mutex);
+  } else {
+    // The tick can hold G.mutex for hundreds of ms.  The seat stays taken
+    // until refreshWsLiveness reaps it, WS_REAP_GRACE_MS from now.
+    Log.warning("Disconnect id=%u: G.mutex busy, seat left for the reaper",
+                (unsigned)client->id());
+    return;
   }
   if (slot < 0) {
     Log.warning("Disconnect id=%u not found in any slot or lobby",

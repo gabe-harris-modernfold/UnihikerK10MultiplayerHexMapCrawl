@@ -141,6 +141,10 @@ class EncounterRun:
         self.rolls = 0
         self.pending_next = None
         self.banked = False
+        # A booby trap (enc_path "trap": 1, traps.hpp): opened by a step, not
+        # chosen, and it cannot be walked away from at the start.
+        self.trap = False
+        self.pushed = 0          # caches pressed on from, in a trap
 
     @property
     def node(self) -> dict:
@@ -152,6 +156,29 @@ class EncounterRun:
 
     def can_bank(self) -> bool:
         return bool(self.node.get("can_bank"))
+
+    @property
+    def at_escape(self) -> bool:
+        """On a node flagged "escape": a way out, not the bottom of the place."""
+        return bool(self.node.get("escape"))
+
+    def _leads_to_escape(self, ch: dict) -> bool:
+        nxt = (self.enc.get("nodes") or {}).get(ch.get("success_node", ""), {})
+        return bool(nxt.get("escape"))
+
+    def escape_choice(self):
+        """Index of the choice that backs out of a trap, or None."""
+        for i, ch in enumerate(self.choices):
+            if self._leads_to_escape(ch):
+                return i
+        return None
+
+    def work_choice(self):
+        """Index of the first choice that does not back out, or None."""
+        for i, ch in enumerate(self.choices):
+            if not self._leads_to_escape(ch):
+                return i
+        return None
 
     def loot_here(self) -> list:
         return self.node.get("loot") or []
@@ -175,4 +202,4 @@ class EncounterRun:
         return {"biome": self.biome, "id": self.eid,
                 "title": self.enc.get("title", ""), "node": self.node_key,
                 "rolls": self.rolls, "visited": self.visited,
-                "banked": self.banked}
+                "banked": self.banked, "trap": self.trap}

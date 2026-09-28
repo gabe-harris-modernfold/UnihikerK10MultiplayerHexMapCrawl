@@ -28,8 +28,13 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
     Player& p = G.players[arch];
-    refused = p.connected ? "slot_taken" : nullptr;
-    if (!p.connected) {
+    // Six archetype seats, at most MAX_SEATED filled. handleConnect's gate
+    // keeps a sixth socket out of the lobby; this is the backstop for the
+    // paths that put a client back into it (downed, evicted).
+    refused = p.connected                          ? "slot_taken"
+            : (G.connectedCount >= MAX_SEATED)     ? "full"
+            :                                        nullptr;
+    if (!refused) {
       p.connected  = true;
       p.wsClientId = client->id();
       p.connectMs  = millis();
@@ -71,6 +76,9 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 
       { GameEvent ev = {}; ev.type = EVT_JOINED; ev.pid = (uint8_t)arch;
         ev.q = p.q; ev.r = p.r; enqEvt(ev); }
+      // A respawn is an entry too: dropping in beside a friend who is standing
+      // in the flowers costs the same 1 LL as walking into them (ecology.hpp).
+      if (!isReconnect) ecoBiteCheck(arch);
       Log.notice("PICK arch=%d name=%s q=%d r=%d %s connected=%d",
                  arch, p.name, (int)p.q, (int)p.r,
                  isDowned ? "respawn" : (isReconnect ? "reconnect" : "new"),
@@ -108,12 +116,15 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   const char* dv = strchr(dp + 3, ':');  if (!dv) { wsNack(client, "parse"); return; }
   int dir = atoi(dv + 1);
 
-  PSRAM_STATIC(char, visBuf, [1100]);
+  // 1600: an underground disk at the widest light (radius 6, clipped to the
+  // 16x10 board) is ~110 cells at 12 chars with its "op" tail.
+  PSRAM_STATIC(char, visBuf, [1600]);
   int visLen = 0, visCells = 0;
   int vr = VISION_R; bool mr = false;
   int slot = -1;
   uint8_t depBefore = 0, depAfter = 0;
   const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
+  char trapPath[88]; int trapPathLen = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -130,6 +141,13 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
       // that -- so the nack is the only way to tell the two apart.
       refused   = movePlayer(slot, dir);   // may cross boards -- see tunnelStepDown/Up
       depAfter  = G.players[slot].depth;
+      // The step landed on a booby trap and opened a scene the client never
+      // asked for (traps.hpp). Same enc_path an enc_start would get, plus
+      // "trap" so the panel knows there is no walking away from this one.
+      if (!refused && encounters[slot].active && encounters[slot].trap)
+        trapPathLen = snprintf(trapPath, sizeof(trapPath),
+          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"trap\":1}",
+          encPools[ENC_POOL_TRAP].path, (int)encounters[slot].encIdx);
       playerVisParams(slot, &vr, &mr);
       // Underground the disk must be built from tq/tr against G.tunnel. p.q/p.r
       // stay pinned to the hatch the player descended through -- the invariant
@@ -141,7 +159,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
       visLen = buildVisDisk(visBuf, sizeof(visBuf),
                             depAfter ? G.players[slot].tq : G.players[slot].q,
                             depAfter ? G.players[slot].tr : G.players[slot].r,
-                            vr, mr, &visCells, depAfter);
+                            vr, mr, &visCells, depAfter, slot);
     }
     xSemaphoreGive(G.mutex);
   }
@@ -153,6 +171,8 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   if (visLen > 0) {
     client->text(visBuf, (size_t)visLen);
   }
+  // After the vis disk, so the board under the trap is fresh when the panel opens.
+  if (trapPathLen > 0) client->text(trapPath, (size_t)trapPathLen);
   if (refused) wsNack(client, refused);
   if (slot >= 0 && depAfter != depBefore) k10Play(MOTIF_SEWER_ECHO);
 }
@@ -336,10 +356,12 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     return;
   }
   {
-    Log.notice("Regen: removing %s, %s and %s", SAVE_MAP_F, SAVE_PLY_F, SAVE_GND_F);
+    Log.notice("Regen: removing %s, %s, %s and %s", SAVE_MAP_F, SAVE_PLY_F, SAVE_GND_F, SAVE_SCAR_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
     SD.remove(SAVE_GND_F);
+    ecoDiscardScarFile();   // the scars belong to the land they were made on
+    ecoRequestRegen();      // the Eco task re-runs genesis on its next tick (ecology.hpp)
     // A new world: nothing from the old one may leak through.
     for (int i = 0; i < MAX_PLAYERS; i++)
       if (encounters[i].active) endEncounter(i, ENC_END_REGEN, /*restorePoi=*/false);

@@ -1,0 +1,104 @@
+{
+  "id": "trap_ring_for_service",
+  "tier": 2,
+  "title": "The {{adjective}} Reception",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A reception desk in dark varnished wood, a guest book lying open on it, and a brass bell with a card propped against it: RING FOR SERVICE. Behind the desk is a wall of pigeonholes, a key hanging in every one — except number twelve, which holds no key, only two dark round holes side by side, very close together, level with the bell. A string runs from the bell's plunger back into the rack. Another runs off the desk, along the skirting, and ends at the hinge of the door you just came through.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Slip back out, and don't let the door swing any wider",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_door_string"
+        },
+        {
+          "label": "Get behind the desk and lift the string off whatever is in twelve",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_service"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You go out the way you came in, sideways, through a gap no wider than you are, holding the door still with two fingers as if it were asleep. The bell does not ring. Behind you the reception stays exactly as it was: warm wood, open book, and the bell, gleaming. You notice that on the way out. Somebody still keeps it polished.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "Pigeonhole twelve holds a sawn-off side-by-side bedded in hotel towels, and the string runs from the bell to both triggers over a little brass pulley that somebody fitted with obvious pride. You lift it off, break the gun and shake out two cartridges that rattle with rock salt and carpet tacks. Under the desk: the float tin, the first-aid box and the hotel's entire remaining stock of tiny soaps.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 3] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Go through the STAFF ONLY door behind the key rack",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "lost_property"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The back office is a camp bed, a kettle, a tin of brass polish and a wall of lost property, every item tagged and entered in a ledger in the same careful hand. On the desk lies the complaints book, forty years deep. RANG THE BELL. NOBODY CAME. RANG FOR TWENTY MINUTES. NOBODY CAME. DISGRACEFUL. The last page is the manager's, one line, pressed hard enough to tear: I AM ALWAYS HERE NOW. {{irony}} You help yourself to the lost property. Nobody comes.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 2] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_door_string": {
+      "text": "The door moves a finger's width too far. The string draws tight, the bell gives one bright, cheerful ding, and pigeonhole twelve answers from across the room. The door takes most of it. The rest comes round the edge as rock salt and carpet tacks, into the hand you were holding the door with and the ear you were listening with, and both of them sing about it for the rest of the day.",
+      "penalty": { "ll": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_service": {
+      "text": "Your hip finds the desk and the desk finds the bell. Ding. You are standing square in front of twelve with both hands up inside the key rack, which is precisely where the manager always wanted a guest to be, and both barrels give you rock salt and carpet tacks at the range of a handshake. The tacks are bad. The salt is worse. It keeps working long after the tacks have finished, finding every hole they made and being salt in it.",
+      "penalty": { "ll": [-2, -3], "med": [-1, -1] },
+      "wound": [0, 1],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "lost_property": {
+      "text": "The office door sticks, so you shoulder it, and the lost-property shelving behind it comes down on you in one piece: forty years of umbrellas, a single wellington, somebody's teeth, a boxed wedding cake that stopped being cake a long time ago. Somewhere in the avalanche is the manager's other gun. It goes off when it lands, and it lands looking at you, and your canteen and your ribs share the salt while your mouth is still full of cake.",
+      "penalty": { "ll": [-2, -4], "water": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Warm",
+      "Prompt",
+      "Attentive",
+      "Full-Service",
+      "Very Personal"
+    ],
+    "irony": [
+      "The service, you have to admit, is very prompt these days.",
+      "Nobody has had to wait since.",
+      "Every complaint, in the end, was answered.",
+      "Response times have improved beyond all recognition."
+    ]
+  }
+}

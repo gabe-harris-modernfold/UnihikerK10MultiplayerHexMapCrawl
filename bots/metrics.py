@@ -248,6 +248,25 @@ class RunReport:
                                              key=lambda kv: (kv[0] is None, kv[0]))),
                 "content_scores": content}
 
+    def traps(self):
+        """Booby traps (traps.hpp): forced scenes, how they ended, what they cost.
+
+        `opened` is enc_start with "trap"; `sprung` a failed trap check (every
+        trap hazard ends the scene), `spent` a trap banked from, `escaped` one
+        left armed and on the escapee's map (unicast, so one row each).
+        `ll_lost` is what the hazards took -- the number the brush-rate
+        question turns on. A trap never takes the last point, so a death it
+        leads to is recorded under whatever finished the job."""
+        opened = [d for _t, d in _dedupe_events(self.rows, "enc_start") if d.get("trap")]
+        sprung = [d for _t, d in _dedupe_events(self.rows, "enc_res")
+                  if d.get("trap") and not d.get("out")]
+        outs = Counter(d.get("out") for _t, d in _dedupe_events(self.rows, "trap"))
+        by_pid = Counter(d.get("pid") for d in opened)
+        return {"opened": len(opened), "sprung": len(sprung),
+                "spent": outs.get("spent", 0), "escaped": outs.get("known", 0),
+                "ll_lost": -sum(min(0, d.get("penLL", 0)) for d in sprung),
+                "by_bot": dict(sorted(by_pid.items(), key=lambda kv: (kv[0] is None, kv[0])))}
+
     def tunnels(self):
         """Who used the bunker network, and what it bought them.
 
@@ -407,7 +426,7 @@ class RunReport:
         """Players in the run who were not bots from this arena.
 
         A human opening the browser mid-run is not a neutral observer: they
-        take one of the six slots, and because tickGame() only ends a day
+        take one of the five seats, and because tickGame() only ends a day
         early when *every* connected player is resting, an awake human holds
         every day open for the full DAY_TICKS (5 real minutes) instead of the
         ~3-5s an all-bot fleet collapses to.  That changes game-days per real
@@ -594,7 +613,7 @@ class RunReport:
                 "score_spread": self.score_spread(), "snowball": self.snowball(),
                 "check_margins": self.check_margins(), "action_mix": self.action_mix(),
                 "resource_slack": self.resource_slack(), "crises": self.crises(),
-                "poi_reach": self.poi_reach(), "deaths": self.deaths(),
+                "poi_reach": self.poi_reach(), "traps": self.traps(), "deaths": self.deaths(),
                 "tunnels": self.tunnels(),
                 "tension": self.tension(), "death_causes": self.death_causes(),
                 "outsiders": self.outsiders(),
@@ -672,6 +691,12 @@ class RunReport:
             L.append(f"   {self.label(a):<32} nodes={c['nodes_seen']} "
                      f"rolls={c['rolls_won']}/{c['rolls']} recipes={c['recipes']} "
                      f"aborted={c['encounters_aborted']}")
+
+        tr = m.get("traps") or {}
+        if tr.get("opened"):
+            L.append(f"\n-- booby traps: {tr['opened']} forced scenes -- {tr['escaped']} escaped, "
+                     f"{tr['spent']} disarmed, {tr['sprung']} sprung, {tr['ll_lost']} LL lost")
+            L.append(f"   by bot: {tr['by_bot']}")
 
         tu = m["tunnels"]
         if tu["descents"] or tu["ascents"]:

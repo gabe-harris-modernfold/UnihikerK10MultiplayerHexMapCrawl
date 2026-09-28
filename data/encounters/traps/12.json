@@ -1,0 +1,103 @@
+{
+  "id": "trap_gnome_sweet_gnome",
+  "tier": 2,
+  "title": "The {{adjective}} Gnomes",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A static caravan up on blocks, net curtains in every window, and a hand-painted sign screwed to the door: GNOME SWEET GNOME — PAT & DEREK. The front step is crowded with garden gnomes, twenty-odd of them, shoulder to shoulder and all facing out. They sit too heavy for what they are. The nearest has a hairline crack, and something grey and pointed shows through it like a tooth. A dark waxy cord runs hat to hat round the whole step, and the little fisherman at the front has his line cast across the path at ankle height.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step back off the path without troubling the fisherman",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "one_gnome"
+        },
+        {
+          "label": "Pinch out the cord between the hats and reel the fisherman in",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_whole_step"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You go backwards one boot at a time, eyes on the fisherman, and he keeps his eyes on you, and it is the longest staring contest of your life. Then you are clear. Twenty little painted faces watch you go, rosy-cheeked and patient, every one of them still stuffed to the hat.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You nip the cord between the first two hats, then the next, working round the step like someone deadheading roses. The fisherman comes last. His rod is a friction pull screwed into a hollow belly, and when you upend him out pours a double handful of coarse black powder and a great many roofing nails. There are twenty more where he came from. Pat and Derek had a lot of gnomes, and by the look of it a very long winter.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 4, "qty": [2, 3] }
+      ],
+      "loot_table": "scrub_common",
+      "choices": [
+        {
+          "label": "Climb the cleared step and try the caravan door",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_door_gnome"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "You feel the string on the handle before it tightens, and lift the gnome off the shelf above the door like a sleeping baby. Inside it is all doilies and commemorative plates, and on the table, facing the door, sits one more gnome: uncracked, unarmed, a tiny suitcase at his feet and a fan of postcards round him. Paris. Rome. Blackpool. HAVING A LOVELY TIME — GERALD. Propped against him, in capitals: WELCOME HOME GERALD. NOBODY IS EVER TAKING YOU AGAIN. You empty the cupboards into your pack. Then you put Gerald in too. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "scrub_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "one_gnome": {
+      "text": "Your heel finds the fisherman's line on the last step back. One gnome goes — only the one, the cord burns too slow to carry it on — with a flat bang and a hot fistful of roofing nails, most of which arrive in the seat of your trousers. Three find your canteen. You leave a trail of water and a very particular limp, and behind you the rest of the step carries on smiling.",
+      "penalty": { "ll": [-1, -2], "water": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_whole_step": {
+      "text": "You pinch the wrong length of cord. The step goes off in order, round its whole circumference, pop-pop-pop like the world's worst birthday, and you are on your back in a blizzard of pink ceramic with nails in both forearms and one pointed red hat buried in your thigh up to the brim. Pat and Derek packed the powder with nails and, going by the smell, with ten years of the neighbours' dog-mess bags.",
+      "penalty": { "ll": [-2, -3], "med": [-1, -1] },
+      "wound": [0, 1],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "the_door_gnome": {
+      "text": "Derek, it seems, did the inside. The handle is strung to a gnome on a shelf above the door, and this one has no fuse at all: a percussion cap and a short drop. It lands between your boots. The pack takes the worst of it, and every tin in there becomes a colander. You take the rest in the shins, the knees and the soft underside of the chin, and for a while afterwards the world is a thin high whistle with a caravan in it.",
+      "penalty": { "ll": [-2, -4], "food": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Cheerful",
+      "Rosy-Cheeked",
+      "Loaded",
+      "Well-Fed",
+      "Neighbourly"
+    ],
+    "irony": [
+      "Somebody has to send the postcards.",
+      "He looks, if anything, relieved.",
+      "Pat and Derek were right about gnome thieves the whole time.",
+      "Gerald, it turns out, just likes to travel."
+    ]
+  }
+}

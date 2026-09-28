@@ -6,10 +6,10 @@ Reset sequence (order matters):
   1. every bot disconnects, so handleDisconnect() clears p.connected and
      G.connectedCount drops back to 0
   2. one control connection opens -- it needs a free lobby slot, and
-     handleConnect() rejects once connectedCount + lobbySize >= MAX_PLAYERS,
+     handleConnect() rejects once connectedCount + lobbySize >= MAX_SEATED,
      which is exactly why this runs with the bots down rather than as a
-     seventh client
-  3. eraseslot for each of the 6 slots.  regen alone is not enough: it keeps
+     sixth client
+  3. eraseslot for each of the 6 archetype seats (seated or not).  regen alone is not enough: it keeps
      score and steps on connected players ("keeping only name, score, and
      steps"), and the run terminates on score, so a stale 988 would end run 2
      instantly.  eraseslot zeroes score/steps/encCount and wipes the survivor.
@@ -32,7 +32,7 @@ import websockets
 
 import policy as policy_mod
 from client import BotClient, RateLimiter, SlotBroker
-from config import MAX_PLAYERS, ARCHETYPE_NAME
+from config import MAX_PLAYERS, MAX_SEATED, ARCHETYPE_NAME
 from findings import FindingLog
 from policy.base import Action, Policy
 from policy.survivor import REST_RETRY_S
@@ -391,7 +391,8 @@ def parse_args(argv=None):
     p.add_argument("--host", default="192.168.4.234",
                    help="K10 address, or localhost:8765 for the mock")
     p.add_argument("--bots", type=int, default=5,
-                   help="1-6; 5 leaves a slot free so you can watch in a browser")
+                   help="1-5; 4 leaves a seat free to play in a browser "
+                        "(the observer TV polls /state and takes no seat)")
     p.add_argument("--policies", default="drunk",
                    help="comma-separated, cycled across slots (e.g. drunk,drunk)")
     p.add_argument("--target", type=int, default=1000,
@@ -420,8 +421,8 @@ def parse_args(argv=None):
                         "arm of the exposure experiment -- see death_causes in "
                         "metrics.py")
     args = p.parse_args(argv)
-    if not 1 <= args.bots <= MAX_PLAYERS:
-        p.error(f"--bots must be 1..{MAX_PLAYERS}")
+    if not 1 <= args.bots <= MAX_SEATED:
+        p.error(f"--bots must be 1..{MAX_SEATED}")
     if args.mode == "sprint" and "sentinel" in args.policies.split(","):
         # SprintPolicy forces REST the moment MP runs out, which collapses the
         # day the Sentinel exists to hold open.

@@ -1,13 +1,13 @@
 # WASTELAND A SURVIVAL HEX MAP ROGUE
 ## ESP32-S3 WebSocket Hex-Crawl Game that is ported to the DfRobot UniHiker K10 ESP32 S3 SBC.
 
-A 6-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization. Does not require an internet connection to play. You can play by connecting directly to the wifi network access point "WASTELAND" on your phone or laptop.
+A 5-player cooperative post-apocalyptic hex-crawl survival game running on the **Unihiker K10** microcontroller with embedded web server and real-time WebSocket synchronization. Does not require an internet connection to play. You can play by connecting directly to the wifi network access point "WASTELAND" on your phone or laptop.
 
 ---
 
 ## Overview
 
-**WASTELAND CRAWL** is a collaborative survival exploration game designed for the **Unihiker K10**, an ESP32-S3 development board with an integrated 2.8" touchscreen display. The game runs a built-in WiFi access point that allows up to 6 players to connect via web browser on their phones or computers, forming a shared party navigating a procedurally generated post-apocalyptic hex grid.
+**WASTELAND CRAWL** is a collaborative survival exploration game designed for the **Unihiker K10**, an ESP32-S3 development board with an integrated 2.8" touchscreen display. The game runs a built-in WiFi access point that allows up to 5 players to connect via web browser on their phones or computers, forming a shared party navigating a procedurally generated post-apocalyptic hex grid.
 
 ### Platform: Unihiker K10 (ESP32-S3)
 
@@ -51,7 +51,7 @@ Players connect via WiFi and open a browser to `http://192.168.47.1/` to join th
 
 #### Multi-Player Synchronization
 - **WebSocket Protocol:** JSON messages broadcast position, actions, and game state changes
-- **Low-Latency Updates:** 100ms game tick ensures responsive gameplay across 6 players
+- **Low-Latency Updates:** 100ms game tick ensures responsive gameplay across 5 players
 - **Conflict Resolution:** Server is authority; all decisions validated server-side
 - **Player Names:** Customizable per-session; visible on hex grid and in party roster
 
@@ -269,7 +269,7 @@ Esp32HexMapCrawl/
 **Designed for:** Unihiker K10 ESP32-S3 with integrated TFT display
 **Game Engine:** ESPAsyncWebServer + Custom WebSocket Protocol
 **Theme:** Post-apocalyptic survival exploration
-**Players:** Up to 6 simultaneous via WiFi
+**Players:** Up to 5 simultaneous via WiFi (6 archetypes to choose from)
 
 ---
 

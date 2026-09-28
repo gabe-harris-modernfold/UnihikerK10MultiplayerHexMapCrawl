@@ -8,7 +8,8 @@ automatically.  Sources are named per-block so a mismatch is easy to chase.
 # ── Map / session (Esp32HexMapCrawl.ino "Constants") ─────────────────────────
 MAP_COLS    = 75
 MAP_ROWS    = 57
-MAX_PLAYERS = 6
+MAX_PLAYERS = 6         # seats, one per archetype -- sizes per-seat tables
+MAX_SEATED  = 5         # at most this many seated at once (the table is full)
 TICK_MS     = 100
 DAY_TICKS   = 3000      # TICK_MS * DAY_TICKS = 5 real minutes per game-day
 

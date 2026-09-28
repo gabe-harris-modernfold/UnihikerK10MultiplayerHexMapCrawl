@@ -145,6 +145,7 @@ function updateSidebar() {
   uiVision.val = getEffectiveVR();
   uiLL.val      = me.ll   ?? 6;
   uiLLCap.val   = me.llCap ?? 7;   // +LL gear raises the ceiling; draw to it
+  uiCanteenCap.val = me.wc ?? 0;   // canteenCap() — the Water readouts' fill tag
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
   uiMP.val      = me.mp   ?? 0;
@@ -231,7 +232,9 @@ function updateClock() {
 function openCharSheet() {
   if (myId < 0) return;
   const me = players[myId];
-  document.getElementById('cs-name-input').value = me.nm || '';
+  const nameInput = document.getElementById('cs-name-input');
+  nameInput.value = me.nm || '';
+  nameInput.closest('.cs-name-row')?.classList.remove('dirty');
 
   // Archetype banner + portrait
   const arch     = ARCHETYPES[me.arch] || ARCHETYPES[0];
@@ -242,7 +245,7 @@ function openCharSheet() {
   document.getElementById('char-sheet')
     .style.setProperty('--cs-portrait', `url('img/survivors/${arch.name.toLowerCase()}.jpg')`);
   const archTrait = document.getElementById('cs-arch-trait');
-  if (archTrait) archTrait.textContent = arch.trait || '';
+  if (archTrait) { archTrait.textContent = arch.trait || ''; archTrait.title = arch.trait || ''; archTrait.classList.remove('open'); }
 
   // Skills grid
   const grid = document.getElementById('cs-skills-grid');
@@ -251,7 +254,7 @@ function openCharSheet() {
     SK_NAMES.forEach((name, i) => {
       const lvl = me.sk?.[i] || 0;
       const row = document.createElement('div');
-      row.className = 'cs-skill-row';
+      row.className = 'cs-skill-row lvl-' + lvl;
       const label = document.createElement('span');
       label.className = 'cs-skill-name';
       label.textContent = name;
@@ -269,6 +272,8 @@ function openCharSheet() {
       else if (lvl === 1) lvlLabel = 'TRAINED';
       else                lvlLabel = '—';
       lbl.textContent = lvlLabel;
+      // Phones show name + dots only (style.css hides the level word)
+      row.title = name + ': ' + (lvl ? lvlLabel : 'UNTRAINED');
       row.appendChild(label);
       row.appendChild(dots);
       row.appendChild(lbl);
@@ -345,11 +350,44 @@ document.getElementById('char-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('char-overlay')) uiCharOpen.val = false;
 });
 
+// Bottom-sheet swipe: drag the identity strip down to close, alongside ✕
+// and the sticky bottom CLOSE. Only from the top — a scrolled sheet drags
+// back up natively instead.
+(() => {
+  const head = document.getElementById('cs-head');
+  let y0 = null, x0 = 0;
+  head.addEventListener('touchstart', e => {
+    y0 = e.touches.length === 1 ? e.touches[0].clientY : null;
+    x0 = e.touches[0]?.clientX ?? 0;
+  }, { passive: true });
+  head.addEventListener('touchend', e => {
+    if (y0 === null) return;
+    const t = e.changedTouches[0];
+    const dy = t.clientY - y0, dx = Math.abs(t.clientX - x0);
+    y0 = null;
+    if (dy > 60 && dy > dx * 2 && document.getElementById('char-sheet').scrollTop <= 0) uiCharOpen.val = false;
+  }, { passive: true });
+})();
+
+// Phones clamp the archetype trait to two lines; a tap shows all of it
+document.getElementById('cs-arch-trait').addEventListener('click', e => e.currentTarget.classList.toggle('open'));
+
+// Call sign edits in place: the ✓ shows only while the box differs from the
+// current name (.dirty), so the header reads as a name, not a form.
 document.getElementById('cs-name-btn').addEventListener('click', () => {
-  const nm = document.getElementById('cs-name-input').value.trim().slice(0, 11);
+  const input = document.getElementById('cs-name-input');
+  const nm = input.value.trim().slice(0, 11);
   if (!nm) return;
   send({ t: 'n', name: nm });
   if (myId >= 0) { players[myId].nm = nm; updateSidebar(); }
+  input.value = nm;
+  input.closest('.cs-name-row')?.classList.remove('dirty');
+  input.blur();   // drops the phone keyboard
+});
+document.getElementById('cs-name-input').addEventListener('input', e => {
+  const nm = e.target.value.trim();
+  const cur = myId >= 0 ? (players[myId]?.nm || '') : '';
+  e.target.closest('.cs-name-row')?.classList.toggle('dirty', !!nm && nm !== cur);
 });
 document.getElementById('cs-name-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('cs-name-btn').click();
@@ -405,6 +443,20 @@ function initHudBindings() {
         });
       }
       prevInv = v;
+    });
+  }
+
+  // Canteen fill beside both Water readouts: the first `wc` water tokens are
+  // the ones riding in the canteen (tokenLoad() in inventory_items.hpp), so
+  // it holds min(water, wc) of wc. Nothing worn, no tag.
+  for (const el of document.querySelectorAll('.canteen-fill')) {
+    van.derive(() => {
+      const cap = uiCanteenCap.val, held = Math.min(uiInv[0].val, cap);
+      el.hidden = cap <= 0;
+      el.textContent = `${held}/${cap}`;
+      el.classList.toggle('full', cap > 0 && held >= cap);
+      el.title = `Canteen: ${held} of ${cap} water carried outside your pack`;
+      el.setAttribute('aria-label', el.title);
     });
   }
 
@@ -511,14 +563,32 @@ function applyRadStatus(rad) {
   rStat.className   = 'track-suffix' + suffix;
 }
 
+// Char-sheet track row: short label (phone width), full name for screen
+// readers, and a "5/7" readout (#cs-*-val) the derives below keep current.
+function _csTrackRow(id, label, aria, count, color, colorHi) {
+  const row = makeSegmentBar({ id, label, count, color, colorHi });
+  row.querySelector('.track-boxes').setAttribute('aria-label', aria);
+  const val = document.createElement('span');
+  val.className = 'track-val';
+  val.id = id.replace(/-track$/, '-val');
+  row.appendChild(val);
+  return row;
+}
+
+function _setTrackVal(id, v, max) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = `${v | 0}<small>/${max | 0}</small>`;
+}
+
 function initSurvivalTracks() {
-  // Char sheet tracks — built by makeSegmentBar
+  // Char sheet tracks — built by makeSegmentBar. Life/food/water take the
+  // HUD / resource-dot colours so they read at a glance on a phone.
   const section = document.getElementById('cs-survival-section');
   if (section) {
-    section.appendChild(makeSegmentBar({ id: 'cs-ll-track',    label: 'LIFE LEVEL', count: 7  }));
-    section.appendChild(makeSegmentBar({ id: 'cs-food-track',  label: 'FOOD',       count: 6  }));
-    section.appendChild(makeSegmentBar({ id: 'cs-water-track', label: 'WATER',      count: 6  }));
-    const radRow = makeSegmentBar({ id: 'cs-rad-track', label: 'RADIATION', count: 10 });
+    section.appendChild(_csTrackRow('cs-ll-track',    'LIFE',  'Life level', 7, '#A82020', '#E04040'));
+    section.appendChild(_csTrackRow('cs-food-track',  'FOOD',  'Food',       6, '#4A7828', '#72A83C'));
+    section.appendChild(_csTrackRow('cs-water-track', 'WATER', 'Water',      6, '#2A5C8A', '#4A8CC8'));
+    const radRow = _csTrackRow('cs-rad-track', 'RAD', 'Radiation', 10);
     radRow.querySelector('.track-boxes').classList.add('rad-track');
     const radStatus = document.createElement('span');
     radStatus.className = 'track-suffix';
@@ -551,6 +621,7 @@ function initCharSheetBindings() {
   // pulls it down. renderTrackBoxes trims and grows the row in place.
   van.derive(() => {
     renderTrackBoxes('cs-ll-track', uiLL.val, [], 0, uiLLCap.val || 7);
+    _setTrackVal('cs-ll-val', uiLL.val, uiLLCap.val || 7);
   });
 
   // LL mini-track (HUD)
@@ -570,6 +641,7 @@ function initCharSheetBindings() {
     const fth = (myId >= 0 ? players[myId] : null)?.fth ?? 0;
     renderTrackBoxes('cs-food-track', uiFood.val,
       [{ box: 4, bit: 1 }, { box: 2, bit: 2 }], fth);
+    _setTrackVal('cs-food-val', uiFood.val, 6);
   });
 
   // Water track (thresholds at boxes 5, 3, 1)
@@ -577,7 +649,7 @@ function initCharSheetBindings() {
     const wth = (myId >= 0 ? players[myId] : null)?.wth ?? 0;
     renderTrackBoxes('cs-water-track', uiWater.val,
       [{ box: 5, bit: 1 }, { box: 3, bit: 2 }, { box: 1, bit: 4 }], wth);
-
+    _setTrackVal('cs-water-val', uiWater.val, 6);
   });
 
 
@@ -587,6 +659,7 @@ function initCharSheetBindings() {
     renderTrackBoxes('cs-rad-track', rad, [{ box: 4, bit: 0 }, { box: 7, bit: 0 }], 0, 10);
     applyRadColors(rad);
     applyRadStatus(rad);
+    _setTrackVal('cs-rad-val', rad, 10);
   });
 
 

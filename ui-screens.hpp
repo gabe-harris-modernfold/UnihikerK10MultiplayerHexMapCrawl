@@ -1136,7 +1136,7 @@ static void drawEncounterScreen() {
   static const uint32_t C_WARN = 0xC87020;
   static const uint32_t C_CRIT = 0xE89018;
   static const char* SKILL_UP[NUM_SKILLS] = {"NAVIGATE","FORAGE","SCAVENGE","SHELTER","ENDURE"};
-  static const char* END_NAME[ENC_END_COUNT] = {"hazard","abandoned","dawn","downed","dropped","reset"};
+  static const char* END_NAME[ENC_END_COUNT] = {"hazard","abandoned","dawn","downed","dropped","reset","escaped"};
 
   struct ESnap {
     bool     on, inEnc;
@@ -1160,7 +1160,7 @@ static void drawEncounterScreen() {
     snap[i].loot  = 0;
     snap[i].biome[0] = 0;
     if (snap[i].inEnc) {
-      uint8_t t = e.terrain < 10 ? e.terrain : 0;
+      uint8_t t = e.terrain < ENC_POOL_COUNT ? e.terrain : 0;   // the trap pool sits past the terrains
       strlcpy(snap[i].biome, encPools[t].path, sizeof(snap[i].biome));
       int l = e.pendingItemCount;
       for (int k = 0; k < 5; k++) l += e.pendingLoot[k];
@@ -1324,16 +1324,24 @@ static void drawMapScreen() {
 
   canvas.fillScreen(0x0000);
 
+  // The Understory (ecology.hpp): vein hexes take a dim tint in the species
+  // hue, mature fruiting bodies a bright dot. Read from its published copy,
+  // so no lock. Slight on purpose -- it should be found, not announced.
+  const uint8_t* eco = ecoPublishedDensity();
+  uint32_t ecoAccent = ecoAccentRgb();
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int q = 0; q < MAP_COLS; q++) {
       int px = MX + q * XS;
       int py = MY + r * YS + (q & 1) * OY;
       uint8_t t = terr[r][q];
       uint32_t col = (t < NUM_TERRAIN) ? TERR_COL[t] : 0x3A1808;
+      uint8_t ed = eco ? eco[r * MAP_COLS + q] : 0;
+      if ((ed & 15) >= 4) col = ecoLcdTint(col, (uint8_t)(ed & 15));
       // at small cell sizes, drop the 1-px gap so cells read as a continuous map
       int rectW = (CW > 2) ? CW - 1 : CW;
       int rectH = (CH > 2) ? CH - 1 : CH;
       canvas.fillRect(px, py, rectW, rectH, c16(col));
+      if (ed & 0x80) canvas.fillRect(px + CW / 2, py + CH / 2, 1, 1, c16(ecoAccent));
     }
   }
 
@@ -1778,20 +1786,26 @@ static void checkGestureSwitch() {
   k10BtnBLast = btnB;
 }
 
-// ── K10 button A: how mad the screen is allowed to get ─────────────────────
+// ── K10 button A: speaker volume ───────────────────────────────────────────
 // Button A is only read at boot (hold it for the USB drive), so in play it is
-// free. Each press steps the LCD FX level down -- MADNESS, RESTRAINED, OFF,
-// and round again -- and says which in a toast over the screen. Saved with
-// the other K10 prefs. See the top of ui-fx.hpp for what each level keeps.
+// free. Each press steps the speaker LOW -> MED -> HIGH -> OFF and round
+// again, and says which in a toast over the screen. A level set elsewhere
+// (the web slider, the sound desk) steps up to the next preset above it.
+// Saved with the other K10 prefs as `vol`, the same 0..9 the slider writes.
+static const uint8_t VOL_LOW = 2, VOL_MED = 5, VOL_HIGH = 9;
 static void checkFxButton(uint32_t now) {
   bool a = k10.buttonA && k10.buttonA->isPressed();
-  if (a && !fxBtnALast && fxReady) {
-    s_fxLevel     = (s_fxLevel == 0) ? 2 : (uint8_t)(s_fxLevel - 1);
-    FX.level      = s_fxLevel;
-    FX.toastUntil = now + 1600;
-    if (FX.level == 0) { fxCut.on = false; FX.sw = false; FX.trauma = 0; FX.flashN = 0; }
+  if (a && !fxBtnALast) {
+    uint8_t v = s_audioVol;
+    s_audioVol = v == 0 ? VOL_LOW : v < VOL_MED ? VOL_MED : v < VOL_HIGH ? VOL_HIGH : 0;
+    const char* nm = s_audioVol == 0 ? "OFF" : s_audioVol == VOL_LOW ? "LOW" : s_audioVol == VOL_MED ? "MED" : "HIGH";
+    Log.notice("ButtonA: volume %s (%d)", nm, (int)s_audioVol);
+    if (fxReady) {
+      snprintf(FX.toastMsg, sizeof(FX.toastMsg), "VOLUME  %s", nm);
+      FX.toastUntil = now + 1600;
+    }
     saveK10Prefs();
-    k10Play(MOTIF_SCREEN_CLICK);
+    k10Play(MOTIF_SCREEN_CLICK);   // heard at the new level; silent at OFF
     k10Dirty = true;
   }
   fxBtnALast = a;

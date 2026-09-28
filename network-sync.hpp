@@ -168,7 +168,8 @@ static int appendFloodArray(char* buf, size_t cap) {
 // 16x10 at 6 chars/cell is 960 chars, so this fits a small stack buffer; it
 // deliberately does NOT reuse sendSync()'s 40 KB PSRAM buffer.
 static void sendTunnelSync(AsyncWebSocketClient* client) {
-  char buf[1280];
+  // header ~70 + map 960 + op 320 + closers: ~1.36 KB at 16x10
+  char buf[1440];
   int pid = findSlot(client->id());
   if (pid < 0) return;
   int visR; bool maskRes;
@@ -182,7 +183,10 @@ static void sendTunnelSync(AsyncWebSocketClient* client) {
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"tsync\",\"cols\":%d,\"rows\":%d,\"vr\":%d,\"q\":%d,\"r\":%d,\"map\":\"",
     (int)TUN_COLS, (int)TUN_ROWS, visR, pq, pr);
-  pos += encodeTunnelFog(buf + pos, (int)sizeof(buf) - pos, pq, pr, visR, maskRes);
+  pos += encodeTunnelFog(buf + pos, (int)sizeof(buf) - pos, pq, pr, visR, maskRes, pid);
+  // Which sides of each cell are open (tunnels.hpp), for the same cells.
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"op\":\"");
+  pos += encodeTunnelOps(buf + pos, (int)sizeof(buf) - pos, pq, pr, visR, pid);
   xSemaphoreGive(G.mutex);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "\"}");
   client->text(buf, (size_t)pos);
@@ -215,7 +219,7 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     "{\"t\":\"sync\",\"id\":%d,\"pv\":%d,\"tk\":%lu,\"vr\":%d,\"map\":\"",
     pid, PROTO_VERSION, (unsigned long)G.tickId, visR);
   int mapStart = pos;
-  pos += encodeMapFog(buf + pos, (int)sizeof(buf) - pos, me.q, me.r, visR, maskRes);
+  pos += encodeMapFog(buf + pos, (int)sizeof(buf) - pos, me.q, me.r, visR, maskRes, pid);
   int mapLen = pos - mapStart;
   pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"p\":[");
 
@@ -295,10 +299,13 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   // empty screen with no way to redraw it. Sent after the sync so the client
   // has its player id (and therefore its own depth) first.
   if (below) sendTunnelSync(client);
+  // The Understory's latest published state (scars, then veins/bodies/
+  // daisies), read through its swapped index -- never races the Eco task.
+  ecoSendPublished(client);
 }
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
-// Buffer: 6 players × ~385 chars + header/footer ~80 = ~2390; sized at 4096
+// Buffer: MAX_SEATED (5) players × ~385 chars + header/footer ~80 = ~2000; sized at 4096
 // to safely accommodate it[INV_SLOTS_MAX]+iq[INV_SLOTS_MAX]+eq[5]+is+llCap
 // per player (~195 chars × 6 = 1170) — see appendPackArrays()
 // plus the "world" block (caravan incl. its ≤4-entry shelf, doom, sparse
@@ -332,14 +339,21 @@ static void broadcastState() {
 
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"s\",\"tk\":%lu,\"p\":[", (unsigned long)G.tickId);
+  // Seated survivors only, each tagged with its seat. An empty seat's block
+  // was ~300 B of stale numbers that no client draws (everything gates on
+  // "on"), sent 10x a second to every socket. A seat missing from the list
+  // is offline -- clients mark it so (network.js _msgState, bots/state.py).
+  bool firstP = true;
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p = G.players[i];
-    if (i) buf[pos++] = ',';
+    if (!p.connected) continue;
+    if (!firstP) buf[pos++] = ',';
+    firstP = false;
     pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "{\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
+      "{\"id\":%d,\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
       "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,",
-      p.q, p.r, p.score,
+      i, p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.radiation,

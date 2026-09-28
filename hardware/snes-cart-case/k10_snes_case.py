@@ -23,7 +23,7 @@ Where the numbers come from
       its sensor holes don't line up with the mics / light sensor.
 
 The case: front shell (bezel + screen window) and back shell (floor, walls,
-ports) meet on a flat parting plane through the middle of the PCB. Six
+ports) meet on a flat parting plane through the middle of the PCB. Ten
 cantilever tabs on the front shell hang down into recesses in the back
 shell's outer wall and hook under a ledge. The PCB is clamped at the gold-
 finger end between the two shells and exits through the bottom face, so the
@@ -61,7 +61,7 @@ BTN_TIP_X = PCB_W + 0.75                   # plungers stick 0.75 mm past the PCB
 SD_Y = (10.9, 25.3)                        # microSD socket, card enters from the right edge
 P0_Y, P1_Y = 49.2, 37.1                    # Gravity 3-pin PH2.0, left edge, side entry
 I2C_Y = 44.3                               # Gravity 4-pin PH2.0, right edge, side entry
-SPEAKER = (0.1, 10.8, 17.1, 31.7)
+SPEAKER = (0.1, 10.8, 17.1, 31.7)          # the big black box on the back; sound hole on the side pointing away from the board
 LEDS_X = (17.4, 34.3)                      # three RGB LEDs on the back, Y 7.7..10.4
 ESP_MODULE = (0.2, 56.6, 19.5, 83.0)       # ESP32-S3-WROOM-1 on the back, 0.8 mm PCB
 ESP_SHIELD = (1.7, 58.23, 18.0, 75.96)     # its can, 3.1 mm tall overall
@@ -76,25 +76,40 @@ Y_SHROUD = -1.5        # open end of the thin-walled shroud: the fingers sit 1.5
 SHROUD_MARGIN = 1.5    # connector mouth = the board cavity plus this each side; the wings are its feet
 Z_SPLIT = 0.8          # parting plane, through the middle of the PCB
 BACK_CLEAR = 6.0       # PCB back face to the inside of the back floor
+ESP_PAD_Z = -3.1 - 0.25   # top of the pad under the ESP32 can: 0.25 mm off it
 FLOOR = 1.8
 FRONT_CLEAR = 5.7      # PCB front face to the underside of the bezel
 BEZEL = 1.6
-CORNER_CUT = 5.0       # 45 deg cut on the two top corners, like the SNES shell
-R_CORNER = 2.0         # every silhouette corner is rounded this much
+CORNER_CUT = 0.0       # 45 deg cut on the two top corners (0: plain rounded corners, like the real shell)
+R_CORNER = 2.5         # every silhouette corner is rounded this much. Not 2.0 or 3.0: with the top
+                       # chamfers those put an arc's end exactly on a chamfer edge and break the STL
 CH = 1.0               # perimeter chamfer, front and back faces
 CH_TOP_FRONT, CH_TOP_BACK = 1.5, 3.0
+PLATEAU_X = (-8.0, 59.6)   # the SNES centre panel on both faces. Its edges are stepped grooves: both faces
+                           # print on the bed, so a real raised step would need supports
+RIBS = 7                   # slats on each wing, like the real shell
 CLAMP_GAP = 0.03       # per side, between the PCB and the gold-finger-end clamps
 Y_CLAMP = 9.9          # top of the back shell's finger-end wall
 Y_CLAMP_FRONT = LCD_MODULE[1] - 0.7   # front clamp: bare PCB only, 0.7 short of the LCD frame
 STOP_GAP = 0.45        # stop rib to the ESP32 can: takes USB-C plug-in force off the display
 WINDOW_MARGIN = 0.4
-LABEL_DEPTH = 0.5      # V-groove outlining the front "label" around the screen
-DETAIL_DEPTH = 0.5     # V-grooves on the back: grip wings, label and logo outlines
-EMBLEM_TEXT = "WASTELAND"   # engraved in the stadium on the back ("" = plain stadium)
-BAND_TEXT = "WASTELAND  HEX CRAWL"   # Game Boy-style strip above the screen ("" = lines only)
-TAGLINE = "MADE IN THE WASTELAND"    # small print under the logo on the back ("" = none)
+MIC_HOLE_R = 0.8       # the two mic holes above the screen, 1.6 mm across
+LABEL_CUT = 0.0        # 45 deg cut on the front label outline's top corners (0: rounded rectangle)
+LINE_DEPTH, LINE_W = 1.0, 1.2   # the thin line grooves (screen border, pills): 1 mm deep, walls ~59 deg --
+                                # steeper than 45, so still self-supporting face down
+SLAT_D, SLAT_W = 2.0, 2.6       # slat grooves on the wings, deep like the real shell's (walls ~57 deg). On the
+                                # back they run out over the edge at full depth into the side grooves
+STEP_D = 2.0                    # the centre panel's stepped edges
+LABEL_RECESS_D = 1.1            # back label recess edge (held to 1.1 by the RST paddle's slot beside it)
+LOWER_D, DIVIDER_D = 1.3, 0.8   # three-panel recess: its outline, and the dividers (1 mm left over the mouth)
+BAND_TEXT = "ESP32 S3 UNIHIKER"     # in the nameplate pill above the screen ("" = empty pill)
+EMBLEM_TEXT = "MADE IN WASTELAND"   # in the matching pill on the back ("" = empty pill)
+PILL_W, PILL_H = 49.4, 7.4          # both pills, groove centre line: as big as the space above the screen allows
+FRONT_PILL_Y, BACK_PILL_Y = 74.8, 39.0
+PILL_MARGIN = 0.7                   # text to the inner edge of the pill's groove
 GRAVITY_PORTS = False  # True opens the side walls at the P0 / P1 / I2C expansion connectors
-SD_FLARE = 3.0         # 45 deg funnel on the outside of the SD slot, so a fingernail reaches the card
+SD_POCKET = 3.0        # room past the right inner wall for the end of an installed microSD (no opening)
+SD_CARD_OUT = 2.0      # how far an installed card is taken to stick out past the PCB edge (--check)
 
 # derived
 XI0, XI1 = -GAP_SIDE, PCB_W + GAP_SIDE
@@ -110,47 +125,51 @@ Z_BEZEL_IN = PCB_T + FRONT_CLEAR
 Z_FRONT = Z_BEZEL_IN + BEZEL
 Y_FOREHEAD = LCD_MODULE[3] + 0.8  # sensor block starts just above the LCD frame
 Z_FOREHEAD = PCB_T + 1.6          # clears the ~1.1 mm sensors on the top strip
+RIB_Y = tuple(round(Y_SHROUD + (YO1 - Y_SHROUD) * k / RIBS, 3) for k in range(1, RIBS))       # grooves between slats
+SLAT_C = tuple(round(Y_SHROUD + (YO1 - Y_SHROUD) * (k + 0.5) / RIBS, 3) for k in range(RIBS))  # slat centres
 
 E = 0.01   # overlap so coplanar faces never survive a boolean
 BIG = 5.0
 
 # snap tabs
 TAB_T, TAB_SLIT, TAB_BACKSLIT = 1.0, 0.5, 0.4
-TAB_DOWN = 3.0          # how far a tab hangs below the parting plane
-TAB_ROOT_Z = 6.3        # tabs flex from here (free length ~8 mm, <1% strain)
-LIP, LIP_H = 0.45, 0.9  # hook depth and height (45 deg lead-in, flat catch)
+TAB_DOWN = 3.5          # how far a tab hangs below the parting plane
+TAB_ROOT_Z = 6.3        # tabs flex from here: 9 mm free length, ~1.7% strain snapping over the hook
+LIP, LIP_H = 1.0, 1.6   # hook depth and height (45 deg lead-in, flat catch). The first print's 0.45 mm hooks
+                        # held too little once printing tolerances took their share; 1.0 bites 0.9 mm
 TABS = [                # (wall, centre along the wall, width)
-    # side tabs sit on the grip-groove grid: centre = 23.5 + 2.5k with width 7
-    # puts both outline slits midway between grooves, so the tabs blend in
-    ("left", 13.5, 7.0), ("left", 68.5, 7.0),
-    ("right", 33.5, 7.0), ("right", 46.0, 7.0),
-    ("top", -14.0, 7.0), ("top", 8.0, 7.0), ("top", 43.5, 7.0), ("top", 65.6, 7.0),
-    ("bottom", -13.5, 7.0), ("bottom", 65.1, 7.0),     # on the feet either side of the mouth
+    # side tabs sit in the middle of a slat, clear of the slat grooves
+    ("left", SLAT_C[1], 7.8), ("left", SLAT_C[5], 7.8),
+    ("right", SLAT_C[2], 7.8), ("right", SLAT_C[3], 7.8),
+    ("top", -14.0, 7.8), ("top", 8.0, 7.8), ("top", 43.5, 7.8), ("top", 65.6, 7.8),
+    ("bottom", -13.5, 7.8), ("bottom", 65.1, 7.8),     # on the feet either side of the mouth
 ]
 
-# back face layout (board X; the back is seen mirrored)
-WING_L, WING_R = (0.3, 6.5), (PCB_W - 6.5, PCB_W - 0.3)   # grooved grip wings
-GROOVE_W, GROOVE_PITCH, GROOVE_Y = 1.0, 2.5, (18.5, 81.5)
-RST_TONGUE = (44.8, 50.5, 64.0, 82.0)                      # x0 x1 y0 y1, root at y0
+# back face layout (board X; the back is seen mirrored), after the real shell's back
+BACK_LABEL = (-5.0, 45.0, 56.6, 83.2, 3.0)    # x0 y0 x1 y1 r: the big label recess, drawn as a recess edge
+LOWER_PANEL = (-5.0, 56.6, 32.5)              # x0 x1 top y: the recess below it, open at the bottom edge,
+LOWER_DIVIDERS = 2                            # split into three panels
+RST_TONGUE = (44.8, 50.5, 63.5, 81.0)         # x0 x1 y0 y1, root at y0; tip kept clear of the label edge
 RST_POST = (48.95, 78.0, 1.5)       # x y r: 3 mm post, as far toward the actuator as the paddle allows
 BTN_NUB = 3.0                       # A / B press posts, 3 x 3 mm
-SIDE_GROOVE_Y = (3.5, 78.5)         # grip grooves up the side faces, same pitch/phase as the wings
 SIDE_BEZEL = 1.5                    # plain band the side grooves stop short of, along the front edge
-SIDE_GROOVE_D = 0.45                # a hair shallower than the wings, so the two apex lines never meet on the chamfer
-FACE_LINES_Y = (6.0, 3.5)           # two full-width lines across the shroud end, front and back
-WING_GROOVE_Y0 = 8.5                # face grooves on the wide wings start here (grid 3.5 + 2.5k)
-SPEAKER_CHAMBER = (-23.5, 11.0, 31.0)   # x0 y0 y1: pocket in the left wing off the speaker's side port,
-                                        # vented to the front grille and out the back
-BACK_VENT_X0 = -5.5                 # back-face speaker slots start here
-SD_Z0 = -2.0                        # floor of the SD channel through the right wing
+SIDE_GROOVE_D = 1.2                 # side grooves, carrying the slat grooves up the sides
+SIDE_GROOVE_DY = 0.25               # nudged off the slat grooves' Y, so the two apex lines never cross
+# speaker labyrinth in the left wing, the sound's only way out (see labyrinth())
+LAB_X0, LAB_Y = -22.7, (11.0, 31.0)       # outer end (1.25 mm clear of the left tab's hook pocket); Y span, alongside the speaker
+LAB_FLOOR = Z_FLOOR_IN + 1.2              # floor of stages 2 and 3, raised so the deep grooves under them keep 1 mm
+BAFFLES_X, BAFFLE_T = (-7.8, -15.95), 1.2   # two baffles -> three stages of ~950 mm^3 each
+PASSAGE = 5.0                             # opening at one end of each baffle, filled with a fine comb:
+COMB_GAP, COMB_FIN, COMB_L = 0.5, 1.0, 3.0    # slit width, fin width, slit length along the flow
+OUTLET_RIB, OUTLET_X = 1, (-22.2, -17.1)  # outlets: a 1 mm slot in this slat groove on the back, one in its side groove
+DAM = (17.7, 18.9, -4.0)                  # x0 x1 z1: wall on the floor along the speaker's inner side
+# cooling: line vents in the back over the ESP32 module's can, inside the label recess
+ESP_VENT_Y = (61.0, 63.5, 66.0, 68.5, 71.0, 73.5)
+ESP_VENT_X = ((2.0, 8.6), (10.6, 17.0))    # two columns, so the pad under the can stays one comb
+SD_Z0 = -2.0                        # floor of the pocket for the installed microSD
 ROD_T, ROD_CLR = 2.0, 0.35          # A / B push rods: thickness, and clearance in their channels
 NECK_T, TONGUE_GAP = 0.8, 1.0       # rod-to-tongue flexure neck; room behind the tongue = its travel stop
-# 80s / 90s detail
-GRILLE = dict(c=(-13.0, 21.0), n=6, angle=60.0, w=1.5, l=12.0, pitch=3.0)   # front speaker slots, Game Boy style
-HEX_BADGE = (65.1, 21.0, 7.0)       # x y circumradius: two-ring hex on the front right wing
-ARROW = (25.8, 1.2, 6.6, 6.4)       # x, tip y, top y, width: insert arrow over the connector, both faces
-SCREWS = ((-13.5, 4.3), (65.1, 4.3), 2.6)   # fake security screws on the back feet, and their radius
-LOCK_NOTCH = (3.0, 2.6)             # bottom corner notches: depth into the side, top Y
+SCREWS = ((-13.5, 5.0), (65.1, 5.0), 2.0)   # fake security screws in the bottom slats on the back, and their radius
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -175,7 +194,9 @@ def rounded(cs, r):
 
 
 def cart_cs(x0, y0, x1, y1, cut, r):
-    """Cartridge silhouette: 45 deg cut top corners, all corners rounded by r."""
+    """Cartridge silhouette: 45 deg cut top corners (none when cut is 0), all corners rounded by r."""
+    if cut <= 0:
+        return rect_cs(x0, y0, x1, y1, r)
     return rounded(CrossSection([[(x0, y0), (x1, y0), (x1, y1 - cut), (x1 - cut, y1),
                                   (x0 + cut, y1), (x0, y1 - cut)]]), r)
 
@@ -216,32 +237,57 @@ def text_cs(s, height, cx, cy, max_w, mirror=False):
     return cs.translate((cx, cy))
 
 
-def vgroove_loop(cs, d, z_face, into=+1):
-    """45 deg V-groove, 2d wide and d deep, along the edge of convex cs, cut into
-    the face at z_face (into=+1 cuts toward +Z). Self-supporting on the bed."""
+def vgroove_loop(cs, d, z_face, into=+1, hw=None):
+    """V-groove d deep and 2*hw wide (45 deg when hw is None) along the edge of
+    convex cs, cut into the face at z_face (into=+1 cuts toward +Z). Walls at 45
+    deg or steeper are self-supporting on the bed."""
+    o = (d if hw is None else hw) * (d + 1) / d      # half-width 1 mm outside the face
     def frustum(sign):
-        wide = grow(cs, sign * (d + 1))
+        wide = grow(cs, sign * o)
         return Manifold.batch_hull([slab(wide, z_face - into * 1 - E, z_face - into * 1 + E),
                                     slab(cs, z_face + into * d - E, z_face + into * d + E)])
     return frustum(+1) - frustum(-1)
 
 
-def vgroove_line(x0, x1, y, d, z_face):
-    """Straight 45 deg V-groove along X, cut up into a face at z_face."""
+def vgroove_line(x0, x1, y, d, z_face, hw=None):
+    """Straight V-groove along X, d deep and 2*hw wide (45 deg when hw is None),
+    cut up into a face at z_face."""
+    o = (d if hw is None else hw) * (d + 1) / d
     return Manifold.hull_points([(x, yy, zz) for x in (x0, x1) for yy, zz in
-                                 ((y - d - 1, z_face - 1), (y + d + 1, z_face - 1), (y, z_face + d))])
+                                 ((y - o, z_face - 1), (y + o, z_face - 1), (y, z_face + d))])
 
 
-def vgroove_seg(p0, p1, d, z_face, into=+1):
-    """45 deg V-groove along the XY segment p0 -> p1, cut into the face at z_face."""
+def vgroove_seg(p0, p1, d, z_face, into=+1, hw=None):
+    """V-groove along the XY segment p0 -> p1, d deep and 2*hw wide (45 deg when hw
+    is None), cut into the face at z_face."""
     (x0, y0), (x1, y1) = p0, p1
     ln = math.hypot(x1 - x0, y1 - y0)
     nx, ny = -(y1 - y0) / ln, (x1 - x0) / ln
+    o = (d if hw is None else hw) * (d + 1) / d
     pts = []
     for px, py in (p0, p1):
-        pts += [(px + k * (d + 1) * nx, py + k * (d + 1) * ny, z_face - into) for k in (-1, 1)]
+        pts += [(px + k * o * nx, py + k * o * ny, z_face - into) for k in (-1, 1)]
         pts.append((px, py, z_face + into * d))
     return Manifold.hull_points(pts)
+
+
+def step_line(x, y0, y1, d, z_face, into, out):
+    """Groove along Y that reads as a raised panel's edge: a sheer wall at x on the
+    panel side, and a 45 deg slope rising back to the face on the wing side
+    (out = -1 or +1). The 0.05 mm flat at the bottom keeps the wall and slope
+    from meeting in a knife edge."""
+    zo, zf = z_face - into, z_face + into * (d - 0.05)       # 1 mm outside the face; the groove's floor
+    return Manifold.hull_points([(xx, y, zz) for y in (y0, y1) for xx, zz in
+                                 ((x, zo), (x, zf), (x + out * 0.05, zf), (x + out * (d + 1), zo))])
+
+
+def recess_loop(cs, d, z_face, into=+1):
+    """Groove round convex cs that reads as the edge of a recess: a sheer wall on
+    cs, and a 45 deg slope inside it rising back to the face."""
+    zo, zf = z_face - into, z_face + into * (d - 0.05)
+    wall = slab(cs, min(zo, zf), max(zo, zf))
+    slope = Manifold.batch_hull([slab(grow(cs, -(d + 1)), zo - E, zo + E), slab(grow(cs, -0.05), zf - E, zf + E)])
+    return wall - slope
 
 
 def split_span(x0, x1, gaps):
@@ -253,14 +299,24 @@ def split_span(x0, x1, gaps):
     return spans
 
 
-def arrow_cs():
-    x, tip, top, w = ARROW
-    return CrossSection([[(x - w / 2, top), (x, tip), (x + w / 2, top)]])
+def pill_cs(cx, cy):
+    """The nameplate pill, as the centre line of its groove."""
+    return stadium_cs(cx - PILL_W / 2, cy - PILL_H / 2, cx + PILL_W / 2, cy + PILL_H / 2)
 
 
-def hex_cs(cx, cy, r):
-    return CrossSection([[(cx + r * math.cos(math.radians(90 + 60 * k)), cy + r * math.sin(math.radians(90 + 60 * k)))
-                          for k in range(6)]])
+def pill_text(s, cx, cy, mirror=False):
+    """s as big as it fits inside the pill: PILL_MARGIN clear of the groove,
+    corners included where the words run into the round ends."""
+    a = PILL_H / 2 - LINE_W / 2 - PILL_MARGIN        # inner half-height
+    run = (PILL_W - PILL_H) / 2                      # half-length of the straight sides
+    x0, y0, x1, y1 = text_cs(s, 1.0, 0, 0, 1e6).bounds()
+    aspect = (x1 - x0) / (y1 - y0)
+    lo, hi = 0.0, 2 * a
+    for _ in range(40):
+        h = (lo + hi) / 2
+        dx = max(0.0, h * aspect / 2 - run)
+        lo, hi = (h, hi) if dx * dx + h * h / 4 <= a * a else (lo, h)
+    return text_cs(s, lo, cx, cy, 1e6, mirror)
 
 
 def outline(inset=0.0):
@@ -269,8 +325,8 @@ def outline(inset=0.0):
 
 
 def side_groove_ys(side):
-    """Y of each grip groove running up a side face. Skips any that would clip
-    a tab slit, the edge of the SD notch, or a button window."""
+    """Y of each slat groove that carries on up a side face. Skips any that would
+    clip a tab slit or a button window."""
     d, keep_off = SIDE_GROOVE_D, 0.3
     bad = []
     for wall, c, w in TABS:
@@ -278,29 +334,23 @@ def side_groove_ys(side):
             for sc in (c - w / 2 - TAB_SLIT / 2, c + w / 2 + TAB_SLIT / 2):
                 bad.append((sc - TAB_SLIT / 2 - d - keep_off, sc + TAB_SLIT / 2 + d + keep_off))
     if side == "right":
-        for edge in (SD_Y[0] + 0.3 - SD_FLARE, SD_Y[1] - 0.3 + SD_FLARE):
-            bad.append((edge - d - keep_off, edge + d + keep_off))
         for yc in (BTN_B_Y, BTN_A_Y):
             bad.append((yc - 1.7 - d - keep_off, yc + 8.4 + d + keep_off))
         if GRAVITY_PORTS:
             bad.append((I2C_Y - 5.5 - d - keep_off, I2C_Y + 5.5 + d + keep_off))
     elif GRAVITY_PORTS:
         bad += [(yc - 4.5 - d - keep_off, yc + 4.5 + d + keep_off) for yc in (P0_Y, P1_Y)]
-    ys, y = [], SIDE_GROOVE_Y[0]
-    while y <= SIDE_GROOVE_Y[1] + 1e-6:
-        if not any(a < y < b for a, b in bad):
-            ys.append(round(y, 3))
-        y += GROOVE_PITCH
-    return ys
+    return [y for y in RIB_Y if not any(a < y + SIDE_GROOVE_DY < b for a, b in bad)]
 
 
 def side_grooves():
-    """Grip grooves up both side faces, from the back edge (where they meet the
-    back-wing grooves) to a plain bezel band along the front edge."""
+    """Slat grooves up both side faces, from the back edge (where the back slat
+    grooves run out into them) to a plain bezel band along the front edge."""
     d, z1 = SIDE_GROOVE_D, Z_FRONT - CH - SIDE_BEZEL
     grooves = []
     for side, xf, k in (("left", XO0, 1), ("right", XO1, -1)):
         for y in side_groove_ys(side):
+            y += SIDE_GROOVE_DY
             pts = [(xf - k, y - d - 1), (xf - k, y + d + 1), (xf + k * d, y)]
             grooves.append(Manifold.hull_points([(x, yy, z) for x, yy in pts for z in (Z_BACK - 1, z1)]))
     return union(grooves)
@@ -317,9 +367,6 @@ def body():
     # bigger 45 deg chamfers along the top (USB-C) edge -- the grip slope on the back
     b = b.trim_by_plane((0, -s2, -s2), -s2 * ((YO1 - CH_TOP_FRONT) + Z_FRONT))
     b = b.trim_by_plane((0, -s2, s2), -s2 * ((YO1 - CH_TOP_BACK) - Z_BACK))
-    nd, ny = LOCK_NOTCH                   # SNES-style lock notches at the four bottom corners
-    for x0, x1 in ((XO0 - 1, XO0 + nd), (XO1 - nd, XO1 + 1)):
-        b = b - box(x0, Y_SHROUD - 1, Z_BACK - 1, x1, ny, Z_FRONT + 1)
     return b
 
 
@@ -366,15 +413,26 @@ def tabs_placed():
     return out
 
 
-def face_line(x0, x1, y, d, z_face, into):
+def face_line(x0, x1, y, d, z_face, into, hw=None):
     """Straight V-groove along X on the back (into=+1) or front (into=-1) face."""
-    g = vgroove_line(x0, x1, y, d, into * z_face)
+    g = vgroove_line(x0, x1, y, d, into * z_face, hw)
     return g if into > 0 else g.mirror((0, 0, 1))
 
 
 def wing_x(side):
-    """X span of the plain wing on the front / back face, outside the board area."""
-    return (FACE_X[0], LABEL_X[0] - 1.5) if side == "left" else (LABEL_X[1] + 1.5, FACE_X[1])
+    """X span of the slat grooves on a wing: from the flat face's edge to 1 mm short
+    of the centre panel's stepped edge."""
+    return (FACE_X[0], PLATEAU_X[0] - STEP_D - 1.0) if side == "left" else (PLATEAU_X[1] + STEP_D + 1.0, FACE_X[1])
+
+
+def plateau_edges(z_face, into):
+    """The centre panel's two stepped edges, full height: they stop short of the
+    bottom chamfer and run out over the top one. On the back they break where
+    the A/B push rods come through the face."""
+    y0, y1 = Y_SHROUD + CH + 1.0, YO1 + 1
+    gaps = [(yc - 2.0, yc + 2.0) for yc in (BTN_B_Y, BTN_A_Y)] if into > 0 else []
+    cuts = [step_line(PLATEAU_X[0], y0, y1, STEP_D, z_face, into, -1)]
+    return cuts + [step_line(PLATEAU_X[1], a, b, STEP_D, z_face, into, +1) for a, b in split_span(y0, y1, gaps)]
 
 
 # ── front shell ──────────────────────────────────────────────────────────────
@@ -391,41 +449,19 @@ def front_shell():
     # connector shroud: the mouth around the live gold fingers; the wings are its feet
     shell = shell - box(XI0 - SHROUD_MARGIN, Y_SHROUD - 1, Z_SPLIT - 1, XI1 + SHROUD_MARGIN, Y_BOT, Z_BEZEL_IN)
 
-    # face detail, all 45 deg V-grooves (this face prints on the bed):
-    # label border round the screen, SNES grip lines on both wings, two lines across the shroud end
-    d = LABEL_DEPTH
-    cuts = [vgroove_loop(cart_cs(LABEL_X[0], 8.3, LABEL_X[1], 83.6, 4.0, 2.0), d, Z_FRONT, into=-1)]
-    g = GRILLE
-    grille_y = (g["c"][1] - 10.5, g["c"][1] + 10.5)
-    badge_y = (HEX_BADGE[1] - HEX_BADGE[2] - 1.0, HEX_BADGE[1] + HEX_BADGE[2] + 1.0)
-    y = WING_GROOVE_Y0
-    while y <= GROOVE_Y[1] + 1e-6:        # grip lines on both wings, clear of the grille and the badge
-        if not grille_y[0] < y < grille_y[1]:
-            cuts.append(face_line(*wing_x("left"), y, d, Z_FRONT, -1))
-        if not badge_y[0] < y < badge_y[1]:
-            cuts.append(face_line(*wing_x("right"), y, d, Z_FRONT, -1))
-        y += GROOVE_PITCH
-    ax, _, _, aw = ARROW
-    for y in FACE_LINES_Y:                # two lines across the shroud end, broken for the arrow
-        for x0s, x1s in split_span(*FACE_X, [(ax - aw / 2 - 2.0, ax + aw / 2 + 2.0)]):
-            cuts.append(face_line(x0s, x1s, y, d, Z_FRONT, -1))
-    cuts.append(vgroove_loop(arrow_cs(), d, Z_FRONT, into=-1))
-    for r in (HEX_BADGE[2], HEX_BADGE[2] * 0.6):
-        cuts.append(vgroove_loop(hex_cs(*HEX_BADGE[:2], r), d, Z_FRONT, into=-1))
-    # Game Boy-style text strip above the screen
-    for y in (71.3, 77.3):
-        cuts.append(face_line(LCD_LIT[0], LCD_LIT[2], y, 0.45, Z_FRONT, -1))
+    # face detail, grooves only (this face prints on the bed): the SNES centre panel's
+    # stepped edges, slat grooves on both wings, the label border round the screen,
+    # and the nameplate pill
+    d, hw = LINE_DEPTH, LINE_W / 2
+    cuts = plateau_edges(Z_FRONT, -1)
+    cuts.append(vgroove_loop(cart_cs(LABEL_X[0], 8.3, LABEL_X[1], 83.6, LABEL_CUT, 2.0), d, Z_FRONT, -1, hw))
+    for y in RIB_Y:
+        for side in ("left", "right"):
+            cuts.append(face_line(*wing_x(side), y, SLAT_D, Z_FRONT, -1, SLAT_W / 2))
+    cuts.append(vgroove_loop(pill_cs(XC, FRONT_PILL_Y), d, Z_FRONT, -1, hw))    # nameplate pill above the screen
     if BAND_TEXT:
-        cuts.append(slab(text_cs(BAND_TEXT, 3.4, (LCD_LIT[0] + LCD_LIT[2]) / 2, 74.3, 38.0), Z_FRONT - 0.4, Z_FRONT + 1))
+        cuts.append(slab(pill_text(BAND_TEXT, XC, FRONT_PILL_Y), Z_FRONT - 0.4, Z_FRONT + 1))
     shell = shell - union(cuts)
-
-    # speaker grille: slanted slots through the left wing into the speaker chamber
-    ang = math.radians(g["angle"])
-    for k in range(g["n"]):
-        off = (k - (g["n"] - 1) / 2) * g["pitch"]
-        cx, cy = g["c"][0] - off * math.sin(ang), g["c"][1] + off * math.cos(ang)
-        slot = stadium_cs(-g["l"] / 2, -g["w"] / 2, g["l"] / 2, g["w"] / 2).rotate(g["angle"]).translate((cx, cy))
-        shell = shell - slab(slot, Z_SPLIT - 1, Z_FRONT + 1)
 
     # screen window with a 45 deg chamfer on the outside
     x0, y0, x1, y1 = (LCD_LIT[0] - WINDOW_MARGIN, LCD_LIT[1] - WINDOW_MARGIN,
@@ -436,7 +472,7 @@ def front_shell():
                                          box(x0 - c - 1, y0 - c - 1, Z_FRONT + 1, x1 + c + 1, y1 + c + 1, Z_FRONT + 1 + E)])
 
     # sensor ports through the forehead block
-    for (x, y), r in ((MIC1, 0.65), (MIC2, 0.65), (LIGHT, 1.2), (AHT20, 0.9)):
+    for (x, y), r in ((MIC1, MIC_HOLE_R), (MIC2, MIC_HOLE_R), (LIGHT, 1.2), (AHT20, 0.9)):
         shell = shell - cyl_z(x, y, r, Z_FOREHEAD - 1, Z_FRONT + 1)
 
     # USB-C: top of the plug overmold opening (the rest is in the back shell)
@@ -448,6 +484,36 @@ def front_shell():
     return shell - side_grooves()          # after the tabs, so the tabs get ribbed too
 
 
+# ── speaker labyrinth ────────────────────────────────────────────────────────
+def labyrinth():
+    """Pocket in the left wing that the speaker's sound has to snake through.
+
+    The speaker is a sealed box on the back of the board, against its left edge,
+    and nothing in the case opens straight onto it. Its sound enters the first of
+    three stages through the wing wall beside it, gets past each baffle only
+    through a comb of fine slits at alternate ends, and leaves the last stage by a
+    slot in a back slat groove and one in the side groove beside it, neither of
+    which faces the speaker or the first stage. The stages and slits form an acoustic low-pass that takes the top off
+    the amplifier's hiss (and, less so, off the sound you want). Printed slits
+    damp far less than felt would, so PASSAGE is the knob: narrower is duller
+    with less hiss, wider is brighter. The front shell's flat underside closes
+    the pocket, so the tabs must all be clicked for it to seal."""
+    y0, y1 = LAB_Y
+    a_x0 = BAFFLES_X[0] - BAFFLE_T / 2 + 0.8      # stage 1 keeps the full depth: it takes the speaker's sound
+    cut = box(LAB_X0, y0, LAB_FLOOR, XI0 + E, y1, Z_SPLIT + 1) + box(a_x0, y0, Z_FLOOR_IN, XI0 + E, y1, Z_SPLIT + 1)
+    n = round((PASSAGE + COMB_FIN) / (COMB_GAP + COMB_FIN))       # slits per comb
+    fin = (PASSAGE - n * COMB_GAP) / (n - 1)
+    walls = []
+    for k, xb in enumerate(BAFFLES_X):
+        p0 = y1 - PASSAGE if k % 2 == 0 else y0       # comb at the USB-C end first, then alternate ends
+        s0, s1 = (y0 - 1, p0) if k % 2 == 0 else (p0 + PASSAGE, y1 + 1)
+        walls.append(box(xb - BAFFLE_T / 2, s0, Z_FLOOR_IN - 1, xb + BAFFLE_T / 2, s1, Z_SPLIT + 2))
+        for i in range(n - 1):                        # comb fins, a slit either side of each
+            fy = p0 + COMB_GAP * (i + 1) + fin * i
+            walls.append(box(xb - COMB_L / 2, fy, Z_FLOOR_IN - 1, xb + COMB_L / 2, fy + fin, Z_SPLIT + 2))
+    return cut - union(walls)
+
+
 # ── back shell ───────────────────────────────────────────────────────────────
 def back_shell():
     shell = body().trim_by_plane((0, 0, -1), -Z_SPLIT)
@@ -457,15 +523,17 @@ def back_shell():
         box(XI0 - E, Y_BOT, Z_FLOOR_IN - E, XI1 + E, Y_CLAMP, -2.5),              # finger-end wall
         box(0.3, Y_BOT, -2.5 - E, 16.2, 7.3, -CLAMP_GAP),                        # clamp ribs, clear of the LEDs
         box(35.5, Y_BOT, -2.5 - E, 51.3, 7.3, -CLAMP_GAP),
-        box(3.0, 60.0, Z_FLOOR_IN - E, 16.0, 74.5, -3.1 - 0.25),                 # under the ESP32 shield
+        box(3.0, 59.25, Z_FLOOR_IN - E, 16.0, 75.25, ESP_PAD_Z),                 # under the ESP32 shield
         box(2.0, 78.3, Z_FLOOR_IN - E, 17.0, 82.6, -1.0),                        # under the module's antenna end
         box(3.0, 57.0, Z_FLOOR_IN - E, 16.0, ESP_SHIELD[1] - STOP_GAP, -2.0),    # stop rib below the can
+        box(DAM[0], Y_CLAMP - E, Z_FLOOR_IN - E, DAM[1], SPEAKER[3] - 0.2, DAM[2]),   # speaker dam
     ])
     shell = shell - (cav - keep)
     shell = shell - box(XI0 - SHROUD_MARGIN, Y_SHROUD - 1, Z_FLOOR_IN, XI1 + SHROUD_MARGIN, Y_BOT, Z_SPLIT + 1)  # shroud
     shell = shell - box(21.0, 55.5, Z_FLOOR_IN - 0.6, 31.5, 74.5, Z_FLOOR_IN + E)   # camera headroom (no opening)
-    # speaker: its port faces the left edge, so give it a chamber in the wing (vented through the back)
-    shell = shell - box(SPEAKER_CHAMBER[0], SPEAKER_CHAMBER[1], Z_FLOOR_IN, XI0 + E, SPEAKER_CHAMBER[2], Z_SPLIT + 1)
+    shell = shell - labyrinth()             # the speaker's only way out
+    oy = RIB_Y[OUTLET_RIB] + SIDE_GROOVE_DY  # one of its two outlets: a slot in that side groove
+    shell = shell - box(XO0 - 1, oy - 0.4, LAB_FLOOR + 0.5, LAB_X0 + E, oy + 0.4, Z_SPLIT - 0.5)
 
     # USB-C plug overmold opening, 12.6 x 6.8, bottom corners chamfered
     zc = -USBC_H / 2
@@ -480,11 +548,8 @@ def back_shell():
         shell = shell - box(XO0 - 1, P0_Y - 4.5, -5.8, XI0 + 1, P0_Y + 4.5, z_top)
         shell = shell - box(XO0 - 1, P1_Y - 4.5, -5.8, XI0 + 1, P1_Y + 4.5, z_top)
         shell = shell - box(XI1 - 1, I2C_Y - 5.5, -5.8, XO1 + 1, I2C_Y + 5.5, z_top)
-    # microSD: a channel through the right wing to the socket, flared at the side face
-    sd0, sd1, f = SD_Y[0] + 0.3, SD_Y[1] - 0.3, SD_FLARE
-    shell = shell - box(XI1 - 1, sd0, SD_Z0, XO1 + 1, sd1, z_top)
-    shell = shell - Manifold.batch_hull([box(XO1 - f, sd0, SD_Z0, XO1 - f + E, sd1, z_top),
-                                         box(XO1 + 1, sd0 - f - 1, SD_Z0 - f - 1, XO1 + 1 + E, sd1 + f + 1, z_top)])
+    # microSD: no opening, just room in the right wall for the end of an installed card
+    shell = shell - box(XI1 - 1, SD_Y[0] + 0.3, SD_Z0, XI1 + SD_POCKET, SD_Y[1] - 0.3, z_top)
 
     # A / B: a flush flexing panel on the side face drives a printed push rod
     # through the wing to the switch plunger. A thin neck joins panel and rod,
@@ -515,49 +580,46 @@ def back_shell():
                          Z_BACK + 1.0, Z_FLOOR_IN + 1)                                   # thin the tongue to 1.0
     shell = shell + cyl_z(RST_POST[0], RST_POST[1], RST_POST[2], Z_BACK + 1.0 - E, RST_TOP_Z - 0.5, 64)
 
-    # back face, SNES style: grooved grip wings, label, logo stadium, lock slots.
-    # This face prints on the bed, so the details are 45 deg V-grooves or
-    # through-cuts -- never a flat-floored recess.
-    d = DETAIL_DEPTH
-    cuts = []
+    # back face, after the real shell's back: the centre panel's stepped edges, slat
+    # grooves on the wings (running round onto the sides), a big label recess with a
+    # three-panel recess below it, the pill between them, and two screws. This face
+    # prints on the bed, so it is all grooves and through-cuts -- never a flat-floored recess.
+    d, hw = LINE_DEPTH, LINE_W / 2
+    cuts = plateau_edges(Z_BACK, +1)
     wrap_l, wrap_r = set(side_groove_ys("left")), set(side_groove_ys("right"))
-    slot_x = [(sum(WING_L) / 2 - 1.5, sum(WING_L) / 2 + 1.5), (sum(WING_R) / 2 - 1.5, sum(WING_R) / 2 + 1.5)]
-    y = WING_GROOVE_Y0
-    while y <= GROOVE_Y[1] + 1e-6:
-        yk, low = round(y, 3), y < GROOVE_Y[0]    # below the wings proper, stop short of the lock slots
-        l0 = XO0 - 1 if yk in wrap_l else FACE_X[0]
-        l1 = slot_x[0][0] - 1.0 if low else WING_L[1]
-        cuts.append(vgroove_line(l0, l1, y, d, Z_BACK))
-        if SPEAKER[1] + 0.3 < y - GROOVE_W / 2 and y + GROOVE_W / 2 < SPEAKER[3] - 0.2:   # speaker vents
-            cuts.append(slab(rect_cs(BACK_VENT_X0, y - GROOVE_W / 2, min(l1, WING_L[1]) - 0.3,
-                                     y + GROOVE_W / 2, 0), Z_BACK - 1, Z_FLOOR_IN + 1))
-        near_rod = any(abs(y - yc) < ROD_T / 2 + ROD_CLR + d + 0.3 for yc in (BTN_B_Y, BTN_A_Y))
-        if not near_rod:
-            r0 = slot_x[1][1] + 1.0 if low else (WING_R[0] if y + GROOVE_W / 2 < ty0 - 1.2 else tx1 + 0.7 + 1.2)
-            in_btn = any(yc - 1.1 - 0.6 - 1.0 < y < yc + 8.4 + 1.0 for yc in (BTN_B_Y, BTN_A_Y))
-            r1 = XO1 + 1 if yk in wrap_r else (XO1 - 0.3 - 0.8 - TONGUE_GAP - 1.0 if in_btn else FACE_X[1])
-            cuts.append(vgroove_line(r0, r1, y, d, Z_BACK))
-        y += GROOVE_PITCH
+    outlet_y = RIB_Y[OUTLET_RIB]
+    sd, sw = SLAT_D, SLAT_W / 2
+    for y in RIB_Y:
+        # where a side groove carries on, the slat groove runs out over the edge at full
+        # depth: its apex leaves through the side face, clear of the chamfer's edges
+        cuts.append(vgroove_line(XO0 - 1 if y in wrap_l else FACE_X[0], wing_x("left")[1], y, sd, Z_BACK, sw))
+        if y == outlet_y:                 # the labyrinth's other outlet, through the floor of the groove
+            cuts.append(slab(rect_cs(OUTLET_X[0], y - 0.5, OUTLET_X[1], y + 0.5, 0), Z_BACK - 1, LAB_FLOOR + 1))
+        if any(abs(y - yc) < ROD_T / 2 + ROD_CLR + sw + 0.3 for yc in (BTN_B_Y, BTN_A_Y)):
+            continue                      # an A/B push rod comes through the face here
+        in_btn = any(yc - 1.1 - 0.6 - 1.0 < y < yc + 8.4 + 1.0 for yc in (BTN_B_Y, BTN_A_Y))
+        r1 = XO1 + 1 if y in wrap_r else (XO1 - 0.3 - 0.8 - TONGUE_GAP - 1.0 if in_btn else FACE_X[1])
+        cuts.append(vgroove_line(wing_x("right")[0], r1, y, sd, Z_BACK, sw))
+    lx0, ly0, lx1, ly1, lr = BACK_LABEL
+    rods = union([box(lx1 - 2.0, yc - 2.0, Z_BACK - 2, lx1 + 2.0, yc + 2.0, Z_BACK + 2) for yc in (BTN_B_Y, BTN_A_Y)])
+    cuts.append(recess_loop(rect_cs(lx0, ly0, lx1, ly1, lr), LABEL_RECESS_D, Z_BACK) - rods)   # label recess, open where the rods pass
+    px0, px1, ptop = LOWER_PANEL      # the recess below, open at the bottom: 1.3 deep, so its apex runs out through
+    cuts.append(vgroove_loop(rect_cs(px0, Y_SHROUD - 4.0, px1, ptop, lr), LOWER_D, Z_BACK, hw=0.75))   # the bottom face, clear of the chamfer
+    for k in range(1, LOWER_DIVIDERS + 1):        # dividers, shallower, running up into its top groove
+        x = px0 + (px1 - px0) * k / (LOWER_DIVIDERS + 1)
+        cuts.append(vgroove_seg((x, Y_SHROUD - 3.0), (x, ptop), DIVIDER_D, Z_BACK, hw=0.55))
     (s1x, s1y), (s2x, s2y), sr = SCREWS
-    ax, _, _, aw = ARROW
-    gaps = [(ax - aw / 2 - 2.0, ax + aw / 2 + 2.0), (s1x - sr - 1.0, s1x + sr + 1.0), (s2x - sr - 1.0, s2x + sr + 1.0)]
-    for y in FACE_LINES_Y:                        # two lines across the shroud end, broken for arrow and screws
-        for x0s, x1s in split_span(*FACE_X, gaps):
-            cuts.append(vgroove_line(x0s, x1s, y, d, Z_BACK))
-    cuts.append(vgroove_loop(arrow_cs(), d, Z_BACK))
     for sx, sy in ((s1x, s1y), (s2x, s2y)):      # fake security screws: head ring and a cross
-        cuts.append(vgroove_loop(CrossSection.circle(sr, 64).translate((sx, sy)), 0.4, Z_BACK))
+        cuts.append(vgroove_loop(CrossSection.circle(sr, 64).translate((sx, sy)), 0.7, Z_BACK))
         a = sr * 0.5
-        cuts.append(vgroove_seg((sx - a, sy - a), (sx + a, sy + a), 0.35, Z_BACK))
-        cuts.append(vgroove_seg((sx - a, sy + a), (sx + a, sy - a), 0.35, Z_BACK))
-    if TAGLINE:
-        cuts.append(slab(text_cs(TAGLINE, 3.0, XC, 29.5, 30.0, mirror=True), Z_BACK - 1, Z_BACK + 0.4))
-    for x0s, x1s in slot_x:                       # lock slots, through
-        cuts.append(slab(stadium_cs(x0s, Y_CLAMP + 0.5, x1s, 17.5), Z_BACK - 1, Z_FLOOR_IN + 1))
-    cuts.append(vgroove_loop(rect_cs(9.5, 47.0, PCB_W - 9.5, 79.5, 2.0), d, Z_BACK))   # label border
-    cuts.append(vgroove_loop(stadium_cs(XC - 15.0, 35.0, XC + 15.0, 43.0), d, Z_BACK))  # logo stadium
+        cuts.append(vgroove_seg((sx - a, sy - a), (sx + a, sy + a), 0.6, Z_BACK))
+        cuts.append(vgroove_seg((sx - a, sy + a), (sx + a, sy - a), 0.6, Z_BACK))
+    cuts.append(vgroove_loop(pill_cs(XC, BACK_PILL_Y), d, Z_BACK, hw=hw))       # nameplate pill, same as the front's
+    for y in ESP_VENT_Y:              # vents over the ESP32 can, through the floor and the pad under it
+        for x0s, x1s in ESP_VENT_X:   # (the pad is left as ribs between them, still backing the board)
+            cuts.append(slab(stadium_cs(x0s, y - 0.5, x1s, y + 0.5), Z_BACK - 1, ESP_PAD_Z + 1))
     if EMBLEM_TEXT:                                                              # engraved, reads right from behind
-        cuts.append(slab(text_cs(EMBLEM_TEXT, 4.2, XC, 39.0, 25.0, mirror=True), Z_BACK - 1, Z_BACK + 0.4))
+        cuts.append(slab(pill_text(EMBLEM_TEXT, XC, BACK_PILL_Y, mirror=True), Z_BACK - 1, Z_BACK + 0.4))
     shell = shell - union(cuts)
 
     for _, _, _, cut in tabs_placed():
@@ -577,6 +639,7 @@ def dummy_k10(lcd_t=LCD_T_CHECK):
         box(ESP_SHIELD[0], ESP_SHIELD[1], -3.1, ESP_SHIELD[2], ESP_SHIELD[3], -0.8),
         box(48.6, 75.7, RST_TOP_Z, 51.6, 80.3, 0),
         box(36.9, SD_Y[0], -1.9, 51.5, SD_Y[1], 0),
+        box(PCB_W + SD_CARD_OUT - 15.0, SD_Y[0] + 1.7, -1.4, PCB_W + SD_CARD_OUT, SD_Y[1] - 1.7, -0.6),   # installed card
         box(0, P0_Y - 5.2, -5.4, 7.8, P0_Y + 5.2, 0), box(0, P1_Y - 5.2, -5.4, 7.8, P1_Y + 5.2, 0),
         box(43.8, I2C_Y - 5.1, -5.4, PCB_W, I2C_Y + 5.1, 0),
         box(39.0, 28.2, -5.4, 46.4, 36.2, 0),                                     # BAT IN
@@ -641,6 +704,10 @@ def check(front, back):
                 break
         else:
             print(f"  slide {label}: free for 2 mm")
+    lab = labyrinth()
+    n = round((PASSAGE + COMB_FIN) / (COMB_GAP + COMB_FIN))
+    print(f"  speaker labyrinth: {(lab ^ box(LAB_X0, LAB_Y[0], Z_FLOOR_IN, XI0, LAB_Y[1], Z_SPLIT)).volume():.0f} mm^3 "
+          f"in 3 stages, combs of {n} x {COMB_GAP:.2f} mm slits, outlets in the back and side grooves at Y {RIB_Y[OUTLET_RIB]}")
     for name, part in (("front", front), ("back", back)):
         print(f"  {name}: {part.volume() / 1000:.2f} cm^3, {part.num_tri()} tris, genus {part.genus()}, "
               f"bbox {tuple(round(v, 2) for v in part.bounding_box())}")

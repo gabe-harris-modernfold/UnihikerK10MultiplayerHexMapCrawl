@@ -1,0 +1,132 @@
+{
+  "id": "trap_knock_three_times",
+  "tier": 3,
+  "title": "The {{adjective}} Host",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A round steel hatch sits flush in the floor, and someone has stencilled KNOCK THREE TIMES across it in hopeful yellow capitals. It is not hinged at the edge. The pin runs straight through the middle, so the lid is a see-saw, and the rubber seal round it is tacky and faintly warm, and what comes up through the seal smells like a swimming bath with a dead dog in it. You tap the lid once with your boot. Below, water slaps the underside, and something heavy and soft turns over, and bumps, and is still.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step off the lid and leave the knocking to somebody else",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_see_saw"
+        },
+        {
+          "label": "Jam the centre pin and lever the lid up off its seal",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "decontamination"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You take your weight off the lid a gram at a time, step onto honest floor, and keep stepping, back the way you came. You are nearly at the door when it happens, muffled by steel and water, from under the hatch: three soft knocks. Somebody down there has been waiting a long time to be asked in, and is far too polite to push.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You drive the pry bar through the pivot and lever the lid up off its seal, and the smell comes out to meet you like a relative. Below is a shaft with a ladder and, two metres down, black water with a skin on it, dead flat. A laminated card is cable-tied to the top rung: ALL GUESTS MUST DECONTAMINATE. THANK YOU FOR YOUR PATIENCE. On hooks above the waterline hangs a welcome basket — sealed water, iodine, a clean towel. Something under the skin rolls over slowly, as if it heard its name.",
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [2, 3] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Go down the ladder to the steel ledge at the waterline",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_bottom_rungs"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The ladder ends at a steel ledge a hand above the water, the ledge ends at a wall, and the door in the wall is below the waterline: a U-bend, a proper airlock. The only way into his rooms is through the bath. On the ledge is a locker marked DECON KIT, stocked for more guests than you would have guessed he knew. From here, close to, you can see what the soft things in the water are. They were visitors. Every one of them got as far as the door.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 1, "qty": [1, 2] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": [
+        {
+          "label": "Fill your lungs and go under, through the U-bend, into his rooms",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 4,
+          "success_node": "cache_3",
+          "hazard_id": "the_u_bend"
+        }
+      ]
+    },
+    "cache_3": {
+      "text": "You go under into the stinging dark and come up gasping on the far side, in a dry room lit by a single battery lamp. A table laid for eight. Paper hats. A banner: WELCOME! At the head sits the host in his good cardigan, very dead, and beside his plate a diary lies open at the last page, where every line for nine years says the same thing in the same careful hand: NOBODY CAME TODAY. Next to the diary is his hearing aid, battery door open, battery long gone. {{irony}} You take the dinner. You leave him his hat.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 3, "qty": [2, 3] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_see_saw": {
+      "text": "You lift your front foot, and the lid, which has waited years for exactly this imbalance, tips. Your back leg goes down through the gap to the hip, into water that is warm, and thick, and wrong, and something under the surface takes a slow, interested hold of your ankle, soft as a glove with nothing in it. You come out of there on your elbows faster than you have ever done anything, and the lid slaps shut behind you, and you spend every drop of water you are carrying trying to get the burn out of your leg.",
+      "penalty": { "ll": [-2, -4], "water": [-1, -2], "med": [-1, -1] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    },
+    "decontamination": {
+      "text": "The pry bar skids off the pin and the lid goes over like a flipped coin, and you go with it, head first, two metres down into the host's hospitality. It is bleach and something older than bleach and it closes over you warm as a bath, and it is in your eyes, and it is in your mouth, and the dark is crowded. You find the ladder by climbing a guest. You come up with your skin singing and your eyelashes coming away on your fingers, retching a pale froth that smells like a clean hospital, and it is some time before you can see anything at all.",
+      "penalty": { "ll": [-3, -5], "water": [-1, -3], "med": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_bottom_rungs": {
+      "text": "The last three rungs are only resting in their brackets, which he must have thought was fair. They fold under your boot and put you in to the chest, the water finds every cut you own and sets about it, and the guests come to meet you. They are soft. They are very soft, and they are all around you, bumping and pressing and turning gently in the current you make, and one of them gets its arms round your neck in what is either a drowning grip or a very long overdue hug. You leave it your pack strap, and most of what hung from it, to get back onto the ladder.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_u_bend": {
+      "text": "The U-bend narrows in the middle, which he would know, having built it for someone exactly his size, and you are not his size. Halfway through, in the stinging dark, your pack wedges under the lip and you stop. Your lungs begin, politely at first, to raise the matter. Then the guests arrive, because you have moved the water and the water has moved them, and they crowd in soft and patient behind you, glad of the company, holding you in place with the tender insistence of people who have waited a very long time for somebody new. You come out backwards, eventually, with no memory of how, face down on the ledge bringing up the bath, and one of them is still holding your hand.",
+      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-2, -3], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Hospitable",
+      "Patient",
+      "Neighbourly",
+      "Attentive",
+      "Long-Waiting"
+    ],
+    "irony": [
+      "He never heard a single knock.",
+      "Nine years of NOBODY CAME, with a full house in the hall.",
+      "He had company the whole time. It just never got past the door.",
+      "You are, technically, the first guest to make it to dinner."
+    ]
+  }
+}

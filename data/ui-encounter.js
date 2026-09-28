@@ -124,6 +124,9 @@ function initEncounterOverlay() {
   let rollTimer    = 0;
   let confirmTimer = 0;
   let leaveArmed   = false;   // two-tap confirm when leaving would drop loot
+  let trapMode     = false;   // a booby trap opened this scene under a step (traps.hpp):
+                               // no walking away at the start, and leaving with nothing
+                               // leaves it armed -- on your map
 
   const me = () => (myId >= 0 ? players[myId] : null);
 
@@ -166,12 +169,15 @@ function initEncounterOverlay() {
   }
 
   function canBankHere() { return terminal || !!(node?.can_bank); }
+  // An "escape" node is a way out, not the bottom of the place: leaving it
+  // banks nothing and scores no full clear (a trap stays armed).
+  function atEscape() { return terminal && !!node?.escape; }
 
   // Keys the server's encounter_engine.hpp understands, for the authoring warnings.
   const COST_KEYS = new Set(['ll', 'radiation', 'food', 'water', 'scrap', 'med']);
   const PEN_KEYS  = new Set(['ll', 'radiation', 'water', 'food', 'fuel', 'med', 'scrap']);
   // Keys allowed on the hazard object itself (alongside `penalty`).
-  const HAZ_KEYS  = new Set(['text', 'penalty', 'wound', 'ends_encounter']);
+  const HAZ_KEYS  = new Set(['text', 'penalty', 'wound', 'wound_max', 'ends_encounter']);
 
   // Encounter JSON is hand-authored; an unrecognised key would otherwise be
   // dropped in silence and the choice would simply be free. Say so instead.
@@ -321,7 +327,23 @@ function initEncounterOverlay() {
     if (phase === 'ejected') {
       leaveBtn.textContent = 'LEAVE';
       leaveBtn.classList.add('primary');
-      leaveHint.textContent = 'The encounter is over.';
+      leaveHint.textContent = trapMode ? 'It went off. It will not go off again.' : 'The encounter is over.';
+      return;
+    }
+    if (atEscape()) {
+      leaveBtn.textContent = 'BACK AWAY';
+      leaveBtn.classList.add('primary');
+      leaveHint.textContent = trapMode
+        ? 'It is still armed. You will know it when you see it again.'
+        : 'You get out with nothing.';
+      return;
+    }
+    if (trapMode && !terminal && !canBankHere()) {
+      // The server would take an enc_abort here as the escape roll anyway
+      // (handleMsg_enc_abort), but that choice should be the player's to see.
+      leaveBtn.textContent = 'NO WAY OUT';
+      leaveBtn.disabled = true;
+      leaveHint.textContent = 'You cannot just walk off this one. Back out, or work it.';
       return;
     }
     if (terminal) {
@@ -331,17 +353,22 @@ function initEncounterOverlay() {
     } else if (n && canBankHere()) {
       leaveBtn.textContent = 'TAKE HAUL & LEAVE';
       leaveBtn.classList.add('primary');
-      leaveHint.textContent = 'Pocket what you have, or push on for more.';
+      leaveHint.textContent = trapMode
+        ? 'Taking anything disarms it. Or push on for more.'
+        : 'Pocket what you have, or push on for more.';
     } else if (n) {
       leaveBtn.textContent = 'LEAVE · DROPS HAUL';
       leaveBtn.classList.add('danger');
       leaveHint.textContent = 'You can’t carry loot out from here. Push on to secure it.';
       return;   // nothing banks here anyway — the trim note below would only confuse
-    } else if (haulTrimmed()) {
+    } else if (haulTrimmed() || trapMode) {
       // Trimmed the whole tray away. There is nothing left to bank, but this is
-      // a deliberate choice rather than an empty-handed walk-out.
+      // a deliberate choice rather than an empty-handed walk-out. In a trap it
+      // is the same choice either way: the server leaves it armed, and known.
       leaveBtn.textContent = 'LEAVE IT ALL';
-      leaveHint.textContent = 'You take nothing. What you leave behind stays behind.';
+      leaveHint.textContent = trapMode
+        ? 'Take nothing and it stays armed — on your map.'
+        : 'You take nothing. What you leave behind stays behind.';
       return;
     } else {
       leaveBtn.textContent = 'WALK AWAY';
@@ -397,7 +424,9 @@ function initEncounterOverlay() {
   function renderChoices() {
     choiceEl.innerHTML = '';
     if (terminal) {
-      choiceEl.appendChild(el('div', 'enc-terminal', 'You’ve seen all there is to see here.'));
+      choiceEl.appendChild(el('div', 'enc-terminal', node?.escape
+        ? (trapMode ? 'You are out. It is still there.' : 'You are out.')
+        : 'You’ve seen all there is to see here.'));
       return;
     }
     node.choices.forEach((ch, idx) => {
@@ -539,10 +568,12 @@ function initEncounterOverlay() {
     if (ev.ends) {
       phase = 'ejected';
       choiceEl.innerHTML = '';
-      choiceEl.appendChild(el('div', 'enc-terminal bad', 'You’re driven out. Whatever you hadn’t pocketed is lost.'));
+      choiceEl.appendChild(el('div', 'enc-terminal bad', trapMode
+        ? 'It goes off. It is spent now — and so, very nearly, are you.'
+        : 'You’re driven out. Whatever you hadn’t pocketed is lost.'));
       pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
       renderHaul(); haulEmpty.textContent = 'lost'; renderLeave();
-      showResult({ ok: false, verdict: 'DRIVEN OUT', roll: rollTxt, text: hazText, deltas });
+      showResult({ ok: false, verdict: trapMode ? 'IT GOES OFF' : 'DRIVEN OUT', roll: rollTxt, text: hazText, deltas });
       return;
     }
 
@@ -575,8 +606,10 @@ function initEncounterOverlay() {
   };
 
   // ── Open / close ───────────────────────────────────────────────
-  function openEncounter(json) {
+  function openEncounter(json, trap = false) {
     enc          = json;
+    trapMode     = !!trap;
+    overlay.classList.toggle('trap', trapMode);
     picked       = pickPlaceholders(json.placeholders);
     pendingLoot  = [0, 0, 0, 0, 0];
     keepLoot     = [0, 0, 0, 0, 0];
@@ -589,9 +622,11 @@ function initEncounterOverlay() {
 
     titleEl.textContent = resolveText(json.title || 'Encounter', picked);
     const p = me();
-    const cell = p ? gameMap[p.r]?.[p.q] : null;
+    // The board the player is actually on -- underground, p.q/p.r are the hatch.
+    const cell = p ? (typeof myBoardCell === 'function' ? myBoardCell() : gameMap[p.r]?.[p.q]) : null;
     const tname = cell ? (TERRAIN[cell.terrain]?.name ?? '') : '';
-    kickerEl.textContent = tname ? `ENCOUNTER · ${tname.toUpperCase()}` : 'ENCOUNTER';
+    const kind  = trapMode ? 'TRAP' : 'ENCOUNTER';
+    kickerEl.textContent = tname ? `${kind} · ${tname.toUpperCase()}` : kind;
 
     overlay.classList.add('open');
     overlay.style.display = '';
@@ -609,20 +644,26 @@ function initEncounterOverlay() {
     overlay.style.display = 'none';
     enc = null; node = null; nodeKey = '';
     phase = 'idle';
+    trapMode = false;
+    overlay.classList.remove('trap');
     pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
     terminal = false; pendingNext = ''; pendingHaz = '';
     hideResult();
     choiceEl.innerHTML = ''; haulItems.innerHTML = '';
   }
 
-  // Called from network.js enc_path handler
-  globalThis._startEncounterFetch = function(biome, id) {
+  // Called from network.js enc_path handler. `trap`: a booby trap opened this
+  // scene under a step (traps.hpp) rather than the player walking into it.
+  globalThis._startEncounterFetch = function(biome, id, trap = false) {
     const url = `/enc?biome=${encodeURIComponent(biome)}&id=${encodeURIComponent(id)}`;
     fetch(url)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(openEncounter)
+      .then(json => openEncounter(json, trap))
       .catch(e => {
         console.error('[ENC] fetch failed, aborting:', e.message);
+        // A trap cannot be declined: the server takes this enc_abort as the
+        // escape roll (handleMsg_enc_abort), so say so rather than "blocked".
+        if (trap) { showToast?.('⚠ Something clicks underfoot. You throw yourself back.'); send({ t: 'enc_abort' }); return; }
         showToast?.('⊙ The way in is blocked. (encounter failed to load)');
         send({ t: 'enc_abort' });
       });

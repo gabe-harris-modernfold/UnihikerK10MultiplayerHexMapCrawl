@@ -126,6 +126,7 @@ class WireOracle:
         for pid, d in enumerate(plist):
             if not isinstance(d, dict) or not d.get("on"):
                 continue
+            pid = d.get("id", pid)   # PROTO 4 "s" lists seated players only
             ll = d.get("ll")
             if ll is None:
                 continue

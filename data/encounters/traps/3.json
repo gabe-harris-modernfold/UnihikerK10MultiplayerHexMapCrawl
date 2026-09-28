@@ -1,129 +1,102 @@
 {
-  "id": "trap_waiting_room",
-  "tier": 3,
-  "title": "The {{adjective}} Waiting Room",
+  "id": "trap_scarecrow_coat",
+  "tier": 1,
+  "title": "The {{adjective}} Scarecrow",
   "start_node": "armed",
   "nodes": {
     "armed": {
-      "text": "The plate on the door still says ORAL & MAXILLOFACIAL. Inside, the waiting room has been cleared of everything except the carpet, which is wrong — carpet is the first thing anyone takes. It runs wall to wall, fitted, unmarked, and it sits about four centimetres proud of where the skirting says a floor should be. Somewhere under it something is holding a lot of weight very patiently. On the reception desk, a laminated card: PLEASE TAKE A SEAT.",
+      "text": "A scarecrow stands in the middle of the room, its post set in a bucket of concrete. Its head is a feed sack drawn tight over something round and heavy, a smile painted on, and its broom-handle arms are held wide on hinged shoulders. It is wearing a coat — a genuinely good waxed coat, corduroy collar, oiled and buttoned to the chin. Behind the post a green sapling has been bent nearly double and tied off with a slipknot, and from the knot a cord runs to the top button.",
       "can_bank": false,
       "choices": [
         {
-          "label": "Work the wall, feet on the skirting, and get back to the door",
+          "label": "Leave it the coat and back out the way you came",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 20,
           "skill": 0,
           "success_node": "escaped",
-          "hazard_id": "the_edge"
+          "hazard_id": "the_wave"
         },
         {
-          "label": "Find the plate's edge and pin it before it can travel",
+          "label": "Wedge the slipknot and unbutton it from behind",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 30,
           "skill": 2,
           "success_node": "cache_1",
-          "hazard_id": "the_floor"
+          "hazard_id": "the_hug"
         }
       ]
     },
     "escaped": {
-      "text": "You go round the room on four centimetres of skirting board with your cheek against the wallpaper, and it takes eleven minutes, and at no point does your breathing sound like it belongs to you. Then you are at the door, and through it, and the carpet is behind you being beautifully, evenly flat.",
+      "text": "You leave the coat on the scarecrow, which is the hardest thing you have done since you last left a coat anywhere, and back out with its arms held wide behind you, still offering. The painted smile does not change. It will be standing there dry and warm and buttoned up long after you are neither.",
       "escape": true,
       "can_bank": false,
       "choices": []
     },
     "cache_1": {
-      "text": "You get the carpet edge up and drive a screwdriver through the plate into the joist, and then you look down into the gap, and the gap looks back with about forty small bright eyes. Chair-mounted drills. A whole surgery's worth, unbolted and re-bolted upward on a hinged frame, so that the floor does not so much give way as close. Under the reception desk, untouched: the practice's day-stock.",
+      "text": "You jam a stick through the slipknot, unbutton the coat from behind like a valet, and ease it off the scarecrow's shoulders. It is magnificent. Waxed cotton, tartan lining, and a label in the collar that reads {{label}}. It is dry. You had forgotten what dry felt like. The pockets give up a lighter and a fistful of good washers, and the scarecrow stands there in its sacking looking, somehow, cold.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [2, 3] },
+        { "res": 2, "qty": [1, 1] },
         { "res": 4, "qty": [1, 2] }
       ],
       "choices": [
         {
-          "label": "Cross the pinned plate to the surgery door",
+          "label": "Slit the sack and find out what keeps it so plump",
           "cost": {},
-          "base_risk": 55,
-          "skill": 2,
+          "base_risk": 45,
+          "skill": 1,
           "success_node": "cache_2",
-          "hazard_id": "the_hinge"
+          "hazard_id": "the_stuffing"
         }
       ]
     },
     "cache_2": {
-      "text": "The surgery itself has been stripped to the walls, but they left the wall cabinet, because the wall cabinet is steel and set in concrete and they could not get it out. You can, because you have a pry bar and eleven years fewer scruples. Inside: sealed, sorted, labelled, alphabetical.",
+      "text": "It is not stuffed with straw. Under a top layer for show, the scarecrow is packed shoulder to hip with food: strings of dried apple rings, foil ration bricks, a bag of oats sewn into each leg. The crows never came back. Nobody told the scarecrow, and whoever kept feeding it never told anyone at all. It is the best-fed thing you have met in a month. You leave it the hat.",
       "can_bank": true,
       "loot": [
-        { "res": 3, "qty": [2, 4] },
-        { "res": 0, "qty": [1, 2] }
+        { "res": 1, "qty": [2, 3] }
       ],
-      "loot_table": "urban_rare",
-      "choices": [
-        {
-          "label": "There is a second cabinet behind the first. There is always a second cabinet.",
-          "cost": {},
-          "base_risk": 70,
-          "skill": 2,
-          "success_node": "cache_3",
-          "hazard_id": "the_appointment"
-        }
-      ]
-    },
-    "cache_3": {
-      "text": "Behind the first cabinet is a second, smaller, better, and taped to the inside of its door is a note in surgical handwriting: IF YOU ARE READING THIS THE FLOOR WORKED AND I AM SORRY ABOUT THE FLOOR. IT WAS THE ONLY THING I HAD. {{irony}} You take the whole cabinet's contents and you take the note as well, and much later, somewhere safe, you will read it again and it will be worse.",
-      "can_bank": true,
-      "loot": [
-        { "res": 3, "qty": [3, 5] },
-        { "res": 1, "qty": [2, 3] },
-        { "res": 4, "qty": [2, 3] }
-      ],
-      "loot_table": "urban_rare",
+      "loot_table": "scrub_common",
       "choices": []
     }
   },
   "hazards": {
-    "the_edge": {
-      "text": "Four centimetres is not very much skirting board. Your boot rolls off it at the halfway mark and your whole weight arrives on the carpet at once, and the room folds shut along its middle like a book. You get an elbow onto the skirting on the way through, which is the only reason any of you stays above floor level, and everything below your knee is briefly introduced to the dental profession.",
-      "penalty": { "ll": [-2, -4], "med": [-1, -2] },
-      "wound": [1, 0],
-      "wound_max": [2, 1],
+    "the_wave": {
+      "text": "You back into one of its outstretched hands and the arm comes round on its hinge like a door in a gale. The glove on the end is stuffed with wet sawdust and about four hundred earwigs, and it bursts across the side of your head, and the earwigs go everywhere earwigs go, which is mostly your collar and at least one ear. You find the last of them hours later, in your rations.",
+      "penalty": { "ll": -1, "food": -1 },
+      "wound": [0, 0],
+      "wound_max": [0, 0],
       "ends_encounter": true
     },
-    "the_floor": {
-      "text": "The plate travels. It travels a great deal faster than a floor has any business travelling, and the hinged frame comes up to meet it with forty burrs turning on the last of a dead battery, and the noise the room makes is not a crash, it is a sort of enthusiastic industrial hum with you in the middle of it. You come out of the gap on your forearms with your legs arriving some moments later and in a condition you elect not to inventory.",
-      "penalty": { "ll": [-3, -5], "med": [-1, -2], "water": [-1, -2] },
-      "wound": [1, 1],
-      "wound_max": [2, 2],
+    "the_hug": {
+      "text": "The knot slips while you are on the second button. The sapling straightens, the arms come round, and the scarecrow takes you in a hug of enormous sincerity, face to face with the feed sack, something in your ribs going click. It smells of damp straw and whatever crawled into the lining to die. The only way out is to wriggle out of your own jacket, canteen and all. The scarecrow is now wearing two coats.",
+      "penalty": { "ll": [-1, -2], "water": -1, "scrap": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
       "ends_encounter": true
     },
-    "the_hinge": {
-      "text": "The screwdriver holds. The joist does not. Eighty years of damp and a dentist's patient engineering part company under your third step, and you go down through the plate at an angle, which is worse, because at an angle the frame does not close on you — it takes its time.",
-      "penalty": { "ll": [-3, -5], "med": [-1, -2] },
-      "wound": [1, 1],
-      "wound_max": [2, 2],
-      "ends_encounter": true
-    },
-    "the_appointment": {
-      "text": "The second cabinet was the trigger for the third thing, and the third thing is not in the floor. It is in the ceiling, and it has been up there being a ceiling for a very long time, and it comes down across the room in one piece with all of the surgery's remaining ironmongery welded to its underside. You are face-down under a dentist's entire professional life. Somewhere near your ear, something is still turning.",
-      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-1, -3], "food": [-1, -2] },
-      "wound": [1, 1],
-      "wound_max": [2, 2],
+    "the_stuffing": {
+      "text": "The stuffing is occupied. A family of mice who have been living in the warmest, best-fed body in the building pours out of the slit and up your sleeve, and in the scramble you shoulder the post, and the head — the round, heavy thing in the feed sack is a paint tin — comes down across the bridge of your nose. You sit down hard. The mice take the opportunity to go through your pack.",
+      "penalty": { "ll": [-1, -3], "food": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
       "ends_encounter": true
     }
   },
   "placeholders": {
     "adjective": [
-      "Fully Booked",
-      "Well-Attended",
-      "Punctual",
-      "Carpeted",
-      "Very Popular"
+      "Best-Dressed",
+      "Dapper",
+      "Well-Turned-Out",
+      "Smartly Dressed",
+      "Weatherproof"
     ],
-    "irony": [
-      "It was not the only thing they had. The cabinet is full.",
-      "They had this the entire time.",
-      "The floor worked. That is the part they were right about.",
-      "Alphabetical. Right to the end, alphabetical."
+    "label": [
+      "GUARANTEED FOR LIFE",
+      "DRY CLEAN ONLY",
+      "PROPERTY OF DENNIS — HANDS OFF",
+      "WEATHERPROOF OR YOUR MONEY BACK",
+      "BUILT TO OUTLAST YOU"
     ]
   }
 }

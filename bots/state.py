@@ -7,16 +7,17 @@ new field would take the whole arena down for a purely additive firmware change.
 
 Outbound types seen from the server:
   lobby full sync s vis ev err asgn enc_path enc_dbg ground_update
-  item_result res_result loot_result trade_fail tsync wifi
+  item_result res_result loot_result trade_fail tsync wifi eco
 Event kinds (ev.k):
   act car_avail col col_fail dawn doom_act doom_warn downed dusk enc_bank
   enc_end enc_res enc_start fire_dmg fire_spread flood_dmg flood_washout
-  join left mv regen rsp trd_off trd_res weather
+  join left mv regen rsp trd_off trd_res weather dmg
 """
 from dataclasses import dataclass, field
 from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
                     TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain)
 from mapdec import WorldMap
+from navigate import DAISY_BLOOM_COST, DAISY_BUD_COST
 
 
 @dataclass(slots=True)
@@ -209,6 +210,14 @@ class Observation:
         # firmware and the mock). 2+ answers every request that carries a
         # "rid" with ack/nack, stamps ev with "sq" and sends "rt" per tick.
         self.proto = 1
+        # The Understory (docs/ecology-spec.md, protocol 3).  Cosmetic except
+        # for the Wasteland Daisy, so the ~9 KB vein grid is dropped on the
+        # floor here and only the daisy patches are kept: (q, r) -> (stage,
+        # count).  Stage 3 bites for 1 LL on entry; stage 2 blooms at the
+        # next dawn.  Both are priced into map.extra_cost for the pathfinder.
+        self.eco_tick = 0
+        self.eco_name = ""
+        self.daisies: dict[tuple[int, int], tuple[int, int]] = {}
 
     @property
     def me(self):
@@ -316,9 +325,20 @@ class Observation:
             self._sync_tunnel_pos()
         elif t == "s":
             self.tick = msg.get("tk", self.tick)
-            for i, pd in enumerate(msg.get("p", [])):
-                if i < MAX_PLAYERS:
+            # PROTO 4 lists only seated players, each with its seat as "id";
+            # a seat missing from p is offline.  No "id" = the old dense form.
+            plist = msg.get("p", [])
+            sparse = any(isinstance(pd, dict) and "id" in pd for pd in plist)
+            listed = set()
+            for i, pd in enumerate(plist):
+                i = pd.get("id", i) if isinstance(pd, dict) else i
+                if 0 <= i < MAX_PLAYERS:
                     self.players[i].update(pd)
+                    listed.add(i)
+            if sparse:
+                for i in range(MAX_PLAYERS):
+                    if i not in listed:
+                        self.players[i].connected = False
             self._apply_gs(msg.get("gs"))
             if "world" in msg:
                 self.world.update(msg["world"])
@@ -339,7 +359,7 @@ class Observation:
                     self._pending_hatch = None
             if "map" in msg:
                 try:
-                    self.tunnel.load_full(msg["map"], merge=True)
+                    self.tunnel.load_full(msg["map"], merge=True, ops=msg.get("op"))
                     self.tunnel_synced = True
                 except ValueError:
                     # A short board is a firmware buffer problem, not ours.
@@ -354,7 +374,7 @@ class Observation:
                 if "q" in msg and "r" in msg:
                     self.tunnel_pos = (msg["q"], msg["r"])
                 if "cells" in msg:
-                    self.tunnel.apply_vis(msg["cells"])
+                    self.tunnel.apply_vis(msg["cells"], ops=msg.get("op"))
             else:
                 self.vision_r = msg.get("vr", self.vision_r)
                 if "cells" in msg:
@@ -395,6 +415,20 @@ class Observation:
             self._prune_graves()
         elif t == "enc_path":
             self.encounter = msg
+        elif t == "eco":
+            # Every field is optional: the scar grid rides a message of its
+            # own (`s` alone), and a main message always carries `dz`, so
+            # a message without it must not be read as "no daisies".
+            self.eco_tick = msg.get("tk", self.eco_tick)
+            if "n" in msg:
+                self.eco_name = msg["n"]
+            if "dz" in msg:
+                self.daisies = {(d[0], d[1]): (d[2], d[3])
+                                for d in msg["dz"] if len(d) >= 4}
+                self.map.extra_cost = {
+                    qr: (DAISY_BLOOM_COST if stage >= 3 else DAISY_BUD_COST)
+                    for qr, (stage, _count) in self.daisies.items()
+                    if stage >= 2}
         return t
 
     def _prune_graves(self):
@@ -453,6 +487,16 @@ class Observation:
             pass
         elif k in ("enc_end", "enc_bank") and mine:
             self.encounter = None
+        elif k == "trap":
+            # A booby trap changed state (traps.hpp). "known" only ever comes
+            # to the survivor who escaped it -- it is on our map now -- and
+            # "sprung"/"spent" to everyone, so a trap we knew stops being one.
+            q, r = ev.get("q"), ev.get("r")
+            if isinstance(q, int) and isinstance(r, int):
+                grid = self.tunnel if ev.get("dp") else self.map
+                cell = grid[(q, r)]
+                if cell is not None:
+                    cell.trap = ev.get("out") == 'known'
         elif k == "mv":
             # Every event that names a hex carries the board it belongs to.
             # Our own underground steps are the freshest position we get --
@@ -494,6 +538,9 @@ class Observation:
             self.ground_items = []
             self.remains = []
             self.my_graves = set()
+            # The species died with its world (ecoRequestRegen); the new
+            # map above already has an empty extra_cost.
+            self.daisies = {}
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:

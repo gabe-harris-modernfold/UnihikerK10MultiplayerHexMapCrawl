@@ -1,0 +1,129 @@
+{
+  "id": "trap_waiting_room",
+  "tier": 3,
+  "title": "The {{adjective}} Waiting Room",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "The plate on the door still says ORAL & MAXILLOFACIAL. Inside, the waiting room has been cleared of everything except the carpet, which is wrong — carpet is the first thing anyone takes. It runs wall to wall, fitted, unmarked, and it sits about four centimetres proud of where the skirting says a floor should be. Somewhere under it something is holding a lot of weight very patiently. On the reception desk, a laminated card: PLEASE TAKE A SEAT.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Work the wall, feet on the skirting, and get back to the door",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_edge"
+        },
+        {
+          "label": "Find the plate's edge and pin it before it can travel",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_floor"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You go round the room on four centimetres of skirting board with your cheek against the wallpaper, and it takes eleven minutes, and at no point does your breathing sound like it belongs to you. Then you are at the door, and through it, and the carpet is behind you being beautifully, evenly flat.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You get the carpet edge up and drive a screwdriver through the plate into the joist, and then you look down into the gap, and the gap looks back with about forty small bright eyes. Chair-mounted drills. A whole surgery's worth, unbolted and re-bolted upward on a hinged frame, so that the floor does not so much give way as close. Under the reception desk, untouched: the practice's day-stock.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "choices": [
+        {
+          "label": "Cross the pinned plate to the surgery door",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_hinge"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The surgery itself has been stripped to the walls, but they left the wall cabinet, because the wall cabinet is steel and set in concrete and they could not get it out. You can, because you have a pry bar and eleven years fewer scruples. Inside: sealed, sorted, labelled, alphabetical.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": [
+        {
+          "label": "There is a second cabinet behind the first. There is always a second cabinet.",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 2,
+          "success_node": "cache_3",
+          "hazard_id": "the_appointment"
+        }
+      ]
+    },
+    "cache_3": {
+      "text": "Behind the first cabinet is a second, smaller, better, and taped to the inside of its door is a note in surgical handwriting: IF YOU ARE READING THIS THE FLOOR WORKED AND I AM SORRY ABOUT THE FLOOR. IT WAS THE ONLY THING I HAD. {{irony}} You take the whole cabinet's contents and you take the note as well, and much later, somewhere safe, you will read it again and it will be worse.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [3, 5] },
+        { "res": 1, "qty": [2, 3] },
+        { "res": 4, "qty": [2, 3] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_edge": {
+      "text": "Four centimetres is not very much skirting board. Your boot rolls off it at the halfway mark and your whole weight arrives on the carpet at once, and the room folds shut along its middle like a book. You get an elbow onto the skirting on the way through, which is the only reason any of you stays above floor level, and everything below your knee is briefly introduced to the dental profession.",
+      "penalty": { "ll": [-2, -4], "med": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    },
+    "the_floor": {
+      "text": "The plate travels. It travels a great deal faster than a floor has any business travelling, and the hinged frame comes up to meet it with forty burrs turning on the last of a dead battery, and the noise the room makes is not a crash, it is a sort of enthusiastic industrial hum with you in the middle of it. You come out of the gap on your forearms with your legs arriving some moments later and in a condition you elect not to inventory.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "water": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_hinge": {
+      "text": "The screwdriver holds. The joist does not. Eighty years of damp and a dentist's patient engineering part company under your third step, and you go down through the plate at an angle, which is worse, because at an angle the frame does not close on you — it takes its time.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_appointment": {
+      "text": "The second cabinet was the trigger for the third thing, and the third thing is not in the floor. It is in the ceiling, and it has been up there being a ceiling for a very long time, and it comes down across the room in one piece with all of the surgery's remaining ironmongery welded to its underside. You are face-down under a dentist's entire professional life. Somewhere near your ear, something is still turning.",
+      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-1, -3], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Fully Booked",
+      "Well-Attended",
+      "Punctual",
+      "Carpeted",
+      "Very Popular"
+    ],
+    "irony": [
+      "It was not the only thing they had. The cabinet is full.",
+      "They had this the entire time.",
+      "The floor worked. That is the part they were right about.",
+      "Alphabetical. Right to the end, alphabetical."
+    ]
+  }
+}

@@ -111,21 +111,16 @@ static bool grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
   return groundPut(p.q, p.r, itemId, qty);   // pack full — the rest lands where they stand
 }
 
-static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
-  LOG_FN();
-  // {"t":"enc_choice","ci":N}
-  const char* cp = strstr(data, "\"ci\""); if (!cp) { wsNack(client, "parse"); return; }
-  const char* cv = strchr(cp + 4, ':');   if (!cv) { wsNack(client, "parse"); return; }
-  int ci = atoi(cv + 1);
-  if (ci < 0 || ci > 15) { wsNack(client, "bad_arg"); return; }
-
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
-  int pid = findSlot(client->id());
-  if (pid < 0 || !encounters[pid].active || G.players[pid].ll == 0) {
-    xSemaphoreGive(G.mutex);
-    wsNack(client, pid < 0 ? "not_seated" : !encounters[pid].active ? "no_enc" : "downed");
-    return;
-  }
+// Resolve choice `ci` of pid's active scene: the cost, the roll, then the
+// destination's loot or the hazard, and the events that report it. Shared by
+// enc_choice and by enc_abort on a trap's start node -- a trap cannot be
+// declined, so "walk away" there means taking the escape door, roll and all.
+//
+// Returns nullptr once the roll has happened (*outSuccess says which way it
+// went), else the nack code for a refusal that changed nothing; the refusal's
+// "err" text goes to `client` when there is one. Caller holds G.mutex.
+static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, bool* outSuccess) {
+  if (outSuccess) *outSuccess = false;
   Player&          p   = G.players[pid];
   ActiveEncounter& enc = encounters[pid];
 
@@ -133,18 +128,16 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   EncChoice ch;
   if (!json || !encResolveChoice(json, enc.nodeKey, ci, ch)) {
     Log.warning("enc_choice pid=%d node=%s ci=%d: not found", pid, enc.nodeKey, ci);
-    client->text("{\"t\":\"err\",\"msg\":\"That choice is not open to you\"}");
-    wsNack(client, "no_choice");
-    xSemaphoreGive(G.mutex); return;
+    if (client) client->text("{\"t\":\"err\",\"msg\":\"That choice is not open to you\"}");
+    return "no_choice";
   }
 
   bool canAfford = (p.ll >= ch.costLL) && (p.radiation + ch.costRad <= 10) &&
                    (p.inv[1] >= ch.costFood) && (p.inv[0] >= ch.costWat) &&
                    (p.inv[4] >= ch.costScrap) && (p.inv[3] >= ch.costMed);
   if (!canAfford) {
-    client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
-    wsNack(client, "no_res");
-    xSemaphoreGive(G.mutex); return;
+    if (client) client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
+    return "no_res";
   }
   // Deduct costs (a negative cost is a gain; LL gains respect the ceiling)
   if (ch.costLL) { p.ll = (uint8_t)constrain((int)p.ll - ch.costLL, 0, (int)effectiveMaxLL(pid)); if (p.ll == 0) p.movesLeft = 0; }
@@ -157,6 +150,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
 
   uint8_t dn = computeEncounterDN(pid, (uint8_t)ch.baseRisk, ch.skill);
   CheckResult cr = resolveCheck(pid, ch.skill, dn, 0);
+  if (outSuccess) *outSuccess = cr.success;
   GameEvent ev = {};
   ev.type      = EVT_ENC_RESULT;
   ev.pid       = (uint8_t)pid;
@@ -164,6 +158,7 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   ev.encDN     = dn;
   ev.encTotal  = (int8_t)cr.total;
   ev.encOut    = cr.success ? 1 : 0;
+  ev.amt       = enc.trap ? 1 : 0;   // EVT_ENC_RESULT-specific: a trap scene (the LCD tells it differently)
   bool encounterEnded = false;
   if (cr.success) {
     for (int i = 0; i < 5; i++) {
@@ -197,19 +192,31 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
     // Advance to the destination node
     strncpy(enc.nodeKey, ch.nextKey, ENC_KEY_LEN - 1); enc.nodeKey[ENC_KEY_LEN - 1] = 0;
     enc.canBank = ch.nextCanBank ? 1 : 0;
+    enc.escape  = ch.nextEscape  ? 1 : 0;
     if (ch.nextTerminal) enc.active |= (1 << 7);
     // cost_ll can take the last point of LL even on a success.
     if (p.ll == 0) encounterEnded = true;
   } else {
-    ev.encPenLL  = (int8_t)ch.hazLL;
-    ev.encPenRad = (int8_t)ch.hazRad;
-    ev.encEnds   = ch.hazEnds ? 1 : 0;
+    // A sprung trap is a spent trap, so every trap hazard ends the scene
+    // whatever the file says -- and it never takes the last point of LL.
+    // Traps maim; the wasteland kills. A survivor left on 1 LL with two major
+    // wounds twenty hexes from water walks home through systems that already
+    // know how to finish the job (docs/trap-system-spec.md, "Tuning").
+    if (enc.trap) ch.hazEnds = true;
+    const int llBefore = p.ll;
     if (ch.hazLL > 0) {
       p.ll = (uint8_t)min((int)p.ll + ch.hazLL, (int)effectiveMaxLL(pid));
     } else if (ch.hazLL < 0) {
-      p.ll = (uint8_t)max(0, (int)p.ll + ch.hazLL);
+      const int floorLL = enc.trap ? min(1, llBefore) : 0;
+      p.ll = (uint8_t)max(floorLL, (int)p.ll + ch.hazLL);
       if (p.ll == 0) { p.movesLeft = 0; ledFlash(255, 0, 0); }
+      ecoNoteHurt(pid, DC_ENC_HAZARD);   // an injury: the daisies seed on the encounter's hex (ecology.hpp)
     }
+    // What the hazard actually cost, not what the file asked for: a range
+    // rolls, and the LL floor (or the ground at 0) clips it.
+    ev.encPenLL  = (int8_t)(ch.hazLL > 0 ? ch.hazLL : (int)p.ll - llBefore);
+    ev.encPenRad = (int8_t)ch.hazRad;
+    ev.encEnds   = ch.hazEnds ? 1 : 0;
     p.radiation = (uint8_t)constrain((int)p.radiation + ch.hazRad, 0, 10);
     for (int i = 0; i < 5; i++) {
       int take = min((int)ch.hazRes[i], (int)p.inv[i]);
@@ -243,7 +250,31 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
     }
     endEncounter(pid, (p.ll == 0) ? ENC_END_DOWNED : ENC_END_HAZARD, /*restorePoi=*/false);
   }
+  return nullptr;
+}
+
+static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
+  LOG_FN();
+  // {"t":"enc_choice","ci":N}
+  const char* cp = strstr(data, "\"ci\""); if (!cp) { wsNack(client, "parse"); return; }
+  const char* cv = strchr(cp + 4, ':');   if (!cv) { wsNack(client, "parse"); return; }
+  int ci = atoi(cv + 1);
+  if (ci < 0 || ci > 15) { wsNack(client, "bad_arg"); return; }
+
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
+  int pid = findSlot(client->id());
+  if (pid < 0 || !encounters[pid].active || G.players[pid].ll == 0) {
+    xSemaphoreGive(G.mutex);
+    wsNack(client, pid < 0 ? "not_seated" : !encounters[pid].active ? "no_enc" : "downed");
+    return;
+  }
+  const bool wasTrap = encounters[pid].trap != 0;
+  const char* why = encRunChoice(client, pid, ci, nullptr);
+  const bool ended = !encounters[pid].active;
   xSemaphoreGive(G.mutex);
+  if (why) wsNack(client, why);
+  // A trap that went off changed the board for everyone (and for the save).
+  if (wasTrap && ended) requestSave();
 }
 
 static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -296,10 +327,23 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
         // client's _evEncBank would add the untrimmed amount to its inv[].
         // What's left over is simply left behind — no ground drop, no refund.
         int take = min((int)enc.pendingLoot[i], (int)keep[i]);
-        p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + take);
         enc.pendingLoot[i] = (uint8_t)take;
         totalRes += take;
       }
+      // Leaving with nothing from an escape node (either kind of scene), or
+      // from a trap at all, is not a bank: no full-clear bonus, no score, no
+      // encounter tally -- and a trap left this way is still armed, now on
+      // this survivor's map. "Leave with nothing -> it is still there. Leave
+      // with anything -> it is spent" (docs/trap-system-spec.md, Outcomes).
+      const bool tookAnything = totalRes > 0 || enc.pendingItemCount > 0 || enc.pendingRecipes != 0;
+      if (!tookAnything && (enc.trap || enc.escape)) {
+        if (enc.trap) trapSettle(pid, TRAP_OUT_KNOWN);
+        endEncounter(pid, ENC_END_ESCAPED, /*restorePoi=*/false);
+        xSemaphoreGive(G.mutex);
+        requestSave();
+        return;
+      }
+      for (int i = 0; i < 5; i++) p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + (int)enc.pendingLoot[i]);
       for (int j = 0; j < enc.pendingItemCount; j++)
         spilled |= grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
       spillQ = p.q; spillR = p.r;
@@ -315,15 +359,21 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
         ap = appendPackArrays(itemAck, sizeof(itemAck), ap, pid);
         appendFmt(itemAck, sizeof(itemAck), ap, "}");
       }
-      int scoreGain = totalRes * 3 + (fullClear ? 10 : 0);
+      // An escape node is terminal but it is a way out, not the bottom of
+      // the place -- it never pays the full-clear bonus.
+      int scoreGain = totalRes * 3 + ((fullClear && !enc.escape) ? 10 : 0);
       GameEvent ev = {};
       ev.type = EVT_ENC_BANK; ev.pid = (uint8_t)pid;
       ev.q = (int16_t)enc.hexQ; ev.r = (int16_t)enc.hexR;
+      ev.depth = enc.depth;
       memcpy(ev.encLoot, enc.pendingLoot, 5);
       ev.bankedRecipes = enc.pendingRecipes;
       addScore(p, ev, scoreGain);
       p.encCount++;
       enqEvt(ev);
+      // Taking the bait is what disarms it. After the bank event, so every
+      // client sees the haul land before the hex goes quiet.
+      if (enc.trap) trapSettle(pid, TRAP_OUT_SPENT);
       enc = {};
       banked = true;
     }
@@ -345,11 +395,52 @@ static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t
   LOG_FN();
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   int pid = findSlot(client->id());
-  if (pid >= 0 && encounters[pid].active) {
+  const char* why = nullptr;
+  bool trapChanged = false;
+  if (pid < 0 || !encounters[pid].active) {
+    why = (pid < 0) ? "not_seated" : "no_enc";
+  } else if (encounters[pid].trap) {
+    // There is no walking away from a trap -- that is the whole of it. What
+    // "abort" means depends on where in the scene you are:
+    //  * past the mechanism (a cache node) or already through the escape
+    //    door: you walk off with nothing, so it stays armed, and you know it;
+    //  * still at the start: you take the escape door, roll and all. The
+    //    client never offers a walk-away there, so this is the path a client
+    //    that failed to load the scene (or a bot) takes -- it resolves the
+    //    scene instead of wedging the survivor in it until dawn.
+    // The threat clock does not tick: nobody chose to be here.
+    ActiveEncounter& enc = encounters[pid];
+    trapChanged = true;
+    const char* json = encLoadFile(enc.terrain, enc.encIdx);
+    if (enc.canBank || (enc.active & (1 << 7))) {
+      trapSettle(pid, TRAP_OUT_KNOWN);
+      endEncounter(pid, ENC_END_ESCAPED, /*restorePoi=*/false);
+    } else if (!json) {
+      // The file will not load (SD trouble): nothing can be rolled, so put
+      // the trap back exactly as it was and let them go.
+      trapSettle(pid, TRAP_SETTLE_REARM);
+      endEncounter(pid, ENC_END_ESCAPED, /*restorePoi=*/false);
+    } else {
+      int ci = encEscapeChoice(json, enc.nodeKey);
+      if (ci < 0) {
+        client->text("{\"t\":\"err\",\"msg\":\"There is no way back out from here. Choose.\"}");
+        why = "trap";
+        trapChanged = false;
+      } else {
+        bool ok = false;
+        why = encRunChoice(client, pid, ci, &ok);
+        if (!why && ok && encounters[pid].active) {
+          trapSettle(pid, TRAP_OUT_KNOWN);
+          endEncounter(pid, ENC_END_ESCAPED, /*restorePoi=*/false);
+        }
+        // On a failed roll encRunChoice already ended it: a trap hazard always does.
+      }
+    }
+  } else {
     if (G.threatClock < 20) G.threatClock++;
     endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);  // walking away closes the place for good
-  } else {
-    wsNack(client, pid < 0 ? "not_seated" : "no_enc");
   }
   xSemaphoreGive(G.mutex);
+  if (why) wsNack(client, why);
+  if (trapChanged) requestSave();
 }

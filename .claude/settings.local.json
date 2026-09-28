@@ -119,7 +119,17 @@
       "Bash(grep -rn \"collectResource\" *.hpp | head -5 && sed -n '/static .*collectResource/,/^}/p' survival_state.hpp | head -60)",
       "Bash(node river-proto.js 200)",
       "Bash(node river-proto.js 300)",
-      "Bash(node river-proto.js show 7)"
+      "Bash(node river-proto.js show 7)",
+      "Bash(python shot.py v1)",
+      "Bash(sed -i \"s/headless=True, args=\\\\['--allow-file-access-from-files'\\\\]/headless=False, args=['--headless=new','--allow-file-access-from-files']/\" shot.py)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Arduino CLI\\\\arduino-cli.exe\" board list)",
+      "PowerShell(Get-Process arduino-cli -ErrorAction SilentlyContinue)",
+      "Bash(python ingest_shelters.py C:/SourceCode/Esp32HexMapCrawl/data/img/shelter-sheet-improved.png cells112 112)",
+      "Bash(awk '{print $1, $NF, $\\(NF-1\\)}')",
+      "Bash(python -)",
+      "Bash(sed -i 's/^MARGIN = 5$/MARGIN = 6/' ingest_shelters.py)",
+      "Bash(rm -f cells224/* cells112/*)",
+      "Bash(python ingest_shelters.py C:/SourceCode/Esp32HexMapCrawl/data/img/shelter-sheet-improved.png cells224 224)"
     ]
   }
 }

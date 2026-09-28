@@ -1,0 +1,131 @@
+{
+  "id": "trap_taxidermist",
+  "tier": 3,
+  "title": "The {{adjective}} Taxidermist",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "Every surface in the workshop holds something that used to be alive, and every one of them is looking at you. Shift your weight and a hundred glass eyes turn to follow with a small dry click — fishing line, all of it, all running down into the board under your boots. Over the doorway behind you a stag's head holds its antlers cocked flat against a spring as thick as your wrist. By the counter a brown bear stands with its arms open. In the good chair by the stove sits the taxidermist, finished to a very high standard.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Keep your weight on that board and ease back out under the stag",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_stag"
+        },
+        {
+          "label": "Follow the fishing line down to wherever it all ties off",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_bear"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You keep your weight exactly where it is and reach behind you for the door frame, and then you leave the way a person leaves a sleeping dog, a centimetre at a time, under the stag, out. A hundred glass eyes click round in their sockets to watch you go. So, you would swear on anything you have left, do his.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "The lines come up under the counter to a board of brass cleats, each one labelled in a neat pencil hand: FOX. FOX. OWL. STAG. BEAR. Near the bottom, underlined twice: STOCKROOM — DO NOT. You let STAG down by degrees and the antlers over the door ease forward like a sigh; then BEAR, and the bear's arms sag. On the counter, laid out for a job he never got to: wire, surgical spirit, a sack of curing salt, and a tray of glass eyes sorted by species and by mood.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 3] },
+        { "res": 3, "qty": [1, 2] },
+        { "res": 1, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Find out what DO NOT is tied to, and open the stockroom anyway",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_stockroom"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The stockroom is shelved floor to ceiling with the ones he never finished, each crouched on its own small cocked spring, and you go down the aisle wedging a scalpel handle into every trigger you can find, which is all of them. At the back is his larder. He preserved everything. Hams, fish, a whole wall of jars, each labelled with a date and one word: KEEPS. You believe him. You have never believed anything so completely.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 1] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": [
+        {
+          "label": "His keys are in his lap. The cabinet by his chair is locked.",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 2,
+          "success_node": "cache_3",
+          "hazard_id": "the_good_chair"
+        }
+      ]
+    },
+    "cache_3": {
+      "text": "The keys come out of his lap and nothing else does. The cabinet beside the chair is where he kept everything too good for a shelf: the best spirit, the best wire, a roll of banknotes he used for stuffing, a velvet tray of eyes so fine they look wet. Tucked under the tray, a card in the neat pencil hand: NOBODY ELSE WOULD HAVE DONE IT PROPERLY. You look at him then, really look — the stitching you cannot find, the posture, the glass eyes chosen for an expression of mild professional interest. {{irony}} You take the lot, and you close the cabinet quietly, out of respect for the work.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [3, 4] },
+        { "res": 4, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_stag": {
+      "text": "Your heel comes off the board. It is not a large movement, and the room was never waiting for a large one. Over the doorway the stag lets go of years of patience and the antlers come down and forward like two hands clapping, and you are just far enough through that they take your pack and the meat of one shoulder instead of the whole of you. For a short, intimate interval you and the stag are pinned together in the doorway. Then you tear free, and the stag keeps a piece of you as a trophy, which seems only fair.",
+      "penalty": { "ll": [-2, -4], "med": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    },
+    "the_bear": {
+      "text": "You pull one line too many. Behind you a lorry's worth of leaf springs straighten at once and the bear comes off its stand with its arms swinging shut, and you learn two things in the same instant: that he replaced the claws with bradawls, and that he understood hugging better than anyone you have ever met. It holds you for a long, warm, deeply sincere moment, at fourteen points of contact. Then the springs run out and you and the bear go down together in a snowfall of stuffing and mothballs, and you have to crawl out from underneath it, and it does not want you to go.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "water": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_stockroom": {
+      "text": "DO NOT meant, it turns out, do not. The stockroom door opens on shelves of the unfinished, every one on its own little spring, and they all go at once: stoats, weasels, a heron like a thrown spear, a pike with its mouth packed full of carpet tacks. It is more wildlife than you have seen in years and all of it is coming at your face. You go down under a small, furious avalanche of the natural world and lie there being savaged by things with no insides until the last spring runs down, and one stoat, hung up in your collar, keeps trying.",
+      "penalty": { "ll": [-3, -5], "med": [-1, -2], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    },
+    "the_good_chair": {
+      "text": "You lift the keys out of his lap and his lap rises to follow them. The chair was the last stage and the first; every cleat on that board was a courtesy, and this is the real line, and when it goes it all goes at once. He comes up out of the leather with his arms opening, the bear lurches off its stand for another go, the stag slams over the door, and every eye in the room snaps to you in one clack like applause. The taxidermist reaches you first. He is light, and dry, and beautifully stitched, and he has a scalpel up each sleeve, and he holds you in the middle of the floor while the rest of his work arrives.",
+      "penalty": { "ll": [-4, -6], "med": [-2, -2], "water": [-1, -3], "food": [-1, -2] },
+      "wound": [1, 1],
+      "wound_max": [2, 2],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Lifelike",
+      "Meticulous",
+      "Well-Stuffed",
+      "Beautifully Finished",
+      "Ever-Watchful"
+    ],
+    "irony": [
+      "Nobody else would have. He was right about that.",
+      "The hands are the only part that isn't perfect. He did the hands last.",
+      "His best work, and the one piece he never got to see.",
+      "He always said you should never leave a job half done."
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "id": "trap_silence_please",
+  "tier": 2,
+  "title": "The {{adjective}} Library",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A lending library, or one room of one: steel stacks, a returns desk, and SILENCE PLEASE on a laminated sign, then another, then hand-lettered ones added as the years went by — QUIET. QUIETER. I CAN HEAR YOU BREATHING. The floor between you and the stacks is carpeted in bells of every kind, bedded in broken glass. Every stack has been walked forward onto its front edge and roped to the next, the whole row leaning out over the aisle like drunks at a bar. It would not take much. Somewhere deeper in, very softly, a page turns.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back out through the door without ringing anything",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_shush"
+        },
+        {
+          "label": "Clear a silent path and chock the first stack",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "large_print"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You go back the way you came with your boots finding every bell a moment before your weight does, and you ease the door shut behind you without a single chime. It is the quietest you have been in years, possibly ever. From inside, very faintly, comes the small approving sound of a page being turned.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You lift the bells one at a time and stuff each one in a sock, and sweep a lane through the glass with your sleeve, and it takes the best part of an hour to cover four metres. Then you wedge a hardback under the first stack's back foot — ADVANCED JOINERY, which feels apt — and the whole row settles with a sigh of paper. The returns trolley is loaded with overdue things that are not books. The last aisle runs to the desk under Reference, eight shelves high.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 3] },
+        { "res": 2, "qty": [1, 1] },
+        { "res": 3, "qty": [1, 1] }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Pick down the last aisle, under Reference, to the desk",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "reference_section"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "Behind the returns desk sits the librarian. She is very old and entirely alive, cardigan buttoned wrong, reading by a candle stub, and she has been there the whole time. She does not look up. Under the desk, stamped and catalogued: tinned food, sealed water, a first-aid tin. You take them. Without a word she reaches out and stamps the back of your hand with a date two weeks from today. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 2] },
+        { "res": 0, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_shush": {
+      "text": "Your heel comes down on a bicycle bell. It rings once, bright as a question. The nearest stack answers, tipping off its edge and dragging its neighbour after it, and you go out through the door with the whole of Crime and Thriller hammering at your back and your palms full of glass from the landing. Somewhere behind you, faintly, someone tuts.",
+      "penalty": { "ll": [-1, -3] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "large_print": {
+      "text": "There is a sleigh bell under your knee that you did not see, and it has been waiting a long time to be rung. The first stack goes and pulls the second, and the rope pulls the rest, and you are flat in the glass under four tonnes of Large Print Romance swollen into one mouldering brick. Silverfish pour out of it into your collar like sand from a split bag. Your canteen splits and empties under you. It is, at last, very quiet in here.",
+      "penalty": { "ll": [-2, -3], "water": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "reference_section": {
+      "text": "Halfway down the last aisle, very close, someone says 'Shh.' You freeze, which is correct. Your pack, which is not a good listener, swings on, and its buckle chimes against a shelf upright. Reference leans out over you like a cliff making up its mind. Thirty volumes of encyclopaedia arrive in alphabetical order, and somewhere around M a family of rats that had been living in the index comes down with them, furious, and gets into your collar, your sleeves and your pack.",
+      "penalty": { "ll": [-2, -4], "food": [-1, -2], "med": [-1, -1] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Quiet",
+      "Very Quiet",
+      "Hushed",
+      "Strictly Silent",
+      "Public"
+    ],
+    "irony": [
+      "On the wall behind her, the fine for late return is listed as ONE (1) STACK.",
+      "Nobody has ever brought anything back. She keeps lending anyway.",
+      "It is, after all, a lending library.",
+      "The ink is red. You gather that is serious."
+    ]
+  }
+}

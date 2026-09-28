@@ -45,6 +45,11 @@ static bool hasTunnelLight(int pid);
 // surface hatches against the finished map, then carves the tunnel board.
 static void generateTunnels();
 
+// Defined in traps.hpp (needs the encounter pools' trap tiers and the tunnel
+// board's hatch table). The very last generation phase: arms traps on both
+// boards, skipping POI hexes and hatches.
+static void placeTraps();
+
 // ── Group vision bonus ──────────────────────────────────────────
 // Survivors watching the same hex together see farther: +1 vision radius per
 // other connected player stacked on pid's hex, capped so a full party stack
@@ -74,11 +79,20 @@ static int groupVisionBonus(int pid) {
 //      Fog is 0xFF and is tested for equality before decoding. Terrain
 //      itself only needs bits 0-3 (NUM_TERRAIN=16), so bits 6/7 are free
 //      for these flags without widening the byte.
+//      Bit 4 is an armed booby trap THIS player knows about (traps.hpp) --
+//      per recipient, so pid is the player the cell is being encoded for
+//      (-1: nobody's knowledge, e.g. a spectator). Bit 5 stays clear, which
+//      is what keeps terrain 15 with every flag set (0xDF) off the 0xFF fog
+//      sentinel.
 // DD = bits 0-5 footprints, bit 6 any shelter, bit 7 POI present.
 // VV = resource type << 4 | image variant (resource masked when maskRes).
-static inline void encodeCell(const HexCell& cell, bool maskRes,
+static inline bool trapKnownBy(const HexCell& cell, int pid) {
+  return pid >= 0 && pid < MAX_PLAYERS && (cell.trap & TRAP_ARMED) && (cell.trap & (1u << pid));
+}
+static inline void encodeCell(const HexCell& cell, bool maskRes, int pid,
                               uint8_t* tt, uint8_t* dd, uint8_t* vv) {
-  *tt = cell.terrain | (cell.shelter >= 2 ? 0x40 : 0x00) | (cell.tireTrack ? 0x80 : 0x00);
+  *tt = cell.terrain | (cell.shelter >= 2 ? 0x40 : 0x00) | (cell.tireTrack ? 0x80 : 0x00)
+      | (trapKnownBy(cell, pid) ? 0x10 : 0x00);
   *dd = (cell.footprints & 0x3F) | ((cell.shelter ? 1 : 0) << 6) | (cell.poi ? 0x80 : 0x00);
   *vv = (maskRes ? 0 : (cell.resource << 4)) | (cell.variant & 0x0F);
 }
@@ -277,6 +291,8 @@ static void generateMap() {
       cell.shelter      = 0;
       cell.footprints   = 0;
       cell.tireTrack    = 0;
+      cell.trap         = 0;
+      cell.trapEnc      = 0;
     }
   }
 
@@ -931,12 +947,12 @@ static void generateMap() {
   // hexes, and they cluster inside the same few cities, so a single tile would
   // visibly tile against itself down one street.
   //
-  // Safe before that art exists: poiArtFor() returns undefined for an unknown
-  // key and the renderer falls back to `variant % poolLength`, so every pin
-  // degrades to plain hexBrokenUrban art. It stops being safe the moment a
-  // hexBrokenUrban10.png is added -- terrainVariantCount[4] would become 11
-  // and pickVariant() could hand out 10 on its own, so the real core tiles
-  // must NOT use that filename. See data/img/HEX_TILE_PROMPTS.md.
+  // Safe before that art exists: a pin with no `poi` entry in tiles.json
+  // falls back to `variant % poolLength`, so every pin degrades to plain
+  // Broken Urban art. The core tiles go in cells 10-12 of the sheet
+  // art/hex-sheets/hexBrokenUrban.png: scripts/hex_sheets.py treats Broken
+  // Urban cells from 10 on as landmarks (its LANDMARKS table), so they never
+  // join the pool and pickVariant() can't hand out 10 on its own.
   static constexpr uint8_t CITY_CORE_V0    = 10;   // POI_ART keys 4_10 .. 4_12
   static constexpr uint8_t CITY_CORE_TILES = 3;    // ceiling is 16: variant is 4 bits on the wire
   for (int r = 0; r < MAP_ROWS; r++)
@@ -1010,9 +1026,10 @@ static void generateMap() {
   // Jack's Chopper (scrub/19.json) is a named landmark, not empty scrub —
   // force its hex's variant to 10, a sentinel reserved for point-of-interest
   // art rather than a real scrub variant (Open Scrub's counted variants are
-  // 0-9). The client maps terrain 0 + variant 10 to a dedicated named image
-  // (poi_jacks_chopper.png) instead of a random hexOpenScrub<N>.png — see
-  // POI_ART in engine.js. Overrides whatever random variant Phase 4 picked.
+  // 0-9). The client maps terrain 0 + variant 10 to dedicated landmark art
+  // (cell 10 of the Open Scrub sheet, tiles.json poi "0_10") instead of a
+  // random scrub tile — see terrainTile() in engine.js. Overrides whatever
+  // random variant Phase 4 picked.
   for (int r2 = 0; r2 < MAP_ROWS; r2++)
     for (int c2 = 0; c2 < MAP_COLS; c2++)
       if (G.map[r2][c2].terrain == 0 && G.map[r2][c2].poi == 19)
@@ -1023,6 +1040,12 @@ static void generateMap() {
   // needs every earlier phase (rivers, craters, settlements) already placed to
   // pick legal, well-spread entrances. Defined in tunnels.hpp.
   generateTunnels();
+
+  // ── Phase 7: booby traps ─────────────────────────────────────
+  // After everything that can claim a hex first: POIs (Phase 5, traps never
+  // share a hex with one) and the hatches Phase 6 just stamped, on both
+  // boards. Defined in traps.hpp; see docs/trap-system-spec.md.
+  placeTraps();
 }
 
 // ── Map encode: fog masked ─────────────────────────────────────
@@ -1033,15 +1056,19 @@ static const char HEX_CH[] = "0123456789ABCDEF";
 // bunker tunnel board. No wrap: distance is the plain axial one. At 16x10 the
 // whole board is 960 hex chars, so this ships in one go on descend rather than
 // dribbling in through vis disks.
-static int encodeTunnelFog(char* buf, int cap, int pq, int pr, int visR, bool maskRes) {
+//
+// A trap pid knows about is sent whatever the distance, same as the surface
+// map below: it is the one thing a survivor can know about a hex they cannot
+// see, and without it a reconnect would forget it.
+static int encodeTunnelFog(char* buf, int cap, int pq, int pr, int visR, bool maskRes, int pid) {
   int pos = 0;
   for (int r = 0; r < TUN_ROWS; r++) {
     for (int c = 0; c < TUN_COLS; c++) {
       uint8_t tt, dd, vv;
       int dq = c - pq, dr = r - pr;
       int dist = (abs(dq) + abs(dq + dr) + abs(dr)) / 2;
-      if (dist <= visR) {
-        encodeCell(G.tunnel[r][c], maskRes, &tt, &dd, &vv);
+      if (dist <= visR || trapKnownBy(G.tunnel[r][c], pid)) {
+        encodeCell(G.tunnel[r][c], maskRes, pid, &tt, &dd, &vv);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
       }
@@ -1056,13 +1083,33 @@ static int encodeTunnelFog(char* buf, int cap, int pq, int pr, int visR, bool ma
   return pos;
 }
 
-static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskRes) {
+// The tunnel board's open sides (G.tunnelOp, tunnels.hpp), 2 hex chars a
+// cell in the same row-major order as encodeTunnelFog() and for the same
+// cells: "00" wherever that sent fog. tsync carries it as "op" beside "map".
+static int encodeTunnelOps(char* buf, int cap, int pq, int pr, int visR, int pid) {
+  int pos = 0;
+  for (int r = 0; r < TUN_ROWS; r++) {
+    for (int c = 0; c < TUN_COLS; c++) {
+      int dq = c - pq, dr = r - pr;
+      int dist = (abs(dq) + abs(dq + dr) + abs(dr)) / 2;
+      uint8_t op = (dist <= visR || trapKnownBy(G.tunnel[r][c], pid)) ? G.tunnelOp[r][c] : 0;
+      if (pos + 2 < cap) { buf[pos++] = HEX_CH[op >> 4]; buf[pos++] = HEX_CH[op & 0xF]; }
+    }
+  }
+  buf[pos] = 0;
+  return pos;
+}
+
+// Known traps ride outside the vision disk too (see encodeTunnelFog): an
+// escaped trap stays on that survivor's map across a reconnect, a reload and
+// a brand-new browser, and in any weather.
+static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskRes, int pid) {
   int pos = 0;
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int c = 0; c < MAP_COLS; c++) {
       uint8_t tt, dd, vv;
-      if (hexDistWrap(pq, pr, c, r) <= visR) {
-        encodeCell(G.map[r][c], maskRes, &tt, &dd, &vv);
+      if (hexDistWrap(pq, pr, c, r) <= visR || trapKnownBy(G.map[r][c], pid)) {
+        encodeCell(G.map[r][c], maskRes, pid, &tt, &dd, &vv);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
       }
@@ -1082,11 +1129,15 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
 // board, which is a different size and does NOT wrap -- off-board cells are
 // simply omitted rather than wrapping round to the far wall. The "dp" field
 // tells the client which board to apply the cells to; it is omitted at depth
-// 0 so surface traffic is byte-identical to before.
+// 0 so surface traffic is byte-identical to before. Underground an "op"
+// string follows the cells: each one's open sides (G.tunnelOp), 2 hex chars
+// apiece in the same order, with room reserved for it as the cells go in.
+// pid is who the disk is for: it decides which traps show (encodeCell).
 static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskRes,
-                        int* outCells = nullptr, uint8_t depth = 0) {
+                        int* outCells = nullptr, uint8_t depth = 0, int pid = -1) {
   int pos   = 0;
   int cells = 0;
+  uint8_t ops[128];                    // underground only: a tunnel disk is at most 16x10
   if (depth)
     pos += snprintf(buf, cap, "{\"t\":\"vis\",\"dp\":1,\"vr\":%d,\"q\":%d,\"r\":%d,\"cells\":\"", visR, pq, pr);
   else
@@ -1105,8 +1156,12 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
         cq = wrapQ(pq + dq); cr = wrapR(pr + dr);
       }
       uint8_t tt, dd, vv;
-      encodeCell(depth ? G.tunnel[cr][cq] : G.map[cr][cq], maskRes, &tt, &dd, &vv);
-      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
+      encodeCell(depth ? G.tunnel[cr][cq] : G.map[cr][cq], maskRes, pid, &tt, &dd, &vv);
+      // reserve 2 extra bytes for closing `"}` + snprintf null -- and below,
+      // the whole "op" tail for every cell so far plus this one
+      const int tail = depth ? 10 + 2 * (cells + 1) : 0;
+      if (pos + 12 + tail < cap && (!depth || cells < (int)sizeof(ops))) {
+        if (depth) ops[cells] = G.tunnelOp[cr][cq];
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
@@ -1114,6 +1169,12 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
         buf[pos++] = HEX_CH[vv >> 4]; buf[pos++] = HEX_CH[vv & 0xF];
         cells++;
       }
+    }
+  }
+  if (depth) {
+    pos += snprintf(buf + pos, cap - pos, "\",\"op\":\"");
+    for (int i = 0; i < cells && pos + 4 < cap; i++) {
+      buf[pos++] = HEX_CH[ops[i] >> 4]; buf[pos++] = HEX_CH[ops[i] & 0xF];
     }
   }
   pos += snprintf(buf + pos, cap - pos, "\"}");
@@ -1133,7 +1194,7 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       int cr = wrapR(pr + dr);
       if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
         uint8_t tt, dd, vv;
-        encodeCell(G.map[cr][cq], false, &tt, &dd, &vv);
+        encodeCell(G.map[cr][cq], false, pid, &tt, &dd, &vv);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];

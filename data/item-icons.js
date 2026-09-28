@@ -1457,6 +1457,60 @@
     k.solid(r(poly([18, 27, 27, 18, 25.6, 26])), 'note', { shade: { t: 'flat', tone: HI }, grime: 0 });
   };
 
+  // ── Resource tokens (not items) ─────────────────────────────────
+  // 900 + res, RES_NAMES order: 901 Water .. 905 Scrap. Far above the item
+  // ids so none can collide; getResIcon() in game-data.js is the way in.
+  // Same subjects as the map's resource glyphs (drop, can, cross, cog) where
+  // the map has one; food has no map glyph, so it is a roast leg.
+
+  // 901 Water: one fat drop, silt settling in the bottom of it.
+  I[901] = (k) => {
+    k.solid(rough(drop(16, 20.2, 8.2, -90), 0.3, 0.6, 2), 'water', { shade: { t: 'sphere', cx: 14.2, cy: 18.6, r: 9.6, hi: 0.66 }, grime: 0.1 });
+    k.decal(rough(ellipse(16.4, 25.6, 6, 2.2), 0.5, 0.8, 3), 'water', { dt: -1 });
+    k.decal(curve(9.8, 22, 9.8, 16.6, 12.6, 12.8), 'water', { tone: GLINT, w: 1 });
+    k.decal(dots([12.4, 24.6]), 'water', { tone: HI, w: 1 });
+    k.fx(dots([25.6, 27.2]), 'water', { tone: HI, w: 1 });
+  };
+
+  // 902 Food: a roast leg on the bone, seared, char lines across it.
+  I[902] = (k) => {
+    k.solid(union(seg(18.6, 13.4, 24.4, 7.6, 1.7), circle(24.2, 5.4, 2.1), circle(26.6, 7.8, 2.1)), 'bone', { shade: { t: 'round', r: 1.6 }, grime: 0.2 });
+    const meat = rough(union(ellipse(12.8, 19.6, 8.4, 7.4), seg(12.8, 19.6, 19.4, 13, 4.6, 2.6)), 0.6, 0.6, 3);
+    k.solid(meat, 'clay', { shade: { t: 'round', r: 4.5 }, grime: 0.3, speck: 0.08 });
+    k.decal(rough(ellipse(10.4, 16.6, 3.4, 2.2), 0.6, 0.9, 4), 'clay', { tone: HI });
+    k.line(union(stroke(jit([7.6, 22, 10.8, 20.4, 13.8, 22.2], 0.3, 5)), stroke(jit([11.6, 25.6, 15.4, 24.2, 18.4, 21.6], 0.3, 6))), { tone: SHD });
+  };
+
+  // 903 Fuel: a ribbed oil drum, bung in the lid, a dribble down the side.
+  I[903] = (k) => {
+    k.solid(union(box(16, 17.6, 8.6, 10, 1.2), ellipse(16, 27.6, 8.6, 1.8)), 'copper', { shade: cyl(16, 0, 16, 32, 8.6), rust: 0.45, grime: 0.3 });
+    k.line(union(stroke([7.6, 12.6, 24.4, 12.6]), stroke([7.6, 22.6, 24.4, 22.6])), { tone: SHD });
+    k.line(union(stroke([7.6, 13.6, 24.4, 13.6]), stroke([7.6, 23.6, 24.4, 23.6])), { tone: HI });
+    k.decal(drop(16, 18.6, 2.1), 'mustard', { tone: HI });
+    k.decal(stroke([11.2, 8.8, 11.4, 15.6], 0.8, 0.3), 'black', { tone: BASE });
+    k.solid(ellipse(16, 7.6, 8.6, 2.2), 'copper', { shade: { t: 'flat', tone: HI }, rust: 0.5 });
+    k.decal(ellipse(16, 7.8, 7, 1.4), null, { tone: SHD });
+    k.solid(circle(19.8, 7.4, 1.3), 'iron', { wear: 0 });
+  };
+
+  // 904 Medicine: a red cross on a grubby white patch.
+  I[904] = (k) => {
+    const cross = union(box(16, 16, 3.6, 10.4, 1), box(16, 16, 10.4, 3.6, 1));
+    k.solid(rough(grow(cross, 2), 0.35, 0.7, 2), 'white', { shade: { t: 'bevel', hw: 1, sw: 1.4 }, grime: 0.35 });
+    k.solid(rough(cross, 0.3, 0.8, 3), 'red', { shade: { t: 'round', r: 3 }, grime: 0.2 });
+  };
+
+  // 905 Scrap: a rusted cog and a hex nut.
+  I[905] = (k) => {
+    const gx = 13.4, gy = 13.6;
+    const cog = (x, y) => { const a = Math.atan2(y - gy, x - gx); return len(x - gx, y - gy) - (8.4 + (Math.cos(a * 8 + 0.3) > 0.1 ? 2.8 : 0)); };
+    k.solid(minus(cog, circle(gx, gy, 3)), 'steel', { rust: 0.55, grime: 0.3 });
+    k.line(shell(circle(gx, gy, 5.6), 0), { tone: SHD });
+    const hex = [];
+    for (let i = 0; i < 6; i++) { const a = (i * 60 + 12) * PI / 180; hex.push(23.8 + Math.cos(a) * 5, 24 + Math.sin(a) * 5); }
+    k.solid(minus(poly(hex), circle(23.8, 24, 2)), 'foil', { grime: 0.25 });
+  };
+
   // ── Category glyphs (items without a drawing of their own) ──────
   I.cat0 = (k) => {                                        // Gulpable: flask
     k.solid(union(circle(16, 20, 7.5), box(16, 10, 2.6, 4)), 'glass', { shade: { t: 'sphere', cx: 16, cy: 20, r: 7.5 } });

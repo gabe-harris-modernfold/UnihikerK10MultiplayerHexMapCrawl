@@ -1,0 +1,108 @@
+{
+  "id": "trap_portable_toilet",
+  "tier": 1,
+  "title": "The {{adjective}} Convenience",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A portable toilet, blue plastic, padlocked from the outside. The hand-lettered sign on the door says {{sign}}, and has said so for years. Every seam has been sealed with parcel tape and the roof vent is stuffed with a sock. The walls bulge slightly, like cheeks. On the frame, exactly where the door will scrape past it, someone has screwed the business end of a disposable lighter, flint wheel out. Whatever has been brewing in there wants very badly to meet it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Leave it occupied and back out the way you came",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_seam"
+        },
+        {
+          "label": "Pick the padlock and ease the door open clear of the flint",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_whump"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You leave it occupied. Some doors are shut for a reason, and this one has a sign, a padlock, a lighter and several years of reasons. You back out the way you came, and the last thing you hear is a long, low creak of plastic, like something shifting its weight to get comfortable.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "The padlock gives. You hold the door off the flint with one boot and let it swing, slowly, and years of held breath roll out past you and away while you stand well back and wait, which takes a while. Inside, the toilet has been fitted out like a pantry: shelves where the paper holder was, a tin of matches, a first-aid pouch on a hook. A cord runs from the seat hinge down into the tank, taut, with something heavy on the end.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 3, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Roll your sleeve up and follow the cord down into the tank",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "cache_2",
+          "hazard_id": "the_deep_end"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "You come up blue to the shoulder with the cord in your fist, and on the end of it is a drybag, knotted shut and double-wrapped. Inside is the most precious thing its owner had. Soap. Six bars, still in their paper, and a bottle of hand gel. The cleanest things you have seen in a year, kept at the bottom of the dirtiest place you have ever put your arm. {{verdict}} You use a bar on the spot. It barely touches the sides.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_seam": {
+      "text": "You turn to go and clip the corner with your hip, and a taped seam gives up with a long, low, wet noise that goes on for much longer than any noise should. Years of held breath come out of it at nose height. It is warm. It has texture. You make it as far as the door before you lose your last meal, and a little way past it before you lose the one before.",
+      "penalty": { "ll": -1, "food": -1 },
+      "wound": [0, 0],
+      "wound_max": [0, 0],
+      "ends_encounter": true
+    },
+    "the_whump": {
+      "text": "The padlock gives, and the door, pushed from inside by years of pent-up opinion, swings wide on its own and drags right across the flint. There is a sound like a very large dog saying WHUMP. A soft blue fireball rolls out and over you, the door slams back and flattens you with the sign, and the matches in your top pocket go up in sympathy. You get up without eyebrows, smoking gently, lightly misted in something from the tank.",
+      "penalty": { "ll": [-1, -2], "fuel": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_deep_end": {
+      "text": "You take a breath and go in to the shoulder after the cord. The tank is deeper than a tank has any right to be, and colder, and there are things in it that turn over when you touch them. Halfway down your boots go on the wet floor and you follow your arm in, face first, and for four long seconds you learn what the blue tastes like. It tastes the way it smells. You drink your canteen dry trying to rinse it out.",
+      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Engaged",
+      "Portable",
+      "Temporary",
+      "Reserved",
+      "Public"
+    ],
+    "sign": [
+      "OCCUPIED",
+      "ENGAGED",
+      "IN USE",
+      "BACK IN 5 MINS",
+      "DO NOT DISTURB"
+    ],
+    "verdict": [
+      "You understand the padlock now.",
+      "It was, in fairness, occupied.",
+      "Somebody had their priorities in order.",
+      "Cleanliness, it turns out, is next to the tank."
+    ]
+  }
+}

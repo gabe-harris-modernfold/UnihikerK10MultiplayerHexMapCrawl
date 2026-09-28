@@ -81,13 +81,17 @@ static void cacheWebFile(File& f, const String& fname) {
 // Web files: every web-typed file in the /data ROOT → webFiles (see the
 // WebFile comment in Esp32HexMapCrawl.ino). Order of discovery doesn't
 // matter; gz-vs-plain preference is resolved in cacheWebFile().
-// A per-file terrain tile (hex<Name><N>.png) or landmark (poi_*.png) that the
-// tile atlas replaced. An SD synced before the atlas still has ~70 of them;
-// with tiles.json on the card they would only burn PSRAM and cache slots.
+// A per-file terrain tile (hex<Name><N>.png), landmark (poi_*.png), shelter
+// sprite (shelter<Kind><N>.png, plus the unused basicShelter<N>.png copies)
+// or forage animal (forrageAnimal<N>.png) that the sprite sheets replaced.
+// An SD synced before them still has ~100; with tiles.json on the card they
+// would only burn PSRAM and cache slots. The sheets are .webp, so never match.
 static bool isLegacyTileFile(const char* name) {
   const size_t n = strlen(name);
   if (n < 5 || strcasecmp(name + n - 4, ".png") != 0) return false;
-  return strncmp(name, "hex", 3) == 0 || strncmp(name, "poi_", 4) == 0;
+  return strncmp(name, "hex", 3) == 0 || strncmp(name, "poi_", 4) == 0 ||
+         strncmp(name, "shelter", 7) == 0 || strncmp(name, "basicShelter", 12) == 0 ||
+         strncmp(name, "forrageAnimal", 13) == 0;
 }
 
 static void loadWebFilesToRAM() {
@@ -440,7 +444,7 @@ static void loadEncounterIndex() {
   File f = SD.open("/data/encounters/index.json");
   if (!f) { Log.warning("SD MISSING: /data/encounters/index.json"); return; }
   Log.notice("Encounter index load: size=%u", (unsigned)f.size());
-  size_t sz = min((size_t)f.size(), (size_t)1024);  // grew with the tunnel pool
+  size_t sz = min((size_t)f.size(), (size_t)1536);  // grew with the tunnel pool, then the traps
   char* buf = (char*)malloc(sz + 1);
   if (!buf) { Log.error("encounter index malloc FAIL size=%u", (unsigned)(sz+1)); f.close(); return; }
   f.read((uint8_t*)buf, sz);
@@ -458,6 +462,46 @@ static void loadEncounterIndex() {
     const char* pv = jsonFindKey(tmp, "path");
     if (cv) encPools[t].count = (uint8_t)jsonInt(cv);
     if (pv) jsonStr(pv, encPools[t].path, sizeof(encPools[t].path));
+  }
+  // The booby-trap pool (traps.hpp): not keyed by terrain, so it has a name
+  // of its own, and "tiers" -- file counts per tier, cheap first -- which
+  // become contiguous id ranges so worldgen can pick a tier without opening
+  // a single file:  "traps": {"count": 20, "path": "traps", "tiers": [6, 9, 5]}
+  // No "tiers" means one undivided pool, dealt as cheap.
+  for (int t = 0; t < TRAP_TIERS; t++) { trapTierLo[t] = 1; trapTierHi[t] = 0; }
+  if (const char* te = strstr(buf, "\"traps\"")) {
+    te += 7;
+    int copyLen = min(120, (int)(sz - (size_t)(te - buf)));
+    char tmp[124]; strncpy(tmp, te, copyLen); tmp[copyLen] = 0;
+    if (char* close = strchr(tmp, '}')) *close = 0;   // this entry only
+    EncPoolInfo& tp = encPools[ENC_POOL_TRAP];
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) tp.count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, tp.path, sizeof(tp.path));
+    int next = 1;
+    const char* tv = jsonFindKey(tmp, "tiers");
+    const char* lb = tv ? strchr(tv, '[') : nullptr;
+    if (lb) {
+      const char* q = lb + 1;
+      for (int t = 0; t < TRAP_TIERS && next <= tp.count; t++) {
+        while (*q == ' ') q++;
+        int n = atoi(q);
+        if (n > 0) {
+          trapTierLo[t] = (uint8_t)next;
+          trapTierHi[t] = (uint8_t)min((int)tp.count, next + n - 1);
+          next = trapTierHi[t] + 1;
+        }
+        const char* comma = strchr(q, ',');
+        if (!comma) break;
+        q = comma + 1;
+      }
+    } else if (tp.count) {
+      trapTierLo[0] = 1; trapTierHi[0] = tp.count;
+    }
+    Log.notice("Trap pool: %d files at /%s, tiers %d-%d / %d-%d / %d-%d", (int)tp.count, tp.path,
+               (int)trapTierLo[0], (int)trapTierHi[0], (int)trapTierLo[1], (int)trapTierHi[1],
+               (int)trapTierLo[2], (int)trapTierHi[2]);
   }
   free(buf);
 }

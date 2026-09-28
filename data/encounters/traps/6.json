@@ -1,0 +1,103 @@
+{
+  "id": "trap_unattended_luggage",
+  "tier": 1,
+  "title": "The {{adjective}} Luggage",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A suitcase stands upright in the doorway, handle up, as if its owner has just set it down to find their keys. Hard shell, two wheels, a tag on the handle: PLEASE RETURN TO OWNER. Beside the door a tall steel shelving unit, loaded to the top with paint tins, leans out over the threshold. The only thing stopping it finishing the lean is a fishing line from its top shelf, round a hook in the frame, down to the suitcase handle. The suitcase is the anchor.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Leave the luggage unattended and back out the way you came",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_warning_shot"
+        },
+        {
+          "label": "Chock the shelf back and cut the line",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_shelf"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You leave the suitcase where it stands. Somewhere at the back of your head a calm recorded voice reminds you that unattended luggage will be removed and destroyed, and you find you are happy for that to be somebody else's job. You back away the way you came. The shelf goes on leaning. It has a real gift for it.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You chock the shelf back against the wall with one of its own tins, cut the line, and nothing falls, and you stand in the doorway breathing like a dog for a while. The suitcase is heavy. Inside, packed with terrible care: shirts folded round a washbag, sun cream, a tube of mints, and a paperback with the corner turned down at the last chapter. Whoever packed this was going somewhere nice. They never found out how it ended.",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 1] },
+        { "res": 1, "qty": [1, 2] }
+      ],
+      "choices": [
+        {
+          "label": "Go through the door the suitcase was minding",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_last_coat"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "Through the door is a small room painted {{colour}}. Walls, ceiling, light switch, a chair, a radio, the boots by the skirting: all {{colour}}, coat upon coat, until the corners have gone soft and round and the room is a hand's width smaller all round. A stepladder in the middle, a full tin on its top step. The suitcase was packed and waiting. They were only going to do one more coat. Under the ladder: thinners, rags, a good toolbag.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "loot_table": "urban_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_warning_shot": {
+      "text": "You brush the line on the way back and the shelf, which was only waiting for an excuse, sends one tin off the top as a warning shot. It bursts at your feet and decorates you knee to shoulder in a gloss called {{colour}}, gone thick and sour and smelling of old eggs. You use your water trying to wash it off. It does not come off. You are {{colour}} now.",
+      "penalty": { "ll": -1, "water": -1 },
+      "wound": [0, 0],
+      "wound_max": [0, 0],
+      "ends_encounter": true
+    },
+    "the_shelf": {
+      "text": "Your chock slips as the line parts, and the shelf, relieved of its anchor, gives you its full attention. It is heavier than you. It is heavier than you and two friends. It comes down slowly, like a tree, and forty tins come with it, and the ones that do not bounce off your head burst around your knees. Your pack took a tin as well. You surface through a lake of {{colour}}, and so does lunch.",
+      "penalty": { "ll": [-1, -2], "food": [-1, -2] },
+      "wound": [0, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_last_coat": {
+      "text": "The last coat on this floor is not paint. It is gloss thinned with something slick and laid on purpose, and your first step goes out from under you like a rug. You grab the only thing there is to grab — the stepladder, which was the idea — and the full tin on its top step comes down corner first onto your scalp. You come round in a spreading pool of {{colour}} and use all your bandage on your head.",
+      "penalty": { "ll": [-1, -3], "med": -1 },
+      "wound": [0, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Unattended",
+      "Unclaimed",
+      "Lost",
+      "Forgotten",
+      "Left"
+    ],
+    "colour": [
+      "MAGNOLIA",
+      "BARLEY WHITE",
+      "SOFT OATMEAL",
+      "APPLE WHITE",
+      "WHISPER OF CREAM"
+    ]
+  }
+}

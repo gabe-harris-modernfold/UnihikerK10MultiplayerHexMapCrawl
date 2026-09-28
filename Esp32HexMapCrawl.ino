@@ -70,6 +70,7 @@
  *   survival_state.hpp    — day cycle, movement, resource collection
  *   actions_game_loop.hpp — action handlers (forage, scav, shelter, rest, …)
  *   encounter_engine.hpp  — server-side encounter JSON resolution
+ *   traps.hpp             — booby traps: worldgen placement, forced entry
  *   network-persistence.hpp — SD save/load
  *   network-sync.hpp      — state serialization and broadcast
  *   network-events.hpp    — event queue drain → JSON → clients
@@ -197,7 +198,12 @@ static uint8_t     hatchCount = 0;
 static constexpr int      MAP_COLS      = 75;
 static constexpr int      MAP_ROWS      = 57;
 static constexpr int      SURVEYED_BYTES = (MAP_ROWS * MAP_COLS + 7) / 8;
-static constexpr int      MAX_PLAYERS   = 6;
+static constexpr int      MAX_PLAYERS   = 6;   // seats: one per archetype (NUM_ARCHETYPES)
+// The game is for five: at most this many seats filled at once. MAX_PLAYERS
+// stays 6 because a seat IS an archetype -- pick puts you in players[arch],
+// and a returning survivor gets their seat back by picking it again -- so it
+// sizes every per-seat table, the save and the wire. This is the cap.
+static constexpr int      MAX_SEATED    = 5;
 static constexpr int      VISION_R      = 3;
 static constexpr int      NUM_TERRAIN   = 16;
 static constexpr uint32_t TICK_MS       = 100;
@@ -562,7 +568,17 @@ struct HexCell {
   uint8_t variant;
   uint8_t poi;        // 0 = none/looted, non-zero = has encounter
   uint8_t tireTrack;  // 0/1 — caravan has driven through this hex (wire-packed into TT bit 7)
+  // Booby trap (traps.hpp, docs/trap-system-spec.md). Bit 7 = armed, bits
+  // 0-5 = which survivors know it is here (an escapee's own map shows it;
+  // nobody else's does), bit 6 spare. Same per-player bitmask idiom as
+  // footprints. Wire-packed into TT bit 4, and only for a player whose bit
+  // is set -- see encodeCell().
+  uint8_t trap;
+  uint8_t trapEnc;    // 1-based file id in the traps pool; 0 = no trap. Never
+                      // shares a hex with poi -- placeTraps() skips POI hexes.
 };
+static constexpr uint8_t TRAP_ARMED = 0x80;
+static constexpr uint8_t TRAP_KNOWN = 0x3F;   // one bit per player slot
 
 struct Player {
   int16_t  q, r;
@@ -667,20 +683,31 @@ enum EvtType : uint8_t {
   // LL lost to a hazard that has no event of its own (chem storm, Strangle
   // Fog). pid, amt = LL lost, res = DC_* cause. Every other LL loss already
   // rides its own event (dawn, dusk, fire_dmg, flood_dmg, doom_act, enc_res).
-  EVT_DAMAGE        = 31
+  EVT_DAMAGE        = 31,
+  // ── Booby traps (traps.hpp) ──
+  // A trap changed state: pid = whose doing, q/r + depth = the hex,
+  // amt = TRAP_OUT_*. TRAP_OUT_KNOWN is unicast to that survivor alone (it
+  // is the one piece of trap news nobody else gets to hear); the other two
+  // are broadcast so anyone who knew about the trap stops drawing it.
+  EVT_TRAP          = 32
 };
+static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
+static constexpr uint8_t TRAP_OUT_SPRUNG = 1;   // a check failed: it went off, and it is gone
+static constexpr uint8_t TRAP_OUT_SPENT  = 2;   // banked from a cache: taking the bait disarmed it
 
 // Why a survivor went down: rides EVT_DOWNED (and EVT_DAMAGE) as ev.res, and
 // goes on the wire as "cause" in the names bots/causes.py already reports.
 enum DownCause : uint8_t {
   DC_UNKNOWN = 0, DC_THIRST, DC_HUNGER, DC_EXPOSURE, DC_BAD_AIR, DC_RADIATION,
   DC_FIRE, DC_LIGHTNING, DC_FLOOD, DC_DOOM, DC_ENC_HAZARD, DC_ENC_COST,
-  DC_ACTION, DC_CHEM, DC_FOG, DC_COUNT
+  DC_ACTION, DC_CHEM, DC_FOG,
+  DC_DAISY,   // a bloomed Wasteland Daisy bit (ecology.hpp) -- the Understory's one mechanical effect
+  DC_COUNT
 };
 static const char* const DC_NAME[DC_COUNT] = {
   "unattributed", "thirst", "hunger", "exposure", "bad air", "radiation",
   "fire", "lightning", "flood", "creeping doom", "encounter hazard",
-  "encounter cost", "action", "chem storm", "strangle fog"
+  "encounter cost", "action", "chem storm", "strangle fog", "wasteland daisy"
 };
 static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] : DC_NAME[0]; }
 
@@ -688,7 +715,26 @@ static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] :
 // Rides sync and /state so a bot can refuse a build it was not written for.
 //   2: exact-match dispatch, rid/ack/nack, ev "sq", downed "cause", EVT_DAMAGE,
 //      "rt" in the tick broadcast, ABW_* codes 2-9.
-static constexpr int PROTO_VERSION = 2;
+//   3: the "eco" message (ecology.hpp, docs/ecology-spec.md) and the
+//      "wasteland daisy" cause on dmg/downed/left.
+//   4: the tick broadcast "s" lists only seated players, each carrying its
+//      seat as "id"; a seat missing from "p" is offline.
+//   5: booby traps (traps.hpp): terrain is TT bits 0-3 and bit 4 is a
+//      per-recipient "a trap you escaped" flag; ev "trap"; enc_path,
+//      enc_start and enc_res carry "trap"; enc_end reason "escaped"; an
+//      enc_abort refused at a trap's start nacks "trap".
+static constexpr int PROTO_VERSION = 5;
+
+// ── The Understory (ecology.hpp) ──────────────────────────────────────────
+// Hooks the earlier includes call into. ecology.hpp itself comes after
+// tunnels.hpp (it needs W_hex and the tunnel board); with ECO_ENABLE=0 in
+// build_opt.h every one of these is a no-op.
+static void ecoNoteHurt(int pid, uint8_t cause);   // an injury happened here: the daisies' seed
+static bool ecoBiteCheck(int pid);                 // just entered a surface hex: bloomed daisies bite
+static void ecoOnIgnite(int16_t q, int16_t r);     // fire clears the bloom bit at once
+static const uint8_t* ecoPublishedDensity();       // per-hex vein density for the LCD minimap
+static uint32_t ecoLcdTint(uint32_t base, uint8_t dens);
+static uint32_t ecoAccentRgb();
 
 struct GameEvent {
   EvtType  type;
@@ -794,6 +840,10 @@ struct ActiveEncounter {
   uint8_t  pendingItemQty[ENC_MAX_ITEMS];
   uint8_t  pendingItemCount;
   uint32_t pendingRecipes;  // bitmask (bit id-1) of every recipe learned this scene, granted on enc_bank
+  uint8_t  trap;            // 1 = a forced booby-trap scene (traps.hpp): no walking away,
+                            // LL floored at 1 on a hazard, every hazard ends it
+  uint8_t  escape;          // current node carries "escape": true -- leaving banks nothing
+                            // and scores no full clear (a trap stays armed)
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
 
@@ -805,18 +855,38 @@ static constexpr uint8_t ENC_END_DAWN       = 2;
 static constexpr uint8_t ENC_END_DOWNED     = 3;
 static constexpr uint8_t ENC_END_DISCONNECT = 4;
 static constexpr uint8_t ENC_END_REGEN      = 5;
-static constexpr uint8_t ENC_END_COUNT      = 6;
+static constexpr uint8_t ENC_END_ESCAPED    = 6;   // left with nothing from an escape node / a trap
+static constexpr uint8_t ENC_END_COUNT      = 7;
 // Defined in encounter_engine.hpp; called from the game tick, session, and
 // regen handlers which are included earlier/later in the chain.
 static void endEncounter(int pid, uint8_t reason, bool restorePoi);
+// Defined in traps.hpp (needs the encounter engine, included after the
+// movement code that calls it). Opens the forced scene when pid has just
+// arrived on an armed trap; returns true when it did. Caller holds G.mutex.
+static bool trapOnArrival(int pid);
+// Also traps.hpp: settle the hex behind pid's active trap scene -- one of the
+// TRAP_OUT_* outcomes, or TRAP_SETTLE_REARM (the scene was cut short by dawn
+// or a disconnect: armed again, and nobody learned anything). Reads
+// encounters[pid], so call it before the slot is cleared. Caller holds G.mutex.
+static constexpr uint8_t TRAP_SETTLE_REARM = 3;
+static void trapSettle(int pid, uint8_t outcome);
 
 struct EncPoolInfo {
   uint8_t count;
   char    path[12];  // e.g. "urban", "marsh"
 };
-// Indexed by terrain type.  Sized NUM_TERRAIN so the tunnel pool (14) fits --
-// index.json only defines a subset; the rest stay count=0 and never fire.
-static EncPoolInfo encPools[NUM_TERRAIN];
+// Indexed by terrain type, plus one pool past the terrains for the booby
+// traps (ENC_POOL_TRAP), which fire by hex state rather than by terrain.
+// Sized so the tunnel pool (14) fits -- index.json only defines a subset;
+// the rest stay count=0 and never fire.
+static constexpr uint8_t ENC_POOL_TRAP  = NUM_TERRAIN;
+static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 1;
+static EncPoolInfo encPools[ENC_POOL_COUNT];
+// Trap tiers: contiguous file-id ranges inside the traps pool, from
+// index.json "traps"."tiers" (counts per tier, cheap first). Tier t is ids
+// trapTierLo[t]..trapTierHi[t]; an empty tier has lo > hi.
+static constexpr uint8_t TRAP_TIERS = 3;
+static uint8_t trapTierLo[TRAP_TIERS], trapTierHi[TRAP_TIERS];
 
 // POI encounter probability removed — encounters are now pre-placed
 // at map generation time (one hex per encounter ID, guaranteed).
@@ -843,6 +913,7 @@ struct CheckResult { int r1, r2, skillVal, mods, total, dn; bool success; };
 struct GameState {
   HexCell  (*map)[MAP_COLS];   // PSRAM: MAP_ROWS rows, allocated by allocPsramGlobals(); G.map[r][q] unchanged
   HexCell  (*tunnel)[TUN_COLS];  // PSRAM: the bunker tunnel board, G.tunnel[r][q] (tunnels.hpp)
+  uint8_t  (*tunnelOp)[TUN_COLS];  // PSRAM: per tunnel cell, which sides are open + art bits (TOP_* in tunnels.hpp)
   Player*  players;           // PSRAM: [MAX_PLAYERS], allocated by allocPsramGlobals(); G.players[i] unchanged
   uint32_t tickId;
   int      connectedCount;
@@ -862,6 +933,7 @@ static constexpr int  EVT_QUEUE_SIZE = 64;
 // Whole-map byte count — use instead of sizeof(G.map) (which is now a pointer).
 static constexpr size_t MAP_BYTES    = sizeof(HexCell) * MAP_ROWS * MAP_COLS;
 static constexpr size_t TUNNEL_BYTES = sizeof(HexCell) * TUN_ROWS * TUN_COLS;
+static constexpr size_t TUNNEL_OP_BYTES = sizeof(uint8_t) * TUN_ROWS * TUN_COLS;
 
 static GameState      G;
 
@@ -880,7 +952,15 @@ static constexpr uint32_t SAVE_MAGIC   = 0xDEADC0DEul;
 // slots on a Mule (see the constant). SavePlayer's invType[]/invQty[] are
 // that width, so the players.bin record size changed. Same one-shot reset —
 // a v17 save is ignored and survivors respawn.
-static constexpr uint8_t  SAVE_VERSION = 18;
+// v19: HexCell grew trap + trapEnc (booby traps, traps.hpp), which changes
+// MAP_BYTES and TUNNEL_BYTES. Same one-shot reset -- a v18 save is ignored
+// and the world regenerates, which is also the only way an existing world
+// would ever get traps: they are placed at generation and never re-armed.
+// v20: the tunnel board is corridors and rooms now, with walls between cells
+// that are not joined -- G.tunnelOp, one byte per tunnel cell, rides map.bin
+// straight after the G.tunnel block. Same one-shot reset: a v19 board has no
+// walls to load, and its blob caves are what the new generator replaced.
+static constexpr uint8_t  SAVE_VERSION = 20;
 static const char         SAVE_DIR[]   = "/save";
 static const char         SAVE_MAP_F[] = "/save/map.bin";
 static const char         SAVE_PLY_F[] = "/save/players.bin";
@@ -1095,7 +1175,7 @@ static uint8_t  k10PrevTCLevel = 0;
 static uint8_t  s_audioVol   = 5;
 static uint8_t  s_ledBright  = 4;
 static bool     s_screenFlip = false;
-static uint8_t  s_fxLevel    = 2;   // LCD FX (ui-fx.hpp): 0 off, 1 restrained, 2 madness; Button A cycles
+static uint8_t  s_fxLevel    = 2;   // LCD FX (ui-fx.hpp): 0 off, 1 restrained, 2 madness (Button A is volume now)
 static uint8_t  s_musicVol   = 6;   // K10 music + ambience (snd-music.hpp): 0 off .. 9; web settings slider
 
 static void loadK10Prefs() {
@@ -1223,12 +1303,18 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 // into by generateMap() through the forward declaration in hex-map.hpp.
 #include "tunnels.hpp"
 
+// The Understory: the slime mould and the Wasteland Daisy (docs/ecology-spec.md).
+// Reads G.map/W_hex through a snapshot, writes nothing the game reads except
+// the daisy bite. Its own task; see the concurrency notes at the top of the file.
+#include "ecology.hpp"
+
 // Gameplay chain (depend on hex-map + ui-display)
 #include "survival_skills.hpp"
 #include "inventory_items.hpp"     // depends on survival_skills
 #include "survival_state.hpp"      // depends on survival_skills + inventory_items
 #include "actions_game_loop.hpp"   // depends on all 3 above
 #include "encounter_engine.hpp"    // server-side encounter JSON resolution
+#include "traps.hpp"               // booby traps: placement, forced entry, knowledge
 
 // Network layer
 #include "network-persistence.hpp"
@@ -1253,6 +1339,7 @@ static void allocPsramGlobals() {
   uint32_t heapBefore = ESP.getFreeHeap();
   G.map         = (HexCell(*)[MAP_COLS])    psramStaticAlloc(MAP_BYTES);
   G.tunnel      = (HexCell(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_BYTES);
+  G.tunnelOp    = (uint8_t(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_OP_BYTES);
   W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
   pendingEvents = (GameEvent*)              psramStaticAlloc(sizeof(GameEvent) * EVT_QUEUE_SIZE);
   itemRegistry  = (ItemDef*)                psramStaticAlloc(sizeof(ItemDef)   * MAX_ITEMS);
@@ -1263,6 +1350,7 @@ static void allocPsramGlobals() {
   lootTables    = (LootTable*)              psramStaticAlloc(sizeof(LootTable) * MAX_LOOT_TABLES);
   k10Log        = (K10LogEntry*)            psramStaticAlloc(sizeof(K10LogEntry) * K10_LOG_SIZE);
   g_knownNets   = (KnownNet*)               psramStaticAlloc(sizeof(KnownNet)  * WIFI_MAX_NETS);
+  ecoAllocPsram();   // ~310 KB: trail grids, agents, snapshots, wire buffers (ecology.hpp)
   Log.notice("PSRAM globals: map=%u tunnel=%u whex=%u evq=%u items=%u recipes=%u img=%u web=%u "
              "players=%u loot=%u k10log=%u nets=%u B; heap %u->%uKB psram=%uKB",
              (unsigned)MAP_BYTES, (unsigned)TUNNEL_BYTES, (unsigned)W_HEX_BYTES,
@@ -1480,9 +1568,11 @@ void setup() {
     Log.notice("No save found, generating map");
     generateMap();
     wInit();  // fresh world — tryLoadSave() already called wInit() on its own success path
+    ecoDiscardScarFile();   // new land: the old scars belong to a map that is gone
   } else {
     Log.notice("Save loaded: map+players+world");
   }
+  ecoLoadScars();   // /save/scar.bin -- what the last boot's growth left behind
   Log.notice("Map ready %dx%d", (int)MAP_COLS, (int)MAP_ROWS);
   { char mb[30]; snprintf(mb, 30, "Map %dx%d ready", MAP_COLS, MAP_ROWS);
     splashAdd(mb, 0x60A040); }
@@ -1491,6 +1581,12 @@ void setup() {
              (int)W.caravan.q, (int)W.caravan.r, (int)W.creepingDoom.q, (int)W.creepingDoom.r);
 
   setupWiFiAndServer();
+  // Genesis after the radio is up: esp_random() is only a true RNG then. The
+  // map is generated or loaded and scar.bin is read, so the species can take
+  // root on the fossils -- and the splash gets its line before the art goes.
+  ecoGenesis();
+  splashAdd("Something has taken root:", 0x80A060);
+  splashAdd(ecoName(), 0xA0C080);
   splashFreeArt();
 
   // 18 KB: was 24 KB until drainEvents()'s 6.4 KB snapshot[] moved to PSRAM,
@@ -1498,6 +1594,7 @@ void setup() {
   // the "gameLoop wm: stack_free=" log line before trimming further.
   xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 18432, NULL, 2, NULL, 1);
   Log.notice("gameLoopTask spawned core=1 prio=2 stack=18KB");
+  ecoStartTask();   // core 1, prio 1: it runs in the gaps between game ticks
   Log.notice("==== BOOT COMPLETE elapsed=%ums ====", (unsigned)(millis() - _bootT0));
 }
 

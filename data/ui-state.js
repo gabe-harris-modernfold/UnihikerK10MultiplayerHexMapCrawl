@@ -29,6 +29,10 @@ const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
 // as llCap (appendPackArrays). The track used to be a hardcoded 7, so +LL
 // armour raised a ceiling nothing on screen could show.
 const uiLLCap = van.state(7);
+// Worn canteen capacity: the server's `wc` (canteenCap()). Up to this many
+// water tokens ride outside the pack cap; the Water readouts show how full it
+// is (min(water, wc)/wc) and hide it at 0 — nothing worn, nothing to show.
+const uiCanteenCap = van.state(0);
 // Equipment slots whose daily *_cost went unpaid at the last dawn (bitmask,
 // bit 0 = head .. bit 4 = vehicle). EVT_DAWN "unf". A fuel-gated MP bonus is
 // dormant on such a day, and the equipment panel greys it out to say so.

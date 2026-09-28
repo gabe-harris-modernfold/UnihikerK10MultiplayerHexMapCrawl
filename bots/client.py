@@ -487,7 +487,10 @@ class BotClient:
                 # *sent* equip_item but not what it was actually wearing at
                 # any moment, so "did the bonus apply" had to be inferred from
                 # item_result acks scattered through the rx channel.
-                "eq": list(me.equip), "is": me.inv_slots, "llcap": me.ll_cap}
+                "eq": list(me.equip), "is": me.inv_slots, "llcap": me.ll_cap,
+                # canteenCap(): gearcheck.py checks the Canteen's water_cap
+                # against it, and without it no run could say it was worn.
+                "wc": me.water_cap}
 
     async def _decide_loop(self) -> None:
         while not self.stop.is_set():

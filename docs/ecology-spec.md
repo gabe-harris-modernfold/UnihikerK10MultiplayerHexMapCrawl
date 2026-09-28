@@ -8,15 +8,42 @@ the spores start the next, larger wave somewhere else. What it leaves behind
 — **scars** — is saved to SD, so each new boot's growth takes root on the
 fossils of the last. It feeds on the game's own in-memory data (footprints,
 tracks, terrain, fire, the device's telemetry) through a set of
-transformation rules, and in this first cut it is **purely cosmetic**.
+transformation rules. It is cosmetic apart from one thing: nothing grows
+under it (see "The blight").
 
 It has a second, fixed species: the **Wasteland Daisy**, biting flowers that
 seed wherever a survivor was hurt and bloom three days later (see "Second
 species"). The slime mould is new every boot; the daisy is always the daisy.
 
-Status: **design draft, nothing implemented.** No firmware, client,
-mock-server or bot changes exist yet. Open questions are at the bottom.
+Status: **phases 1–5 implemented (2026-09-27), not yet compiled for the
+board or flashed.** Firmware in `ecology.hpp` (hooks forward-declared in
+`Esp32HexMapCrawl.ino`), client overlay in `data/eco-field.js`, the JS port
+and tuning harness in `mock-server/ecology.js` (wired into `server.js` with
+`--eco-speed=N`, `--eco-seed=N`, `dbg_eco` and the `/state` `eco` block),
+bots decode `dz` and price the daisies (`bots/state.py`, `navigate.py`,
+`causes.py`), and `bots/eco_check.py` is the online checker. Phase 6 (LEDs,
+toasts, text rot) is not started. The blight (phase 7) was added 2026-09-27:
+compiled clean with `build.ps1` and mock-verified, not flashed. Open
+questions are at the bottom.
 "The Understory" is a working name.
+
+Where the implementation departs from the text below:
+
+- **Genesis runs in `setup()`**, after `setupWiFiAndServer()`, not on the
+  first eco tick: the splash wants the species' name, and Wi-Fi is up by
+  then so the RNG rationale still holds. The Eco task starts right after.
+- **Scars ride a separate `eco` message** (`{"t":"eco","tk":…,"s":…}`) sent
+  before the main one on sync and again whenever scars change, instead of
+  an `s` field inside the main message. Same wire shape per hex.
+- **Pinned seed and bite switch** are set through `/state?ecoseed=N` and
+  `/state?ecobite=0|1` (NVS `eco`/`seed`, `eco`/`bite`), not a WS message.
+- **The bite lands on every surface entry**: a step (`movePlayer`), a climb
+  out of a shaft (`tunnelStepUp`), a respawn pick and a teleport item.
+- **`/save/scar.bin` is written inside `saveGame()`'s mutex hold** so the SD
+  card is only ever touched from one place; the Eco task publishes a packed
+  copy and sets `ecoScarDirty`.
+- **Bots count the bite on the per-game-day clock** (it scales with steps,
+  not with real time), so it is not in `metrics.PER_MINUTE_CAUSES`.
 
 **The Understory is its own system.** It shares no state with Creeping Doom,
 the Meridian Engine or the caravan, and neither side reacts to the other. It
@@ -24,13 +51,14 @@ the Meridian Engine or the caravan, and neither side reacts to the other. It
 fire), but it never reads their entity state and never writes anything they
 read. It keeps its own clock.
 
-**It is cosmetic — with one exception.** Nothing the slime mould does may
+**It is cosmetic — with two exceptions.** Nothing the slime mould does may
 change a number a player, a bot oracle or a balance measurement can observe:
-no terrain, resource, loot, encounter, movement cost, vision, damage or
-score. The single mechanical effect in the whole system is the **Wasteland
-Daisy's bite** (1 LL, see "Bite"). With the bite switched off (`eco`/`bite`
-= 0, see "Determinism") or the build flag `ECO_ENABLE=0`, the game must be
-identical to one without the Understory.
+no terrain, loot, encounter, movement cost, vision, damage or score. The two
+mechanical effects in the whole system are the **Wasteland Daisy's bite**
+(1 LL, see "Bite") and the mould's **blight** (no resource on a hex it
+covers, see "The blight"). With both switched off (`eco`/`bite` = 0 and
+`eco`/`blight` = 0, see "Determinism") or the build flag `ECO_ENABLE=0`, the
+game must be identical to one without the Understory.
 
 ---
 
@@ -58,6 +86,9 @@ identical to one without the Understory.
   marked, and the new one tends to germinate there.
 - The slime never hurts anyone. It is there, it is growing, and it is
   paying attention to where people go.
+- But nothing grows under it. Whatever was lying on a hex it creeps over is
+  gone, and nothing turns up there again until it has died back off the
+  hex. Because it feeds on footprints, that is the routes people walk.
 - Separately: wherever someone got hurt, a few days later there are
   flowers. Pale, pretty, and wrong — the heads turn to follow you, there
   are teeth in the middle, and if you walk into them they **bite**. The
@@ -153,9 +184,9 @@ that fizzles in a minute or a mat that floods the map.
 | 4 | `tempo` | Agent steps per eco tick (growth speed), within the "Loudness" band |
 | 4 | `cycle` | Wave timing: forage length, starvation patience N, fruit hold M, spore dormancy |
 | 4 | `growth` | Wave-cap multiplier per generation (×1.4–1.8) and spores per body |
-| 4 | `fruit` | Fruiting-body form for the client: stalk count, height, head shape (bead, cup, lattice, pod), cluster spread |
+| 4 | `fruit` | Fruiting-body form for the client: stalks per clump (bits 0-1), head shape (bits 2-3: blister, gill cap, cage, pod) |
 | 4 | `shyness` | Negative = drawn toward survivors' fresh tracks, positive = steers away from them |
-| 8 | `hue` | Base colour (client + LCD); fruiting bodies use a shifted accent |
+| 8 | `hue` | LCD: base tint. Client: where the species sits between bruise-purple and blood-red, plus the heartbeat's direction |
 | 4 | `scarLove` | How strongly old scars attract spores and agents |
 | rest | `name` | Syllable indices for the species name |
 
@@ -226,7 +257,9 @@ Each agent step:
 1. **Sense** three points ahead (left, centre, right at ± sensor angle,
    sensor distance away): `trail + food(hex) − barrier(hex)`.
 2. **Turn** toward the strongest (by the rotation angle), random if tied.
-3. **Move** one step. Into a lethal barrier = die; off an impassable edge =
+3. **Move** one step. Toward a lethal barrier = turn back with a random
+   swing (changed 2026-09-27: dying on contact emptied whole colonies into
+   the rivers within a dozen ticks); standing in one = die; off an impassable edge =
    turn back.
 4. **Deposit** into the trail.
 
@@ -286,24 +319,38 @@ Spores never land on water or within 3 hexes of a connected player.
 
 ### Layer 4 — membrane
 
-The only ways the Understory leaves memory (all cosmetic except item 6):
+The only ways the Understory leaves memory (all cosmetic except items 6
+and 7):
 
 1. **`eco` wire message** to every in-game client, once per eco tick (below).
 2. **Client overlay** — `data/eco-field.js`, same shape as `fire-field.js`
    / `storm-field.js`: indexes the latest message; the renderer queries it
    in the terrain pass. **Drawn procedurally in canvas code, no image
-   assets**, in the genome's hue:
-   - **Veins:** for each hex with density > 0, a tube from near the hex
-     centre to the midpoint of every edge in its edge mask, thickness from
-     density, with a small wobble derived from a hash of (seed, q, r) so it
-     is the same every frame and on every client. Because neighbouring
-     hexes' masks agree on shared edges, tubes join into one continuous
-     network across hex boundaries.
+   assets.** The look is mycelium runners in blood and bruise-purple,
+   desaturated; the genome hue only sets where a species sits between
+   purple-leaning and blood-leaning:
+   - **Veins:** for each hex with density > 0, a tapered, lumpy cord from a
+     hashed knot to every edge in its edge mask, crossing the edge at a
+     point and angle hashed from the shared edge (not its midpoint), so both
+     hexes agree and the network runs through the seam without showing the
+     grid. Cords overshoot the seam slightly so the tile bleed of whichever
+     hex draws later never cuts them. Side runners fork into hair-thin
+     hyphae and appear one by one as density climbs; toward every empty
+     neighbour a thin runner breaks into tips that probe and sweep slowly.
+     Thick growth gets creases, necrotic patches, a bruise stain on the
+     ground and pustules that swell over 10-20 s, pop and regrow. A faint
+     lub-dub heartbeat rolls across the map in a species-set direction. A
+     hex whose density is falling (a spent colony) rots black as it fades.
+     Geometry is cached per hex as Path2D; a frame only draws it plus the
+     live bits.
    - **Fruiting bodies:** drawn on their hex from `fruit` + body `seed`:
-     thin stalks with beaded / cupped / latticed heads, growing in over the
-     forming stage, a faint pulse while mature, and a one-shot puff of
-     drifting motes on burst.
-   - **Scars:** a very faint stain; fruiting scars a faint ring.
+     2-4 small clumps, each a squat mound crowded with stubby stalks
+     carrying a blood-blister / gill-cap / red-cage / seamed-pod head
+     (`fruit` bits 2-3), coming up clump by clump, throbbing faintly while
+     mature, and rupturing on burst into a fine mist of specks from every
+     clump that rises and drifts for ~4 s. Spore flights are small drifting
+     knots of the same specks.
+   - **Scars:** dried, broken husks of runners on a dried-blood stain.
    - **Daisies:** per patch from `stage`, `count` and `seed` (see "Second
      species"). Head-turning and the snap use player positions the client
      already has; no extra wire data.
@@ -313,9 +360,12 @@ The only ways the Understory leaves memory (all cosmetic except item 6):
 4. **Boot splash** — the species name line.
 5. **`/state`** — `eco:{seed, name, style, tick, wave, colonies, agents,
    coverage, fruiting, scarred, daisies:{seeded, growing, bloomed},
-   bite}`.
+   bite, blight, eaten}`.
 6. **Bloom bitset** — read by the GameLoop to apply daisy bites (see
-   "Bite"). The only output with a gameplay effect.
+   "Bite").
+7. **Published density** — the same per-hex buffer the LCD tints from,
+   read by the GameLoop's respawn pass to apply the blight (see "The
+   blight").
 
 Deferred cosmetic outputs (phase 6): an LED pulse when a body bursts,
 occasional flavour toasts ("the ground here is soft", "something has
@@ -453,6 +503,47 @@ seeds and blooms included, like the slime. They are not written to
 
 ---
 
+## The blight
+
+**Decided (2026-09-27): nothing grows under the mould.**
+
+- **What:** a surface hex with any mould the client draws on it loses
+  whatever resource is on it, and none respawns while the mould stays. "Any
+  mould" is density 1 or more (the faint searching lace counts, so the rule
+  is simply "if you can see it, it's barren") or a mature fruiting body.
+  Daisies are not mould and do not blight; scars (dead husks) do not either.
+- **Regrowth: only while it's there.** The eaten hex's respawn timer is
+  armed, as if the pile had been collected, and held full while the mould
+  stays. Once the hex's density is back to 0 the normal `RESPAWN_TICKS`
+  count runs and the terrain's usual respawn roll decides. The dead zone
+  moves with the mould, and the coverage cap (see "Loudness") bounds it.
+- **Where it runs:** the GameLoop's resource-respawn pass (`tickGame`,
+  `actions_game_loop.hpp`) under `G.mutex`, reading the published per-hex
+  density through `ecoBlightMap()`. The Eco task still writes nothing the
+  game reads. No density published yet, or none since a regen, means no
+  blight, so an old world's mould never eats a new world's resources.
+- **Rate:** one hex per game tick (10/s), so a spreading wave can't
+  overflow the 64-slot event queue or the clients' 8-deep socket queues. The
+  rest wait a tick or two.
+- **Wire:** the existing `rsp` event with `res` 0 and `amt` 0. The client
+  already clears the hex on it (`drop_res` uses the same shape), so there is
+  no new message and no `PROTO_VERSION` bump.
+- **Dropped tokens:** `drop_res` onto a mouldy hex loses them to the dust
+  (`grd` 0), the same as a hex holding a different resource, instead of
+  landing and being eaten a tick later.
+- **Not touched:** ground item piles and Remains, which are not hex
+  resources, and anything underground. The mould is surface-only, and the
+  blight reads and writes `G.map` only, never `G.tunnel`.
+- **Switch:** NVS `eco`/`blight` (default 1), set with
+  `/state?ecoblight=0|1` and reported as `eco.blight`, next to `eco.eaten`
+  (resources eaten since boot). The mock has the same query and a `dbg_eco`
+  `blight` act.
+- **Balance:** unmeasured. The mould feeds on footprints (T1), so it grows
+  along the routes survivors walk and eats what lies on them. It needs a bot
+  run (`docs/bot-testing.md`) before it is left on for real play.
+
+---
+
 ## Scars
 
 **Decided: scars persist across reboots and never fade; only a world regen
@@ -556,7 +647,7 @@ New server → client message, plus the new `DC_DAISY` down/damage cause
   revealed hexes. A client reading the raw message can infer the outline of
   water barriers under fog; that leak is accepted (decided), so there is no
   per-player masking or per-client encode.
-- At 6 clients × ~9 KB every 5 s this is ~11 KB/s — small next to the
+- At 5 clients × ~9 KB every 5 s this is ~9 KB/s — small next to the
   10 Hz `s` broadcast, and one PSRAM buffer shared by all clients, not a
   queue. The per-client WS queue is capped at 8 (`build_opt.h`), so it must
   never be sent more often than every few seconds.
@@ -597,10 +688,14 @@ hardware with a pinned seed:
 - **`ECO_ENABLE=0`** compile flag removes the whole system, task included
   (and with it every daisy bite).
 - **Bite switch:** NVS `eco`/`bite`, reported in `/state`.
+- **Blight switch:** NVS `eco`/`blight`, reported in `/state` with
+  `eco.eaten`.
 - **Cosmetic oracle:** a bot check that runs the same pinned scenario with
-  the ecology on (bite switched off) and off and diffs every gameplay field
-  it observes. Any difference is a bug by definition. A second run with the
-  bite on must differ *only* by `DC_DAISY` damage and its consequences.
+  the ecology on (bite and blight switched off) and off and diffs every
+  gameplay field it observes. Any difference is a bug by definition. A
+  second run with the bite on must differ *only* by `DC_DAISY` damage and
+  its consequences; a third with the blight on only by resources missing
+  from mouldy hexes and their consequences.
 - **Mock parity:** `mock-server/` gets a JS port of layers 1–3 so offline UI
   work sees a live, fruiting ecology. The same port is the tuning harness.
 
@@ -660,8 +755,9 @@ internal RAM — the one internal cost.
    is left on.
 5. **More inputs.** T5–T7 (ruts, weather, vital signs), LCD drawing.
 6. **More membrane.** LEDs, flavour toasts, text rot, wrong-art variants.
-7. *(Not planned)* Mechanical effects. Would need its own spec and a round
-   of bot balance measurement.
+7. **Mechanical effects.** The blight (2026-09-27, see "The blight").
+   Anything further would need its own spec and a round of bot balance
+   measurement.
 
 ---
 
@@ -687,8 +783,11 @@ internal RAM — the one internal cost.
 - Second species, the **Wasteland Daisy**: fixed (not genome-rolled), seeds
   only where a survivor was *injured* on the surface, blooms three dawns
   later, never underground, destroyed by fire.
-- Bloomed daisies **bite for 1 LL** — the Understory's only mechanical
-  effect.
+- Bloomed daisies **bite for 1 LL** — one of the Understory's two
+  mechanical effects.
+- The mould **blights** (2026-09-27): no resource lies on a surface hex with
+  any visible mould, and none regrows until it has died back off the hex.
+  Never underground.
 - Daisies do not survive a reboot.
 
 ## Open questions

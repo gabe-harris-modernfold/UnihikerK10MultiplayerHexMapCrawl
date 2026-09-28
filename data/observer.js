@@ -559,7 +559,7 @@
       // ── When the turn happens ────────────────────────────
       // On the FIRST DEATH, or on half or more of the connected players
       // sitting at ll <= llCap/2 — whichever comes first. The threshold alone
-      // mistimes it both ways: six players limping trips it before anything
+      // mistimes it both ways: five players limping trips it before anything
       // has happened, and one catastrophic death among five healthy players
       // does not trip it at all, which is the exact moment an audience feels
       // a show change gear.
@@ -740,7 +740,7 @@
   // It sees every derived event and may speak about exactly three things:
   // THE CAMERA SUBJECT, THE WORLD, AND A HARD INTERRUPT. Everything else is a
   // meter moving and belongs in the render. Without that rule the ticker
-  // degenerates into a six-player status console with jokes in it — six
+  // degenerates into a five-player status console with jokes in it — five
   // threads, no thread.
   // ══════════════════════════════════════════════════════════════
   const Narrator = {
@@ -1147,10 +1147,10 @@
       }
     },
 
-    // The tile atlas (scripts/tilegen, mirrors loadTerrainVariants() in
-    // engine.js): undefined until asked for, 'loading', the parsed manifest
-    // with its pages, or 'failed' -- in which case the per-file tiles below
-    // are used exactly as before.
+    // The tile atlas (one sheet per terrain, scripts/hex_sheets.py; mirrors
+    // loadTerrainVariants() in engine.js): undefined until asked for,
+    // 'loading', the parsed manifest with its pages, or 'failed' -- in which
+    // case the per-file tiles below are used exactly as before.
     atlas: undefined,
     atlasReady: null,     // settles when tiles.json has been read (or failed)
 
@@ -1216,16 +1216,28 @@
       return this.get(host + '/img/hex' + name + v + '.png');
     },
 
+    // -> { img, sx, sy, s } from a shelter sheet (tiles.json `shelters`),
+    // { img } per-file, or null.
     shelter(host, kind, q, r, sv) {
       const name = SHELTER_IMG_NAMES[kind - 1];
       if (!name) return null;
-      const count = sv ? (sv[kind - 1] | 0) : 0;
+      this.loadAtlas(host);
+      const A = this.atlas;
+      if (A === 'loading') return null;
       // No variant on the wire for shelters, so pick one by position: stable
       // for a given hex, which is what matters, and wrong in a way nobody
-      // standing three metres away can see. No counts, same fallback as the
-      // terrain tiles.
-      const v = count ? ((((q * 73856093) ^ (r * 19349663)) >>> 0) % count) : 0;
-      return this.get(host + '/img/' + name + v + '.png');
+      // standing three metres away can see.
+      const pick = (n) => ((((q * 73856093) ^ (r * 19349663)) >>> 0) % n);
+      if (A && A !== 'failed' && Array.isArray(A.shelters)) {
+        const pool = A.shelters[kind - 1] || [];
+        const at = pool.length ? pool[pick(pool.length)] : null;
+        const img = at && A.imgs[at[0]];
+        return img && img.ok ? { img, sx: at[1], sy: at[2], s: (A.shelterCell || [224])[0] } : null;
+      }
+      // Per file. No counts, same fallback as the terrain tiles: variant 0.
+      const count = sv ? (sv[kind - 1] | 0) : 0;
+      const img = this.get(host + '/img/' + name + (count ? pick(count) : 0) + '.png');
+      return img && img.ok ? { img } : null;
     },
   };
 
@@ -1476,17 +1488,18 @@
     const size = Math.max(W / (3 * R + 2), H / (2 * SQ3 * R + 2));
     const host = ST.host;
 
-    // Back to front, as renderHexTerrain() does it: atlas tiles are 3/4
-    // dioramas whose props stand up into the hex behind, so a row has to
-    // land on top of the row behind it.
+    // Back to front, as renderHexTerrain() does it: a diorama atlas's tiles
+    // stand up into the hex behind, so a row has to land on top of the row
+    // behind it. (Flat sheet tiles don't care.)
     const cells = view.cells.slice().sort((a, b) => (a.dr - b.dr) || (a.dq - b.dq));
     for (const c of cells) {
       const x = size * 1.5 * c.dq;
       const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
       const tile = Art.tile(host, c.terrain, c.variant, snap.vc);
       if (tile && tile.m) {
-        // An atlas cell, anchored at the hex centre (see build_tiles.py):
-        // unclipped, so peaks and towers overlap the hex behind them.
+        // An atlas cell, anchored at the hex centre: unclipped, so a
+        // diorama's peaks overlap the hex behind. A flat sheet cell (anchor =
+        // centre of a square cell) lands on the same 2*size square as below.
         const m = tile.m, k = size / m.radius;
         ctx.drawImage(tile.img, tile.sx, tile.sy, m.cell[0], m.cell[1],
           x - m.anchor[0] * k, y - m.anchor[1] * k, m.cell[0] * k, m.cell[1] * k);
@@ -1509,7 +1522,8 @@
 
       if (c.shelter) {
         const sh = Art.shelter(host, c.shelter, c.q, c.r, snap.sv);
-        if (sh && sh.ok) ctx.drawImage(sh, x - size * 0.6, y - size * 0.6, size * 1.2, size * 1.2);
+        if (sh && sh.s) ctx.drawImage(sh.img, sh.sx, sh.sy, sh.s, sh.s, x - size * 0.6, y - size * 0.6, size * 1.2, size * 1.2);
+        else if (sh) ctx.drawImage(sh.img, x - size * 0.6, y - size * 0.6, size * 1.2, size * 1.2);
         else { ctx.strokeStyle = '#C0C0B0'; ctx.lineWidth = size * 0.05; ctx.strokeRect(x - size * 0.2, y - size * 0.2, size * 0.4, size * 0.4); }
       }
       if (c.poi) { ctx.fillStyle = '#E8A828'; dot(ctx, x, y, size * 0.17); }

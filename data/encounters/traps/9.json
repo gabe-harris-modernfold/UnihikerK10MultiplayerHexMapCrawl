@@ -1,0 +1,103 @@
+{
+  "id": "trap_daily_confession",
+  "tier": 2,
+  "title": "The {{adjective}} Confessional",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "A confessional booth, two narrow doors in dark wood. The priest's side has its curtain drawn, and under the curtain a candle is burning — a fresh one, wax still soft. Somebody lit it today. On the penitent's side: a kneeler, and a lattice grille at exactly the height of a kneeling face, with a little sliding shutter. A cord is tied to the shutter's brass pull and runs up into the roof, where something heavy ticks against the panelling, slow as a clock. Through the lattice, a bowed head in a stole. It does not look up.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back out of the booth, well clear of the cord",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_amen"
+        },
+        {
+          "label": "Reach under the curtain and find what the cord is holding",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_penance"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You back out of the booth without letting the cord so much as feel your breath, and you do not turn round until the door has swung shut between you. Behind it the candle keeps burning, the bowed head keeps listening, and the thing in the roof keeps time against the wood. You have nothing to confess. Not yet. Somebody, evidently, does.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You get an arm under the curtain and find it by feel: a butcher's cleaver bolted to a sash weight, swinging from a pulley, drawn back and pinned by the shutter, so that whoever slides it takes the sacrament full in the face. You take its weight, cut the cord and lower it to the floor like something sleeping. Then you draw the curtain. A box of church candles. A tin of wafers. And the confessor — dead for years, dried to the chair, sitting on a lidded box with his hands folded over something wrapped in purple cloth.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 1, "qty": [2, 3] }
+      ],
+      "loot_table": "settlement_common",
+      "choices": [
+        {
+          "label": "Shift the confessor off the box he is sitting on",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "cache_2",
+          "hazard_id": "the_confessor"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "The box under him is the poor box, and it is not poor: sealed medicine and bottled water, bedded in straw. On top lies a thick sheaf of slips in one careful hand, years of them, every one beginning FORGIVE ME FATHER, IT HAS BEEN ONE DAY SINCE MY LAST CONFESSION, and every one ending AND I RESET THE BOOTH. Somebody kneels here every evening, lights a candle, tells a dead man what they did, and goes home forgiven. {{irony}}",
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [2, 3] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_amen": {
+      "text": "Your pack strap finds the cord on the way out. The shutter jerks open an inch — only an inch — and the cleaver comes through the lattice sideways, like a bad thought, and takes the top off your ear on its way past. Then it swings back into the dark to think about what it has done. You leave a little of yourself in the booth. Everybody does.",
+      "penalty": { "ll": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_penance": {
+      "text": "The sash weight is heavier than it looks and the cord is slicker, and it gets away from you with your arm still under the curtain. The cleaver swings the only way it knows, and your forearm is in the way. It opens you from wrist to elbow, neat as a letter. Through the lattice the confessor goes on listening with the patience of his profession, and you bleed on the kneeler, which seems about right.",
+      "penalty": { "ll": [-2, -4], "med": [-1, -1] },
+      "wound": [1, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "the_confessor": {
+      "text": "You get your hands under his arms and lift, and the confessor comes up off the box with a dry creak and then, quite suddenly, not dry at all. Years of sitting in candle-warmth have done something to his insides that his outside was keeping quiet about, and he folds over you and tells you all of it. The purple cloth unwraps on the way down. It was a second cleaver, tied to his wrist, and he gives it to you with his whole remaining weight.",
+      "penalty": { "ll": [-2, -4], "water": [-1, -2], "med": [-1, -1] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Forgiving",
+      "Patient",
+      "Discreet",
+      "Understanding",
+      "Always Open"
+    ],
+    "irony": [
+      "The confessor has never once objected.",
+      "Today's slip is not written yet. You suspect it will mention you.",
+      "There is no space on the slips for a penance. There never was.",
+      "Absolution, it turns out, is very easy to come by in here."
+    ]
+  }
+}

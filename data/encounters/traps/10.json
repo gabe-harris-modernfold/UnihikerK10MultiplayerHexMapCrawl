@@ -1,0 +1,110 @@
+{
+  "id": "trap_ninety_nine",
+  "tier": 2,
+  "title": "The {{adjective}} Ice-Cream Van",
+  "start_node": "armed",
+  "nodes": {
+    "armed": {
+      "text": "An ice-cream van, a fibreglass cone on the roof gone the pink of old gums. On the menu board every price has been crossed out and rewritten in marker: 99 FLAKE — ONE HAND. The hatch is a sheet of steel with its bottom edge ground bright, and through the gap beneath it you can see a dozen bungee cords stretched downward, waiting. The counter has a notch worn in it. When your shadow touches the hatch, the chimes play one hopeful note. You would bet your boots the hatch stays up exactly as long as the tune does.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Step away from the van before the chimes finish their thought",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "escaped",
+          "hazard_id": "the_jingle"
+        },
+        {
+          "label": "Get in the cab and jam the hatch runners from inside",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "cache_1",
+          "hazard_id": "the_ninety_nine"
+        }
+      ]
+    },
+    "escaped": {
+      "text": "You step back from the van, and back again, and the chimes lose interest halfway through the first bar and trail off in a sad electric sigh. Behind the hatch the bungee cords go on waiting, stretched and patient. Somebody will want something from that freezer eventually. Somebody always does, and the van knows it.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "cache_1": {
+      "text": "You get in through the driver's door and wedge a spanner into the hatch runners, then lift the hatch yourself, from inside, to be sure. The chimes play the whole tune, every tinny bar, and on the last note a latch clacks and the steel lunges down against the spanner and holds. The cab gives up the van's own jerry can; the cone dispenser has been restocked with bolts. And the freezer is humming. It has no business humming. Its lid has the same bright edge as the hatch, and the same bungee cords.",
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 2] },
+        { "res": 4, "qty": [2, 3] }
+      ],
+      "loot_table": "urban_common",
+      "choices": [
+        {
+          "label": "Take the freezer lid on your back and reach in",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "cache_2",
+          "hazard_id": "the_freezer"
+        }
+      ]
+    },
+    "cache_2": {
+      "text": "You get your shoulders under the lid and heave, and the chimes start up again, and you have one tune to do this in. The freezer is cold — properly cold, frost-furred, the whole van's wiring bent to exactly two purposes and this the second. Under a crust of ice: sealed water, sealed rations, and at the very bottom one perfect unopened tub of {{flavour}}. The hatch, the hand, the menu board — all of it was guarding ice cream. {{irony}} You eat it in the cab with your fingers. All ten of them.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "loot_table": "urban_rare",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_jingle": {
+      "text": "You step back, the van rocks on its springs, and the hatch hops a hand's width up its runners. The chimes take that as a yes. Your fingers, which you had not noticed were curled over the counter's edge, are the last part of you to leave, and on the fourth note not all of them make it. The hatch keeps two fingertips and a thumbnail, and plays the rest of the tune to nobody, because that is its job.",
+      "penalty": { "ll": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 0],
+      "ends_encounter": true
+    },
+    "the_ninety_nine": {
+      "text": "The spanner is a size too small for the runners. You learn this halfway through the tune, leaning out through the hatch to check the latch, and on the last note the runners spit it out. A dozen bungees bring the steel down across your arm above the elbow and hold it there, pinned in the counter's notch, while the chimes start again from the top. It is a very long tune with your arm in it. Behind you, the jerry can you kicked over empties itself into the footwell.",
+      "penalty": { "ll": [-2, -3], "fuel": [-1, -2] },
+      "wound": [1, 0],
+      "wound_max": [1, 1],
+      "ends_encounter": true
+    },
+    "the_freezer": {
+      "text": "The tune is shorter the second time, or you are slower. The last note lands with your arms in the freezer to the shoulder and your back already giving out, and the lid comes down across your shoulder blades like a verdict. You are folded face-first into the frost, where your cheek freezes fast to a rat that crawled in to die somewhere cold and managed it. The chimes start again. Getting your face back takes the whole tune, and not all of your face comes.",
+      "penalty": { "ll": [-2, -4], "food": [-1, -2], "water": [-1, -1] },
+      "wound": [1, 0],
+      "wound_max": [2, 1],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Friendly",
+      "Tuneful",
+      "Much-Loved",
+      "Cheerful",
+      "Neighbourhood"
+    ],
+    "flavour": [
+      "raspberry ripple",
+      "mint choc chip",
+      "rum and raisin",
+      "Neapolitan",
+      "plain vanilla"
+    ],
+    "irony": [
+      "The lid says SAVE FOR A SPECIAL OCCASION. You decide this is one.",
+      "Somebody guarded it with other people's fingers for six years and never had a spoonful.",
+      "It is not even a large tub.",
+      "There is a scoop taped to the lid, still in its wrapper."
+    ]
+  }
+}

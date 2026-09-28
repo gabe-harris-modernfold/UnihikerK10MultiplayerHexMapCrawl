@@ -22,6 +22,7 @@
     "storm-field.js",
     "quake-field.js",
     "fire-field.js",
+    "eco-field.js",
     "world-entities.js",
     "engine.js",
     "ui-state.js",

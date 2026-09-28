@@ -9,7 +9,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 
 ## For AI coding agents (read first, ≤ 1 min)
 
-- **Self-test, no board:** `cd bots && python smoke.py` (456 checks). Run this
+- **Self-test, no board:** `cd bots && python smoke.py` (503 checks). Run this
   before every live run; it catches a broken parser in 2 s instead of wasting
   10 minutes of hardware time. It also reads the firmware source and fails on
   drift: 36 constants mirrored in `config.py`, the dispatch table, and the
@@ -44,6 +44,9 @@ knows about the game it learns through the same WebSocket a browser uses.
   bunker tunnels". They apply to any policy, not just the two that go down
   there deliberately: a hatch is the cheapest hex on the surface map, so bots
   fall in.
+- **Booby traps open scenes nobody asked for** (protocol 5) — see "Booby
+  traps". A bot that only drives encounters it opened itself will sit in one
+  forever; every `SurvivorPolicy` answers them with `decide_trap()`.
 - **Never `nohup` a background run, and never pipe `arena.py` into
   `head`/`tail`.** Both orphan the Python process: it survives, keeps
   playing, and every later `verify_reset()` then sees a dirty board and
@@ -233,12 +236,13 @@ nack means the request was refused before it did anything.
 | `why` | Means |
 |---|---|
 | `parse`, `bad_arg`, `bad_act`, `unknown_cmd` | malformed, out of range, or no such `t` |
-| `not_seated`, `not_in_lobby`, `slot_taken` | seat state: act before pick, pick twice, pick a taken slot |
+| `not_seated`, `not_in_lobby`, `slot_taken`, `full` | seat state: act before pick, pick twice, pick a taken seat, pick with `MAX_SEATED` already seated |
 | `busy` | `G.mutex` timeout — safe to retry |
 | `downed`, `in_enc`, `resting`, `underground` | player state forbids it |
 | `bad_dir`, `terrain`, `wall`, `no_mp`, `cooldown` | move refusals (`movePlayer` / `moveTunnel`) |
 | `pack_full`, `no_res`, `not_needed`, `archetype`, `craft` | action refusals (`ABW_*`, also on the `act` event as `bw`) |
 | `not_here`, `no_poi`, `claimed`, `no_pool`, `load_failed`, `no_enc`, `no_choice`, `cannot_bank` | encounter refusals |
+| `trap` | `enc_abort` at a booby trap's start and the escape roll failed: still in the scene |
 | `self`, `no_target`, `not_same_hex`, `dup_offer`, `no_offer`, `stale_offer`, `empty`, `no_caravan`, `caravan_short`, `water` | trade refusals |
 | `refused` | an item function said no; it returns a bare bool, so this is as specific as it gets |
 
@@ -260,6 +264,17 @@ Protocol 2 also:
 - names the **`cause`** on `downed` and on the `left` that follows a death.
 - sends **`dmg`** (`pid`, `amt`, `cause`, `ll`) for the chem storm and
   Strangle Fog losses that used to emit nothing.
+
+Protocol 4 lists only **seated** players in the tick broadcast `s`, each block
+carrying its seat as **`id`**. A seat missing from `p` is offline. Never index
+`s.p` by position: `p[0]` is whichever seated player has the lowest id.
+`state.py` marks unlisted seats disconnected. `sync` still carries all six.
+
+Protocol 5 adds booby traps: **terrain is TT bits 0-3**, and bit 4 is a
+per-recipient "a trap you escaped" flag (`mapdec.py` masks `0x0F` and reads
+it as `Cell.trap`). `enc_path`, `enc_start` and `enc_res` carry `"trap"`,
+`enc_end` gains reason `escaped`, and there is a new `ev trap`. Details in
+"Booby traps" below and [trap-system-spec.md](trap-system-spec.md).
 
 ## Protocol rules
 
@@ -321,6 +336,15 @@ connected client. Policies filter on their own `pid`; `metrics.py` dedupes on
 - **There is no inbound rate limiting anywhere** in `handleMessage`. Bots must
   self-throttle. In practice the load is `broadcastState()` fan-out rather than
   inbound traffic, so client *count* matters far more than send rate.
+- **Protocol 3 adds the `eco` message** ([ecology-spec.md](ecology-spec.md)):
+  ~9 KB every 5 s, plus a scar-only variant. `state.py` drops the vein grid
+  and keeps only `dz`, the Wasteland Daisy patches — a bloomed one (stage 3)
+  bites for 1 LL on entry, reported as a `dmg` event with `cause:
+  "wasteland daisy"` (`causes.py` knows it). `navigate.dijkstra` prices
+  bloomed and budding patches through `WorldMap.extra_cost`, so a bot walks
+  around the flowers when a detour exists. Everything else in the message
+  is cosmetic by contract; `eco_check.py` checks the message shape against
+  a live board or the mock.
 
 ---
 
@@ -386,6 +410,15 @@ can.
 **6. `tsync` arrives on every descent, fogged.** Applied naively it wipes the
 corridor map built on the last trip down. `WorldMap.load_full(merge=True)`
 keeps what was already known.
+
+**7. Two floor cells side by side are not necessarily joined.** Since
+2026-09-27 the board is one-hex corridors with rooms off them, and there are
+walls between cells (`G.tunnelOp`, tunnels.hpp "Open sides"). A step through
+a closed side is refused as `"wall"` exactly like rock, and silently from the
+bot's side. Each tunnel cell's open sides ride `tsync` and `vis` as `op`
+(2 hex chars a cell, in cell order); `Cell.op` holds them (-1 = not sent)
+and `navigate.walled()` keeps Dijkstra out of them. `vm` is still the
+authority for the step you are about to take.
 
 ### What the tunnels charge, and what they do not
 
@@ -476,6 +509,7 @@ per item, because "the item did something" is not a test -- an item declaring
 |---|---|---|
 | `ll` | `llCap` delta across the equip (`appendPackArrays` sends the EFFECTIVE ceiling) | hard |
 | `slots` | `is` delta, allowing for the INV_SLOTS_MAX clamp | hard |
+| `water_cap` | `wc` delta (`canteenCap()`, same emitter) -- the Canteen | hard |
 | `vision` | `vr` on the vis disk `pushVisDisk()` sends straight after the equip | hard |
 | `mp` | dawn MP against `ll + 3` + declared, unwounded dawns only | soft |
 | `rad` | direction of change at the dawns it was worn | soft |
@@ -613,9 +647,12 @@ moment it ever had.
 occasional large `maxTickMs` spike is `saveGame()` — `tickGame()` saves on
 every dawn, and with collapsed days that is an SD write every few seconds.
 
-**Ceiling: 5 bots.** `handleConnect` rejects once
-`connectedCount + lobbySize >= MAX_PLAYERS` (6), and a rejected bot gets
-`{"t":"full"}` and retries forever. Any stale slot eats into that budget.
+**Ceiling: 5 bots, which is also the game's cap.** There are six archetype
+seats but at most `MAX_SEATED` (5) filled. `handleConnect` rejects once
+`connectedCount + lobbySize >= MAX_SEATED`, and a rejected bot gets
+`{"t":"full"}` and retries forever, so 5 bots leave no room for a browser
+player (the observer TV polls `/state` and takes no seat). Any stale lobby
+entry eats into that budget.
 
 ---
 
@@ -666,6 +703,51 @@ Two things changed underneath at the same time, both of which move the numbers:
 
 `config.EQUIPMENT` is parsed from `data/items.cfg` at import rather than
 hardcoded, so adding an item to the registry needs no change here.
+
+## Booby traps
+
+Some hexes are trapped ([traps.hpp](../traps.hpp),
+[trap-system-spec.md](trap-system-spec.md)): about one in 25 in open country,
+one in five downtown, one in twelve of tunnel floor. Stepping onto an armed
+one opens an encounter from the `traps` pool **without an `enc_start`** — the
+server pushes `enc_path {"biome":"traps","id":N,"trap":1}` after the move's
+vis disk, and the move itself is still acked. Every policy meets them, on
+either board, whatever it thinks of encounters.
+
+How a scene goes, and what the bot sees:
+
+| The survivor | Wire | The trap |
+|---|---|---|
+| backs out (Navigate), or leaves a cache with nothing | `enc_end reason:"escaped"` + unicast `ev trap out:"known"` | still armed, and on this bot's map: TT bit 4 from now on, `sync` included |
+| banks anything | `enc_bank`, then `ev trap out:"spent"` | gone, for everyone |
+| fails any check | `enc_res out:0 trap:1`, `enc_end reason:"hazard"`, `ev trap out:"sprung"` | gone; the hazard hurt, but **never below 1 LL** |
+| is cut off by dawn or a disconnect | `enc_end` | re-armed exactly as it was |
+
+`enc_abort` at the start is not a walk-away: it rolls the back-out check, and
+a failure nacks `trap` and leaves the bot in the scene.
+
+What the harness does with it:
+
+- **`decide_trap()`** (`policy/survivor.py`): work it (the Scavenge door) when
+  the odds are at least `trap_nerve` (0.6) and LL at least `trap_min_ll` (4),
+  otherwise back out; from a cache, press on once if the next check is at
+  least `trap_push` and LL has a point to spare, else bank; out of an escape
+  node, `enc_bank` with nothing — which is also what the browser sends. The
+  coward sets `trap_nerve = 2.0` and never works one.
+- **Pathing:** a known trap costs `TRAP_KNOWN_COST` (8) extra MP in
+  `navigate.step_cost()` — a detour of most of a day is taken first, but a
+  trap is never a wall.
+- **Causes:** a failed trap check is its own cause, `booby trap`, not
+  `encounter hazard`. It can never be the killing blow (the LL floor), so it
+  shows up in the loss ledger and near-death causes, never in deaths.
+- **Metrics:** `RunReport.traps()` — forced scenes, escaped / disarmed /
+  sprung, LL lost, and scenes per bot — printed as `-- booby traps:` after the
+  POI block. Trap scenes count in `stats["traps"]`, not
+  `encounters_opened`, so POI reach is unchanged by them.
+
+**The question to answer before flashing a density change** is the brush
+rate: forced scenes per survivor-day, LL lost to them, and deaths within a
+game-day of a sprung trap. The spec's intent is "scares, not deaths".
 
 ## Death drops (and why a fall no longer costs the canteen)
 
@@ -786,6 +868,8 @@ Causes run on two different clocks and must not share a projection:
 |---|---|---|
 | per game-day | thirst, hunger, exposure, radiation | fire once per dawn/dusk |
 | per real minute | fire, lightning, Creeping Doom, chem, fog | `WORLD_TICK_INTERVAL`, and `weatherNextGapMs` floors weather changes at ~1.1–1.9 real minutes no matter how fast game-days fly |
+| per game-day | wasteland daisy | bites on *entry*, so it scales with steps (~7 a day), not with wall time; the patches themselves grow a stage per dawn |
+| per game-day | booby trap | fires on *entry* like the daisy; static at worldgen, and never takes the last LL |
 
 A bot fleet collapses days to a few seconds, so it lives ~85 game-days inside
 7 real minutes — roughly 25x the supply pressure per unit of hazard exposure
