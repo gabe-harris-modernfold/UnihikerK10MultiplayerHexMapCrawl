@@ -16,7 +16,7 @@ The layout follows the back of a real NTSC shell:
 - On the front, the screen is the label.
 - On the back, a big label recess sits over a three-panel recess, with a fake
   security screw in each bottom slat.
-- Matching nameplate pills: `BAND_TEXT` (ESP32 S3 UNIHIKER) above the screen,
+- Matching nameplate pills: `BAND_TEXT` (UNIHIKER ESP 32) above the screen,
   and `EMBLEM_TEXT` (MADE IN WASTELAND) on the back between the two recesses.
 
 Both halves print face down, so a truly raised centre panel would need
@@ -169,10 +169,11 @@ If a print needs tuning, these are the parameters to change:
 - `LINE_DEPTH`, `LINE_W` (1.0, 1.2): the thin line grooves (screen border, pills).
 - `PASSAGE`, `COMB_GAP`, `OUTLET_RIB`: the speaker labyrinth (see above).
 - `BAND_TEXT`, `EMBLEM_TEXT`: the words in the two pills; `""` leaves a pill
-  empty. The words are sized to fill the pill (`PILL_W` × `PILL_H`, 49.4 × 7.4 mm).
-  They come out about 3.1 mm tall on the front and 2.9 mm on the back. The pills
-  can't get bigger: the front one already fills the space between the screen
-  and the sensor holes.
+  empty. The words are sized to fill their pill (`FRONT_PILL` 50.6 × 7.8 mm,
+  `BACK_PILL` 64 × 9 mm). They come out about 3.7 mm tall on the front and
+  3.8 mm on the back. The front pill can't get bigger: it already fills the
+  space inside the label border, between the screen and the sensor holes. The
+  back one fills the gap between the two recesses.
 
 The reference STLs in `docs/` were only used for Z. Their XY doesn't match
 the board in the photos:

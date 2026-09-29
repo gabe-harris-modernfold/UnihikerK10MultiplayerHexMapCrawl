@@ -372,7 +372,8 @@ function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
 // Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8, River(11) DN6
 // Water:  Marsh(3), Flooded(5), River(11)
 // Scavenge: Broken Urban(4) DN6, Flooded(5) DN7, Glass Fields(6) DN8
-// Treat:  anywhere for the Medic, Settlement(9) for everyone else
+// Treat:  a Major Wound anywhere for the Medic, Settlement(9) for everyone
+//         else; with no Major Wound, Settlement(9) heals 1 LL per Medicine
 // Others: any terrain
 // River Channel (11) is reachable with the right equipment: it forages and waters.
 // Tunnel Floor (14) waters (cistern seeps) and salvages (bunker fittings) at DN 7.

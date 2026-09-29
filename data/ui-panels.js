@@ -13,12 +13,16 @@ function getShelterDesc(shelterMaxed, shelterLevel, scrap, mp) {
 // Scrap needed for the shelter action on this hex (2 to upgrade a basic one).
 function shelterScrapNeeded(shelterLevel) { return shelterLevel === 1 ? 2 : 1; }
 
-function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds) {
+function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds, ll, llCap, terr) {
   const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
   const hasScrap = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
   if (shelterMaxed) return 'Max shelter built here';
   if (def.id === ACT_SHELTER && shelterLevel === 1 && !hasScrap) return 'Shelter here — upgrading needs 2 scrap';
-  if (def.id === ACT_TREAT && !majorWounds) return 'No Major Wound to treat';
+  // TREAT without a Major Wound is the Settlement heal: 1 Medicine → +1 LL.
+  if (def.id === ACT_TREAT && !majorWounds) {
+    if (terr !== null && terr !== 9) return 'Heal needs a Settlement (or a Major Wound to treat)';
+    if (ll >= llCap)                 return 'Life Level is already full';
+  }
   if (!available) {
     if (def.id === ACT_FORAGE) return 'Needs Forage terrain (Open Scrub · Rust Forest · Marsh · River Channel)';
     if (def.id === ACT_WATER)  return 'Needs Water terrain (Marsh \u00b7 Flooded District \u00b7 River Channel)';
@@ -36,9 +40,27 @@ function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, maj
 
 function initActionPanel() {
   const actionPanel     = document.getElementById('action-panel');
-  const actionBtnList   = document.getElementById('action-btn-list');
   const actionStatusBar = document.getElementById('action-status-bar');
-  let terrName = '';  // hoisted so closeActionPanel can read the last-opened terrain name
+  const actionTitle     = actionPanel.querySelector('.act-title-line');
+  let terrName = '';  // name of the hex under your feet, refreshed by computeActionDefs()
+
+  // The #action-panel dialog is now only the home of the multi-step
+  // sub-controls (WATER stepper, TRADE, CRAFT). The one-tap actions live on
+  // the deck under the map (renderActionDeck, below).
+  function openSubPanel(title, ctrlId, note) {
+    const me = myId >= 0 ? players[myId] : null;
+    if (actionTitle) actionTitle.textContent = title;
+    const _terrSub = document.getElementById('act-panel-terrain-sub');
+    if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
+    actionStatusBar.innerHTML =
+      `<span class="act-mp-badge">MP: ${me?.mp ?? 0}</span>` +
+      `<span class="act-terrain-ctx">${escHtml(note ?? terrName)}</span>`;
+    ['action-water-ctrl', 'action-trade-ctrl', 'action-craft-ctrl'].forEach(id => {
+      document.getElementById(id).style.display = (id === ctrlId) ? '' : 'none';
+    });
+    actionPanel.classList.add('open');
+    actionPanel.setAttribute('aria-hidden', 'false');
+  }
 
   // Water MP stepper
   let waterMpVal = 1;
@@ -274,25 +296,13 @@ function initActionPanel() {
 
   function openCaravanTrade() {
     if (!caravanOnMyHex()) return;
-    const me = players[myId];
-    // Header/status are normally set by openActionPanel(); this path skips it
-    // (trade is free, so neither the MP-0 nor the resting gate applies).
+    // Trade is free, so neither the MP-0 nor the resting gate applies.
     const terr = myBoardCell()?.terrain ?? null;
     terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
-    const _terrSub = document.getElementById('act-panel-terrain-sub');
-    if (_terrSub) _terrSub.textContent = 'IN THE ' + terrName.toUpperCase();
-    actionStatusBar.innerHTML =
-      `<span class="act-mp-badge">MP: ${me.mp ?? 0}</span>` +
-      '<span class="act-terrain-ctx">⇄ Caravan · trading is free</span>';
     tradeTargetPid = CARAVAN_PID;
     document.getElementById('action-trade-target-list').style.display = 'none';
     buildTradeOfferForm();
-    document.getElementById('action-water-ctrl').style.display = 'none';
-    document.getElementById('action-craft-ctrl').style.display = 'none';
-    document.getElementById('action-trade-ctrl').style.display = '';
-    actionBtnList.style.display = 'none';
-    actionPanel.classList.add('open');
-    actionPanel.setAttribute('aria-hidden', 'false');
+    openSubPanel('⇄ CARAVAN', 'action-trade-ctrl', '⇄ Caravan · trading is free');
   }
 
   function maybeAutoOpenCaravanTrade() {
@@ -308,14 +318,11 @@ function initActionPanel() {
                      '#item-action-menu.open, #res-drop-menu.open, #help-overlay.open, ' +
                      '#menu-overlay.open, #char-select-overlay.open';
     if (document.querySelector(BLOCKING)) return;
-    // Already in the action panel: don't yank them into the shelf, they can
-    // reach it from TRADE — but the menu behind was built before the caravan
-    // got here, so re-render it (main list only) or TRADE stays greyed out.
+    // Already in a sub-panel (water stepper, a player trade): don't yank them
+    // into the shelf, they can reach it from the deck's TRADE cell, which the
+    // state tick has just relit.
     lastAutoTradeHex = key;
-    if (actionPanel.classList.contains('open')) {
-      if (actionBtnList.style.display !== 'none') openActionPanel();
-      return;
-    }
+    if (actionPanel.classList.contains('open')) return;
     openCaravanTrade();
   }
   // network.js calls this off every state/sync message (see _msgState).
@@ -427,10 +434,9 @@ function initActionPanel() {
   });
 
   function closeActionPanel() {
-    document.getElementById('fab-action-btn')?.focus();
     actionPanel.setAttribute('aria-hidden', 'true');
     actionPanel.classList.remove('open');
-    actionBtnList.style.display = '';
+    if (actionTitle) actionTitle.textContent = '☞ ACTIONS';
     const _terrSub = document.getElementById('act-panel-terrain-sub');
     if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
     document.getElementById('action-water-ctrl').style.display = 'none';
@@ -438,143 +444,100 @@ function initActionPanel() {
     document.getElementById('action-craft-ctrl').style.display = 'none';
   }
 
-  function showExhaustedPanel(me) {
-    // Same two-way gate as openActionPanel's tradeAvail: a co-located
-    // survivor OR the caravan (trade is free, so it stays open when exhausted).
-    const tradeAvailExhausted = players.some(p => p.id !== myId && p.on && sharesMyHex(p)) ||
-      caravanSharesMyHex();
-    let exhaustedHTML = '<div class="act-exhausted-msg">\u26A1 EXHAUSTED \u2014 use \u25BC REST to recover MP</div>';
-    if (tradeAvailExhausted) {
-      exhaustedHTML +=
-        `<button id="action-btn-6" class="action-item-btn" role="listitem" aria-label="TRADE — Trade with a co-located survivor or the caravan">` +
-        `<span class="act-icon">\u21C4</span>` +
-        `<span class="act-body"><span class="act-label">TRADE</span>` +
-        `<span class="act-desc">Swap resources with a survivor, or buy from the caravan \u2014 free</span></span></button>`;
-    }
-    actionBtnList.innerHTML = exhaustedHTML;
-    actionStatusBar.innerHTML =
-      `<span class="act-mp-badge act-mp-zero">MP: 0</span>` +
-      '<span class="act-used-badge">\u2297 NO MOVEMENT POINTS</span>';
-    actionPanel.classList.add('open');
-    actionPanel.setAttribute('aria-hidden', 'false');
-    if (tradeAvailExhausted) {
-      const tb = document.getElementById('action-btn-6');
-      if (tb) tb.addEventListener('click', () => {
-        buildTradeTargetList();
-        document.getElementById('action-trade-ctrl').style.display = '';
-        actionBtnList.style.display = 'none';
-      });
-    }
-  }
+  // ── Action deck ──────────────────────────────────────────────────
+  // The on-screen buttons under the map. Every action is one tap away and
+  // every cell keeps its place: a cell that can't fire right now is dimmed,
+  // not hidden, and tapping it toasts the reason, so the thumb learns
+  // positions. Icon-only faces — the title / aria-label is the label.
+  const actionDeck    = document.getElementById('action-deck');
 
-  function showRestingPanel(mp) {
-    actionBtnList.innerHTML =
-      '<div class="act-exhausted-msg">\ud83d\ude34 RESTING \u2014 waiting for dawn</div>';
-    actionStatusBar.innerHTML =
-      `<span class="act-mp-badge">MP: ${mp}</span>` +
-      '<span class="act-used-badge">\u2297 RESTING</span>';
-    actionPanel.classList.add('open');
-    actionPanel.setAttribute('aria-hidden', 'false');
-  }
+  const DECK_ICON = {
+    [ACT_FORAGE]: 'forage', [ACT_WATER]: 'water', [ACT_SCAV]: 'scav', [ACT_SHELTER]: 'shelter',
+    [ACT_CRAFT]: 'craft', [ACT_TRADE]: 'trade', [ACT_TREAT]: 'treat', [ACT_SURVEY]: 'survey',
+    [ACT_REST]: 'rest',
+  };
 
-  function openActionPanel() {
-    if (myId < 0) return;
-    if (players[myId]?.ll === 0) {
-      addLog('<span class="log-check-fail">☠ Cannot act — you have been downed.</span>');
-      return;
-    }
-    if (players[myId]?.enc) return;
-    const me   = players[myId];
+  // Everything the deck needs to light itself, from the current state.
+  // Returns [{id, key, icon, label, mpCost, desc, canAct, blockReason, cls}]
+  // in deck order: the six core actions, then TREAT / SURVEY when they
+  // apply, then REST. (SHEET is appended by renderActionDeck — it is a
+  // utility, not an action.)
+  function computeActionDefs() {
+    const me   = myId >= 0 ? players[myId] : null;
     // The cell under your feet on the board you are on -- underground that
     // is the corridor (tq/tr), not the surface hatch me.q/r is pinned to.
     // Reading the hatch greyed out WATER and SCAVENGE, the two things the
     // tunnels are for, and lit SHELTER/SURVEY that the server refuses below.
-    const cell = myBoardCell();
-    const terr        = cell?.terrain ?? null;
-    const mp          = me.mp  ?? 0;
-    const scrap       = me.inv?.[4] ?? 0;
+    const cell = me ? myBoardCell() : null;
+    const terr         = cell?.terrain ?? null;
+    const mp           = me?.mp  ?? 0;
+    const scrap        = me?.inv?.[4] ?? 0;
     const shelterLevel = cell?.shelter ?? 0;
-    const isScout     = (me.arch ?? -1) === 4;  // Scout: Survey is free
-    const isMedic     = (me.arch ?? -1) === 2;  // Medic: may TREAT anywhere
-    const med         = me.inv?.[3] ?? 0;
-    const majorWounds = me.wnd?.[WOUND_MAJOR] ?? 0;
+    const isScout      = (me?.arch ?? -1) === 4;  // Scout: Survey is free
+    const isMedic      = (me?.arch ?? -1) === 2;  // Medic: may TREAT anywhere
+    const med          = me?.inv?.[3] ?? 0;
+    const majorWounds  = me?.wnd?.[WOUND_MAJOR] ?? 0;
+    const ll           = me?.ll ?? 0;
+    const llCap        = me?.llCap || uiLLCap.val || 0;   // wire llCap is the effective cap
 
-    // Always update terrain header immediately so it never shows a stale hex name (BUG-04)
     terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
-    const _terrSub = document.getElementById('act-panel-terrain-sub');
-    if (_terrSub) _terrSub.textContent = 'IN THE ' + terrName.toUpperCase();
 
-    // terr is read again below for the TREAT gate (Settlement = 9)
-    // Fix: suppress action menu entirely at MP:0 — only REST makes sense
-    // Exception: TRADE is free (0 MP) and must remain available if a co-located player exists
-    if (mp === 0) {
-      showExhaustedPanel(me);
-      return;
-    }
-
-    // Fix: suppress action menu when resting — show resting banner instead
-    if (uiResting.val) {
-      showRestingPanel(mp);
-      return;
-    }
-
-    // terrName and _terrSub already updated above before early-returns (BUG-04 fix)
-    const forageHere = terr != null && TERRAIN_FORAGE_DN[terr] > 0;
-    const scavHere   = terr != null && TERRAIN_SALVAGE_DN[terr] > 0;
-    const waterHere  = terr != null && TERRAIN_HAS_WATER[terr] > 0;
-    const terrTags   = [forageHere && 'Forage', scavHere && 'Salvage', waterHere && 'Water'].filter(Boolean).join(' · ');
-    actionStatusBar.innerHTML =
-      `<span class="act-mp-badge">MP: ${mp}</span>` +
-      `<span class="act-terrain-ctx">${terrName}${terrTags ? ' · ' + terrTags : ''}</span>`;
-
-    // Rebuilding the main list must also hide any sub-panel left open from
-    // before — the FAB can call openActionPanel() again while a sub-panel is
-    // already showing (panel still .open, nothing routed through
-    // closeActionPanel() in between), and only water was reset here, leaving
-    // trade/craft visible stacked on top of the freshly rebuilt list.
-    document.getElementById('action-water-ctrl').style.display = 'none';
-    document.getElementById('action-trade-ctrl').style.display = 'none';
-    document.getElementById('action-craft-ctrl').style.display = 'none';
+    // Whole-deck gates. TRADE is free and stays open when exhausted (a
+    // co-located survivor or the caravan can still deal), nothing else does.
+    let gate = '';
+    if (!me)                    gate = 'No survivor claimed';
+    else if (me.ll === 0)       gate = 'Downed — cannot act';
+    else if (me.enc)            gate = 'In an encounter';
+    else if (uiResting.val)     gate = 'Resting — waiting for dawn';
+    else if (mp === 0)          gate = 'Exhausted — REST to recover MP';
+    const gateExemptsTrade = !!me && me.ll > 0 && !me.enc && !uiResting.val && mp === 0;
 
     // Shelter cost mirrors doShelter(): improved when affordable, basic otherwise;
     // an existing basic shelter can only be upgraded (2 scrap, 2 MP).
     const shelterMpCost = (shelterLevel === 1 || (scrap >= 2 && mp >= 2)) ? 2 : 1;
     const shelterLabel  = shelterLevel >= 1 ? 'UPGRADE SHELTER' : 'BUILD SHELTER';
 
-    actionBtnList.innerHTML = '';
-    const actionDefs = [
-      { id: ACT_FORAGE,  icon: '\u2698', label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
-      { id: ACT_WATER,   icon: '\u2248', label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
-      { id: ACT_SCAV,    icon: '\u26B2', label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, icon: '\u2302', label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
-      { id: ACT_CRAFT,   icon: '⚒', label: 'CRAFT', mpCost: 1, desc: 'Craft a known recipe — Settlement only' },
-      { id: ACT_TRADE,   icon: '\u21C4', label: 'TRADE',         mpCost: 0,             desc: 'Swap resources with a survivor, or buy from the caravan — free' },
+    const defs = [
+      { id: ACT_FORAGE,  label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
+      { id: ACT_WATER,   label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
+      { id: ACT_SCAV,    label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
+      { id: ACT_SHELTER, label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
+      { id: ACT_CRAFT,   label: 'CRAFT',         mpCost: 1,             desc: 'Craft a known recipe — Settlement only' },
+      { id: ACT_TRADE,   label: 'TRADE',         mpCost: 0,             desc: 'Swap resources with a survivor, or buy from the caravan — free' },
     ];
-    // TREAT is only offered when there is a Major Wound to treat.
+    // TREAT is offered when there is a Major Wound to treat, or in a
+    // Settlement where it becomes the heal: 1 Medicine + 1 MP → +1 LL, no roll.
+    // Mirrors doTreat(): a wound always takes precedence over the heal.
     if (majorWounds > 0) {
-      actionDefs.push({ id: ACT_TREAT, icon: '\u2695', label: 'TREAT WOUND', mpCost: 2,
-                        desc: `Close a Major Wound — Endure DN${TREAT_DN}, costs 1 Medicine` });
+      defs.push({ id: ACT_TREAT, label: 'TREAT WOUND', mpCost: 2,
+                  desc: `Close a Major Wound — Endure DN${TREAT_DN}, costs 1 Medicine` });
+    } else if (terr === null || terr === 9) {
+      defs.push({ id: ACT_TREAT, label: 'HEAL', mpCost: 1,
+                  desc: 'Settlement care — 1 Medicine restores 1 Life Level, no roll' });
     }
     // Scout-exclusive: SURVEY is hidden for non-Scouts
     if (isScout) {
-      actionDefs.push({ id: ACT_SURVEY, icon: '\u25CE', label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
+      defs.push({ id: ACT_SURVEY, label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
     }
 
     // TRADE availability: requires another connected player, or the caravan, on the same hex
-    const tradeAvail  = players.some(p => p.id !== myId && p.on && sharesMyHex(p)) ||
-      caravanSharesMyHex();
+    const tradeAvail = !!me && (players.some(p => p.id !== myId && p.on && sharesMyHex(p)) ||
+      caravanSharesMyHex());
     // CRAFT: Settlement only, same terrain check TREAT uses for non-Medics — which
     // recipes are actually affordable is decided per-card inside the craft sub-panel.
-    const craftAvail  = terr === null || terr === 9;
+    const craftAvail = terr === null || terr === 9;
 
-    actionDefs.forEach(def => {
-      // Fix: shelter unavailable if improved shelter already built here
+    defs.forEach(def => {
+      def.key  = def.id;
+      def.icon = DECK_ICON[def.id];
+      // Shelter unavailable if improved shelter already built here
       const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
       // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
       // allow terrain-dependent actions optimistically; the server validates.
       const terrAvail  = terr === null || (!shelterMaxed && actAvailable(def.id, terr));
-      // TREAT: the Medic works anywhere; everyone else needs a Settlement (9).
-      const treatAvail = isMedic || terr === null || terr === 9;
+      // TREAT: the Medic closes a Major Wound anywhere; everyone else needs a
+      // Settlement (9), and so does the no-wound heal for every archetype.
+      const treatAvail = terr === null || terr === 9 || (isMedic && majorWounds > 0);
       const available  = def.id === ACT_TRADE ? tradeAvail
                        : def.id === ACT_TREAT ? treatAvail
                        : def.id === ACT_CRAFT ? craftAvail
@@ -582,93 +545,146 @@ function initActionPanel() {
       const hasMP      = mp >= def.mpCost;
       const hasScrap   = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
       const hasMed     = def.id !== ACT_TREAT || med >= 1;
-      const hasWound   = def.id !== ACT_TREAT || majorWounds > 0;
-      const canAct     = available && hasMP && hasScrap && hasMed && hasWound;
+      const hasWound   = def.id !== ACT_TREAT || majorWounds > 0 || ll < llCap;
+      let canAct       = available && hasMP && hasScrap && hasMed && hasWound;
 
       // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
-      let desc = def.desc;
-      if (def.id === ACT_SHELTER) {
-        desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, mp);
-      }
+      if (def.id === ACT_SHELTER) def.desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, mp);
 
-      // Compute the inline block reason shown under the button label
-      const blockReason = getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds);
-
-      const btn = document.createElement('button');
-      btn.id        = 'action-btn-' + def.id;   // stable ID for AI agents
-      btn.setAttribute('role', 'listitem');
-      btn.className = 'action-item-btn' + (canAct ? '' : ' action-disabled');
-      btn.setAttribute('aria-label', def.label + (blockReason ? ' — ' + blockReason : ''));
-      btn.innerHTML =
-        `<span class="act-icon">${def.icon}</span>` +
-        `<span class="act-body">` +
-          `<span class="act-label">${def.label}</span>` +
-          `<span class="act-desc">${desc}</span>` +
-          (blockReason ? `<span class="act-unavail-reason">${blockReason}</span>` : '') +
-        `</span>` +
-        `<span class="act-cost">${def.mpCost > 0 ? def.mpCost + ' MP' : 'Free'}</span>`;
-
-      btn.addEventListener('click', () => {
-        if (!canAct) return;
-        if (def.id === ACT_WATER) {
-          waterMpVal = Math.min(3, mp);
-          document.getElementById('action-water-v').textContent = waterMpVal;
-          document.getElementById('action-water-ctrl').style.display = '';
-          actionBtnList.style.display = 'none';
-          return;
-        }
-        if (def.id === ACT_TRADE) {
-          buildTradeTargetList();
-          document.getElementById('action-trade-ctrl').style.display = '';
-          actionBtnList.style.display = 'none';
-          return;
-        }
-        if (def.id === ACT_CRAFT) {
-          buildCraftList();
-          document.getElementById('action-craft-ctrl').style.display = '';
-          actionBtnList.style.display = 'none';
-          return;
-        }
-        send({ t: 'act', a: def.id });
-        closeActionPanel();
-      });
-      actionBtnList.appendChild(btn);
+      let blockReason = getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds, ll, llCap, terr);
+      if (gate && !(def.id === ACT_TRADE && gateExemptsTrade)) { canAct = false; blockReason = gate; }
+      def.canAct = canAct;
+      def.blockReason = canAct ? '' : blockReason;
     });
 
-    actionBtnList.style.display = '';
-    actionPanel.classList.add('open');
-    actionPanel.setAttribute('aria-hidden', 'false');
+    // REST: the day's other verb. Same gates the FAB handler enforces.
+    const restBlocked = !me ? 'No survivor claimed'
+                      : me.ll === 0 ? 'Downed — cannot act'
+                      : me.enc ? 'In an encounter'
+                      : (uiResting.val || restSent) ? 'Already resting — waiting for dawn'
+                      : '';
+    defs.push({ id: ACT_REST, key: ACT_REST, icon: 'rest', label: 'REST', mpCost: 0, cls: 'rest', domId: 'fab-rest-btn',
+                desc: 'Sleep until dawn — recover MP, heal a little', canAct: !restBlocked, blockReason: restBlocked });
+    return defs;
+  }
+
+  function fireAction(def) {
+    if (myId < 0) return;
+    const mp = players[myId]?.mp ?? 0;
+    if (def.id === ACT_WATER) {
+      waterMpVal = Math.min(3, Math.max(1, mp));
+      document.getElementById('action-water-v').textContent = waterMpVal;
+      openSubPanel('≈ COLLECT WATER', 'action-water-ctrl');
+      return;
+    }
+    if (def.id === ACT_TRADE) {
+      buildTradeTargetList();
+      openSubPanel('⇄ TRADE', 'action-trade-ctrl');
+      return;
+    }
+    if (def.id === ACT_CRAFT) {
+      buildCraftList();
+      openSubPanel('⚒ CRAFT', 'action-craft-ctrl');
+      return;
+    }
+    if (def.id === ACT_REST) {
+      if (uiResting.val || restSent) return;
+      restSent = true; // NOSONAR — declared in network.js
+      updateRestIndicator();
+      send({ t: 'act', a: ACT_REST });
+      return;
+    }
+    send({ t: 'act', a: def.id });
+  }
+
+  const deckCells = new Map();   // def.key -> <button>
+  function deckCell(def) {
+    let btn = deckCells.get(def.key);
+    if (btn) return btn;
+    btn = document.createElement('button');
+    btn.type      = 'button';
+    btn.id        = def.domId || ('action-btn-' + def.id);   // stable IDs for AI agents / tests
+    btn.className = 'act-btn' + (def.cls ? ' ' + def.cls : '');
+    btn.innerHTML = `<svg aria-hidden="true"><use href="#ai-${def.icon}"></use></svg><span class="act-cost-tag"></span>`;
+    btn._def = def;
+    btn.addEventListener('pointerdown',  e => { if (e.pointerType !== 'mouse' || e.button === 0) btn.classList.add('pressed'); });
+    btn.addEventListener('pointerup',    () => btn.classList.remove('pressed'));
+    btn.addEventListener('pointercancel',() => btn.classList.remove('pressed'));
+    btn.addEventListener('pointerleave', () => btn.classList.remove('pressed'));
+    btn.addEventListener('contextmenu',  e => e.preventDefault());   // long-press on phones
+    btn.addEventListener('click', () => {
+      const d = btn._def;
+      if (!d.canAct) { showToast(`${d.label} — ${d.blockReason}`); return; }
+      if (d.fire) d.fire(); else fireAction(d);
+    });
+    deckCells.set(def.key, btn);
+    return btn;
+  }
+
+  function renderActionDeck() {
+    if (!actionDeck) return;
+    const defs = computeActionDefs();
+    // SHEET rides the deck as a utility cell, set off from the actions by a rule.
+    defs.push({ key: 'sheet', icon: 'sheet', label: 'SHEET', mpCost: 0, cls: 'util', domId: 'fab-char-btn',
+                desc: 'Survivor record — vitals, gear, pack', canAct: true, blockReason: '', fire: openCharSheet });
+    const wanted = new Set(defs.map(d => d.key));
+    for (const [key, btn] of deckCells) {
+      if (!wanted.has(key)) { btn.remove(); deckCells.delete(key); }
+    }
+    let sep = actionDeck.querySelector('.act-sep');
+    if (!sep) { sep = document.createElement('span'); sep.className = 'act-sep'; sep.setAttribute('aria-hidden', 'true'); }
+    // Relight every cell, then reconcile the DOM order without touching a
+    // node that is already where it belongs. This runs on every 100 ms state
+    // broadcast, and the old appendChild-everything pass detached and
+    // re-inserted all nine cells ten times a second. Chromium drops a click
+    // whose mousedown target left the document before mouseup, so any press
+    // that spanned a broadcast simply vanished -- in Brave/Chrome the deck
+    // (SHEET included) only worked between ticks, while Firefox retargets
+    // and never showed it. Seen on the K10 2026-09-28.
+    const order = [];
+    defs.forEach(def => {
+      const btn = deckCell(def);
+      btn._def = def;
+      btn.classList.toggle('act-disabled', !def.canAct);
+      const title = def.label + (def.blockReason ? ' — ' + def.blockReason : '');
+      if (btn.title !== title) btn.title = title;
+      const aria = def.label + (def.mpCost > 0 ? ` (${def.mpCost} MP)` : '') + (def.blockReason ? ' — ' + def.blockReason : '');
+      if (btn.getAttribute('aria-label') !== aria) btn.setAttribute('aria-label', aria);
+      const dis = def.canAct ? 'false' : 'true';
+      if (btn.getAttribute('aria-disabled') !== dis) btn.setAttribute('aria-disabled', dis);
+      const tag = btn.querySelector('.act-cost-tag');
+      const cost = def.mpCost > 0 ? String(def.mpCost) : '';
+      if (tag.textContent !== cost) tag.textContent = cost;
+      if (def.key === 'sheet') order.push(sep);
+      order.push(btn);
+    });
+    let cursor = actionDeck.firstChild;
+    for (const node of order) {
+      if (cursor === node) { cursor = cursor.nextSibling; continue; }
+      actionDeck.insertBefore(node, cursor);   // only a cell out of place moves
+    }
   }
 
   actionPanel.addEventListener('click', e => { if (e.target === actionPanel) closeActionPanel(); });
-  document.getElementById('fab-action-btn').addEventListener('click', () => {
-    actionPanel.classList.contains('open') ? closeActionPanel() : openActionPanel();
-  });
   document.getElementById('action-close').addEventListener('click', closeActionPanel);
   document.getElementById('action-close').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeActionPanel(); } });
 
-  document.getElementById('fab-rest-btn').addEventListener('click', () => {
-    if (myId >= 0 && players[myId]?.ll === 0) return;
-    if (myId >= 0 && players[myId]?.enc) return;
-    if (uiResting.val || restSent) return;
-    restSent = true; // NOSONAR — declared in network.js
-    updateRestIndicator();
-    send({ t: 'act', a: ACT_REST });
-  });
-
+  renderActionDeck();
   van.derive(() => {
+    // Read the states so the derive tracks them, then relight the deck.
+    const mp = uiMP.val, resting = uiResting.val;
+    renderActionDeck();
     const btn = document.getElementById('fab-rest-btn');
     if (!btn) return;
-    btn.classList.toggle('rest-btn-used', uiResting.val);
+    btn.classList.toggle('rest-btn-used', resting);
     // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
-    btn.classList.toggle('rest-exhausted', uiMP.val <= 0 && !uiResting.val);
+    btn.classList.toggle('rest-exhausted', mp <= 0 && !resting);
   });
   // Bunker tunnels have no control of their own: stepping onto a Bunker
   // Entrance / Vent Shaft crosses boards by itself (tunnelStepDown/Up in
   // tunnels.hpp), so the D-pad is the only thing that moves you.
-  document.getElementById('fab-char-btn').addEventListener('click', openCharSheet);
-  // Expose for engine.js (dawn event re-renders the panel if it's open)
-  globalThis.openActionPanel = openActionPanel;
+  globalThis.renderActionDeck = renderActionDeck;
+  globalThis.openActionPanel  = renderActionDeck;   // legacy alias: callers only ever wanted a refresh
 }
 
 function initTradeOverlay() {

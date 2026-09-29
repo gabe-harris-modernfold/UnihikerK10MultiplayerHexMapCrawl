@@ -400,6 +400,7 @@ function _msgSync(msg) {
     renderEquipment?.();
     if (myId >= 0) renderWounds?.(players[myId]);
   }
+  globalThis.renderActionDeck?.();
   globalThis.maybeAutoOpenCaravanTrade?.();
 }
 
@@ -470,6 +471,9 @@ function _msgState(msg) {
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
+  // MP, terrain, co-located players, wounds: everything the deck lights on
+  // rides this message too (ui-panels.js).
+  globalThis.renderActionDeck?.();
   // Both halves of "am I standing on the caravan?" ride this message, so
   // the shelf pops within a tick of the step (ui-panels.js).
   globalThis.maybeAutoOpenCaravanTrade?.();
@@ -498,8 +502,6 @@ function _handleSelfVis() {
   // reveals send one too, so standing on an uncollectable pile re-toasted on
   // every keypress — on top of the col_fail toast for the same pickup. The
   // server's col_fail (reason 2) is authoritative; it is the only notice now.
-  // Someone's remains underfoot: say so once per arrival (ui-items.js).
-  noteRemainsUnderfoot?.(_here.q, _here.r);
   // Auto-trigger encounter: vis fires after applyVisDisk so the board is fresh.
   // Coordinates are whichever board we are on — handleMsg_enc_start() reads
   // the player's own depth server-side, so nothing extra rides the message.
@@ -559,20 +561,42 @@ function _msgGroundUpdate(msg) {
   } else if (msg.why === 'aged') {
     addLog('<span class="log-mv">☠ The wasteland takes back what was left lying too long.</span>');
   }
-  if (document.getElementById('hex-info')?.classList.contains('open') && myId >= 0) {
-    const _pos = myBoardPos();
-    renderHexGroundItems?.(_pos.q, _pos.r);
-  }
 }
 
 // Ack for {t:'loot'}: `got` is what came out of the remains, `why` the
 // server's LOOT_* code (0 ok, 1 nothing here, 2 pack full). inv is the
 // looter's fresh token counts; the ground_update broadcast redraws the hex.
+// auto:1 is the same message sent unasked by a step onto the hex
+// (scoopGroundOnArrival): it also carries `items` ([[id, qty], ...] lifted
+// off the piles), the pack arrays those went into, and `left` when the pack
+// could not hold everything.
 function _msgLootResult(msg) {
-  if (msg.pid >= 0 && msg.pid < MAX_PLAYERS && Array.isArray(msg.inv)) players[msg.pid].inv = msg.inv;
+  if (msg.pid >= 0 && msg.pid < MAX_PLAYERS) {
+    const p = players[msg.pid];
+    if (Array.isArray(msg.inv)) p.inv = msg.inv;
+    if (msg.it) p.it = msg.it;
+    if (msg.iq) p.iq = msg.iq;
+    if (msg.eq) p.eq = msg.eq;
+    if (msg.is    !== undefined) p.is = msg.is;
+    if (msg.wc    !== undefined) p.wc = msg.wc;
+    if (msg.llCap !== undefined) { p.llCap = msg.llCap; if (msg.pid === myId) uiLLCap.val = msg.llCap; }
+  }
   if (msg.pid !== myId) return;
-  if (msg.ok) {
-    const parts = (msg.got || []).map((n, k) => n ? `${n}× ${RES_NAMES[k + 1]}` : '').filter(Boolean);
+  const parts = (msg.got || []).map((n, k) => n ? `${n}× ${RES_NAMES[k + 1]}` : '').filter(Boolean);
+  (msg.items || []).forEach(([id, n]) => {
+    const name = escHtml(getItemById?.(id)?.name ?? `Item #${id}`);
+    parts.push(n > 1 ? `${n}× ${name}` : name);
+  });
+  if (msg.auto) {
+    if (parts.length) {
+      addLog(`<span class="log-col">☠ You gather ${parts.join(', ')} from the ground.</span>`);
+      showToast(`☠ Picked up ${parts.join(', ')}${msg.left ? ' — pack full, the rest stays here' : ''}.`);
+    } else {
+      showToast('🎒 Pack full — there is more on the ground here.');
+    }
+    renderInventory?.();
+    renderEquipment?.();
+  } else if (msg.ok) {
     addLog(`<span class="log-col">☠ You take ${parts.join(', ')} from the remains.</span>`);
     showToast(`☠ Took ${parts.join(', ')}.`);
   } else if (msg.why === 2) {
@@ -915,8 +939,8 @@ function _toastDawnSelf(ev) {
   else if (ev.dll > 0) dawnMsg = `☀ Day ${ev.day} — you wake mended. The sun feels kind for once.`;
   else                 dawnMsg = `☀ Day ${ev.day} — the sun returns. The wastes endure, and so do you.`;
   showToast(dawnMsg);
-  const _ap = document.getElementById('action-panel');
-  if (_ap?.classList.contains('open')) setTimeout(openActionPanel, 0);
+  // Dawn restores MP and clears the rest flag — relight the action deck.
+  setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
 
 function _evDawn(ev) {

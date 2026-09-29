@@ -3184,6 +3184,37 @@ function pickupGroundItem(p, gslot) {
   return true;
 }
 
+// Mirrors scoopGroundOnArrival() in inventory_items.hpp plus the send in
+// handleMsg_move: a surface step takes the remains' supplies and every pile
+// on the hex, whatever fits. The mover gets one loot_result (auto:1), everyone
+// the ground_update. Call only once the step is known to have stayed up top.
+function scoopOnArrival(ws, p) {
+  if (p.dp || p.ll === 0) return;
+  let got = [0, 0, 0, 0, 0], left = false, any = false;
+  const items = [];
+  if (remainsIndexAt(p.q, p.r) >= 0) {
+    const r = lootRemains(p, 0);
+    got = r.got;
+    if (r.out === 0) any = true;
+    const i = remainsIndexAt(p.q, p.r);
+    if (i >= 0 && remainsTable[i].res.some(n => n > 0)) left = true;
+  }
+  groundItems.forEach((gi, g) => {
+    if (!gi.itemType || gi.q !== p.q || gi.r !== p.r) return;
+    const id = gi.itemType, before = gi.qty;
+    if (!pickupGroundItem(p, g)) { left = true; return; }
+    if (gi.itemType) left = true;
+    items.push([id, gi.itemType ? before - gi.qty : before]);
+    any = true;
+  });
+  if (!any && !left) return;
+  console.log(`[scoop] pid=${p.id} q=${p.q} r=${p.r} got=${got} piles=${items.length} left=${left}`);
+  // A full pack that took nothing still hears about it (why 2 = LOOT_FULL).
+  send(ws, { t: 'loot_result', ok: any, why: any ? 0 : 2, auto: 1, left: left ? 1 : 0, pid: p.id, got, inv: p.inv,
+             items, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
+  if (any) broadcast(groundUpdateMsg(p.q, p.r));
+}
+
 // Mirrors equipItem() in inventory_items.hpp, orphan guard included: every
 // bound is the pack size the swap ENDS with, because trading a slots-granting
 // item (Hoarder's Rig, Backpack, Knife-Wrench) for one without shrinks the
@@ -3583,7 +3614,7 @@ wss.on('connection', (ws) => {
           }
           // Landing on a shaft climbs out. After the pickup, so the last thing
           // you grab on the way past still lands in the pack.
-          if (stepUpIfShaft(ws, id, p)) { broadcast(stateMsg()); break; }
+          if (stepUpIfShaft(ws, id, p)) { scoopOnArrival(ws, p); broadcast(stateMsg()); break; }
           const tvr = tunnelVis(p);
           send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
                      cells: buildTunnelVisDisk(p.tq, p.tr, tvr, id),
@@ -3618,6 +3649,9 @@ wss.on('connection', (ws) => {
         // A booby trap under this hex fires now (traps.hpp trapOnArrival):
         // after the pickup, as on the board, and after the vis disk.
         trapOnArrival(ws, id, p);
+        // Whatever lies here comes with you. After the trap, as on the board:
+        // handleMsg_move scoops once movePlayer() (trap included) returns.
+        scoopOnArrival(ws, p);
         broadcast(stateMsg());
         break;
       }
@@ -3637,12 +3671,28 @@ wss.on('connection', (ws) => {
           // needs to be standing in a Settlement. Costs 2 MP + 1 Medicine,
           // Endure vs TREAT_DN; a near miss downgrades the Major Wound to a
           // Minor one instead of clearing it outright.
+          // With no Major Wound, TREAT in a Settlement is the heal: 1 Medicine
+          // + 1 MP restores 1 LL, no roll. A Medic in the field with nothing
+          // to stitch is refused, same as the firmware's ABW_TERRAIN.
           const isMedic      = p.arch === 2;
           const inSettlement = terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT;
           if (!isMedic && !inSettlement) {
             send(ws, { t: 'err', msg: 'Only the Medic can treat outside a Settlement' });
           } else if (!p.wnd[1]) {
-            send(ws, { t: 'err', msg: 'No Major Wound to treat' });
+            if (!inSettlement) {
+              send(ws, { t: 'err', msg: 'Heal needs a Settlement' });
+            } else if (p.ll >= effectiveMaxLL(p)) {
+              send(ws, { t: 'err', msg: 'Life Level is already full' });
+            } else if (p.inv[3] < 1 || p.mp < 1) {
+              send(ws, { t: 'err', msg: 'Needs 1 MP and 1 Medicine' });
+            } else {
+              p.mp -= 1;
+              p.inv[3]--;
+              p.ll += 1;
+              p.sc += 1;
+              broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out: 1, mp: p.mp, ll: p.ll,
+                          lld: 1, md: -1, wnd: [p.wnd[0], p.wnd[1]], scoreD: 1 });
+            }
           } else if (p.inv[3] < 1 || p.mp < 2) {
             send(ws, { t: 'err', msg: 'Needs 2 MP and 1 Medicine' });
           } else {
@@ -4006,6 +4056,22 @@ wss.on('connection', (ws) => {
         broadcast({ t: 'ev', k: 'settle', removed: [{ q: p.q, r: p.r }], q: p.q, r: p.r });
         broadcast(stateMsg());
         console.log(`[settle] test-forced at (${p.q},${p.r})`);
+        break;
+      }
+
+      case 'dbg_hurt': {
+        // Test-only: {"t":"dbg_hurt","ll":3,"wnd":[0,1]} — set the sender's
+        // Life Level and wound counts so TREAT's two paths (close a Major
+        // Wound / Settlement heal) can be exercised without an encounter.
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.ll !== undefined) p.ll = Math.max(0, Math.min(effectiveMaxLL(p), msg.ll | 0));
+        if (Array.isArray(msg.wnd)) {
+          p.wnd[0] = Math.max(0, Math.min(WOUND_MAX_EACH, msg.wnd[0] | 0));
+          p.wnd[1] = Math.max(0, Math.min(WOUND_MAX_EACH, msg.wnd[1] | 0));
+        }
+        broadcast(stateMsg());
         break;
       }
 

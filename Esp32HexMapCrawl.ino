@@ -247,7 +247,9 @@ static constexpr int     WOUND_MAJOR    = 1;
 static constexpr int     NUM_WOUND_TIER = 2;
 static constexpr uint8_t WOUND_MAX_EACH = 3;
 // Medic treats a major wound in the field at this DN; anyone may treat while
-// standing in a Settlement.  Costs 2 MP + 1 Medicine.
+// standing in a Settlement.  Costs 2 MP + 1 Medicine.  With no major wound,
+// TREAT in a Settlement instead spends 1 Medicine + 1 MP for +1 Life Level,
+// no roll (doTreat).
 static constexpr uint8_t TREAT_DN       = 9;
 
 // ── Action system constants ─────────────────────────────────────

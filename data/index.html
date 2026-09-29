@@ -29,9 +29,35 @@
 </div>
 <div id="game-narrator" aria-live="polite" aria-atomic="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden"></div>
 
+<!-- Action-deck glyph set. Stroke-only, square-capped 24x24 paths drawn in
+     code (no bitmaps) so they read as one terminal charset in any browser;
+     ui-panels.js stamps them with <use href="#ai-..."> (renderActionDeck). -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="ai-forage" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M12 22V7"/><path d="M12 15L5 11V4l7 4z"/><path d="M12 11l7-4V1l-7 4z"/></g></symbol>
+  <symbol id="ai-water" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M2 8l3-3 3 3 3-3 3 3 3-3 3 3 2-2"/><path d="M2 14l3-3 3 3 3-3 3 3 3-3 3 3 2-2"/><path d="M2 20l3-3 3 3 3-3 3 3 3-3 3 3 2-2"/></g></symbol>
+  <symbol id="ai-scav" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M4 10a6 6 0 1 0 12 0a6 6 0 1 0-12 0z"/><path d="M14.5 14.5L21 21"/><path d="M7 10h6M10 7v6"/></g></symbol>
+  <symbol id="ai-shelter" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></g></symbol>
+  <symbol id="ai-craft" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M13 3l8 8-3 3-8-8z"/><path d="M12 9l-9 9 3 3 9-9"/><path d="M4 4l3 3"/></g></symbol>
+  <symbol id="ai-trade" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M3 8h16"/><path d="M15 4l4 4-4 4"/><path d="M21 16H5"/><path d="M9 12l-4 4 4 4"/></g></symbol>
+  <symbol id="ai-treat" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/></g></symbol>
+  <symbol id="ai-survey" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M2 12l5-7h10l5 7-5 7H7z"/><path d="M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z"/></g></symbol>
+  <symbol id="ai-rest" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="M15 3h4l-4 4h4"/></g></symbol>
+  <symbol id="ai-sheet" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M4 3h16v18H4z"/><path d="M12 7.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z"/><path d="M7 18c0-3 2-4.5 5-4.5s5 1.5 5 4.5"/></g></symbol>
+</svg>
+
 <!-- Top HUD -->
 <div id="hud">
-  <button class="hud-btn" id="menu-btn">&#x2630; MENU</button>
+  <button class="hud-btn" id="menu-btn" aria-label="open menu">&#x2630;<span class="hud-btn-txt"> MENU</span></button>
   <span id="hud-title">&#9762; WASTELAND</span>
   <div id="hud-status">
     <span id="hud-conn-dot" class="conn-dot" aria-label="connecting" aria-live="polite">●</span>
@@ -96,48 +122,25 @@
         <div id="player-list"></div>
       </div>
     </div>
-    <!-- Expanded hex info panel -->
-    <div id="hex-info">
-      <h2><span id="hi-title">HEX DATA</span></h2>
-      <div class="hi-row"><span class="hi-label">Move Cost</span><span class="hi-val" id="hi-mc">—</span></div>
-      <div class="hi-row"><span class="hi-label">Shelter</span><span class="hi-val" id="hi-shelter">—</span></div>
-      <div class="hi-row"><span class="hi-label">Vision</span><span class="hi-val" id="hi-vis">—</span></div>
-      <div class="hi-row"><span class="hi-label">Actions</span>
-        <div><div id="hi-actions"></div></div>
-      </div>
-      <div class="hi-row"><span class="hi-label">Resource</span>
-        <div><div id="hi-res-list"></div></div>
-      </div>
-      <div class="hi-row hi-players-row" id="hi-players-row" style="display:none">
-        <span class="hi-label">Survivors</span>
-        <div><div id="hi-players-list"></div></div>
-      </div>
-<div class="hi-row hi-ground-row" id="hi-ground-row" style="display:none">
-        <span class="hi-label">On Ground</span>
-        <div><div id="hi-ground-list"></div></div>
-      </div>
-    </div>
-    <div id="fab-col">
-      <button class="fab-btn" id="fab-rest-btn"   aria-label="rest and recover">REST</button>
-      <button class="fab-btn" id="fab-action-btn" aria-label="open action menu">ACTION</button>
-      <button class="fab-btn" id="fab-char-btn"   aria-label="open survivor">SHEET</button>
-    </div>
   </div>
 
   <!-- Event log -->
   <div id="log-panel" role="log" aria-label="event log" aria-live="polite" aria-atomic="false"><div id="log-inner"></div></div>
 </main>
 
-<!-- Controls -->
+<!-- Control deck: the action row (built by renderActionDeck in ui-panels.js)
+     and the movement D-pad. One amber phosphor strip on every screen size. -->
+<div id="deck">
+  <div id="action-deck" role="toolbar" aria-label="actions"><!-- populated by JS --></div>
 <fieldset id="controls" aria-label="movement controls">
 <button class="dir-btn" data-dir="3" id="dir-btn-3" aria-label="move northwest">&#x2196;</button>
   <button class="dir-btn" data-dir="2" id="dir-btn-2" aria-label="move north">&#x2191;</button>
   <button class="dir-btn" data-dir="1" id="dir-btn-1" aria-label="move northeast">&#x2197;</button>
   <div class="dir-btn empty" id="cd-center" aria-hidden="true">
     <svg viewBox="0 0 36 36" width="20" height="20" aria-hidden="true">
-      <circle cx="18" cy="18" r="14" fill="none" stroke="#180C04" stroke-width="3.5"/>
+      <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(192,120,24,0.35)" stroke-width="3.5"/>
       <circle id="cd-arc" cx="18" cy="18" r="14" fill="none"
-              stroke="#6A3008" stroke-width="3.5"
+              stroke="#E8A828" stroke-width="3.5"
               stroke-dasharray="87.96" stroke-dashoffset="87.96"
               stroke-linecap="round" transform="rotate(-90 18 18)"/>
     </svg>
@@ -146,6 +149,7 @@
   <button class="dir-btn" data-dir="5" id="dir-btn-5" aria-label="move south">&#x2193;</button>
   <button class="dir-btn" data-dir="0" id="dir-btn-0" aria-label="move southeast">&#x2198;</button>
 </fieldset>
+</div>
 
 <!-- Action panel modal -->
 <dialog id="action-panel" aria-modal="true" aria-labelledby="action-panel-title">
@@ -153,7 +157,6 @@
     <button id="action-close" aria-label="close action panel">&#x2715;</button>
     <h2 id="action-panel-title"><span class="act-title-line">&#x261E; ACTIONS</span><span class="act-title-sub" id="act-panel-terrain-sub"></span></h2>
     <div id="action-status-bar"></div>
-    <ul id="action-btn-list" aria-label="available actions"><!-- populated by JS --></ul>
     <!-- WATER mp sub-control -->
     <div id="action-water-ctrl" style="display:none">
       <div class="check-row">

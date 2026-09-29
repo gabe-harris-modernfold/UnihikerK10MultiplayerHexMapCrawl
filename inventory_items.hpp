@@ -723,6 +723,44 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   return true;
 }
 
+// ── scoopGroundOnArrival ──────────────────────────────────────────────────
+// Stepping onto a hex takes what lies on it, the way collectResource() takes
+// the hex's own tokens: a fallen survivor's supplies (lootRemains(), all that
+// fits) and every item pile, theirs or anyone's.  Whatever the pack can't hold
+// stays where it is -- *left says so.  items[] receives (itemId, qty) pairs,
+// up to maxItems of them, *nItems how many.  Surface only, like the piles.
+// Returns true when anything moved.  Must hold G.mutex.
+static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
+                                 int maxItems, int* nItems, bool* left) {
+  memset(got, 0, 5);
+  *nItems = 0;
+  *left   = false;
+  Player& p = G.players[pid];
+  if (p.depth || p.ll == 0) return false;
+  bool any = false;
+  if (remainsIndexAt(p.q, p.r) >= 0) {
+    uint8_t out = lootRemains(pid, 0, got);
+    if (out == LOOT_OK) any = true;
+    int i = remainsIndexAt(p.q, p.r);
+    if (i >= 0) for (int k = 0; k < 5; k++) if (remainsTable[i].res[k]) *left = true;
+  }
+  for (int g = 0; g < MAX_GROUND; g++) {
+    GroundItem& gi = groundItems[g];
+    if (!gi.itemType || gi.q != p.q || gi.r != p.r) continue;
+    uint8_t id = gi.itemType, before = gi.qty;
+    if (!pickupGroundItem(pid, (uint8_t)g)) { *left = true; continue; }
+    uint8_t took = gi.itemType ? (uint8_t)(before - gi.qty) : before;
+    if (gi.itemType) *left = true;
+    if (*nItems < maxItems) {
+      items[*nItems * 2]     = id;
+      items[*nItems * 2 + 1] = took;
+      (*nItems)++;
+    }
+    any = true;
+  }
+  return any;
+}
+
 // ── applyRecipe ───────────────────────────────────────────────────────────
 // Consumes a known recipe's material items + resource tokens and grants its
 // output item. Returns nullptr on success, else a short player-facing reason

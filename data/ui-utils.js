@@ -268,17 +268,21 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (uiMenuPage.val) { closeMenu(); return; }
     uiCharOpen.val    = false;
-    uiHexInfoOpen.val = false;
     return;
   }
   // Map zoom: +/= in, -/_ out, 0 reset (renderer.js owns the clamp + persistence)
   if (e.key === '+' || e.key === '=') { e.preventDefault(); nudgeZoom(+1); return; }
   if (e.key === '-' || e.key === '_') { e.preventDefault(); nudgeZoom(-1); return; }
   if (e.key === '0')                  { e.preventDefault(); resetZoom();   return; }
-  // FAB shortcuts: R=Rest, A=Action, C=Survivor
+  // Deck shortcuts: R=Rest, C=Survivor, A=focus the action deck (Tab/Enter
+  // walk it), 1-9 fire the nth deck cell left to right (SHEET is last).
   if (e.code === 'KeyR') { e.preventDefault(); document.getElementById('fab-rest-btn')?.click(); return; }
-  if (e.code === 'KeyA') { e.preventDefault(); document.getElementById('fab-action-btn')?.click(); return; }
+  if (e.code === 'KeyA') { e.preventDefault(); document.querySelector('#action-deck .act-btn')?.focus(); return; }
   if (e.code === 'KeyC') { e.preventDefault(); document.getElementById('fab-char-btn')?.click(); return; }
+  if (/^Digit[1-9]$/.test(e.code) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const cell = document.querySelectorAll('#action-deck .act-btn')[Number(e.code.slice(5)) - 1];
+    if (cell) { e.preventDefault(); cell.click(); return; }
+  }
   // Block movement while the character selection screen or the resource-drop
   // sheet is showing — stepping off the hex mid-drop would land the tokens
   // somewhere other than the hex the sheet just described.

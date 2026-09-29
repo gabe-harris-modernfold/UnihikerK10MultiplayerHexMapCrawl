@@ -54,7 +54,6 @@ const uiApLink      = van.state(false);
 const uiApCap       = van.state(0);
 const uiStaIp       = van.state('');
 // Overlay open states — toggled via .val; van.derive in ui.js handles class changes
-const uiHexInfoOpen = van.state(false);
 const uiCharOpen    = van.state(false);
 van.derive(() => {
   const lp = document.getElementById('log-panel');

@@ -102,11 +102,13 @@ SLAT_D, SLAT_W = 2.0, 2.6       # slat grooves on the wings, deep like the real 
 STEP_D = 2.0                    # the centre panel's stepped edges
 LABEL_RECESS_D = 1.1            # back label recess edge (held to 1.1 by the RST paddle's slot beside it)
 LOWER_D, DIVIDER_D = 1.3, 0.8   # three-panel recess: its outline, and the dividers (1 mm left over the mouth)
-BAND_TEXT = "ESP32 S3 UNIHIKER"     # in the nameplate pill above the screen ("" = empty pill)
+BAND_TEXT = "UNIHIKER ESP 32"       # in the nameplate pill above the screen ("" = empty pill)
 EMBLEM_TEXT = "MADE IN WASTELAND"   # in the matching pill on the back ("" = empty pill)
-PILL_W, PILL_H = 49.4, 7.4          # both pills, groove centre line: as big as the space above the screen allows
+FRONT_PILL = (50.6, 7.8)            # w h, groove centre line: as big as the space above the screen allows
+                                    # (~0.5 mm clear of the label border, the window chamfer and the sensor holes)
+BACK_PILL = (64.0, 9.0)             # w h: as big as the space between the two recesses allows
 FRONT_PILL_Y, BACK_PILL_Y = 74.8, 39.0
-PILL_MARGIN = 0.7                   # text to the inner edge of the pill's groove
+PILL_MARGIN = 0.5                   # text to the inner edge of the pill's groove
 GRAVITY_PORTS = False  # True opens the side walls at the P0 / P1 / I2C expansion connectors
 SD_POCKET = 3.0        # room past the right inner wall for the end of an installed microSD (no opening)
 SD_CARD_OUT = 2.0      # how far an installed card is taken to stick out past the PCB edge (--check)
@@ -299,16 +301,18 @@ def split_span(x0, x1, gaps):
     return spans
 
 
-def pill_cs(cx, cy):
-    """The nameplate pill, as the centre line of its groove."""
-    return stadium_cs(cx - PILL_W / 2, cy - PILL_H / 2, cx + PILL_W / 2, cy + PILL_H / 2)
+def pill_cs(pill, cx, cy):
+    """The nameplate pill (w, h), as the centre line of its groove."""
+    w, h = pill
+    return stadium_cs(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
 
 
-def pill_text(s, cx, cy, mirror=False):
-    """s as big as it fits inside the pill: PILL_MARGIN clear of the groove,
+def pill_text(s, pill, cx, cy, mirror=False):
+    """s as big as it fits inside the pill (w, h): PILL_MARGIN clear of the groove,
     corners included where the words run into the round ends."""
-    a = PILL_H / 2 - LINE_W / 2 - PILL_MARGIN        # inner half-height
-    run = (PILL_W - PILL_H) / 2                      # half-length of the straight sides
+    w, ph = pill
+    a = ph / 2 - LINE_W / 2 - PILL_MARGIN            # inner half-height
+    run = (w - ph) / 2                               # half-length of the straight sides
     x0, y0, x1, y1 = text_cs(s, 1.0, 0, 0, 1e6).bounds()
     aspect = (x1 - x0) / (y1 - y0)
     lo, hi = 0.0, 2 * a
@@ -458,9 +462,9 @@ def front_shell():
     for y in RIB_Y:
         for side in ("left", "right"):
             cuts.append(face_line(*wing_x(side), y, SLAT_D, Z_FRONT, -1, SLAT_W / 2))
-    cuts.append(vgroove_loop(pill_cs(XC, FRONT_PILL_Y), d, Z_FRONT, -1, hw))    # nameplate pill above the screen
+    cuts.append(vgroove_loop(pill_cs(FRONT_PILL, XC, FRONT_PILL_Y), d, Z_FRONT, -1, hw))    # nameplate pill above the screen
     if BAND_TEXT:
-        cuts.append(slab(pill_text(BAND_TEXT, XC, FRONT_PILL_Y), Z_FRONT - 0.4, Z_FRONT + 1))
+        cuts.append(slab(pill_text(BAND_TEXT, FRONT_PILL, XC, FRONT_PILL_Y), Z_FRONT - 0.4, Z_FRONT + 1))
     shell = shell - union(cuts)
 
     # screen window with a 45 deg chamfer on the outside
@@ -614,12 +618,12 @@ def back_shell():
         a = sr * 0.5
         cuts.append(vgroove_seg((sx - a, sy - a), (sx + a, sy + a), 0.6, Z_BACK))
         cuts.append(vgroove_seg((sx - a, sy + a), (sx + a, sy - a), 0.6, Z_BACK))
-    cuts.append(vgroove_loop(pill_cs(XC, BACK_PILL_Y), d, Z_BACK, hw=hw))       # nameplate pill, same as the front's
+    cuts.append(vgroove_loop(pill_cs(BACK_PILL, XC, BACK_PILL_Y), d, Z_BACK, hw=hw))   # nameplate pill, wider than the front's
     for y in ESP_VENT_Y:              # vents over the ESP32 can, through the floor and the pad under it
         for x0s, x1s in ESP_VENT_X:   # (the pad is left as ribs between them, still backing the board)
             cuts.append(slab(stadium_cs(x0s, y - 0.5, x1s, y + 0.5), Z_BACK - 1, ESP_PAD_Z + 1))
     if EMBLEM_TEXT:                                                              # engraved, reads right from behind
-        cuts.append(slab(pill_text(EMBLEM_TEXT, XC, BACK_PILL_Y, mirror=True), Z_BACK - 1, Z_BACK + 0.4))
+        cuts.append(slab(pill_text(EMBLEM_TEXT, BACK_PILL, XC, BACK_PILL_Y, mirror=True), Z_BACK - 1, Z_BACK + 0.4))
     shell = shell - union(cuts)
 
     for _, _, _, cut in tabs_placed():

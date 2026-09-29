@@ -125,6 +125,10 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   uint8_t depBefore = 0, depAfter = 0;
   const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
   char trapPath[88]; int trapPathLen = 0;
+  // What the step picked up off the ground (scoopGroundOnArrival): the
+  // mover's loot_result, and the hex for the ground_update everyone gets.
+  PSRAM_STATIC(char, scoopAck, [768]);
+  bool scooped = false, scoopTook = false; int scoopQ = 0, scoopR = 0;
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     slot = findSlot(client->id());
@@ -148,6 +152,35 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
         trapPathLen = snprintf(trapPath, sizeof(trapPath),
           "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"trap\":1}",
           encPools[ENC_POOL_TRAP].path, (int)encounters[slot].encIdx);
+      // Anything lying on the hex comes with you -- the remains' supplies and
+      // every pile.  Surface only: a step that went down a hatch took nothing
+      // off it, and piles never lie underground.  Climbing back up onto a
+      // hatch does, which is where anyone who fell below left their pack.
+      if (!refused && depAfter == 0) {
+        uint8_t got[5], items[2 * 24]; int nItems = 0; bool left = false;
+        scoopTook = scoopGroundOnArrival(slot, got, items, 24, &nItems, &left);
+        // A full pack that could take nothing still hears about it (ok false,
+        // why LOOT_FULL): otherwise walking onto a grave says nothing at all.
+        if (scoopTook || left) {
+          Player& sp = G.players[slot];
+          scooped = true; scoopQ = sp.q; scoopR = sp.r;
+          int ap = appendFmt(scoopAck, sizeof(scoopAck), 0,
+            "{\"t\":\"loot_result\",\"ok\":%s,\"why\":%d,\"auto\":1,\"left\":%d,\"pid\":%d,"
+            "\"got\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d],\"items\":[",
+            scoopTook ? "true" : "false", scoopTook ? (int)LOOT_OK : (int)LOOT_FULL,
+            left ? 1 : 0, slot, got[0], got[1], got[2], got[3], got[4],
+            sp.inv[0], sp.inv[1], sp.inv[2], sp.inv[3], sp.inv[4]);
+          for (int i = 0; i < nItems; i++)
+            ap = appendFmt(scoopAck, sizeof(scoopAck), ap, i ? ",[%d,%d]" : "[%d,%d]",
+                           (int)items[i * 2], (int)items[i * 2 + 1]);
+          ap = appendFmt(scoopAck, sizeof(scoopAck), ap, "],");
+          ap = appendPackArrays(scoopAck, sizeof(scoopAck), ap, slot);
+          appendFmt(scoopAck, sizeof(scoopAck), ap, "}");
+          Log.notice("scoop pid=%d at (%d,%d) tokens=%d,%d,%d,%d,%d piles=%d left=%d",
+                     slot, scoopQ, scoopR, got[0], got[1], got[2], got[3], got[4],
+                     nItems, left ? 1 : 0);
+        }
+      }
       playerVisParams(slot, &vr, &mr);
       // Underground the disk must be built from tq/tr against G.tunnel. p.q/p.r
       // stay pinned to the hatch the player descended through -- the invariant
@@ -173,6 +206,11 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   }
   // After the vis disk, so the board under the trap is fresh when the panel opens.
   if (trapPathLen > 0) client->text(trapPath, (size_t)trapPathLen);
+  if (scooped) client->text(scoopAck);
+  if (scoopTook) {
+    broadcastGroundUpdate(scoopQ, scoopR);   // takes G.mutex itself; drops the grave marker once bare
+    requestSave();
+  }
   if (refused) wsNack(client, refused);
   if (slot >= 0 && depAfter != depBefore) k10Play(MOTIF_SEWER_ECHO);
 }

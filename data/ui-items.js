@@ -325,17 +325,13 @@ function closeItemMenu() {
 
 // ── Remains ───────────────────────────────────────────────────────
 // Where a survivor fell: `remains` (engine.js) holds {q,r,pid,nm,d,res[5]}
-// per grave, from sync / ground_update "rm". The tokens are taken with
-// {t:'loot',res} (0 = everything that fits); the fallen survivor's items are
-// ordinary ground piles on the same hex and use pickup_item like any other.
+// per grave, from sync / ground_update "rm". Stepping onto the hex takes
+// everything that fits -- the tokens and the fallen survivor's item piles --
+// server-side (scoopGroundOnArrival); _msgLootResult reports it.
 
 // The label players actually see on the map (renderHexLabels), not q/r.
 function hexNameOf(q, r) {
   return (typeof hexLabel !== 'undefined') ? `hex ${hexLabel[r * MAP_COLS + q]}` : `(${q},${r})`;
-}
-
-function remainsAt(q, r) {
-  return (typeof remains === 'undefined' ? [] : remains).find(rm => rm.q === q && rm.r === r) ?? null;
 }
 
 // Game-days before the dawn sweep takes something stamped day `d` --
@@ -343,95 +339,6 @@ function remainsAt(q, r) {
 // dayCount is a uint16 on the board, hence the mask.
 function groundDaysLeft(d) {
   return Math.max(0, GROUND_AGE_DAYS - (((gameState?.dc ?? 0) - (d ?? 0)) & 0xFFFF));
-}
-function groundDaysLabel(d) {
-  const left = groundDaysLeft(d);
-  return left <= 1 ? 'gone at dawn' : `${left} days left`;
-}
-
-// Arriving on a hex with remains says so once: the grave marker is easy to
-// read from a distance but the pickup chips live in the hex panel.
-let _remainsNotedKey = '';
-function noteRemainsUnderfoot(q, r) {
-  const key = `${q}_${r}`;
-  const rm  = myDepth ? null : remainsAt(q, r);
-  if (!rm) { _remainsNotedKey = ''; return; }
-  if (key === _remainsNotedKey) return;
-  _remainsNotedKey = key;
-  const tokens = rm.res.reduce((a, b) => a + b, 0);
-  const piles  = (groundItems ?? []).filter(gi => gi.q === q && gi.r === r && gi.id > 0).length;
-  const what   = [tokens ? `${tokens} supplies` : '', piles ? `${piles} item${piles > 1 ? 's' : ''}` : '']
-    .filter(Boolean).join(' and ');
-  showToast(`☠ ${rm.nm || 'Someone'}'s remains — ${what || 'picked clean'}. Open the hex panel to take them.`);
-}
-
-// Ground items for the hex info panel
-function renderHexGroundItems(q, r) {
-  const row  = document.getElementById('hi-ground-row');
-  const list = document.getElementById('hi-ground-list');
-  if (!list || !row) return;
-  // GroundItem has no depth -- the table is surface coordinates only, so
-  // underground a q/r match would list whatever lies on some surface hex.
-  // Remains are the same: a fall below lands on the hatch above.
-  const here = (typeof groundItems === 'undefined' || myDepth ? [] : groundItems)
-    .filter(gi => gi.q === q && gi.r === r && gi.id > 0);
-  const rm = myDepth ? null : remainsAt(q, r);
-  console.log('[INV] renderHexGroundItems', `q=${q} r=${r} itemsFound=${here.length} remains=${!!rm}`);
-  if (here.length === 0 && !rm) {
-    row.style.display = 'none';
-    list.innerHTML = '';
-    return;
-  }
-  row.style.display = '';
-  list.innerHTML = '';
-  if (rm) {
-    const head = document.createElement('div');
-    head.className = 'hi-remains-head';
-    head.innerHTML = `☠ <span class="hi-remains-who">${escHtml(rm.nm || 'Someone')}</span> fell here · ${groundDaysLabel(rm.d)}`;
-    list.appendChild(head);
-    const kinds = [];
-    (rm.res ?? []).forEach((n, k) => { if (n > 0) kinds.push({ n, k }); });
-    kinds.forEach(({ n, k }) => {
-      const name = RES_NAMES[k + 1];
-      const span = document.createElement('span');
-      span.className = 'hi-ground-pickup';
-      span.title = `Take ${name}`;
-      span.innerHTML = `<span class="dot ${RES_DOT_CLASSES[k]}"></span>${escHtml(name)} ×${n} <span class="gp-plus">+</span>`;
-      span.addEventListener('click', () => {
-        console.log('%c[INV] loot', 'color:#fc0;font-weight:bold', `res=${k + 1} have=${n}`);
-        send({ t: 'loot', res: k + 1 });
-      });
-      list.appendChild(span);
-    });
-    if (kinds.length > 1) {
-      const all = document.createElement('span');
-      all.className = 'hi-ground-pickup hi-remains-all';
-      all.title = 'Take every supply that fits';
-      all.innerHTML = `TAKE ALL <span class="gp-plus">+</span>`;
-      all.addEventListener('click', () => {
-        console.log('%c[INV] loot', 'color:#fc0;font-weight:bold', 'res=all');
-        send({ t: 'loot' });
-      });
-      list.appendChild(all);
-    }
-  }
-  here.forEach(gi => {
-    const item = getItemById?.(gi.id);
-    const name = item?.name ?? ('Item #' + gi.id);
-    const span = document.createElement('span');
-    span.className = 'hi-ground-pickup';
-    span.title = `Pick up ${name}` + (gi.d !== undefined ? ` · ${groundDaysLabel(gi.d)}` : '');
-    span.innerHTML =
-      `<img class="item-icon-img" src="${escHtml(_itemIcon(gi.id, 16))}" alt="" width="16" height="16" onerror="${_iconOnError(gi.id)}">` +
-      `${escHtml(name)}` +
-      (gi.n > 1 ? ` \u00d7${gi.n}` : '') +
-      ` <span class="gp-plus">+</span>`;
-    span.addEventListener('click', () => {
-      console.log('%c[INV] pickup_item', 'color:#fc0;font-weight:bold', `gslot=${gi.g} itemId=${gi.id} name="${name}" qty=${gi.n ?? 1}`);
-      send({ t: 'pickup_item', gslot: gi.g });
-    });
-    list.appendChild(span);
-  });
 }
 
 // Close item menu on cancel button or backdrop tap

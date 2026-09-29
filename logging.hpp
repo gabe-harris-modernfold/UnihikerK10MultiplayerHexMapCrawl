@@ -58,7 +58,15 @@ static void logPrintSuffix(Print* out, int /*logLevel*/) {
 }
 
 static void logInit(unsigned long baud = 115200) {
-  if (!Serial) Serial.begin(baud);
+  // USB-CDC: when the cable is in but nothing on the PC has the port open, the
+  // host stops draining the TX FIFO and the core's default 100 ms timeout
+  // applies to EVERY write -- and ArduinoLog writes one char at a time, so a
+  // single line could hold async_tcp / GameLoop / loop() for seconds (all three
+  // were parked in HWCDC::write in the 2026-09-27 TASK_WDT dump). Drop instead,
+  // with a TX ring big enough (default 256 B) that a watched port still gets
+  // whole NETWD bursts. The buffer size only sticks if set before begin().
+  if (!Serial) { Serial.setTxBufferSize(4096); Serial.begin(baud); }
+  Serial.setTxTimeoutMs(0);
   Log.begin(LOG_LEVEL_VERBOSE, &Serial, false);
   Log.setPrefix(logPrintPrefix);
   Log.setSuffix(logPrintSuffix);

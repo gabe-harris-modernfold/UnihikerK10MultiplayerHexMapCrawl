@@ -7,80 +7,6 @@ function updateTerrainCard() {
   uiCurrentCell.val = { ...cell, q: pos.q, r: pos.r };
 }
 
-function populateHexInfo(q, r, cell) {
-  const t = TERRAIN[cell.terrain] || TERRAIN[0];
-  document.getElementById('hi-title').textContent = t.name.toUpperCase();
-
-  // Move cost
-  document.getElementById('hi-mc').textContent =
-    t.mc === 255 ? 'IMPASSABLE' : `${t.mc}× MP`;
-
-  // Shelter — actual built level on this specific hex
-  const shelterLabels = ['None', 'Basic ⛺', 'Improved 🏠', 'Fortified 🏰'];
-  document.getElementById('hi-shelter').textContent =
-    shelterLabels[cell.shelter] || 'None';
-
-  // Vision modifier — t.vis range is -3..+2; shift by 3 for array index
-  const visLabels = ['BLIND (vis 0)', 'MASKED (vis limited)', 'LOW (−1 hex)', 'STANDARD', 'HIGH (+1 hex)', 'HIGH (+2 hex)'];
-  document.getElementById('hi-vis').textContent = visLabels[t.vis + 3] ?? 'STANDARD';
-
-  // Hazard
-
-  // Available actions for this terrain
-  const actionList = document.getElementById('hi-actions');
-  actionList.innerHTML = '';
-  const actionDefs = [
-    { id: ACT_FORAGE, label: 'FORAGE' },
-    { id: ACT_WATER,  label: 'WATER'  },
-    { id: ACT_SCAV,   label: 'SCAVENGE' },
-  ];
-  actionDefs.forEach(({ id, label }) => {
-    if (actAvailable(id, cell.terrain)) {
-      const b = document.createElement('span');
-      b.className = 'hi-act-badge';
-      b.textContent = label;
-      actionList.appendChild(b);
-    }
-  });
-  if (!actionList.hasChildNodes()) {
-    actionList.innerHTML = '<span class="res-none-label">—</span>';
-  }
-
-  // Resource tokens on this hex
-  const resList = document.getElementById('hi-res-list');
-  resList.innerHTML = '';
-  if (cell.resource > 0) {
-    const b = document.createElement('span');
-    b.className = RES_BADGE_CLASS[cell.resource] || 'hi-badge';
-    b.textContent = cell.amount > 0
-      ? `${RES_NAMES[cell.resource]} ×${cell.amount}`
-      : RES_NAMES[cell.resource];
-    resList.appendChild(b);
-  } else {
-    resList.innerHTML = '<span class="res-none-label">None visible</span>';
-  }
-
-  // Survivors on this hex — informational; mirrors the colocated check the
-  // TRADE action list uses in ui-panels.js, but for whichever hex is shown
-  // here (always the player's own current hex — see uiCurrentCell).
-  const playersRow  = document.getElementById('hi-players-row');
-  const playersList = document.getElementById('hi-players-list');
-  if (playersRow && playersList) {
-    const here = players.filter(p => p.on && (p.id === myId || sharesMyHex(p)));
-    playersList.innerHTML = '';
-    playersRow.style.display = here.length ? '' : 'none';
-    here.forEach(p => {
-      const span = document.createElement('span');
-      span.className = 'hi-badge';
-      span.textContent = (p.nm || 'P' + p.id) + (p.id === myId ? ' (You)' : '');
-      playersList.appendChild(span);
-    });
-  }
-
-  // Ground items at this hex (renderHexGroundItems defined in ui-items.js)
-  renderHexGroundItems?.(q, r);
-}
-
 // Keep --hud-h in sync for fixed elements that offset below the HUD.
 (function () {
   const hud = document.getElementById('hud');
@@ -666,18 +592,6 @@ function initCharSheetBindings() {
 }
 
 function initMapBindings() {
-  // Hex-info — auto-open and populate whenever the current cell changes
-  const hexInfo = document.getElementById('hex-info');
-  van.derive(() => {
-    hexInfo.classList.toggle('open', uiHexInfoOpen.val);
-  });
-  van.derive(() => {
-    const cc = uiCurrentCell.val;
-    if (!cc) return;
-    populateHexInfo(cc.q, cc.r, cc);
-    uiHexInfoOpen.val = true;
-  });
-
   // Cooldown SVG ring — own rAF loop, separate from the canvas render loop
   const cdArc = document.getElementById('cd-arc');
   if (cdArc) {

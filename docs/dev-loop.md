@@ -861,6 +861,13 @@ items" in `mock-server/server.js`.
   walking back a score pump. Answered with
   `{t:'loot_result',ok,why,got[5],inv[5]}` (`why`: 0 ok, 1 nothing here,
   2 pack full).
+- **Stepping on takes it.** A surface step onto the hex (or climbing out of a
+  hatch onto it) runs `scoopGroundOnArrival()` from `handleMsg_move`: the
+  remains' tokens and *every* pile there, anyone's, whatever fits. The mover
+  gets the same `loot_result` with `auto:1`, `items:[[id,qty],...]`, the pack
+  arrays, and `left:1` if something stayed behind (sent with `ok:false` too,
+  so a full pack still hears about it). There is no pickup UI any more; the
+  explicit `loot` / `pickup_item` messages remain for bots and tests.
 - The record doubles as the grave marker (`renderRemains()` in renderer.js),
   drawn whatever the fog like the caravan and the Doom, and lives until its
   tokens are taken *and* the last pile on its hex is gone.

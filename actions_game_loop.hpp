@@ -667,16 +667,37 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   }
 }
 
-// Treat a major wound.  The Medic (archetype 2) may do this anywhere — that is
-// the archetype's trait; everyone else must be standing in a Settlement.
-// Costs 2 MP + 1 Medicine, and rolls Endure vs TREAT_DN.  On a partial the
-// major wound is downgraded to a minor one rather than cleared outright.
+// Treat.  Two jobs, checked in this order:
+//   1. A major wound.  The Medic (archetype 2) may close one anywhere — that
+//      is the archetype's trait; everyone else must be standing in a
+//      Settlement.  Costs 2 MP + 1 Medicine and rolls Endure vs TREAT_DN.  On
+//      a partial the major wound is downgraded to a minor one rather than
+//      cleared outright.
+//   2. No major wound.  In a Settlement anyone may spend 1 Medicine + 1 MP to
+//      restore 1 Life Level, no roll.  This is medicine's everyday sink; the
+//      Medic's field privilege stays wound-only, so a Medic outside a
+//      Settlement with nothing to stitch is refused on terrain.
 static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
   Player& p = G.players[pid];
   bool isMedic      = (p.archetype == 2);
   bool inSettlement = (terr == 9);
   if (!isMedic && !inSettlement)  { ev.actWhy = ABW_ARCHETYPE;  return; }
-  if (p.wounds[WOUND_MAJOR] == 0)  { ev.actWhy = ABW_NOT_NEEDED; return; }
+  if (p.wounds[WOUND_MAJOR] == 0) {
+    if (!inSettlement)                 { ev.actWhy = ABW_TERRAIN;    return; }
+    if (p.ll >= effectiveMaxLL(pid))   { ev.actWhy = ABW_NOT_NEEDED; return; }
+    if (p.inv[3] == 0)                 { ev.actWhy = ABW_NO_RES;     return; }
+    if (p.movesLeft < 1)               { ev.actWhy = ABW_NO_MP;      return; }
+    spendMP(p, 1);
+    p.inv[3]--;
+    p.ll++;
+    ev.actMedD   = -1;
+    ev.actLLD    = 1;
+    addScore(p, ev, 1);
+    ev.actOut    = AO_SUCCESS;
+    ev.actWndMin = p.wounds[WOUND_MINOR];
+    ev.actWndMaj = p.wounds[WOUND_MAJOR];
+    return;
+  }
   if (p.inv[3] == 0)               { ev.actWhy = ABW_NO_RES;     return; }
   if (p.movesLeft < 2)             { ev.actWhy = ABW_NO_MP;      return; }
   spendMP(p, 2);
