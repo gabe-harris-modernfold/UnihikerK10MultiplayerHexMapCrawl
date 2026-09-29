@@ -39,6 +39,16 @@ pickVariant() weights slot 0 heaviest, so order a sheet common -> rare.
 Shelters and forage animals have no variant on the wire: the client picks
 one by position, so their order doesn't matter.
 
+Alternates: a terrain sheet may have a sidecar hex<Name>.json,
+    {"alts": {"0": [13, 14], "10": [21]}}
+listing, per variant (a pool slot or a landmark), more cells of the same
+sheet that share its slot. The client deals one of [the variant's own cell,
+*its alternates] by a hash of the hex's position (altPick() in engine.js,
+mirrored in observer.js), so a slot holds several tiles while the firmware
+still counts -- and weights -- only the pool. Alternate cells sit past the
+pool and are neither pool tiles nor landmarks; the manifest carries them as
+"alts": {"<terrain>": {"<variant>": [[page, sx, sy], ...]}}.
+
 Needs Pillow + numpy.
 """
 import argparse
@@ -125,7 +135,7 @@ TUNNEL_ROLES = ['entrance', 'vent', 'cave', 'rock']
 # from here on are landmark art, not pool tiles.
 LANDMARKS = {
     0: 10,   # Jack's Chopper (Phase 5.5), was poi_jacks_chopper.png
-    4: 10,   # downtown core, variants 10-12 (Phase 4 city-core pin), no art yet
+    4: 10,   # downtown core, variants 10-12 (Phase 4 city-core pin), gi23 art 2026-09-28
 }
 # The per-file landmark art `import` folds into a sheet.
 LEGACY_POI = {(0, 10): 'poi_jacks_chopper.png'}
@@ -295,9 +305,28 @@ class Pages:
         return len(self.names) - 1
 
 
+def load_alts(sheets, stem, cells):
+    """hex<Name>.json "alts" -> {variant: [cell, ...]}, validated against the sheet."""
+    side = os.path.join(sheets, f'{stem}.json')
+    if not os.path.exists(side):
+        return {}
+    alts = {int(v): list(c) for v, c in json.load(open(side)).get('alts', {}).items()}
+    seen = set()
+    for v, cs in alts.items():
+        if not 0 <= v < POOL_MAX:
+            sys.exit(f'{stem}.json: alts for variant {v}, but a variant is 4 bits')
+        for c in cs:
+            if not 0 <= c < len(cells) or cells[c] is None:
+                sys.exit(f'{stem}.json: variant {v} alternate cell {c} is empty or off the sheet')
+            if c in seen or c in alts:
+                sys.exit(f'{stem}.json: cell {c} is listed twice, or is itself a variant with alternates')
+            seen.add(c)
+    return alts
+
+
 def cmd_build(args):
     pages = Pages(args)
-    counts, tiles, poi = [], [], {}
+    counts, tiles, poi, all_alts = [], [], {}, {}
     for t, name in enumerate(TERRAINS):
         stem = f'hex{name}'
         path = os.path.join(args.sheets, f'{stem}.png')
@@ -306,22 +335,33 @@ def cmd_build(args):
             tiles.append([])
             continue
         cols, cells = cells_of(Image.open(path), f'{stem}.png', TILE)
+        alts = load_alts(args.sheets, stem, cells)
+        alt_cells = {c for cs in alts.values() for c in cs}
         sentinel = LANDMARKS.get(t, POOL_MAX)
         pool = 0
-        while pool < min(len(cells), sentinel) and cells[pool] is not None:
+        while pool < min(len(cells), sentinel) and cells[pool] is not None and pool not in alt_cells:
             pool += 1
         for i in range(pool, min(len(cells), sentinel)):
-            if cells[i] is not None:
+            if cells[i] is not None and i not in alt_cells:
                 print(f'  warning: {stem}.png cell {i} is past an empty cell -- it is not in the pool')
         if pool > POOL_MAX:
             sys.exit(f'{stem}.png: {pool} tiles, but a variant is 4 bits (max {POOL_MAX})')
-        marks = [i for i in range(sentinel, len(cells)) if cells[i] is not None]
+        marks = [i for i in range(sentinel, min(len(cells), POOL_MAX)) if cells[i] is not None and i not in alt_cells]
+        for i in range(POOL_MAX, len(cells)):
+            if cells[i] is not None and i not in alt_cells:
+                print(f'  warning: {stem}.png cell {i} is past the 4-bit variants and not an alternate -- it is not used')
+        for v in alts:
+            if v >= pool and v not in marks:
+                sys.exit(f'{stem}.json: alternates for variant {v}, which is neither a pool slot nor a landmark')
         lm = f' + landmark {", ".join(f"{t}_{i}" for i in marks)}' if marks else ''
-        page = pages.add(stem, cells, cols, TILE, f'{pool} tiles{lm}')
+        al = f' + {len(alt_cells)} alternates' if alt_cells else ''
+        page = pages.add(stem, cells, cols, TILE, f'{pool} tiles{lm}{al}')
         counts.append(pool)
         tiles.append([[page, *cell_xy(i, cols, TILE)] for i in range(pool)])
         for i in marks:
             poi[f'{t}_{i}'] = [page, *cell_xy(i, cols, TILE)]
+        if alts:
+            all_alts[str(t)] = {str(v): [[page, *cell_xy(c, cols, TILE)] for c in cs] for v, cs in sorted(alts.items())}
 
     families = {}   # key -> (counts, pools)
     for fam in FAMILIES:
@@ -359,6 +399,7 @@ def cmd_build(args):
         'pages': pages.names,
         'tiles': tiles,
         'poi': poi,
+        'alts': all_alts,
     }
     for fam in FAMILIES:
         manifest[fam.cell] = [fam.grid.cell, fam.grid.cell]

@@ -249,6 +249,39 @@ run.choose(0)
 run.on_result({"out": 0})
 check("failure does not advance", run.node_key == before)
 
+# "requires_item" (docs/null-meridian-group.md): worn for equipment, in the
+# pack for anything else -- playerHasForChoice() in inventory_items.hpp.
+class _Pack:
+    def __init__(self, it=(), eq=()):
+        self.inv_type = list(it) + [0] * (config.INV_SLOTS_MAX - len(it))
+        self.inv_qty = [1 if t else 0 for t in self.inv_type]
+        self.equip = list(eq) + [0] * (config.EQUIP_SLOTS - len(eq))
+check("an ungated choice is open to anyone", enc_mod.has_for_choice({}, _Pack()))
+check("the Forks gate opens from the pack", enc_mod.has_for_choice({"requires_item": 66}, _Pack(it=[66])))
+check("the Forks gate stays shut without them", not enc_mod.has_for_choice({"requires_item": 66}, _Pack(it=[67])))
+check("the Glove only counts worn", enc_mod.has_for_choice({"requires_item": 69}, _Pack(eq=[0, 0, 69]))
+      and not enc_mod.has_for_choice({"requires_item": 69}, _Pack(it=[69])))
+check("an unknown item id never opens a gate", not enc_mod.has_for_choice({"requires_item": 250}, _Pack(it=[250])))
+for _b, _i in (("scrub", 21), ("glass", 3), ("ridge", 3)):
+    _enc = lib.get(_b, _i)
+    check(f"the Perambulator stops in {_b} (#{_i})", _enc is not None and _enc.get("title") == "The Perambulator")
+    _r = enc_mod.EncounterRun(lib, _b, _i)
+    _ci = _r.first_open_choice(_Pack())
+    check(f"{_b} Perambulator: first open choice is ungated",
+          _ci is not None and "requires_item" not in _r.choices[_ci])
+    _nodes = (_enc or {}).get("nodes", {})
+    check(f"{_b} Perambulator: no node opens on a gated choice",
+          all("requires_item" not in n["choices"][0] for n in _nodes.values() if n["choices"]))
+    _paid = {e["item"] for n in _nodes.values() for e in n.get("loot", []) if "item" in e}
+    check(f"{_b} Perambulator pays all four instruments", _paid == {66, 67, 68, 69})
+for _s in (1, 2, 3):
+    _p = enc_mod.REPO_ENCOUNTERS / "meridian" / "null_camp" / f"{_s}.json"
+    _nc = json.loads(_p.read_text(encoding="utf-8"))
+    check(f"Null Camp stage {_s}: no node opens on a gated choice",
+          all("requires_item" not in n["choices"][0] for n in _nc["nodes"].values() if n["choices"]))
+check("the four instruments are in items.cfg",
+      all(config.ITEM_CATEGORY.get(i) for i in (66, 67, 68, 69)) and config.ITEM_CATEGORY[69] == "equipment")
+
 print("policies")
 import policy as pmod
 

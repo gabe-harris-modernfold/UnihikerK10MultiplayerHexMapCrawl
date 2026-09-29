@@ -1,0 +1,64 @@
+{
+ "_source": "D:/generated-image (23).png (gi23), one building per hex on Open Scrub cells 0-2 ground, 10-16 pieces of gi27/gi17 clutter round it (bu_clutter.py); see docs/hex-tile-art.md \"Broken Urban\"",
+ "cells": [
+  "gi23_01 burnt two-storey",
+  "gi23_06 brick duplex",
+  "gi23_20 ivy farmhouse",
+  "gi23_03 bare frame",
+  "gi23_04 caravan trailer",
+  "gi23_09 awning shop",
+  "gi23_10 gas station",
+  "gi23_14 pharmacy",
+  "gi23_11 L motel",
+  "gi23_12 church",
+  "gi23_07 apartment block",
+  "gi23_08 teal corner block",
+  "gi23_19 grey townhouse",
+  "gi23_05 caved-in bungalow",
+  "gi23_22 green cottage",
+  "gi23_00 colonial house",
+  "gi23_02 log cabin",
+  "gi23_23 garage",
+  "gi23_13 diner",
+  "gi23_17 laundromat",
+  "gi23_16 post office",
+  "gi23_21 gutted brick",
+  "gi23_15 bank",
+  "gi23_18 fire station"
+ ],
+ "alts": {
+  "0": [
+   13
+  ],
+  "1": [
+   14
+  ],
+  "2": [
+   15
+  ],
+  "3": [
+   16
+  ],
+  "4": [
+   17
+  ],
+  "5": [
+   18
+  ],
+  "6": [
+   19
+  ],
+  "7": [
+   20
+  ],
+  "10": [
+   21
+  ],
+  "11": [
+   22
+  ],
+  "12": [
+   23
+  ]
+ }
+}

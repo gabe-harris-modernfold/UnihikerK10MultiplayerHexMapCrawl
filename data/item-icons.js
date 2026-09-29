@@ -1160,6 +1160,26 @@
     k.solid(box(16, 6, 3, 1.6, 0.8), 'black');
   };
 
+  // 69 Dirty Glove: a left-hand surgical glove, palm up, never sterile.
+  // The stains are blotches, never circles, and there are more than you
+  // would like.
+  I[69] = (k) => {
+    const fingers = [[10.6, 7.8, 1.9], [14.2, 5.6, 2], [17.8, 6.2, 1.95], [21, 9.4, 1.75]];
+    const hand = union(rough(box(15.6, 18.6, 6.2, 5.6, 3), 0.35, 0.7, 1),
+      ...fingers.map(([x, y, r], i) => seg(x, y, 11.6 + i * 3.1, 15, r)),
+      seg(21.2, 21.4, 26.6, 15.6, 2.1),
+      box(15.4, 26.6, 5, 3.2, 1.2));
+    k.solid(hand, 'white', { shade: { t: 'round', r: 3.2 }, grime: 0.45, speck: 0.12 });
+    k.decal(rough(box(15.4, 27.6, 5, 2, 0.6), 0.25, 1, 2), 'bone', { dt: -1 });
+    k.line(stroke(jit([10.4, 25.4, 13.2, 25.8, 16, 25.2, 18.8, 25.8, 20.4, 25.4], 0.2, 3)), { tone: SHD });
+    k.line(union(curve(12.4, 16.8, 15, 18.6, 18.8, 16.4), curve(20.4, 20.4, 18.4, 22.4, 15, 22.2)), { tone: SHD, p: 0.8 });
+    k.decal(rough(circle(18.4, 18.4, 2.8), 1.1, 0.7, 4), 'blood', { dt: 0 });
+    k.decal(rough(circle(11, 9.4, 1.6), 0.8, 0.9, 5), 'blood', { dt: 1 });
+    k.decal(rough(circle(12.8, 21.6, 2.2), 0.9, 0.8, 6), 'bile', { dt: -1 });
+    k.decal(rough(ellipse(24.2, 17.2, 1.4, 2), 0.6, 1, 7), 'rust', { dt: 0 });
+    k.decal(dots(jit([16, 12.6, 20.4, 13, 14.2, 24, 9.6, 14.2], 0.5, 8)), 'blood', { tone: SHD, w: 1 });
+  };
+
   // ── Bolt-Ons, vehicles ──────────────────────────────────────────
 
   // 17 Rust Rocket: a rusted-out motor scooter, patched tank, coughing.
@@ -1455,6 +1475,69 @@
         stroke(jit([8.5, 19, 12, 18.4, 15, 19.4, 18, 18.4, 22, 19.2, 24.5, 18.6], 0.3, 2)))), { mat: 'blue', tone: SHD });
     }
     k.solid(r(poly([18, 27, 27, 18, 25.6, 26])), 'note', { shade: { t: 'flat', tone: HI }, grime: 0 });
+  };
+
+  // ── The Null Meridian Group's instruments (docs/null-meridian-group.md) ──
+
+  // 66 Strange Forks: a fan of tuning forks that do not match, wired at the
+  // neck -- two tines, three, one bent back into its own handle, and one with
+  // no tines at all that is still ringing.
+  I[66] = (k) => {
+    const fan = (f, deg) => rotate(f, deg, 16, 28.4);
+    const stem = (top) => union(seg(16, top, 16, 27, 0.6), circle(16, 27.4, 1.1));
+    const tines = (n) => {
+      const w = n === 3 ? 1.9 : 1.5;
+      const u = stroke([16 - w, 5.6, 16 - w, 10.4, 16, 12, 16 + w, 10.4, 16 + w, 5.6], 0.45);
+      return n === 3 ? union(u, stroke([16, 6, 16, 11.8], 0.45)) : u;
+    };
+    // bent: the right tine folds over and runs back down into the handle
+    const bent = union(stroke([14.5, 5.6, 14.5, 10.4, 16, 12], 0.45), curve(17.5, 10.4, 19.6, 3.4, 16.5, 15.6, 0.45));
+    const flat = (t) => ({ shade: { t: 'flat', tone: t }, wear: 0 });
+    k.solid(fan(union(tines(2), stem(12)), -34), 'steel', Object.assign(flat(BASE), { rust: 0.3 }));
+    k.solid(fan(bent, 34), 'iron', flat(HI));
+    k.solid(fan(stem(12), 34), 'iron', Object.assign(flat(HI), { rust: 0.3 }));
+    k.solid(fan(union(tines(3), stem(12)), -12), 'foil', flat(BASE));
+    k.solid(fan(union(circle(16, 9, 1.8), stem(9)), 12), 'copper', { shade: { t: 'round', r: 1.2 }, wear: 0 });
+    // the tineless one rings anyway
+    const hx = 16 + Math.sin(12 * PI / 180) * 19.4, hy = 28.4 - Math.cos(12 * PI / 180) * 19.4;
+    k.fx(union(arc(hx, hy, 3.6, 150, 210), arc(hx, hy, 3.6, -30, 30), arc(hx, hy, 5.6, 160, 200), arc(hx, hy, 5.6, -20, 20)),
+      'amber', { tone: HI, w: 1, under: true });
+    k.solid(rough(box(16, 23.6, 3.2, 1, 0.5), 0.3, 1, 3), 'copper', { shade: cyl(0, 23.6, 32, 23.6, 1), wear: 0 });
+    k.line(union(stroke([14.4, 22.8, 14.9, 24.4]), stroke([16.6, 22.8, 17.1, 24.4])), { tone: SHD });
+  };
+
+  // 67 Upside Pendulum: a brass bob on a rigid rod that stands UP from its
+  // base and leans toward whatever does not belong.
+  I[67] = (k) => {
+    k.solid(rough(box(16, 26.6, 9, 2.4, 0.8), 0.3, 0.8, 1), 'iron', { shade: { t: 'bevel', hw: 1, sw: 1.2 }, grime: 0.3 });
+    k.decal(box(16, 25, 9, 0.5), 'iron', { tone: HI });
+    k.solid(inter(shell(circle(16, 24, 7.6), 0.55), box(16, 20.6, 7, 3.2)), 'mustard', { shade: { t: 'flat', tone: SHD }, wear: 0 });
+    k.decal(dots([10.4, 19.6, 13, 17.4, 16, 16.6, 19, 17.4, 21.6, 19.6]), 'mustard', { tone: HI, w: 1, on: 1 });
+    k.solid(union(seg(16, 24.2, 21.4, 7.6, 0.8), circle(16, 24.2, 1.6)), 'steel', { shade: { t: 'flat', tone: HI }, wear: 0 });
+    k.solid(circle(21.8, 6.6, 3.6), 'copper', { shade: { t: 'sphere', cx: 20.6, cy: 5.4, r: 4.4 }, grime: 0.15, rust: 0.15 });
+    k.decal(dots([20.4, 5.2]), 'copper', { tone: GLINT, w: 1 });
+    // the swing it has not finished: a ghost arc on the far side
+    k.fx(union(arc(16, 24.2, 18.2, -118, -104, 0.5), arc(16, 24.2, 18.2, -98, -86, 0.5)), 'amber', { tone: SHD, w: 1, p: 0.8, under: true });
+    k.fx(union(stroke([25.8, 4, 27.6, 3]), stroke([26.4, 7.4, 28.4, 7.2]), stroke([25.6, 10.6, 27.2, 11.6])), 'amber', { tone: HI, w: 1 });
+  };
+
+  // 68 Inward Scope: the Inside-Out Microscope -- brass tube on an iron arm,
+  // its eyepiece curled back round into its own body. On the slide,
+  // something small is looking up.
+  I[68] = (k) => {
+    k.solid(rough(box(15, 27, 9.6, 2.2, 1), 0.3, 0.8, 1), 'iron', { shade: { t: 'bevel', hw: 1, sw: 1.2 }, grime: 0.3 });
+    k.solid(union(curve(21.6, 25, 26.4, 16, 21, 8.6, 1.5), box(21.6, 24.6, 1.7, 1.6, 0.4)), 'iron', { shade: { t: 'round', r: 1.4 }, rust: 0.2 });
+    k.solid(box(12.8, 19.4, 7.4, 1, 0.4), 'black', { shade: { t: 'flat', tone: HI } });
+    k.decal(ellipse(12.2, 19.3, 1.8, 0.6), 'bone', { tone: BASE });
+    k.decal(dots([12.2, 19.3]), 'amber', { tone: GLINT, w: 1 });
+    const tube = rotate(box(15.4, 11.6, 2.6, 6, 0.6), 24, 15.4, 11.6);
+    k.solid(tube, 'copper', { shade: rcyl(24, 15.4, 0, 15.4, 32, 2.6), grime: 0.2, rust: 0.2 });
+    k.solid(rotate(box(17.6, 16.4, 1.6, 1.2, 0.3), 24, 17.6, 16.4), 'steel');
+    // the eyepiece, bent back round into the tube
+    k.solid(curve(12.8, 5.4, 8.4, 1.2, 8, 8.4, 1.3), 'copper', { shade: { t: 'round', r: 1 }, rust: 0.2 });
+    k.solid(circle(9.2, 10.4, 1.9), 'black', { shade: { t: 'round', r: 1.2 } });
+    k.decal(dots([8.8, 9.9]), 'glass', { tone: GLINT, w: 1 });
+    k.fx(union(stroke([5.4, 20, 7.4, 19.6]), stroke([5.6, 17.4, 7.2, 18.4])), 'amber', { tone: HI, w: 1, p: 0.8 });
   };
 
   // ── Resource tokens (not items) ─────────────────────────────────

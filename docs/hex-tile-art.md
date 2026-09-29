@@ -14,6 +14,9 @@ This is how the hex terrain tiles are being redrawn:
   see [Integration](#integration).
 - **Marsh:** 6 tiles ship as cells 0–5 of the Marsh sheet. These are whole
   painted hexes, reshaped and regraded; see [Marsh](#marsh).
+- **Broken Urban (2026-09-28):** all 24 buildings of gi23, one per hex on
+  Open Scrub ground, as 10 slots + 3 downtown pins with alternates; see
+  [Broken Urban](#broken-urban).
 - **Other terrains:** not started.
 - **Delivery (2026-09-27):** every terrain is one sheet now, not one file per
   tile. Paint into `art/hex-sheets/hex<Name>.png`, then run
@@ -78,7 +81,8 @@ a painted checkerboard.
 | gi7, gi13, gi14 | unlabelled terrain hex sheets | — |
 | gi8, gi15, gi16 | labelled terrain hex sheets (OPEN SCRUB, ASH DUNES, …) | gi8's OPEN SCRUB hex: ground, dead tree, rocks, tufts |
 | gi17 | props: rock outcrop, rusted sedan, skull, toxic pool, DINER sign, barrels, dead tree, bus stop, vending machine, mine, junk | sedan, dead oak |
-| gi18–23, gi28 | buildings | — |
+| gi18–22, gi28 | buildings | — |
+| gi23 | 24 small-town buildings (houses, shops, church, civic) | all 24: [Broken Urban](#broken-urban) |
 | gi24, gi25 | cars, vans, trucks, buses | pickup `gi24_05`. Approved but unused: `gi24_06`, `gi25_01/04/08/09` |
 | gi26 | crashed aircraft | fuselage `gi26_07`, Huey `gi26_12`, fighter `gi26_16` |
 | gi27 | plants: bushes, grass, dead trees, stumps, logs, brush | all dead trees and bushes except the dead oak |
@@ -236,9 +240,11 @@ shares are:
 
 There are more tiles than slots, so each slot holds several alternates:
 
-- The client picks an alternate by a stable hash of the hex's position:
-  `((q*73856093) ^ (r*19349663)) % alternates`. This is not implemented yet;
-  see [Integration](#integration).
+- The client picks an alternate by a stable hash of the hex's map position:
+  `(q*73856093) ^ (r*19349663)`, then a murmur-style finaliser so two
+  alternates don't fall into a checkerboard, mod the slot's tile count
+  (`altPick()` in engine.js and observer.js). Built 2026-09-28; see
+  [Integration](#integration).
 - A tile's frequency is its slot's share divided by the number of alternates
   in that slot.
 - Rare things go in the high slots.
@@ -376,6 +382,76 @@ Script: `fit_flood.py` + `fitlib.py` in scratchpad
 - Page: 7 tiles, q90, 128 KB, worst visible RMSE 3.11. Mock-verified in the
   map (both drawn by the real renderer). Not synced.
 
+## Broken Urban
+
+The user: "replace the Broken Urban with assets from D:\generated-image
+(23).png", then "more variety" (use all 24, not 13). The old Broken Urban
+master is backed up as `hexBrokenUrban.bak.png` in scratchpad 2a362bec.
+
+- **Clips:** gi23's 24 buildings, cut in session 186e549f by
+  `clip_assets.py` (`assets/gi23_*.png`), cleaned with `trees_bushes.clean()`.
+- **Ground:** Open Scrub master cells 0–2, the approved open ground, dealt
+  `clip % 3`. The buildings carry their own grass and rubble skirts.
+- **Grade:** one transform for the whole set, measured on all 24 bodies
+  pooled, so the teal, brick and white stay distinct from each other. a*/b*
+  move to the ground's mean at 0.85× chroma, L* halfway to it; applied at
+  0.35 strength, faded out on ink.
+- **Placement:** fit inside 186×172 px, centred 6 px low, silhouette shadow
+  (alpha blurred 3 px, offset (3, 4), 30%), clipped to the 1.035 hex. The
+  user kept this size ("current is good") over 80% and 65% versions.
+- **Clutter** (`bu_clutter.py`), asked for in steps: "clip some bushes and
+  barrels and various clutter", then "a little bigger", "more clutter per
+  hex", "even more", "little more". Where it landed:
+  - **Pieces:** the approved graded gi27 bushes and wood from `treesbush/`
+    (thorny bush, low bushes, leafy shrub, tall grass, bramble, dry tuft,
+    brush pile, branches, log), plus gi27 ivy rubble, fenced bush, barrel
+    planter and slab and gi17 barrels, jersey barrier and junk pile, given
+    the buildings' own set grade. The vending machine read as a stray box and
+    was dropped. `wasteland items.png` and gi6/9/10 are inventory icons, not
+    ground clutter.
+  - **Size:** 1.6× true scale, so it reads at map zoom.
+  - **Count:** asks 14 per house, 16 per shop or civic; 10–16 fit.
+  - **Where:** feet within 28 px of the walls, three times likelier along
+    the sides and front than behind. In front, a piece may stand on the
+    clip's grass skirt (the bottom 22 px of each column) and cover at most
+    15% of wall. Behind, it must stay whole and clear of the roofline, or it
+    reads as sitting on the roof. Pieces may overlap each other by 38%, so
+    they heap.
+  - **Mix:** houses place a piece of debris first, shops a prop and a
+    debris, so bushes don't crowd out the street junk. A prop appears at
+    most twice per tile, a bush three times.
+  - **Contact shadows:** (58, 50, 30) at 30%, blurred 3 px.
+- **Slots** (`hexBrokenUrban.json` names every cell):
+
+  | Variant | Share | Own cell | Alternate |
+  |---|---|---|---|
+  | 0 | 26.0% | burnt two-storey | caved-in bungalow |
+  | 1 | 21.0% | brick duplex | green cottage |
+  | 2 | 16.6% | ivy farmhouse | colonial house |
+  | 3 | 12.7% | bare frame | log cabin |
+  | 4 | 9.4% | caravan trailer | garage |
+  | 5 | 6.5% | awning shop | diner |
+  | 6 | 4.2% | gas station | laundromat |
+  | 7 | 2.3% | pharmacy | post office |
+  | 8 | 1.0% | motel | — |
+  | 9 | 0.3% | church | — |
+  | 4_10 core | pinned | apartment block | gutted brick |
+  | 4_11 core | pinned | teal corner block | bank |
+  | 4_12 core | pinned | grey townhouse | fire station |
+
+- **Page:** 1184×1760, 624 KB (188 KB before gi23, 461 KB before the
+  clutter). The clutter's high-frequency detail tops the lossy ladder out at
+  q95 with the worst tile at visible RMSE 3.66, past the 3.5 bar, like
+  Settlement's 3.95.
+- **Scripts** (scratchpad 2a362bec): `bu_compose.py` (candidates, grade),
+  `bu_clutter.py` (clutter, into `cand2/`), `bu_patch.py` / `bu_patch2.py`
+  (slot sheet, city patches), `bu_master.py` (writes the master from
+  `cand2/` and the sidecar). They import from scratchpad 186e549f.
+- **Checked:** mock client, all 24 cells reached through `terrainTile()`,
+  and the cluttered tiles drawn in the game over a painted-in city;
+  observer loads clean. Not synced, not flashed. The firmware is untouched:
+  Broken Urban's count is still 10.
+
 ## Integration
 
 **Done (2026-09-23): the 10 shipped tiles.**
@@ -435,15 +511,20 @@ not individual hexes" and said to "leave space between each hex".
 - **The per-file tiles are gone from `data/img`.** Only git has them now: the
   shipped versions in HEAD before 2026-09-27, and the originals in `5d9a9ea`.
 
+**Done (2026-09-28): the alternates picker.** A terrain sheet may carry a
+sidecar `hex<Name>.json` with `{"alts": {"<variant>": [cell, ...]}}`. The
+cells sit past the pool on the same sheet; `build` puts them in `tiles.json`
+`alts` and keeps them out of `counts` and `poi`. `terrainTile(t, v, q, r)` in
+engine.js and `Art.tile(..., q, r)` in observer.js deal one of [the variant's
+own cell, *its alternates] with `altPick(q, r, n)`. A landmark variant can
+have alternates too.
+
 **Not done:**
 
-1. **Alternates picker.**
-   - Map (terrain, variant, q, r) to an alternate using the hash above.
-   - Do it in `terrainTile()` in `data/engine.js`, and match it in `Art.tile`
-     in `data/observer.js`.
-   - The 33 Open Scrub alternates already sit in `data/img/tile-alts0.webp`,
-     with `tile-alts.json`. They are a separate 264 px-stride sheet that
-     nothing loads yet.
+1. **Open Scrub's 33 alternates.** The picker exists now, but they still sit
+   in the separate `data/img/tile-alts0.webp` (264 px stride, with
+   `tile-alts.json`), which nothing loads. To use them, paint them into
+   `hexOpenScrub.png` past cell 10 and list them in a `hexOpenScrub.json`.
 2. **Jack's Chopper.**
    - Its POI art, `poi_jacks_chopper.png`, is a gas station, but
      `data/encounters/scrub/19.json` describes a crashed military helicopter.

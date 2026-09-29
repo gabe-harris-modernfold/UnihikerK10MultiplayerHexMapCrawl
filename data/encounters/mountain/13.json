@@ -1,0 +1,128 @@
+{
+  "id": "mountain_duty_officer_01",
+  "title": "The Duty Officer",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The blast door is open a hand's width and someone has propped it with a chair so it cannot seal. Beyond it, a lit corridor: sixty years of lit corridor, powered by something in the rock that does not tire. A stencil at the first junction reads COUNTY CIVIL DEFENCE — DUTY OFFICER ON STATION. Below it a hand-lettered card: HE HAS BEEN ON STATION SINCE OCTOBER. PLEASE DO NOT WAKE HIM.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ease past the duty desk in silence",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 2,
+          "success_node": "the_log_room",
+          "hazard_id": "desk_creak"
+        },
+        {
+          "label": "Read the wall board above the desk",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 1,
+          "success_node": "the_log_room",
+          "hazard_id": "wall_board"
+        }
+      ]
+    },
+    "the_log_room": {
+      "text": "The log room holds one man in a chair, dry as parchment, both hands folded over a green ledger, headphones still clamped on. The ledger is the county's official account of the end, and it is meticulous. OCT 30: Ultimatum received. NOV 6: Second ultimatum received. NOV 10: Third. Nov 11, 11:44: RADAR SHOWS NOTHING. NO LAUNCH DETECTED. NO ATTACK IN PROGRESS. NO ENEMY. 11:45: We are being informed there is a war. 11:46: We are being informed by whom. I have not been able to find out. 11:47: WE FIRED.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Lift the headphones from his ears and listen",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "the_hotline",
+          "hazard_id": "headphones_hiss"
+        },
+        {
+          "label": "Take the ledger from his hands",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_hotline",
+          "hazard_id": "hands_close"
+        }
+      ],
+      "loot_table": "mountain_common"
+    },
+    "the_hotline": {
+      "text": "Behind the desk is the red telephone, the one for the very end. Beside it, a typed sheet in a plastic sleeve, unsigned: THE OFFICIAL ACCOUNT. THERE WAS A WAR. BOTH SIDES BELIEVE THE OTHER STRUCK FIRST. NEITHER SIDE STRUCK FIRST. SOMETHING IN OUR OWN COUNTY WENT LIVE AT 11:47 AND EVERY SIDE'S WEAPONS ANSWERED IT. THE SENTENCE ABOVE HAS BEEN WITHHELD FROM EVERY PUBLIC RECORD BY ORDER OF NO ONE. On the shelf beneath the phone sits a folded diary, the duty officer's own, closed with a rubber band.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "drop_1966_diary"
+    }
+  },
+  "hazards": {
+    "desk_creak": {
+      "text": "The floor under the desk is a lifelong habit of a floor. It creaks, and the whole corridor takes up the sound and carries it away, and nothing wakes, but something that was not awake begins to listen.",
+      "penalty": {
+        "ll": -2,
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "wall_board": {
+      "text": "The wall board is a map of the county with pins. The pins move as you look. By the time you understand that they are moving toward the one that is you, three of them have reached your sleeve.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "headphones_hiss": {
+      "text": "Static. Then the last transmission the man heard: the Emergency Broadcast tone, three long seconds of it, and then a voice, calmly, THIS IS NOT A TEST. And then, to your enormous alarm, THIS IS A TEST. And then both at once. You take the headphones off with blood coming out of one ear.",
+      "penalty": {
+        "ll": -4,
+        "radiation": 1
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "hands_close": {
+      "text": "He does not wake. His hands do. They close on the ledger with the grip of sixty years' unbroken duty, and by the time you have worked them loose you are missing a fingernail and a piece of your morale.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

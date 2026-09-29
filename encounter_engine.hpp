@@ -185,6 +185,7 @@ static const char* encNode(const char* json, const char* key) {
 struct EncChoice {
   int      baseRisk;
   uint8_t  skill;
+  uint8_t  reqItem;                       // "requires_item": open only to a survivor who has it (0 = anyone)
   int      costLL, costRad, costFood, costWat, costScrap, costMed;
   char     nextKey[ENC_KEY_LEN];
   bool     nextCanBank;
@@ -211,6 +212,10 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
 
   out.baseRisk = constrain(jsonNum(jsonObjGet(ch, "base_risk"), 50), 0, 100);
   out.skill    = (uint8_t)constrain(jsonNum(jsonObjGet(ch, "skill"), 0), 0, NUM_SKILLS - 1);
+  // An item id, not a cost: nothing is spent. What "has it" means is
+  // playerHasForChoice() (inventory_items.hpp) -- worn for equipment, in the
+  // pack for anything else (docs/null-meridian-group.md).
+  out.reqItem  = (uint8_t)constrain(jsonNum(jsonObjGet(ch, "requires_item"), 0), 0, 255);
 
   const char* cost = jsonObjGet(ch, "cost");
   out.costLL    = jsonNum(jsonObjGet(cost, "ll"));

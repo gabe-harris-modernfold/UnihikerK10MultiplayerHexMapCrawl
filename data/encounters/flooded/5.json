@@ -1,0 +1,182 @@
+{
+  "id": "flooded_ledger_01",
+  "title": "The Meridian Ledger",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The newsroom is a foot deep in floodwater and dry to the ceiling, an island of paper floating on a lake of paper, and every sheet is dated. Above the door, hand-lettered: THE MERIDIAN LEDGER — ALL THE NEWS THAT FITS. On the front spike is the first edition of the new world, dated Saturday 12 November 1966, and the headline is set in the biggest type the shop owns. It says: NOTHING HAPPENS.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wade to the spike and read the lead story",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "the_archive",
+          "hazard_id": "wet_floor"
+        },
+        {
+          "label": "Try the pressroom door at the back",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 2,
+          "success_node": "the_pressroom",
+          "hazard_id": "press_jaw"
+        }
+      ]
+    },
+    "the_archive": {
+      "text": "The lead story is a masterpiece of reportage. 'Yesterday at 11:47, nothing happened in Meridian County. City officials stress there is no cause for alarm. Residents are asked to return to their routines. Readers are reminded that the sky has not changed colour.' There are more editions in the stack, one for every day. Thirty-three years of them, without a gap. Every headline is a variation. STILL NOTHING. QUIET DAY. THE HOUSES ARE STILL THERE. WEATHER: THE SAME. Each edition is a little thinner than the last, and the last few are hardly a page.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Dig down to the final editions in 1999",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_last_edition",
+          "hazard_id": "paper_slide"
+        },
+        {
+          "label": "Follow the thud of the press",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_pressroom",
+          "hazard_id": "press_jaw"
+        }
+      ],
+      "loot_table": "flooded_common"
+    },
+    "the_pressroom": {
+      "text": "In the pressroom a single machine is running, empty, printing on nothing, dry ink, blank rollers, a soft steady clack of the type meeting the air. The pressman is at the controls, in a paper cap, bent over the folding table, working on the last edition. He does not turn. He says, in the voice of a man being polite to a stranger, 'I've held the front page for the Rift. It's the biggest thing that ever happened and I can't find the right word for it.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Ask him what the Rift is",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "the_last_edition",
+          "hazard_id": "pressman_explains"
+        },
+        {
+          "label": "Look at the final proof on the table",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_last_edition",
+          "hazard_id": "the_proof"
+        }
+      ],
+      "loot_table": "flooded_common"
+    },
+    "the_last_edition": {
+      "text": "The final edition is dated Friday 31 December 1999. The type is enormous. The headline, after thirty-three years of NOTHING, is a single word, and the word is: OPEN. Beneath it, a photograph, blurred, of the night sky over the county at one minute past midnight, with a line drawn down it from the horizon to the top of the frame, thin and straight and exactly the width of a page. The caption: THE SKY HAS A SEAM. THE EDITORS REGRET THAT THE SEAM IS NOT NOTHING.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "flooded_rare"
+    }
+  },
+  "hazards": {
+    "wet_floor": {
+      "text": "The floor is newspapers all the way down and they slide out from under you like a rug. You go under in the ink-black water and come up spitting stale headlines.",
+      "penalty": {
+        "ll": -2,
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "press_jaw": {
+      "text": "The press door swallows your sleeve and takes the arm behind it in a friendly, indifferent clamp. It is a very old press and a good one. It lets go when it has got what it needs.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "paper_slide": {
+      "text": "The stack goes over on you, thirty-three years of it, and the weight of a whole quiet decade lands in your lap. You are a long time digging yourself out.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "pressman_explains": {
+      "text": "He tells you. He tells it as a story, very well, in the proper order, with the details a reporter would want. You are not certain, later, that what you were told was true, but you are quite certain that he believed it, and you are quite unable to forget it.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "the_proof": {
+      "text": "The proof is wet. It is not ink. As your fingers touch the seam in the photograph, it is as if a thin cold line has drawn itself down the inside of your arm, from the shoulder to the wrist, exactly the width of a page.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

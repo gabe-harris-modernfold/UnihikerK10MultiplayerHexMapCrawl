@@ -96,8 +96,8 @@ function tunnelTauntLine(idx) {
 // the board and impossible at the top. If rows get added, add them in the
 // middle — the thin air up top is load-bearing.
 //
-// MIRRORED IN FIRMWARE: ui-screens.hpp has the same table for the K10's own
-// board (screen 6). The LCD cannot run this file and the browser cannot read
+// MIRRORED IN FIRMWARE: ui-scenes.hpp has the same table for the K10's own
+// board (screen 6, the boneyard). The LCD cannot run this file and the browser cannot read
 // flash, so these rows genuinely live twice — edit one, edit the other, or
 // the two boards disagree about who you just passed.
 //
@@ -781,6 +781,25 @@ const ITEMS = [
     preUse:  'A whittled length of tentacle, still twitching. It wants to be thrown at something.',
     postUse: 'It flies true and sticks. Whatever it hit shrieks, bolts, and forgets about you for a while. Threat Clock −1.',
     story:   null },
+  // ── THE NULL MERIDIAN GROUP — the Perambulator's instruments (docs/null-meridian-group.md) ──
+  { id:66, name:'Strange Forks',      category:3, slot:0,
+    img:'img/items/item_66.png', icon:'img/items/icon_66.png',
+    preUse:  null, postUse: null,
+    story:   'Five tuning forks that do not match. Three tines. A tine bent back into the handle. One with no tines at all that still rings. They keep humming in your pack after you set them down. Some choices only open for whoever carries them.' },
+  { id:67, name:'Upside Pendulum',    category:3, slot:0, usable:true,
+    img:'img/items/item_67.png', icon:'img/items/icon_67.png',
+    preUse:  'A bob on a rigid rod, rising from your palm instead of hanging from it.',
+    postUse: 'It swings toward whatever does not belong. The ground for four hexes around you comes into focus. If it circles your own feet, do not ask.',
+    story:   'A bob on a rigid rod that stands up from the floor and swings toward whatever does not belong. Reveals the land within 4 hexes each time you read it. It is never used up.' },
+  { id:68, name:'Inward Scope',       category:3, slot:0, usable:true,
+    img:'img/items/item_68.png', icon:'img/items/icon_68.png',
+    preUse:  'The eyepiece faces inward. You have to hold it backwards to look.',
+    postUse: 'You see yourself from the other end: small, lit, being counted. Nothing else happens. Not yet.',
+    story:   'The Inside-Out Microscope. The eyepiece faces inward, so you see the target\'s view of you. It opens examine choices that show what a place remembers. The smallest organism is always looking at the observer, and counting.' },
+  { id:69, name:'Dirty Glove',        category:1, slot:3,
+    img:'img/items/item_69.png', icon:'img/items/icon_69.png',
+    preUse:  null, postUse: null,
+    story:   'A left-hand surgical glove, never sterile. Worn, it lets you palpate a survivor, a corpse, a Bloom or an echo (it has a pulse, slower than yours). +1 Rad every dawn while worn. The more it is used, the worse it chooses.' },
 ];
 
 // Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist.
@@ -833,6 +852,7 @@ const ITEM_MODS = {
   63: { note: 'Crosses any water terrain at 1 MP' },               // Raft
   64: { slots: +4 },                                               // Backpack
   65: { waterCap: +3 },                                            // Canteen
+  69: { rad: +1, note: 'Opens palpate choices while worn' },       // Dirty Glove
 };
 
 // ── Equipment terrain perks (mirrors items.cfg "terrain" / TERR_PASS_* ) ─────

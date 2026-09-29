@@ -228,7 +228,7 @@ came up. Hold the K10 reset/boot button briefly while replugging USB to recover.
 | Black / nothing | Crash before `M5.begin()` or `k10.begin()` returned |
 | WASTELAND splash → "SD %dMB/%dMB used" | Boot OK; if held, **A** triggers USB-MSC next |
 | `USB DRIVE` (teal) | Hold-A path; SD is enumerated as a removable drive on the host |
-| Player/Resources/Map screens (cycle with **B**) | Normal gameplay |
+| The road / chronicle / resources / encounters / map / the admired (cycle with **B**) | Normal gameplay. Screens 1 (the road) and 6 (the admired) are animated pictures from [ui-scenes.hpp](../ui-scenes.hpp); the join and LAN addresses are in the road screen's footer |
 | `FILE UPLOAD` (teal banner, scrolling bar, byte counter) | A `/upload` POST is in progress; auto-clears 1.5 s after last byte |
 | `OK` (green) / `FAIL` (red) on the upload screen | Final-chunk flash from [ui-upload.hpp](../ui-upload.hpp) |
 
@@ -297,7 +297,17 @@ python scripts/fxsim/fxsim.py                 # every scene
 python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
 python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
 python scripts/fxsim/fxsim.py tripwire beartrap      # the traps' two
+python scripts/fxsim/fxsim.py road_day road_storm road_night admired   # the picture screens
 ```
+
+The picture screens ([ui-scenes.hpp](../ui-scenes.hpp)) run through the same
+harness: `runScene()` in `fxsim.cpp` redraws the scene into the canvas every
+`scenePeriod()` ms from a hand-built `SceneSnap` (`baseSnap()` / `surv()`),
+exactly as the board's loop does, and composes the FX layer over it. On the
+board a scene screen repaints on that period instead of `SCREEN_MS`, never
+takes the row-diff "reprint", and logs `LCD scene n: frames/30s draw avg=...`
+next to the compositor's `LCD FX` line -- the two together are what an
+animated screen costs.
 
 Output lands in `scripts/fxsim/out/` (gitignored): `<scene>.gif` at 2x with
 the board's own frame pacing (`fxFramePeriod()`, 100 ms when idle) and
@@ -570,8 +580,16 @@ python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, f
   empty, and the pool ends at the first empty cell.
 - **Landmarks** are the cells from a terrain's first pinned sentinel on
   (`LANDMARKS` in the script). Open Scrub cell 10 is Jack's Chopper, and
-  Broken Urban cells 10–12 are the downtown core, not painted yet. They go to
+  Broken Urban cells 10–12 are the downtown core. They go to
   `tiles.json` `poi` and stay out of `counts`.
+- **Alternates** let one variant slot hold several tiles. A sidecar
+  `art/hex-sheets/hex<Name>.json` lists them, `{"alts": {"<variant>":
+  [cell, ...]}}`, and the cells sit past the pool on the same sheet. They go
+  to `tiles.json` `alts`, never to `counts`, so the firmware's weighting is
+  unchanged. The client deals one of a slot's tiles by a hash of the hex's
+  map q/r: `altPick()` in engine.js, mirrored bit for bit in observer.js.
+  Broken Urban (2026-09-28) is the first sheet that uses them: 10 slots and
+  3 core pins, 24 buildings.
 - **Shelters** are two sheets: `art/hex-sheets/shelterBasic.png` for
   `cell.shelter` 1 and `shelterImproved.png` for 2.
   - The grid is 224 px cells with a 16 px gutter.
@@ -604,7 +622,8 @@ python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, f
   - **Terrain pages are lossy**, with the alpha kept lossless. For each sheet
     it picks the lowest of q90/92/95 that keeps the worst tile inside the 3.5
     visible-RMSE bar. Settlement tops out at q95 / 3.95, because 4:2:0 chroma
-    smears the yellow school bus.
+    smears the yellow school bus. Broken Urban tops out at q95 / 3.66
+    (624 KB): its yard clutter is all fine detail.
   - **Shelter pages are lossy too.** At 224 px the re-rendered art passes
     the bar at q92 (Basic) and q90 (Improved).
   - **The forage page is lossless.** Its small ink-outlined sprites never

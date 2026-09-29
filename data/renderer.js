@@ -733,7 +733,7 @@ function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
 function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
   ctx.globalAlpha = surveyed ? 0.7 : 1;
   // Underground the art follows the cell's open sides (tunnelTile).
-  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant);
+  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant, mapQ, mapR);
   if (tile) {
     if (ghost > 0 && tile.diorama) drawTileSplit(tile, cx, cy, 1 - ghost);
     else drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
@@ -756,7 +756,7 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
 // Remembered ground keeps to its own hex: under a 90% veil an overhang would
 // be a ghost of a ghost, and a hex-shaped veil could not cover it anyway.
 function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
-  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant);
+  const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant, mapQ, mapR);
   if (tile && !tile.diorama) {
     drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
   } else if (tile) {

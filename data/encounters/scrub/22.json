@@ -1,0 +1,135 @@
+{
+  "id": "scrub_tomorrow_starts_here_01",
+  "title": "Tomorrow Starts Here",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A billboard the size of a barn stands over the road, its paint gone the colour of old teeth, its message still perfectly legible: MERIDIAN COUNTY — TOMORROW STARTS HERE. JANUARY 1966. Beneath the slogan a smiling family in a station wagon points at a shining tower on the horizon. The tower is real. You can see the stump of it from here, a grey tooth on the skyline. At the foot of the billboard sits an attendant's kiosk with a hand-lettered card in the window: OPEN.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the service ladder and read the fine print",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 2,
+          "success_node": "the_kiosk",
+          "hazard_id": "rotten_ladder"
+        },
+        {
+          "label": "Try the kiosk door",
+          "cost": {},
+          "base_risk": 14,
+          "skill": 1,
+          "success_node": "the_kiosk",
+          "hazard_id": "kiosk_nest"
+        }
+      ]
+    },
+    "the_kiosk": {
+      "text": "The attendant kept a logbook, and it is the first honest account you have found of anything. JAN 9: Ribbon cut. Governor, band, a dove released. Dove did not land. JAN 10: Test at 2 o'clock. Every light in the county went out for eleven minutes and came back a shade wrong. Nobody has said a word about it. JAN 11: Customers all asking the time. Every clock reads 11:47. JAN 12: Every watch reads 11:47. The last entry is in a different pen and dated 11 NOVEMBER. It says: Closing early.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Pry up the floor safe under the till",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 2,
+          "success_node": "the_capsule",
+          "hazard_id": "safe_spring"
+        },
+        {
+          "label": "Follow the pipe-run out behind the billboard",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 3,
+          "success_node": "the_capsule",
+          "hazard_id": "the_stump"
+        }
+      ],
+      "loot_table": "scrub_common"
+    },
+    "the_capsule": {
+      "text": "Behind the billboard, set in concrete, is a steel time capsule with a plaque: SEALED 10 JANUARY 1966 BY THE CITIZENS OF MERIDIAN COUNTY. TO BE OPENED 1 JANUARY 2000. The lid has been welded shut from the inside, which should not be possible, and the weld is neat and recent. Something has been left on top of it: a child's drawing of the tower, in crayon, with every window lit, and beneath it the words WE HOPE YOU HAVE WORKED IT OUT.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "scrub_rare"
+    }
+  },
+  "hazards": {
+    "rotten_ladder": {
+      "text": "The third rung gives, and the fourth, and then you are hanging by one arm from a sixty-year-old advertisement for tomorrow, which holds long enough to be humiliating and not long enough to be safe.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "kiosk_nest": {
+      "text": "The door opens onto a nest of something that has been sleeping on the cash float since the sixties and resents the interruption. It is mostly teeth and it is mostly awake.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "safe_spring": {
+      "text": "The safe is not a safe. It is a spring-loaded lid over a jar of very old, very stable hydrochloric acid, and someone with an unpleasant sense of humour clearly wanted to know how much you wanted the till.",
+      "penalty": {
+        "ll": -4,
+        "med": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_stump": {
+      "text": "Round the back the pipe-run leads you straight into the shadow of the tower stump, and for one moment every wristwatch instinct you own tells you it is 11:47, and you lose the next hour standing perfectly still. You come to hungrier than you went in.",
+      "penalty": {
+        "food": -1,
+        "water": -1
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

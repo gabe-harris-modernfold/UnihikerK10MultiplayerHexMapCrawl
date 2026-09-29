@@ -4,6 +4,7 @@
 
 #include "ui-helpers.hpp"
 #include "ui-fx.hpp"        // LCD compositor: cut-ins, shake, CRT failure; before anything that cues it
+#include "ui-scenes.hpp"    // the picture screens (road, boneyard), drawn with ui-fx.hpp's primitives
 #include "ui-boot.hpp"
 #include "snd-engine.hpp"   // the sound engine (platform-neutral): before anything that raises sndStory()
 #include "ui-leds.hpp"

@@ -261,7 +261,9 @@ const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);   // l
 // without it: renderCaravan() falls back to its plain canvas badge.
 // tunnel: the bunker board's corridor/room/fixture cells (tiles.json "tunnel",
 // drawn through tunnelTile() in tunnel-board.js), null without them.
-const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {}, flat: false,
+// alts: {terrain: {variant: [[page, sx, sy], ...]}}, more cells sharing a
+// variant's slot; altPick() deals one by position.
+const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {}, alts: {}, flat: false,
                     shelters: null, shelterCell: [224, 224], forage: null, forageCell: [80, 80],
                     caravan: null, caravanCell: [384, 384], tunnel: null };
 
@@ -276,7 +278,7 @@ function loadTerrainVariants(vc) {
     : fetch('/img/tiles.json', { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r; });
   tilesQueued = req.then(r => r.json()).then(m => {
     if (!m || !Array.isArray(m.pages) || !m.pages.length) throw new Error('tiles.json lists no pages');
-    Object.assign(tileAtlas, { cell: m.cell, anchor: m.anchor, radius: m.radius, tiles: m.tiles || [], poi: m.poi || {}, flat: !!m.flat,
+    Object.assign(tileAtlas, { cell: m.cell, anchor: m.anchor, radius: m.radius, tiles: m.tiles || [], poi: m.poi || {}, alts: m.alts || {}, flat: !!m.flat,
                                shelters: Array.isArray(m.shelters) ? m.shelters : null, shelterCell: m.shelterCell || tileAtlas.shelterCell,
                                forage: Array.isArray(m.forage?.[0]) ? m.forage[0] : null, forageCell: m.forageCell || tileAtlas.forageCell,
                                caravan: m.caravan?.[0]?.length ? m.caravan[0] : null, caravanCell: m.caravanCell || tileAtlas.caravanCell,
@@ -335,16 +337,33 @@ function poiArtFor(terrain, variant) {
   return POI_ART[`${terrain}_${variant}`];
 }
 
+// Which of n tiles sharing a slot the hex at map (q, r) gets: a stable hash
+// of the position, the same on every client and the observer (observer.js
+// altPick). Mixed, so two alternates don't fall into a checkerboard.
+function altPick(q, r, n) {
+  let h = (Math.imul(q | 0, 73856093) ^ Math.imul(r | 0, 19349663)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39) >>> 0;
+  return ((h ^ (h >>> 15)) >>> 0) % n;
+}
+
 // The tile to draw for a cell, or null (no art, or not decoded yet: the
 // caller draws the flat fallback). Atlas tiles are { page, sx, sy, diorama };
-// the per-file fallback is { img }.
-function terrainTile(terrain, variant) {
+// the per-file fallback is { img }. q, r (map coords) pick among a slot's
+// alternates (tiles.json `alts`); without them the slot's own cell is drawn.
+function terrainTile(terrain, variant, q, r) {
   if (tileAtlas.state === 'atlas') {
     const pool = tileAtlas.tiles[terrain];
     // Wrap like the old pool did: a pinned variant with no entry of its own
     // degrades to an ordinary tile of its terrain.
-    const at = tileAtlas.poi[`${terrain}_${variant}`] ||
-               (pool?.length ? pool[((variant % pool.length) + pool.length) % pool.length] : null);
+    const poi = tileAtlas.poi[`${terrain}_${variant}`];
+    const v = poi || !pool?.length ? variant : ((variant % pool.length) + pool.length) % pool.length;
+    let at = poi || (pool?.length ? pool[v] : null);
+    const alts = at && q !== undefined && tileAtlas.alts[terrain]?.[v];
+    if (alts?.length) {
+      const k = altPick(q, r, alts.length + 1);
+      if (k) at = alts[k - 1];
+    }
     const page = at && tileAtlas.pages[at[0]];
     return page?.loaded ? { page, sx: at[1], sy: at[2], diorama: !tileAtlas.flat } : null;
   }

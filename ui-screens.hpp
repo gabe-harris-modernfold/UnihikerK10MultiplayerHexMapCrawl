@@ -1,6 +1,8 @@
 #pragma once
 // ── ui-screens.hpp ───────────────────────────────────────────────────────────
-// All 6 K10 display screens and button-B screen cycling.
+// The K10 display screens and button-B screen cycling. Screens 1 and 6 are
+// pictures now (ui-scenes.hpp); this file takes their snapshot and draws the
+// rest.
 
 // ── World entity markers for the minimap ─────────────────────────────────────
 // The map screen plots the Caravan and Creeping Doom alongside the players, but
@@ -31,234 +33,79 @@ static uint8_t effectiveInvSlots(const Player& p);
 // against it rather than a literal 7.
 static uint8_t effectiveMaxLL(int pid);
 
-// -- Screen 1: player status dashboard --------------------------
-// Three faces, and which one a thing is set in is what it IS, not decoration
-// (the table is in the font block in ui-helpers.hpp):
-//
-//   Font4  26 px  the masthead, and the two numbers that describe the whole
-//                 party at once -- the day, and the threat clock. Nothing
-//                 per-survivor is ever this large, so the eye finds the party
-//                 state without reading a word.
-//   Font2  16 px  everything a person actually reads: names, stat values,
-//                 the weather, the addresses.
-//   Font0   6x8   every label. At 6 px a label costs a third of what it did
-//                 on the 12x16 grid, which is why nothing on this screen is
-//                 abbreviated any more: the labels that used to read TC, MP,
-//                 L/F/W/R, AP and ST are now THREAT, MOVES, LIFE/FOOD/WATER/
-//                 RADS, HOTSPOT and NETWORK, and the archetype is its real
-//                 name out of ARCHETYPE_NAME instead of a four-letter code.
-//                 Small type buys words; it is not a consolation prize.
-//
-//   y   0-29   header band    "WASTELAND" 26 px         uptime 16 px (right)
-//   y  31-58   strip          DAY 12  THREAT 4 (26 px)  weather 16 px (right)
-//   y  60-281  6 cards x 37   [n] name    archetype     MOVES n / DOWN
-//                             LIFE n  FOOD n  WATER n  RADS n  + 3 px bars
-//   y 285-319  footer         HOTSPOT ip                local time (right)
-//                             NETWORK ip / status       free heap (right)
-
 // The column every screen aligns its right-hand edge to. Proportional faces
 // cannot be positioned by counting characters, so the canvasText*R helpers in
 // ui-helpers.hpp take this as the column the string ENDS at.
 static constexpr int DASH_R = 238;
 
-static void drawPlayerScreen() {
-  struct {
-    bool    on;
-    char    name[12];
-    uint8_t ll, food, water, radiation;
-    uint8_t llCap;                     // effectiveMaxLL(), not a literal 7
-    uint8_t archetype;
-    int8_t  movesLeft;
-  } snap[MAX_PLAYERS];
-  uint8_t  snapTC = 0, snapWx = 0;
-  uint16_t snapDay = 0;
+// -- Screens 1 and 6: pictures ---------------------------------
+// The road (the party, their day and their ledger) and the boneyard of the
+// admired are drawn by ui-scenes.hpp straight into the canvas's buffer, and
+// they animate, so they are repainted every scenePeriod() ms rather than
+// every SCREEN_MS (see the display block in loop()). All the board side does
+// is fill the snapshot they draw from, under G.mutex, and keep the one piece
+// of diagnostics that survived: the join and LAN addresses.
+static_assert(SC_SEATS == MAX_PLAYERS, "SceneSnap has one row per seat");
 
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
-  snapTC  = G.threatClock;
-  snapDay = G.dayCount;
-  snapWx  = G.weatherPhase;
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    Player& p          = G.players[i];
-    snap[i].on         = p.connected;
-    snap[i].ll         = p.ll;
-    snap[i].llCap      = effectiveMaxLL(i);   // base 7 + equipment - penalties
-    snap[i].food       = p.food;
-    snap[i].water      = p.water;
-    snap[i].radiation  = p.radiation;
-    snap[i].archetype  = p.archetype;
-    snap[i].movesLeft  = p.movesLeft;
-    memcpy(snap[i].name, p.name, 12);
-  }
-  xSemaphoreGive(G.mutex);
-
-  // Weather names are set in the 16 px face and right-aligned by measurement,
-  // so the old 5-character budget that forced "S.FOG" is gone.
-  static const char* WX_NAME[6] = {"CLEAR","RAIN","STORM","CHEM RAIN","SMOG","FOG"};
-
-  static const uint32_t C_HDR   = 0xD06818;
-  static const uint32_t C_INFO  = 0x904030;
-  static const uint32_t C_LINE  = 0x502010;
-  static const uint32_t C_TXT   = 0xC87840;
-  static const uint32_t C_DIM   = 0x3A1808;
-  static const uint32_t C_BAND  = 0x1E0A00;   // header fill / badge digit
-  static const uint32_t C_TRACK = 0x2E1206;   // empty bar track
-
-  static const uint32_t C_OK   = 0xC05810;
-  static const uint32_t C_WARN = 0xC87020;
-  static const uint32_t C_CRIT = 0xE89018;
-  static const uint32_t WX_COL[6] = { C_TXT, C_INFO, C_WARN, C_CRIT, C_WARN, C_INFO };
-
-  char buf[40];
-  canvas.fillScreen(0x0000);
-
-  // -- Header band ---------------------------------------------
-  canvasRect(0, 0, 240, 29, C_BAND, true);
-  canvasText26p("WASTELAND", 4, 1, C_HDR);
-
-  uint32_t upSec = millis() / 1000;
-  uint32_t upMin = upSec / 60, upHr = upMin / 60;
-  if      (upHr >= 100) snprintf(buf, sizeof(buf), "%luh", (unsigned long)upHr);
-  else if (upHr >= 1)   snprintf(buf, sizeof(buf), "%luh%02lum", (unsigned long)upHr, (unsigned long)(upMin % 60));
-  else                  snprintf(buf, sizeof(buf), "%lum", (unsigned long)upMin);
-  canvasText16pR(buf, DASH_R, 7, C_INFO);
-  canvasLine(0, 29, 239, 29, C_LINE);
-
-  // -- Day / threat / weather strip ----------------------------
-  // The only two 26 px numerals on the screen. Their labels sit beside them
-  // at mid-height rather than above: the strip is 28 px and the numerals want
-  // all of it.
-  canvasText8("DAY", 2, 40, C_INFO);
-  snprintf(buf, sizeof(buf), "%u", (unsigned)snapDay);
-  canvasText26p(buf, 24, 31, C_TXT);
-  canvasText8("THREAT", 76, 40, C_INFO);
-  snprintf(buf, sizeof(buf), "%u", (unsigned)snapTC);
-  canvasText26p(buf, 116, 31, snapTC >= 15 ? C_CRIT : snapTC >= 8 ? C_WARN : C_TXT);
-  uint8_t wx = snapWx < 6 ? snapWx : 0;
-  canvasText16pR(WX_NAME[wx], DASH_R, 36, WX_COL[wx]);
-  canvasLine(0, 58, 239, 58, C_LINE);
-
-  // -- Survivor cards ------------------------------------------
-  // One stat cell: the stat spelled out at 6x8, the value at 16 px in its own
-  // status colour, and a 3 px bar underneath filled value/max in that colour.
-  // The value sits at a fixed offset rather than after the label, so all four
-  // numbers line up down the row whatever the labels are.
-  auto statCell = [&](int x, int y, const char* lbl, uint8_t v, uint8_t vmax, uint32_t col) {
-    canvasText8(lbl, x, y + 4, C_INFO);
-    char b[4]; snprintf(b, sizeof(b), "%u", (unsigned)v);
-    canvasText16p(b, x + 36, y, col);
-    // y+15..y+17, so row y+18 is blank and the bar does not run straight into
-    // the next card's badge 1 px later.
-    canvasRect(x, y + 15, x + 55, y + 18, C_TRACK, true);
-    int w = (vmax == 0) ? 0 : (55 * (int)(v < vmax ? v : vmax)) / (int)vmax;
-    if (w > 0) canvasRect(x, y + 15, x + w, y + 18, col, true);
-  };
-  static const int CARD_Y0 = 60, CARD_H = 37, CELL_X[4] = { 2, 61, 120, 179 };
-
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    int  y = CARD_Y0 + i * CARD_H;
-    char num[2] = { (char)('1' + i), 0 };
-
-    if (!snap[i].on) {
-      canvasRect(2, y, 18, y + 16, C_DIM, false);
-      canvasText16pC(num, 10, y, C_DIM);
-      canvasText16p("offline", 24, y, C_DIM);
-      for (int c = 0; c < 4; c++) canvasRect(CELL_X[c], y + 33, CELL_X[c] + 55, y + 36, C_BAND, true);
-      continue;
+static void sceneSnapFill(SceneSnap& S) {
+  // Kept between calls: if the lock is busy this frame the scene draws the
+  // last good snapshot instead of an empty party.
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    S.day     = G.dayCount;
+    uint32_t mil = (uint32_t)G.dayTick * 1000u / DAY_TICKS;
+    S.dayMil  = (uint16_t)(mil > 999 ? 999 : mil);
+    S.weather = G.weatherPhase < 6 ? G.weatherPhase : 0;
+    S.threat  = G.threatClock;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+      const Player& p = G.players[i];
+      SceneSurv& v = S.s[i];
+      v.on    = p.connected;
+      memcpy(v.name, p.name, sizeof(v.name));
+      v.name[sizeof(v.name) - 1] = 0;
+      v.arch  = p.archetype < NUM_ARCHETYPES ? p.archetype : 0;
+      v.ll    = p.ll;
+      v.llCap = effectiveMaxLL(i);   // base 7 + equipment - penalties
+      v.food  = p.food;
+      v.water = p.water;
+      v.rad   = p.radiation;
+      v.moves = p.movesLeft;
+      v.depth = p.depth;
+      v.inEnc = (encounters[i].active & 1) != 0;
+      v.score = p.score;
     }
-
-    // Row A: slot badge, name, archetype, moves. The name is a person so it
-    // is 16 px; the archetype is a role so it is 6x8 -- but it is the whole
-    // word, because at 6 px "Quartermaster" costs 78 px and there is room.
-    //
-    // Laid out right to left, because everything on the right is fixed and
-    // the name is what has to give. `nameR` walks in past the moves block and
-    // then past the archetype, and the name takes whatever is left of the row
-    // -- measured, since the default names are literally the archetype with a
-    // digit on the end and "Quartermaster1" is twice the width of "Mule1".
-    uint8_t arch = snap[i].archetype < NUM_ARCHETYPES ? snap[i].archetype : 0;
-    canvasRect(2, y, 18, y + 16, C_HDR, true);
-    canvasText16pC(num, 10, y, C_BAND);
-
-    int nameR;
-    if (snap[i].ll == 0) {
-      canvasText16pR("DOWN", DASH_R, y, C_CRIT);
-      nameR = DASH_R - canvasWidth16p("DOWN") - 8;
-    } else {
-      snprintf(buf, sizeof(buf), "%d", (int)snap[i].movesLeft);
-      canvasText16pR(buf, DASH_R, y, C_TXT);
-      int lx = DASH_R - canvasWidth16p(buf) - 5;
-      canvasText8R("MOVES", lx, y + 4, C_INFO);
-      nameR = lx - 5 * 6 - 8;
-    }
-    const char* an = ARCHETYPE_NAME[arch];
-    canvasText8R(an, nameR, y + 4, C_INFO);
-    nameR -= (int)strlen(an) * 6 + 10;
-
-    char nm[13];
-    snprintf(nm, sizeof(nm), "%.12s", snap[i].name);
-    canvasFit16p(buf, sizeof(buf), nm, nameR - 22);
-    canvasText16p(buf, 22, y, C_TXT);
-
-    // Row B: the four survival stats, each judged on its own thresholds.
-    uint32_t cL = snap[i].ll        <= 2 ? C_CRIT : snap[i].ll    <= 3 ? C_WARN : C_OK;
-    // LIFE is drawn against the survivor's OWN ceiling, not a literal 7:
-    // +LL equipment (Dent Absorber, Bear Skin Cape) raises it and Uranium
-    // Candy lowers it, and a fixed 7 pinned the bar full for anyone wearing
-    // armour -- the bonus was real and completely invisible.
-    uint32_t cF = snap[i].food      <= 1 ? C_CRIT : snap[i].food  <= 2 ? C_WARN : C_OK;
-    uint32_t cW = snap[i].water     <= 1 ? C_CRIT : snap[i].water <= 2 ? C_WARN : C_OK;
-    uint32_t cR = snap[i].radiation >= 7 ? C_CRIT : snap[i].radiation >= 4 ? C_WARN : C_OK;
-    statCell(CELL_X[0], y + 18, "LIFE",  snap[i].ll,  snap[i].llCap,  cL);
-    statCell(CELL_X[1], y + 18, "FOOD",  snap[i].food,      8,  cF);
-    statCell(CELL_X[2], y + 18, "WATER", snap[i].water,     8,  cW);
-    statCell(CELL_X[3], y + 18, "RADS",  snap[i].radiation, 10, cR);
+    xSemaphoreGive(G.mutex);
   }
+  S.tcWeight  = g_dread.tcWeight;
+  S.doomClose = g_dread.doomClose;
+  S.doomAware = g_dread.doomAware;
 
-  // -- Footer: network -----------------------------------------
-  // Addresses get typed into a phone, so they are 16 px; what they are is a
-  // 6x8 word. The old footer set label and address at the same size, and the
-  // label read as loudly as the thing it labelled.
-  canvasLine(0, 283, 239, 283, C_LINE);
+  IPAddress apIp = WiFi.softAPIP(), staIp = WiFi.localIP();
+  snprintf(S.ap, sizeof(S.ap), "%d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
+  S.lanUp = staIp[0] != 0;
+  if (S.lanUp)                snprintf(S.lan, sizeof(S.lan), "%d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
+  else if (bootWifiPending)   snprintf(S.lan, sizeof(S.lan), "connecting");
+  else if (savedSsid[0])      snprintf(S.lan, sizeof(S.lan), "%.14s", savedSsid);
+  else if (g_knownCount > 0)  snprintf(S.lan, sizeof(S.lan), "searching");   // the roaming sweep is looking
+  else                        snprintf(S.lan, sizeof(S.lan), "no credentials");
+}
 
-  IPAddress apIp  = WiFi.softAPIP();
-  IPAddress staIp = WiFi.localIP();
-  canvasText8("HOTSPOT", 2, 289, C_INFO);
-  snprintf(buf, sizeof(buf), "%d.%d.%d.%d", apIp[0], apIp[1], apIp[2], apIp[3]);
-  canvasText16p(buf, 48, 285, C_TXT);
-
-  if (checkRtcReady()) {
-    time_t nowEpoch = time(nullptr);
-    setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1); tzset();
-    struct tm it; localtime_r(&nowEpoch, &it);
-    setenv("TZ", "UTC0", 1); tzset();
-    snprintf(buf, sizeof(buf), "%02d:%02d", it.tm_hour, it.tm_min);
-    canvasText16pR(buf, DASH_R, 285, C_INFO);
+// Draw a scene into the canvas. What a frame costs goes to the log every 30 s
+// while one is up, next to the compositor's own "LCD FX" line: together they
+// are the whole price of an animated screen.
+static void drawSceneScreen(uint8_t screen) {
+  static SceneSnap snap = {};
+  static uint32_t  nF = 0, sum = 0, mx = 0, lastLog = 0;
+  uint32_t t0 = micros();
+  sceneSnapFill(snap);
+  sceneDraw(screen, snap, millis(), (uint16_t*)canvas.getBuffer());
+  uint32_t dt = micros() - t0, now = millis();
+  nF++; sum += dt; if (dt > mx) mx = dt;
+  if (now - lastLog >= 30000) {
+    Log.notice("LCD scene %u: %u frames/30s draw avg=%uus max=%uus",
+               (unsigned)screen, (unsigned)nF, (unsigned)(sum / nF), (unsigned)mx);
+    nF = sum = mx = 0;
+    lastLog = now;
   }
-
-  canvasText8("NETWORK", 2, 307, C_INFO);
-  uint32_t stColor;
-  if (staIp[0] != 0) {
-    snprintf(buf, sizeof(buf), "%d.%d.%d.%d", staIp[0], staIp[1], staIp[2], staIp[3]);
-    stColor = C_TXT;
-  } else if (bootWifiPending) {
-    snprintf(buf, sizeof(buf), "connecting");
-    stColor = C_INFO;
-  } else if (savedSsid[0]) {
-    snprintf(buf, sizeof(buf), "%.14s", savedSsid);
-    stColor = C_INFO;
-  } else if (g_knownCount > 0) {
-    // Known networks, none joined yet: the roaming sweep is looking. This used
-    // to read "no credentials" after any failed join, with creds saved.
-    snprintf(buf, sizeof(buf), "searching");
-    stColor = C_INFO;
-  } else {
-    snprintf(buf, sizeof(buf), "no credentials");
-    stColor = C_DIM;
-  }
-  canvasText16p(buf, 48, 303, stColor);
-
-  snprintf(buf, sizeof(buf), "%luk", (unsigned long)(ESP.getFreeHeap() / 1024));
-  canvasText8R(buf, DASH_R, 307, C_DIM);
 }
 
 // ── Screen 2: the chronicle ────────────────────────────────────
@@ -1472,251 +1319,18 @@ static void drawMapScreen() {
   }
 }
 
-// ── Screen 6: the board of the admired ─────────────────────────
-// The score ladder, on the table where the whole group can see it.
-// ADMIRED_WIN (10000) is the way out; everything under it is the wasteland's
-// own leaderboard, and the party is ranked INTO that list rather than beside
-// it — the point of the screen is which corpses you are currently between.
-//
-//   y   0-29   header band   "THE ADMIRED" 26 px
-//   y  31-49   strip         OUT AT 10000        BEST <party high> (right)
-//   y  54-108  the chase     NEXT ABOVE, their name 16 px, their score 26 px
-//                            right, the gap under it, citation in two 6 px
-//                            lines
-//   y 114-267  the ladder    9 merged rows x 17 px — rank, score, badge,
-//                            name. A living row is lit and carries the
-//                            numbered badge; the dead carry neither.
-//   y 274-317  the wake      LAST PASSED — the highest name already under
-//                            the party, with its citation
-//
-// So the ladder is framed by the dead in both directions: the one being
-// climbed towards at the top, the one most recently stepped over at the
-// bottom. Both move on their own as the score does; nothing here needs a
-// timer or a page flip.
-//
-// This table is a MIRROR of ADMIRED in data/game-data.js, which draws the
-// same board in the browser. The LCD has no JS and the browser has no flash
-// access, so the rows genuinely live twice: change one and change the other
-// or the two boards disagree about who you just passed. The wording rules
-// are in the game-data.js comment — dry, lower case, one line each, and
-// every name on it is dead.
-struct AdmiredRow { uint16_t sc; const char* nm; const char* ln; };
-static constexpr uint16_t ADMIRED_WIN = 10000;
-static const AdmiredRow ADMIRED[] = {
-  { 10000, "SAINT ABEL",      "walked out at ten thousand. nobody has come back to say what out looks like." },
-  {  9100, "THE CARTOGRAPHER","mapped every hex on the ring. died on the one he started from." },
-  {  8300, "MOTHER GRILLE",   "fed nine hundred strangers. ate last, the one time it mattered." },
-  {  7400, "QUIET KORO",      "built two rafts and gave away the one that floated." },
-  {  6600, "TEETH",           "won every fight out here. lost the argument about the water." },
-  {  5900, "DELPH",           "surveyed the whole north ridge and never once went down into it." },
-  {  5200, "OLD PELL",        "ninety-one days. spent the last four looking for his glasses." },
-  {  4700, "HANNA VOSS",      "carried the medicine four days to a town that had already finished." },
-  {  4300, "THE COURIER",     "delivered every package. the last one was addressed to her." },
-  {  4000, "BRACE MULDOON",   "traded his rifle for a roof and was proved right for six weeks." },
-  {  3800, "SISTER ANNEX",    "preached that the wasteland provides. it provided." },
-  {  3650, "LOW TOM",         "died rich in scrap. scrap is not water." },
-  {  3500, "VERA ASH",        "found three settlements. none of them were looking for her." },
-  {  3400, "THE ACCOUNTANT",  "kept a ledger of everything he was owed. we buried it with him." },
-  {  3300, "GIL MARROW",      "reached the caravan carrying nothing the caravan would take." },
-  {  3200, "PIP ENSLEY",      "starved two hexes from a forage ground she had already found." },
-  {  3100, "DOC HALVERS",     "treated everyone. kept his own wounds for later." },
-  {  3000, "THE AVERAGE MAN", "got exactly this far, like almost all of you. admired for the punctuality." },
-  {  2900, "RUTH KANE",       "famous for surviving a storm she chose to walk into." },
-  {  2800, "HOLLIS PEMM",     "slept forty nights underground and died of the one night out." },
-  {  2700, "THE TWINS",       "shared everything. the ration, the shelter, the fever." },
-  {  2600, "MAGGS",           "lost the map on day six and kept walking with great confidence." },
-  {  2500, "CUT-RATE ELIAS",  "sold his shelter for three days of food and ate it in one night." },
-  {  2400, "NELLA BRUNE",     "survived the rads, the flood and the dogs. the dawn got her." },
-  {  2300, "BOSS RIKE",       "ran a settlement for a season. the settlement ran out." },
-  {  2200, "WENDEL FRAY",     "crossed the glass for a rumour and brought the rumour back intact." },
-  {  2100, "THE GLEANER",     "picked over eleven hundred hexes and never put up a roof." },
-  {  2000, "ODESSA PIKE",     "went down the hatch to get out of the rain." },
-  {  1800, "CARTER ILL",      "knew the water was bad. was very thirsty." },
-  {  1600, "SMALL AGNES",     "traded away the coat. it was warm out, and then it was not." },
-  {  1400, "THE OPTIMIST",    "was right about the weather and wrong about everything else." },
-  {  1200, "JODIE SAWN",      "reached the settlement, then kept going to see what else there was." },
-  {   900, "FENN",            "admired for the speed. not for the direction." },
-  {   600, "THE VOLUNTEER",   "went into the crater first so nobody else had to. nobody else was going to." },
-  {   350, "TILLY MOSS",      "died on day two. every story about her is from day one." },
-  {   120, "KEV",             "stepped off the ridge on the first morning. still on the board, somehow." },
-};
-static constexpr int ADMIRED_COUNT = (int)(sizeof(ADMIRED) / sizeof(ADMIRED[0]));
-
-// A citation set in the 6 px hand across two lines. 39 characters is what
-// the 234 px of ladder holds at the 6 px pitch; the break is taken at the
-// last space that fits, and a citation long enough to need a third line is
-// cut with an ellipsis rather than run under the panel edge. No citation in
-// the table needs one today — this only has to hold if someone writes a
-// longer row later.
-static constexpr int ADM_WRAP = 39;
-static void admiredWrap(const char* s, char* a, char* b) {
-  a[0] = b[0] = 0;
-  size_t n = strlen(s);
-  if (n <= (size_t)ADM_WRAP) { strlcpy(a, s, ADM_WRAP + 1); return; }
-  int cut = ADM_WRAP;
-  while (cut > 0 && s[cut] != ' ') cut--;
-  if (cut == 0) cut = ADM_WRAP;           // one unbroken word: hard break
-  memcpy(a, s, cut);
-  a[cut] = 0;
-  const char* rest = s + cut + (s[cut] == ' ' ? 1 : 0);
-  strlcpy(b, rest, ADM_WRAP + 1);
-  if (strlen(rest) > (size_t)ADM_WRAP) { b[ADM_WRAP - 2] = '.'; b[ADM_WRAP - 1] = '.'; }
-}
-
-static void drawAdmiredScreen() {
-  static const uint32_t C_HDR  = 0xD06818;
-  static const uint32_t C_TXT  = 0xC87840;
-  static const uint32_t C_INFO = 0x904030;
-  static const uint32_t C_LINE = 0x502010;
-  static const uint32_t C_DIM  = 0x3A1808;
-  static const uint32_t C_BAND = 0x1E0A00;
-  static const uint32_t C_LIVE = 0xE8A828;   // the living, who are not admired yet
-  static const uint32_t C_ROW  = 0x2A1204;   // the lit band behind a living row
-
-  struct { bool on; uint16_t sc; char name[17]; } snap[MAX_PLAYERS];
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    snap[i].on = G.players[i].connected;
-    snap[i].sc = G.players[i].score;
-    memcpy(snap[i].name, G.players[i].name, 16);
-    snap[i].name[16] = 0;
-  }
-  xSemaphoreGive(G.mutex);
-
-  // The dead and the living in one ranked list. A tie puts the living above
-  // the dead: you are not admired yet, but you are here.
-  struct Row { uint16_t sc; const char* nm; const char* ln; int8_t pid; };
-  Row rows[ADMIRED_COUNT + MAX_PLAYERS];
-  int n = 0;
-  for (int i = 0; i < ADMIRED_COUNT; i++)
-    rows[n++] = { ADMIRED[i].sc, ADMIRED[i].nm, ADMIRED[i].ln, (int8_t)-1 };
-  for (int i = 0; i < MAX_PLAYERS; i++)
-    if (snap[i].on) rows[n++] = { snap[i].sc, snap[i].name, nullptr, (int8_t)i };
-  for (int i = 1; i < n; i++) {            // insertion sort — 42 rows worst case
-    Row k = rows[i];
-    int  j = i - 1;
-    while (j >= 0 && (rows[j].sc < k.sc ||
-                      (rows[j].sc == k.sc && rows[j].pid < 0 && k.pid >= 0))) {
-      rows[j + 1] = rows[j];
-      j--;
-    }
-    rows[j + 1] = k;
-  }
-
-  int      best   = -1;                    // first living row = the party high
-  for (int i = 0; i < n; i++) if (rows[i].pid >= 0) { best = i; break; }
-  uint16_t bestSc = (best >= 0) ? rows[best].sc : 0;
-
-  // ADMIRED is descending, so the last row still above the party is the
-  // nearest one, and the first row at or below it is the one most recently
-  // stepped over. Both are the dead only: another survivor being ahead of
-  // you is a different screen's business.
-  const AdmiredRow* next = nullptr;
-  const AdmiredRow* past = nullptr;
-  for (int i = ADMIRED_COUNT - 1; i >= 0; i--) if (ADMIRED[i].sc >  bestSc) { next = &ADMIRED[i]; break; }
-  for (int i = 0; i < ADMIRED_COUNT;   i++)    if (ADMIRED[i].sc <= bestSc) { past = &ADMIRED[i]; break; }
-
-  char buf[48], l1[ADM_WRAP + 1], l2[ADM_WRAP + 1], nm[32];
-  canvas.fillScreen(0x0000);
-  canvasRect(0, 0, 240, 29, C_BAND, true);
-  canvasText26p("THE ADMIRED", 4, 1, C_HDR);
-  canvasLine(0, 29, 239, 29, C_LINE);
-
-  // -- Strip: the win line, and the party's high-water mark ----
-  canvasText8("OUT AT", 2, 35, C_INFO);
-  snprintf(buf, sizeof(buf), "%u", (unsigned)ADMIRED_WIN);
-  canvasText16p(buf, 44, 31, C_TXT);
-  snprintf(buf, sizeof(buf), "%u", (unsigned)bestSc);
-  canvasText16pR(buf, DASH_R, 31, best >= 0 ? C_LIVE : C_DIM);
-  canvasText8R("BEST", DASH_R - canvasWidth16p(buf) - 6, 35, C_INFO);
-  canvasLine(0, 50, 239, 50, C_LINE);
-
-  // -- The chase -----------------------------------------------
-  // The score is 26 px because it is the only number on this screen anyone
-  // is actually playing against.
-  if (next) {
-    snprintf(buf, sizeof(buf), "%u", (unsigned)next->sc);
-    canvasText26pR(buf, DASH_R, 52, C_HDR);
-    int sx = DASH_R - canvasWidth26p(buf) - 8;
-    canvasText8("NEXT ABOVE", 2, 56, C_INFO);
-    canvasFit16p(nm, sizeof(nm), next->nm, sx - 2);
-    canvasText16p(nm, 2, 66, C_TXT);
-    snprintf(buf, sizeof(buf), "%u TO GO", (unsigned)(next->sc - bestSc));
-    canvasText8R(buf, DASH_R, 84, C_INFO);
-    admiredWrap(next->ln, l1, l2);
-    canvasText8(l1, 2,  92, C_INFO);
-    canvasText8(l2, 2, 101, C_INFO);
-  } else {
-    canvasText8("NOTHING ABOVE", 2, 56, C_INFO);
-    canvasText16p("THE WAY OUT", 2, 66, C_LIVE);
-    canvasText8("ten thousand, and nobody to pass.", 2, 92, C_INFO);
-  }
-  canvasLine(0, 110, 239, 110, C_LINE);
-
-  // -- The ladder ----------------------------------------------
-  // Anchored three rows above the party's leader, so what is still in reach
-  // is on screen with the rest of the party under it.
-  static const int LAD_Y0 = 114, LAD_H = 17, LAD_ROWS = 9;
-  int start = (best >= 0) ? best - 3 : 0;
-  if (start > n - LAD_ROWS) start = n - LAD_ROWS;
-  if (start < 0) start = 0;
-  for (int k = 0; k < LAD_ROWS && start + k < n; k++) {
-    const Row& r  = rows[start + k];
-    int        y  = LAD_Y0 + k * LAD_H;
-    bool       lv = r.pid >= 0;
-    if (lv) canvasRect(0, y - 1, 239, y + 15, C_ROW, true);
-    snprintf(buf, sizeof(buf), "#%d", start + k + 1);
-    canvasText8(buf, 2, y + 4, lv ? C_TXT : C_DIM);
-    snprintf(buf, sizeof(buf), "%u", (unsigned)r.sc);
-    canvasText16pR(buf, 78, y, lv ? C_LIVE : C_TXT);
-    if (lv) {
-      char num[2] = { (char)('1' + r.pid), 0 };
-      canvasRect(84, y, 98, y + 15, C_HDR, true);
-      canvasText16pC(num, 91, y, C_BAND);
-    }
-    canvasFit16p(nm, sizeof(nm), r.nm, DASH_R - 102);
-    canvasText16p(nm, 102, y, lv ? C_LIVE : C_TXT);
-  }
-  canvasLine(0, 269, 239, 269, C_LINE);
-
-  // -- The wake ------------------------------------------------
-  // The window is anchored on the party's leader, so nobody living is ever
-  // off the top of it -- but a straggler can be well off the bottom, and a
-  // board that silently left them out would be lying about the party.
-  int below = 0;
-  for (int i = start + LAD_ROWS; i < n; i++) if (rows[i].pid >= 0) below++;
-  canvasText8("LAST PASSED", 2, 274, C_INFO);
-  if (below) {
-    snprintf(buf, sizeof(buf), "%d MORE SURVIVOR%s BELOW", below, below > 1 ? "S" : "");
-    canvasText8R(buf, DASH_R, 274, C_DIM);
-  }
-  if (past) {
-    snprintf(buf, sizeof(buf), "%u", (unsigned)past->sc);
-    canvasText16pR(buf, DASH_R, 282, C_DIM);
-    canvasFit16p(nm, sizeof(nm), past->nm, DASH_R - canvasWidth16p(buf) - 10);
-    canvasText16p(nm, 2, 282, C_TXT);
-    admiredWrap(past->ln, l1, l2);
-    canvasText8(l1, 2, 300, C_INFO);
-    canvasText8(l2, 2, 309, C_INFO);
-  } else {
-    canvasText16p("nobody yet", 2, 282, C_DIM);
-    canvasText8("the board starts at 120. that is KEV.", 2, 300, C_DIM);
-    canvasText8("he fell off a ridge on day one.", 2, 309, C_DIM);
-  }
-}
-
 // ── Screen dispatch ────────────────────────────────────────────────────────
 // Renders whichever screen button B has landed on into the canvas. Does not
 // push — the caller decides whether the frame goes out clean or as one step
 // of the switch transition below.
 static void drawActiveScreen() {
+  if (sceneOwns(k10Screen)) { drawSceneScreen(k10Screen); return; }
   switch (k10Screen) {
     case 2:  drawEventLogScreen();   break;
     case 3:  drawResourceScreen();   break;
     case 4:  drawEncounterScreen();  break;
     case 5:  drawMapScreen();        break;
-    case 6:  drawAdmiredScreen();    break;
-    default: drawPlayerScreen();     break;  // case 1
+    default: break;                          // 1 and 6: scenes, above
   }
 }
 
@@ -1775,7 +1389,7 @@ static void screenSwitchTransition() {
 }
 
 // ── K10 button B screen switching ──────────────────────────────────────────
-// Screens: 1=Players 2=Events 3=Resources 4=Encounters 5=Map 6=Admired
+// Screens: 1=The road 2=Events 3=Resources 4=Encounters 5=Map 6=The admired
 static void checkGestureSwitch() {
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
   if (btnB && !k10BtnBLast) {

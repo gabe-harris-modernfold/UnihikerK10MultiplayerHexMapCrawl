@@ -1,0 +1,132 @@
+{
+  "id": "glass_eleven_forty_seven_01",
+  "title": "11:47",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The glass here is not a crater's, which curves down. It is a room's, a shape with corners: a kitchen fused in the instant of use. A woman at a stove, a girl at a table, a man in the doorway putting on his coat, all three set in clear green glass, mid-motion, mid-word. On the wall a clock is fused at 11:47 and 11:47 is not a time you can stop looking at.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Study the family through the glass",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_radio",
+          "hazard_id": "the_stare"
+        },
+        {
+          "label": "Break a way in through the kitchen window",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_radio",
+          "hazard_id": "glass_shear"
+        }
+      ]
+    },
+    "the_radio": {
+      "text": "On the counter, fused into the glass beside the family, is a table radio in a walnut case. The dial sits at the CONELRAD marks. Faintly, through the glass, it is still saying something. Not in the room. In your teeth. 'This is the Emergency Broadcast System. This is a test. The broadcasters of your area, in voluntary cooperation with the FCC, have developed this system to keep you informed in the event of an emergency. If this had been an actual emergency—' and then nothing, and then the nothing goes on for a long time, and then it says, in the same voice, only slightly closer, 'If this had been an emergency.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Put your ear to the radio's glass case",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 3,
+          "success_node": "the_kitchen_table",
+          "hazard_id": "the_broadcast"
+        },
+        {
+          "label": "Take the wristwatch from the man in the doorway",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 2,
+          "success_node": "the_kitchen_table",
+          "hazard_id": "the_watch"
+        }
+      ],
+      "loot_table": "glass_common"
+    },
+    "the_kitchen_table": {
+      "text": "Under the glass the girl's hand is spread on a sheet of paper: a school drawing, the crayon fused into the desk. She had drawn the tower, and a sun, and three figures, and a fourth in the corner of the page that she has labelled, in a large carefully uneven hand, THE NEW ONE. Nothing in the drawing is on fire. That is the terrible thing about it. It is a bright, ordinary, summer day, and her mother's stove is on, and lunch is nearly ready.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "glass_rare"
+    }
+  },
+  "hazards": {
+    "the_stare": {
+      "text": "You look for too long. The family's glass faces shine and you begin to be able to tell which of them saw it coming, and which did not, and the girl looks at you in a way that cannot possibly be a trick of the light, and for the rest of the day it is 11:47 in your head.",
+      "penalty": {
+        "ll": -2,
+        "water": -1,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "glass_shear": {
+      "text": "The window comes out of its frame in one sheet and opens your forearm on the way, clean to the bone, without a sound, without any pain at all until you look.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "the_broadcast": {
+      "text": "The tone comes through the case into your skull at exactly the pitch of a heartbeat, and stays there, and a long time later you realise it has been your own heartbeat for the last several minutes, and it is now slightly slower than the radio's.",
+      "penalty": {
+        "ll": -4,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "the_watch": {
+      "text": "The watch comes away in your hand. The man's wrist does not. For an instant his face turns, in glass, to look at what you have done, and you feel it like a hand laid on your shoulder. The watch is warm. It reads 11:47. It will always read 11:47.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

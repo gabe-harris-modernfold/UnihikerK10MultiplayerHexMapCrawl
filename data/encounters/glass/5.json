@@ -1,0 +1,139 @@
+{
+  "id": "glass_the_seam_01",
+  "title": "The Seam",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The glass ends at a line. Not a crater's edge: a line, straight, upright and exactly as tall as you can see, standing in the desert like a slit in a curtain. It is very thin. Through it there is a sliver of another day, and the sun in it is lower, and warmer, and older. The ground on either side is fused for a hundred metres, in a long neat lozenge, as though the Rift, on the night it opened, had pressed on the earth like a thumb. A survey stake stands beside it with a paper flag: 31 DEC 1999 — 00:00 — DO NOT PASS.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk the fused ground to the edge of the line",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_edge",
+          "hazard_id": "glass_step"
+        },
+        {
+          "label": "Stay well back and look through the slit from the stake",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 1,
+          "success_node": "the_edge",
+          "hazard_id": "the_view"
+        }
+      ]
+    },
+    "the_edge": {
+      "text": "Close to, the Seam hums. It's a low, patient, ordinary hum, like an appliance in the next room. Through it, in a single vertical strip, you can see a road in colour, and a town, and a kitchen. The kitchen is the one that fused, three days' walk back, and here it is whole, with the woman at the stove and the girl at the table and the man in the doorway, with his coat on, about to go out, and he turns his head, slowly, in the strip, and looks out through the Seam at the desert, at you. Around your feet, someone has left offerings: cans, coats, a child's shoe, a wristwatch, all set out on the glass at exactly the line.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Reach into the strip and take the man's outstretched hand",
+          "cost": {},
+          "base_risk": 46,
+          "skill": 3,
+          "success_node": "the_crossing",
+          "hazard_id": "the_hand"
+        },
+        {
+          "label": "Gather what the others left and back away",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_crossing",
+          "hazard_id": "the_offerings"
+        }
+      ],
+      "loot_table": "glass_common"
+    },
+    "the_crossing": {
+      "text": "You do not go through. Nobody does; that is the rule of the place, kept by the offerings and the fusing and the flag on the stake. But you stand there long enough to read the whole strip like a page, and the page tells the story once, cleanly, from the beginning: the tower, the test, the birds, the shelters, the train, the ultimatum, the woman at the stove, and the eleven minutes past 11:47 that all of it has been trying to make up ever since. The Rift is not a wound in the world. It is the world's one attempt, at a quarter to midnight in 1999, to go back and do it again properly. The road in the strip is empty, and the kitchen door is open, and someone has put out a fourth plate.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "glass_rare"
+    }
+  },
+  "hazards": {
+    "glass_step": {
+      "text": "The glass near the line is thin as a blown bulb and rings when you step on it. It gives, all at once, and drops you into the cold voids beneath, ringing, and you climb out slowly on a long road of little cuts.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_view": {
+      "text": "From the stake it is only a slit. But the light coming through it is from another afternoon, and the colours in it are so much better than the ones you have, and you stand there so long that your skin begins to burn to the shape of the slit.",
+      "penalty": {
+        "ll": -2,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "the_hand": {
+      "text": "His hand is warm. It closes on yours, and for a moment the pull is steady, kind, and total, and then it stops, and lets you go. The arm you reached with will not stop humming for a week.",
+      "penalty": {
+        "ll": -5,
+        "radiation": 1
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "the_offerings": {
+      "text": "One of the offerings is a child's shoe, and when you pick it up, it is too heavy to be a shoe, and you know before you look what is inside it. You put it back. You have to put it back. You are shaken all the way back to camp.",
+      "penalty": {
+        "ll": -2,
+        "food": -1
+      },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

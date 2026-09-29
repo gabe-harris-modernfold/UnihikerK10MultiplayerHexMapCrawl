@@ -131,6 +131,13 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     if (client) client->text("{\"t\":\"err\",\"msg\":\"That choice is not open to you\"}");
     return "no_choice";
   }
+  // "requires_item": the client hides such a choice from anyone without the
+  // item, so reaching here means a stale pack or a hand-rolled ci. Refused
+  // before the cost, like every other refusal here: nothing has changed.
+  if (ch.reqItem && !playerHasForChoice(pid, ch.reqItem)) {
+    if (client) client->text("{\"t\":\"err\",\"msg\":\"That choice is not open to you\"}");
+    return "no_item";
+  }
 
   bool canAfford = (p.ll >= ch.costLL) && (p.radiation + ch.costRad <= 10) &&
                    (p.inv[1] >= ch.costFood) && (p.inv[0] >= ch.costWat) &&

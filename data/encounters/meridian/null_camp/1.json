@@ -1,0 +1,253 @@
+{
+  "id": "null_camp_1_arrival",
+  "title": "The Null Camp",
+  "meridian": {
+    "site": "null_camp",
+    "stage": 1,
+    "of": 3,
+    "hint": "Reach the camp, and find out whose grave is in the sewn tent."
+  },
+  "start_node": "perimeter",
+  "nodes": {
+    "perimeter": {
+      "text": "A ring of canvas tents stands around a rectangle of broken glass lying flat in the dirt: the floor of an observation gallery, with no gallery around it. Eleven cots. A kettle on a cold stove is warm. No one is here, and every tent flap is tied back, as if for someone expected.",
+      "text_by_lens": {
+        "machine": "A field station, abandoned mid-shift: eleven cots, instrument stakes at even intervals, a kettle still warm. Someone should be logging this.",
+        "ritual": "A camp laid out as a circle, tents facing inward to the glass. The dirt between them is worn into a path by bare feet.",
+        "resonance": "The tents stand on the nodes of a standing wave. You can feel where the glass floor hums and where it doesn't.",
+        "prison": "A cordon. Every tent faces the glass, every stake points at it. They were not studying it. They were watching it.",
+        "mirror": "Eleven cots. Twelve. Eleven. The kettle was warm before you got here, and it is warm because you got here."
+      },
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Log the instruments staked round the perimeter before you cross it.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 0,
+          "success_node": "camp_center",
+          "hazard_id": "log_disagrees",
+          "lens": "machine"
+        },
+        {
+          "label": "Walk the ring of tents once, in the footprints already worn into it.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "camp_center",
+          "hazard_id": "ring_tightens",
+          "lens": "ritual"
+        },
+        {
+          "label": "Cross where the hum is loudest. That is where they would have stood.",
+          "cost": {},
+          "base_risk": 65,
+          "skill": 0,
+          "success_node": "camp_center",
+          "hazard_id": "hum_takes_hold",
+          "lens": "resonance"
+        },
+        {
+          "label": "Go in through the cut in the fence. It was cut from the inside.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 2,
+          "success_node": "camp_center",
+          "hazard_id": "fence_remembers",
+          "lens": "prison"
+        }
+      ]
+    },
+    "camp_center": {
+      "text": "You stand on the glass floor. Under it, very far down, there is a room where eleven people are looking up at you. The tents around you hold what they left: a survey tent, a sleeping tent, and a tent with its flap sewn shut.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Search the survey tent.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 2,
+          "success_node": "survey_tent",
+          "hazard_id": "scrap_recounts"
+        },
+        {
+          "label": "Search the sleeping tent.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "sleeping_tent",
+          "hazard_id": "radio_early"
+        },
+        {
+          "label": "Palpate the sewn-shut flap with the Dirty Glove before you cut it.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "sewn_tent",
+          "hazard_id": "glove_chooses",
+          "requires_item": 69,
+          "lens": "ritual"
+        }
+      ]
+    },
+    "survey_tent": {
+      "text": "Folding tables, a theodolite aimed straight down, and a roll of five tuning forks that do not match. They hum when you pick them up. They go on humming after you put them in your pack.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 66,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look in the tent with its flap sewn shut.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 2,
+          "success_node": "sewn_tent",
+          "hazard_id": "grave_pile"
+        }
+      ]
+    },
+    "sleeping_tent": {
+      "text": "Eleven sleeping bags, zipped, empty, each shaped around a body that is not there. At the foot of the twelfth stands a pendulum on a rigid rod, rising from the floor, leaning toward the survey tent.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 67,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look in the tent with its flap sewn shut.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 2,
+          "success_node": "sewn_tent",
+          "hazard_id": "grave_pile"
+        }
+      ]
+    },
+    "sewn_tent": {
+      "text": "Inside is a grave pile: stones, a boot, a water bottle. It is yours. It is still warm. Someone has scratched a note into the bottle: the roster is in the gallery, and you are already on it.",
+      "text_by_lens": {
+        "machine": "A cairn over a supply cache, marked with your survivor number. A clerical error, surely.",
+        "ritual": "A grave dressed with care: stones, a boot, a bottle. Someone mourned you before you arrived.",
+        "resonance": "A grave pile, and the stones in it are arranged in the figure the nodes make on the map.",
+        "prison": "A grave pile, sealed from the inside. Whatever was put down here tried to get out through the bottle.",
+        "mirror": "It is your grave pile. It is warm. You check your pulse, and it is slower than it should be."
+      },
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "log_disagrees": {
+      "text": "Every instrument reads the same number, and the number is your name. You lose your nerve and the light.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "ring_tightens": {
+      "text": "The ring of footprints is smaller on the second half of the circuit. You come out where you went in.",
+      "penalty": {
+        "food": -1
+      },
+      "ends_encounter": true
+    },
+    "hum_takes_hold": {
+      "text": "The hum gets into your teeth and holds. When it lets go you are back at the perimeter, and the sun has moved.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "fence_remembers": {
+      "text": "The cut wire closes behind you, then in front of you. You back out the way you came.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": true
+    },
+    "scrap_recounts": {
+      "text": "You count the scrap on the table three times and get three numbers. You leave with the smallest.",
+      "penalty": {
+        "scrap": -1
+      },
+      "ends_encounter": false
+    },
+    "radio_early": {
+      "text": "A radio in the bedding says what you will say next, a second before you say it. You stop talking. You stop searching.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "glove_chooses": {
+      "text": "The glove chooses where to press, and it chooses wrong. Something on the other side of the canvas presses back.",
+      "penalty": {
+        "radiation": 1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "grave_pile": {
+      "text": "The stitches come apart on their own before you touch them. You do not go in. Not this time.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "id": "ridge_tuning_gallery_01",
+  "title": "The Tuning Gallery",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "A long glass gallery clings to the ridge like a wasps' nest, overlooking a bowl in the hills that is very obviously the site of something enormous. The glass is intact. The seats are intact. Forty seats face the bowl, each with a folded card on the arm: OBSERVER. PLEASE DO NOT LOOK DIRECTLY AT THE FIELD. Every card has been folded shut with the same crisp crease, by someone in a hurry to be seen not looking.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take a seat and look at the bowl anyway",
+          "cost": {},
+          "base_risk": 32,
+          "skill": 3,
+          "success_node": "the_control_desk",
+          "hazard_id": "the_field"
+        },
+        {
+          "label": "Keep your back to the glass and work along the wall",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 1,
+          "success_node": "the_control_desk",
+          "hazard_id": "wall_static"
+        }
+      ]
+    },
+    "the_control_desk": {
+      "text": "At the end of the gallery is a control desk and a chalkboard, and the board is the last thing anyone wrote in that building. 'WE WERE ASKED TO TUNE IT,' begins the chalk. 'WE WERE NEVER ASKED TO WHAT. THE CHARTS ARE PERFECT. THE CHARTS ARE ALWAYS PERFECT. WHAT WE ARE TUNING IT TO IS LISTENING BACK.' Someone has underlined LISTENING and someone else has underlined it more. Under the desk glass is a log of test firings numbered 1 through 41, and one entry, numbered 42, has no date, and no time, and no operator.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Find test number 42 and read the operator's note",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "the_last_reading",
+          "hazard_id": "reading_burns"
+        },
+        {
+          "label": "Wipe the board and copy it down in your own hand",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_last_reading",
+          "hazard_id": "chalk_dust"
+        }
+      ],
+      "loot_table": "ridge_common"
+    },
+    "the_last_reading": {
+      "text": "Test 42's note is one line in a very tidy hand: THIS WAS NOT A WAR. IT WAS A MEASUREMENT AND THE WAR WAS HOW IT WROTE DOWN THE ANSWER. Below it, a final entry, pencilled by someone who took the time to be sure: THE EXPERIMENT WAS SUCCESSFUL. THE INSTRUMENT IS OBSERVED. PLEASE DO NOT LOOK DIRECTLY AT US. The gallery seats behind you creak, all forty, one after another, as they are quietly sat in.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "ridge_rare"
+    }
+  },
+  "hazards": {
+    "the_field": {
+      "text": "You look. There is nothing to see, which is what is so terrible. The field is precisely as empty as your own eye would like it to be, and the moment you understand that, you understand that you are also being seen as exactly that empty. You come back a little thinner.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "wall_static": {
+      "text": "The wall is warm to the touch, and humming, and not from anything electrical. You carry a hand-shaped ache in your palm for the rest of the day.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "reading_burns": {
+      "text": "The paper is charged. It is not paper. It arcs from the page to your fingertips, and up the arm, and for a moment you are the thing being measured, and you feel the needle touch your name.",
+      "penalty": {
+        "ll": -5,
+        "radiation": 1
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "chalk_dust": {
+      "text": "The chalk comes off on your hands, and on your face, and you cough the dust of the last opinion held in the building. It is a very short cough. It is the shortest cough you have ever coughed. You wonder about this for a long time.",
+      "penalty": {
+        "ll": -2,
+        "water": -1
+      },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

@@ -1,0 +1,232 @@
+{
+  "id": "null_camp_2_roster",
+  "title": "The Roster",
+  "meridian": {
+    "site": "null_camp",
+    "stage": 2,
+    "of": 3,
+    "hint": "Read the roster in the gallery. Count the names."
+  },
+  "start_node": "gallery",
+  "nodes": {
+    "gallery": {
+      "text": "At the edge of the glass floor, a lectern with a clipboard chained to it. The roster of the resonator tuning group: eleven names in the same hand, Dr. Varga-Okoro at the top. You count them. Twelve.",
+      "text_by_lens": {
+        "machine": "A shift roster for the resonator tuning group, observation gallery, day of the test. Eleven staff. The count keeps coming out as twelve, which is an error somewhere.",
+        "ritual": "A roll of eleven names, kept like a litany. There is room at the bottom for one more, and the space has been worn smooth by a thumb.",
+        "resonance": "Eleven names spaced like the nodes of a wave. The gap after the last one is exactly one name wide.",
+        "prison": "A sign-in sheet for a door that should stay shut. Eleven went in. The twelfth line is for whoever lets them out.",
+        "mirror": "The roster lists eleven names. The twelfth is whoever is reading it, and it is in your handwriting."
+      },
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Count them again, slowly, with your finger on each line.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "counted",
+          "hazard_id": "twelfth_line",
+          "lens": "machine"
+        },
+        {
+          "label": "Read the names aloud, the way a roll is called.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 4,
+          "success_node": "called",
+          "hazard_id": "answered",
+          "lens": "ritual"
+        },
+        {
+          "label": "Read the roster through the Inward Scope.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "notes_on_you",
+          "hazard_id": "eyepiece_blink",
+          "requires_item": 68,
+          "lens": "prison"
+        },
+        {
+          "label": "Lay the Dirty Glove flat on the page and feel for a pulse.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "pulse_on_page",
+          "hazard_id": "glove_chooses",
+          "requires_item": 69,
+          "lens": "resonance"
+        }
+      ]
+    },
+    "counted": {
+      "text": "Eleven. You were sure. Then a twelfth line under Varga-Okoro's, blank, initialled in your initials. Beside it someone has drawn a tuning fork with no tines.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look under the lectern.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "lectern_shelf",
+          "hazard_id": "scrap_recounts"
+        }
+      ]
+    },
+    "called": {
+      "text": "Eleven names, and on each one the static in the gallery answers \"here\". On the twelfth it says nothing, and then it says your name, and \"here\" in your voice.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look under the lectern.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "lectern_shelf",
+          "hazard_id": "scrap_recounts"
+        }
+      ]
+    },
+    "notes_on_you": {
+      "text": "Through the backward eyepiece the roster is not a roster. It is a page of field notes, and the subject is you: the way you walk, what you carry, which fork you will choose. The last line is underlined twice.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look under the lectern.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "lectern_shelf",
+          "hazard_id": "scrap_recounts"
+        }
+      ]
+    },
+    "pulse_on_page": {
+      "text": "The paper has a pulse, slower than yours. It quickens under the twelfth line. The glove comes away with a new stain the shape of a name.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look under the lectern.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "lectern_shelf",
+          "hazard_id": "scrap_recounts"
+        }
+      ]
+    },
+    "lectern_shelf": {
+      "text": "On the shelf under the lectern: a microscope built the wrong way round, and a single left-hand surgical glove, never sterile. A note in Varga-Okoro's hand: whoever finishes the measurement will need both.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 68,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "item": 69,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "twelfth_line": {
+      "text": "You count twelve. You count eleven. You count twelve, and the twelfth is standing behind you. You do not turn around. You leave.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "answered": {
+      "text": "Every name answers, including one you did not read. You stop. The gallery is full, and then it is empty.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "eyepiece_blink": {
+      "text": "Something on the other side of the eyepiece blinks first. You lose a minute, and your place in the notes.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "glove_chooses": {
+      "text": "The glove chooses where to press, and it chooses the twelfth line. The page goes cold under it.",
+      "penalty": {
+        "radiation": 1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "scrap_recounts": {
+      "text": "There is a box of scrap under the lectern. You count it and get a different number each time, each smaller than the last.",
+      "penalty": {
+        "scrap": -1
+      },
+      "ends_encounter": false
+    }
+  }
+}

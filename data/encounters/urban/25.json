@@ -1,0 +1,148 @@
+{
+  "id": "urban_shelter_sale_01",
+  "title": "The {{adjective}} Shelter Sale",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The department store's third-floor window says it in letters six feet high: FALLOUT SHELTER SALE — FAMILY OF FOUR — EASY TERMS. AUGUST 1966. Inside, an entire family of mannequins sits around a dinette table in a display of a basement, eating dinner from cans, in radiation-proof pastels. Their faces are painted on with terrifying serenity. A sales associate mannequin stands by with a clipboard and one arm raised, mid-gesture, mid-pitch.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Play along: sit down at the dinette",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 3,
+          "success_node": "the_showroom",
+          "hazard_id": "pitch_lands"
+        },
+        {
+          "label": "Circle the display to the stockroom door",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 1,
+          "success_node": "the_showroom",
+          "hazard_id": "mannequin_shift"
+        }
+      ]
+    },
+    "the_showroom": {
+      "text": "The showroom floor is a catalogue of an entire city preparing to survive something, and getting the details a little wrong. Chemical toilets. Radiation-proof umbrellas. A family-size lead apron in a gift box. On every price tag is a small stamped note: FINAL SALE. NOT RETURNABLE. NO EXCHANGES AFTER NOV 11. Stapled to the wall by the till is the store's shelter-drill schedule for the months ahead, and the last line has been struck through in red, with one word added: WHY.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Open the shelter-model demonstration unit",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 2,
+          "success_node": "the_demonstration",
+          "hazard_id": "unit_seal"
+        },
+        {
+          "label": "Ask the sales associate what happens on Nov 11",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_demonstration",
+          "hazard_id": "associate_answers"
+        }
+      ],
+      "loot_table": "urban_common"
+    },
+    "the_demonstration": {
+      "text": "The demonstration unit is a steel box the size of a wardrobe, with a sales card: SLEEPS FOUR. SURVIVES ANYTHING. INSIDE, a sixty-year-old comfort-kit that has survived precisely as advertised, tinned peaches and all, and a pamphlet the manager put there personally. HOW TO TELL YOUR CHILDREN, it says. Page one is blank. Page two says WAIT. Page three says WHATEVER YOU DECIDE TO SAY, SAY IT BEFORE ELEVEN FORTY-SEVEN.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "urban_rare"
+    }
+  },
+  "hazards": {
+    "pitch_lands": {
+      "text": "You sit. The associate's arm comes down and rests warmly across your shoulders and you feel, in every part of yourself that matters, thoroughly, undeniably sold. It takes an hour to argue yourself out of the paperwork.",
+      "penalty": {
+        "scrap": -1,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "mannequin_shift": {
+      "text": "The dinette family has shifted while you weren't watching. Not much. The youngest has turned its head. Its hand is now on your sleeve, and it is disproportionately strong for plastic, and it does not want to let go.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "unit_seal": {
+      "text": "The unit's door seals behind you with a tremendous, well-engineered sigh. It takes you twenty minutes to find the emergency release. The unit is designed so that you must not be able to find it.",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "associate_answers": {
+      "text": "The associate's head turns very slowly, and the painted mouth stays perfectly shut, and something inside the torso says, quite kindly, 'Everyone asks that in the end.' The lights on the third floor go out in a wave, and the wave reaches you.",
+      "penalty": {
+        "ll": -4,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Final",
+      "Family-Size",
+      "Easy-Terms",
+      "Pastel",
+      "Ninety-Nine-Cent",
+      "Limited-Time"
+    ]
+  }
+}

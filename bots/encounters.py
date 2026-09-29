@@ -17,6 +17,8 @@ the enc_res event says whether the scene is over.
 import json
 from pathlib import Path
 
+from config import ITEM_CATEGORY
+
 REPO_ENCOUNTERS = Path(__file__).resolve().parent.parent / "data" / "encounters"
 
 # Skill ids are the firmware's 5-skill enum (0 NAVIGATE .. 4 ENDURE).  The
@@ -68,6 +70,22 @@ def success_chance(choice: dict, obs) -> float:
     skill_id = choice.get("skill", 0)
     sv = me.skills[skill_id] if 0 <= skill_id <= MAX_SKILL_ID and me.skills else 0
     return p_at_least(dn - sv)
+
+
+def has_for_choice(choice: dict, me) -> bool:
+    """May `me` pick this choice?  A choice with "requires_item": N is only
+    open to a survivor who has item N -- WORN if it is equipment, anywhere in
+    the pack otherwise.  Port of playerHasForChoice() (inventory_items.hpp).
+    The server refuses anyone else, and the browser hides it from them."""
+    iid = int(choice.get("requires_item", 0) or 0)
+    if not iid:
+        return True
+    cat = ITEM_CATEGORY.get(iid)
+    if cat is None or me is None:
+        return False
+    if cat == "equipment":
+        return iid in (me.equip or [])
+    return any(t == iid and q > 0 for t, q in zip(me.inv_type or [], me.inv_qty or []))
 
 
 class EncounterLibrary:
@@ -177,6 +195,13 @@ class EncounterRun:
         """Index of the first choice that does not back out, or None."""
         for i, ch in enumerate(self.choices):
             if not self._leads_to_escape(ch):
+                return i
+        return None
+
+    def first_open_choice(self, me):
+        """Index of the first choice `me` is allowed to pick, or None."""
+        for i, ch in enumerate(self.choices):
+            if has_for_choice(ch, me):
                 return i
         return None
 

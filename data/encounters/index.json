@@ -1,42 +1,42 @@
 {
   "0": {
-    "count": 20,
+    "count": 22,
     "path": "scrub"
   },
   "1": {
-    "count": 7,
+    "count": 8,
     "path": "dunes"
   },
   "2": {
-    "count": 3,
+    "count": 4,
     "path": "forest"
   },
   "3": {
-    "count": 13,
+    "count": 14,
     "path": "marsh"
   },
   "4": {
-    "count": 24,
+    "count": 26,
     "path": "urban"
   },
   "5": {
-    "count": 4,
+    "count": 5,
     "path": "flooded"
   },
   "6": {
-    "count": 2,
+    "count": 5,
     "path": "glass"
   },
   "7": {
-    "count": 2,
+    "count": 4,
     "path": "ridge"
   },
   "8": {
-    "count": 12,
+    "count": 13,
     "path": "mountain"
   },
   "9": {
-    "count": 21,
+    "count": 23,
     "path": "settlement"
   },
   "traps": {

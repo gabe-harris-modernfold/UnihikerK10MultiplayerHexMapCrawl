@@ -1,0 +1,206 @@
+{
+  "id": "settlement_anniversary_pageant_01",
+  "title": "The {{adjective}} Pageant",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The whole settlement is in the square in paper crowns, and there is a stage of pallets, and bunting made of ration wrappers, and a banner that says ELEVEN-ELEVEN in letters taller than the children. It is the Anniversary. Every year, on this day, the town performs the End of the World, and every year, by custom, the story is told a little differently. The children are already in costume. One is a mushroom cloud and one is a tower and one is a very small Governor, and they are all rehearsing their lines under the eyes of a scowling woman with a clipboard.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Join the audience and watch",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 1,
+          "success_node": "the_three_endings",
+          "hazard_id": "audience_rules"
+        },
+        {
+          "label": "Slip backstage and read the script",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 2,
+          "success_node": "the_script_tent",
+          "hazard_id": "backstage_guy"
+        }
+      ]
+    },
+    "the_three_endings": {
+      "text": "There are three endings and the town votes at the end of each Anniversary on which shall be true. In the first, the Two Sides Fight and the world is lost in a mushroom cloud of ration paper and everybody is very sorry. In the second, the Engineers Ring the Bell and something answers, and the children playing the Answer hide under the stage for the rest of the show. In the third, no one does anything, at all, and the lights simply go out, and it is generally agreed that this is the worst of the three. The crowd cheers the third loudest.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Ask the woman with the clipboard which one is true",
+          "cost": {},
+          "base_risk": 34,
+          "skill": 3,
+          "success_node": "the_script_tent",
+          "hazard_id": "clipboard_answers"
+        },
+        {
+          "label": "Vote for the second ending",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_final_act",
+          "hazard_id": "ballot_counted"
+        }
+      ],
+      "loot_table": "settlement_common"
+    },
+    "the_script_tent": {
+      "text": "The script is in a tin trunk, and the trunk is sixty years of scripts, bound in string, a layered archive of the same play told for decades with the changes in the margins. The first version, in a shaky hand, is the shortest: WE DON'T KNOW WHAT HAPPENED. THE LIGHTS WENT OUT. SOMEBODY SAID IT WAS THE BOMB. Every later draft adds another explanation and none of them cross out the last. In the final draft is one page that is not part of any play, an instruction to the director, underlined: NEVER PICK ONE. IF WE PICK ONE THE ANSWER MAY MOVE IN.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Slip the last page into your coat",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 3,
+          "success_node": "the_final_act",
+          "hazard_id": "page_notices"
+        },
+        {
+          "label": "Put the trunk back exactly as you found it",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 1,
+          "success_node": "the_final_act",
+          "hazard_id": "trunk_lid"
+        }
+      ],
+      "loot_table": "settlement_common"
+    },
+    "the_final_act": {
+      "text": "The show ends the way every Anniversary ends. The children take their bows, the mushroom cloud and the tower and the very small Governor, and then a fourth child in a paper crown steps forward from the wings, one who did not appear in the programme, and looks at the crowd, and says, in a clear small voice, 'And then in 1999 it opened.' The audience goes perfectly quiet. The clipboard woman does not look up. Then the crowd claps, politely, with real gratitude, as though something had been settled. A woman near you presses a paper crown and a bowl of stew into your hands and murmurs, 'That's not in the script. It comes every year.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "settlement_rare"
+    }
+  },
+  "hazards": {
+    "audience_rules": {
+      "text": "The audience has rules. You break three of them within a minute: you laugh at the Governor, you sit when the tower is standing, and you have not brought a paper crown. You are given a paper crown, made to wear it, and reminded, all afternoon, in the gentlest possible way.",
+      "penalty": {
+        "ll": -2,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "backstage_guy": {
+      "text": "Backstage is a maze of guy lines and pallets and children's costume wire. You go down in it with a small cry and a very large mushroom cloud lands on you.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "clipboard_answers": {
+      "text": "She does look up. She looks at you for a long time. 'You're not from here,' she says, and it's not a question, and it's not unfriendly, and the way she says it makes a small cold space open up behind your ribs. 'It's true. I can't tell you which. That's how you know it's true.'",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "ends_encounter": true
+    },
+    "ballot_counted": {
+      "text": "The second ending wins by a single vote. Yours. The crowd turns, together, to look at you, and for one long second you have the definite sense that you have been asked a much larger question than the one you answered.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "page_notices": {
+      "text": "You feel the town notice. Nobody moves. Nobody speaks. But by the time you reach the edge of the square every door on the street has opened a crack to watch you go, and the page in your coat is very heavy, and very warm, and it was not yours to take.",
+      "penalty": {
+        "ll": -4,
+        "food": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": true
+    },
+    "trunk_lid": {
+      "text": "The trunk lid drops on your fingers with a terrible, resounding wooden clap, and every head in the square turns toward the tent, and stays turned.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "adjective": [
+      "Anniversary",
+      "Eleven-Eleven",
+      "Paper-Crown",
+      "Annual",
+      "Three-Ending",
+      "Well-Rehearsed"
+    ]
+  }
+}

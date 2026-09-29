@@ -1,0 +1,190 @@
+{
+  "id": "marsh_last_picture_show_01",
+  "title": "The Last Picture Show",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The drive-in screen stands out of the reeds like a tombstone for something large. A hundred speaker posts slope away in rows, half-drowned, and the car nearest the screen still has its headlights on. The movie is running. You can see it from here, a square of grey-white flicker on the black, and the projection booth at the back of the lot is dark, and the beam is coming from nowhere.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wade out along the rows toward the screen",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "the_front_row",
+          "hazard_id": "sunken_speaker"
+        },
+        {
+          "label": "Slip round the back to the projection booth",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_booth",
+          "hazard_id": "booth_door"
+        }
+      ]
+    },
+    "the_front_row": {
+      "text": "In the front-row car sits a family of four, in their Sunday coats, popcorn on their laps, watching the screen. They are watching the screen the way people watch the last minutes of a programme they have seen many times, with mild fondness and no surprise. The film on the screen is a single continuous shot of the audience. Of this audience. Of this car, from the front. You can see the back of your own head arriving, in the corner of the frame, and at that instant it is very hard to stop yourself from turning around.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Sit in the empty seat they have left for you",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 3,
+          "success_node": "the_final_reel",
+          "hazard_id": "the_seat"
+        },
+        {
+          "label": "Take the popcorn",
+          "cost": {},
+          "base_risk": 26,
+          "skill": 1,
+          "success_node": "the_final_reel",
+          "hazard_id": "the_popcorn"
+        }
+      ],
+      "loot_table": "marsh_common"
+    },
+    "the_booth": {
+      "text": "The projection booth is empty. The projector is a beautiful ancient machine, whirring at speed, on one reel that has not been changed in sixty years, and the light it throws is not from the lamp: you check. The lamp house is cold. There is a note taped to the reel: NOVEMBER 11. THE SHOW WENT ON. THEY SAID THE SHOW MUST GO ON, SO IT HAS. NOBODY IN THE BOOTH WAS ASKED TO STAY, BUT THE REEL WAS LONG AND WE THOUGHT WE WOULD FINISH IT.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Stop the reel",
+          "cost": {},
+          "base_risk": 44,
+          "skill": 3,
+          "success_node": "the_final_reel",
+          "hazard_id": "the_reel_stops"
+        },
+        {
+          "label": "Let the reel run and read the credits at the end",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_final_reel",
+          "hazard_id": "the_credits"
+        }
+      ],
+      "loot_table": "marsh_common"
+    },
+    "the_final_reel": {
+      "text": "The credits, when they come, roll for a long time. DIRECTED BY nobody. STARRING the county, the year, the cars in this lot and everyone in them. MUSIC: the tone. At the very bottom, a last card, in plain white letters on grey: FILMED ON LOCATION. NO ONE WAS HARMED IN THE MAKING OF THIS PICTURE. And then, as the lights on the poles come up in the reeds all around you, a hundred sets of headlights, turning slowly, to see what you make of it.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "marsh_rare"
+    }
+  },
+  "hazards": {
+    "sunken_speaker": {
+      "text": "A speaker post gives way under your hand and you go into the reeds to the neck, and the water is colder than water ought to be and does not want to let you up as fast as you want to go.",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "booth_door": {
+      "text": "The booth door is a fire door, on a spring, and the spring is very strong and very old. It arrives with the force of a man who has been waiting sixty years to be let out.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_seat": {
+      "text": "The seat is warm. It's the exact shape of you. On the screen the back of your head has been in the corner of the frame the whole time, and you now understand that it never turned around, and that you were wrong to be afraid of it.",
+      "penalty": {
+        "ll": -4,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "the_popcorn": {
+      "text": "The popcorn is fine. It is the family's response that is unexpected: all four turn their heads at once and say, kindly, in unison, 'That's for the next show.' Your fingers are numb for an hour.",
+      "penalty": {
+        "ll": -2,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "the_reel_stops": {
+      "text": "The reel stops. The screen goes dark. Every headlight in the lot goes out with it, and then, from the silence, a hundred car horns, once, in perfect unison, in a long reproachful note. Nobody has ever been so thoroughly booed.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "the_credits": {
+      "text": "You read the credits through to the end, and there is a long list of names at the bottom, and about halfway down it you find your own. It's spelled correctly. It has been there since long before you were born.",
+      "penalty": {
+        "ll": -2,
+        "water": -1
+      },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

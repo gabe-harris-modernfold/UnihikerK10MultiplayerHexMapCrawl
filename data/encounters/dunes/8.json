@@ -1,0 +1,127 @@
+{
+  "id": "dunes_birdless_spring_01",
+  "title": "The Birdless Spring",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The farmhouse has been scoured to the grain by sixty years of sand, but the porch is swept. On the rail sits a row of jam jars, each with a small, neat, folded paper label in a woman's hand: APRIL 2. NO SWALLOWS. APRIL 9. NO SPARROWS. APRIL 16. NO CROWS. The row runs the whole length of the porch. The last jar is empty and has no label, waiting.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Read the jars in order, front to back",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 2,
+          "success_node": "the_kitchen",
+          "hazard_id": "jar_of_sand"
+        },
+        {
+          "label": "Go straight into the house",
+          "cost": {},
+          "base_risk": 14,
+          "skill": 1,
+          "success_node": "the_kitchen",
+          "hazard_id": "door_wind"
+        }
+      ]
+    },
+    "the_kitchen": {
+      "text": "A kitchen table with one chair and a Bakelite radio still tuned, at a low steady hiss, to a station that says nothing. Beside the radio: a farm ledger, kept faithfully. APRIL 20. THE STOCK ARE FACING EAST. ALL OF THEM. APRIL 27. THE CATTLE HAVE STOPPED CHEWING AND ARE LISTENING. MAY 4. THE HOUR HAND IS SLOW. NOT THE CLOCK. THE HOUR. There are drawings in the margins of the dunes as she watched them, and in every drawing the dunes are a little closer to the house.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Turn the radio's dial one notch",
+          "cost": {},
+          "base_risk": 36,
+          "skill": 2,
+          "success_node": "the_cellar",
+          "hazard_id": "radio_answers"
+        },
+        {
+          "label": "Take the ledger down to the cellar to read by lamplight",
+          "cost": {},
+          "base_risk": 24,
+          "skill": 2,
+          "success_node": "the_cellar",
+          "hazard_id": "cellar_stair"
+        }
+      ],
+      "loot_table": "dunes_common"
+    },
+    "the_cellar": {
+      "text": "The cellar has been made into a cell, gently. A cot, a jug, a row of tinned peaches, a hand-written card taped to the wall: IT IS NOT THE BOMBS. THEY WILL SAY IT WAS THE BOMBS. THE BIRDS KNEW BEFORE THE BOMBS AND THE BIRDS DO NOT USE BOMBS. SOMETHING IS BEING TUNED. Below it, in a tremulous later hand: I HAVE COUNTED. IT IS BEING TUNED TO US.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "dunes_rare"
+    }
+  },
+  "hazards": {
+    "jar_of_sand": {
+      "text": "The last jar is not empty. It only looks it. When you lift it the sand inside pours out in a single long silent stream and does not stop when the jar is empty, and does not stop when you put it down, and you leave with a scalded dryness in your throat.",
+      "penalty": {
+        "water": -2
+      },
+      "ends_encounter": false
+    },
+    "door_wind": {
+      "text": "The door was the only thing holding the house against the dune, and the dune has been patient. It comes in over your boots and up your legs and it is a quarter of an hour before you can get out.",
+      "penalty": {
+        "ll": -2,
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "radio_answers": {
+      "text": "The hiss thins and, very clearly, a woman's voice says the date. It is today's. It is exactly today's, and then it says your name, and then it says goodbye, and you have the immediate impression that it was speaking to a jar.",
+      "penalty": {
+        "ll": -4,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "cellar_stair": {
+      "text": "The stair was built to be slightly wrong, to keep whoever lived down there from being surprised at the top. You are surprised at the bottom.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

@@ -28,7 +28,9 @@ EXE = os.path.join(OUT, "fxsim.exe")
 W, H = 240, 320
 SCENES = ["quake", "strike", "dawn", "eye", "hunt", "switch", "madness", "fire", "threat",
           "chem", "storm", "join", "thrown", "act", "odds", "fog", "reprint", "below", "crafted", "crawl",
-          "tripwire", "beartrap"]
+          "tripwire", "beartrap",
+          "road_day", "road_storm", "road_night", "road_fog", "road_empty", "road_cycle",
+          "admired", "admired_empty"]
 
 
 def find_vcvars():
@@ -53,7 +55,7 @@ def find_fonts(explicit):
 
 def build(fonts):
     src = os.path.join(HERE, "fxsim.cpp")
-    deps = [src, os.path.join(ROOT, "ui-fx.hpp")]
+    deps = [src, os.path.join(ROOT, "ui-fx.hpp"), os.path.join(ROOT, "ui-scenes.hpp")]
     if os.path.isfile(EXE) and all(os.path.getmtime(EXE) > os.path.getmtime(d) for d in deps):
         return
     bat = os.path.join(tempfile.gettempdir(), "fxsim_build.bat")

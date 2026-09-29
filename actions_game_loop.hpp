@@ -241,7 +241,7 @@ static void broadcastQuake(const QuakeResult& q) {
 //
 // Everything is normalised to 0-255 "how bad is it", worst-case across the
 // party rather than averaged: the board is a shared display with no focused
-// survivor (drawPlayerScreen() renders all six), so the lamps speak for the
+// survivor (the road screen draws the whole party), so the lamps speak for the
 // party as a whole, and one survivor bleeding out must not be averaged away
 // by five healthy ones.
 static constexpr int     DREAD_FW_FULL    = 6;   // a full food/water track

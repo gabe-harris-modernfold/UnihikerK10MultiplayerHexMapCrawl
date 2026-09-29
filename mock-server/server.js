@@ -1263,6 +1263,7 @@ function resolveChoice(json, nodeKey, ci) {
   const out = {
     baseRisk: Math.max(0, Math.min(100, ch.base_risk ?? 50)),
     skill:    Math.max(0, Math.min(NUM_SKILLS - 1, ch.skill | 0)),
+    reqItem:  Math.max(0, Math.min(255, ch.requires_item | 0)),
     cost:     { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
                 water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0 },
     nextKey, nextCanBank: true, nextTerminal: true, nextEscape: false,
@@ -1797,12 +1798,24 @@ function encEnd(id, reason) {
   console.log(`[enc] end pid=${id} reason=${reason}`);
 }
 
+// "requires_item": N on a choice -- mirrors playerHasForChoice() in
+// inventory_items.hpp: equipment counts only while worn, anything else
+// anywhere in the pack, and an id items.cfg does not define never counts.
+function hasForChoice(p, itemId) {
+  const def = ITEM_DEFS[itemId];
+  if (!def) return false;
+  if (def.category === 'equipment') return p.eq.includes(itemId);
+  const slots = effectiveInvSlots(p);
+  return p.it.some((t, i) => i < slots && t === itemId && p.iq[i] > 0);
+}
+
 function encChoice(ws, id, m) {
   const p = players[id], e = encounters[id];
   if (!p || !e || p.ll === 0) return;
   // {"t":"enc_choice","ci":N} — everything else comes from the JSON file.
   const ch = resolveChoice(e.json, e.nodeKey, m.ci | 0);
   if (!ch) { send(ws, { t: 'err', msg: 'That choice is not open to you' }); return; }
+  if (ch.reqItem && !hasForChoice(p, ch.reqItem)) { send(ws, { t: 'err', msg: 'That choice is not open to you' }); return; }
   const c = ch.cost;
   const canAfford = p.ll >= c.ll && p.rad + c.rad <= 10 &&
                     p.inv[1] >= c.food && p.inv[0] >= c.water && p.inv[4] >= c.scrap &&

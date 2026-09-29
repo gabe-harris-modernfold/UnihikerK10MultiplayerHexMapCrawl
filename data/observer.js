@@ -1079,6 +1079,16 @@
   // image decodes, and what an older board still gets.
   // ══════════════════════════════════════════════════════════════
 
+  // MIRRORED from altPick() in engine.js: which of n tiles sharing a slot
+  // the hex at map (q, r) wears. Must stay bit-identical, or the TV shows a
+  // different building from the one the players are standing in.
+  function altPick(q, r, n) {
+    let h = (Math.imul(q | 0, 73856093) ^ Math.imul(r | 0, 19349663)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
+    h = Math.imul(h ^ (h >>> 12), 0x297a2d39) >>> 0;
+    return ((h ^ (h >>> 15)) >>> 0) % n;
+  }
+
   // MIRRORED from engine.js:202. If a terrain is added there it has to be
   // added here too, or its tiles quietly stop loading on this screen only.
   const TERRAIN_IMG_NAMES = [
@@ -1183,14 +1193,22 @@
     },
 
     // -> { img, sx, sy, m } from the atlas, { img } per-file, or null.
-    tile(host, t, variant, vc) {
+    // q, r: map coords, which pick among a slot's alternates (tiles.json
+    // `alts`) exactly as terrainTile() in engine.js does.
+    tile(host, t, variant, vc, q, r) {
       this.loadAtlas(host);
       const A = this.atlas;
       if (A === 'loading') return null;
       if (A && A !== 'failed') {
         const pool = A.tiles[t] || [];
-        const at = A.poi[t + '_' + variant] ||
-          (pool.length ? pool[(((variant | 0) % pool.length) + pool.length) % pool.length] : null);
+        const poi = A.poi[t + '_' + variant];
+        const v = poi || !pool.length ? variant : (((variant | 0) % pool.length) + pool.length) % pool.length;
+        let at = poi || (pool.length ? pool[v] : null);
+        const alts = at && q !== undefined && A.alts && A.alts[t] && A.alts[t][v];
+        if (alts && alts.length) {
+          const k = altPick(q, r, alts.length + 1);
+          if (k) at = alts[k - 1];
+        }
         const img = at && A.imgs[at[0]];
         return img && img.ok ? { img, sx: at[1], sy: at[2], m: A } : null;
       }
@@ -1495,7 +1513,7 @@
     for (const c of cells) {
       const x = size * 1.5 * c.dq;
       const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
-      const tile = Art.tile(host, c.terrain, c.variant, snap.vc);
+      const tile = Art.tile(host, c.terrain, c.variant, snap.vc, c.q, c.r);
       if (tile && tile.m) {
         // An atlas cell, anchored at the hex centre: unclipped, so a
         // diorama's peaks overlap the hex behind. A flat sheet cell (anchor =

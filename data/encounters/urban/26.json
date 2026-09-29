@@ -1,0 +1,142 @@
+{
+  "id": "urban_y2k_bunker_01",
+  "title": "The Y2K Bunker",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The hatch is in the floor of a garage and it is labelled in marker on a sheet of cardboard, with the confidence of a man who has thought hard about what he is right about: Y2K SURVIVAL — DO NOT OPEN BEFORE 01/01/2000. Every surface in the garage is a shelf, and every shelf holds a can. Somebody has stacked four thousand cans of beans in a defensive formation. Somebody has drawn a face on the wall in tinfoil, and given it a hat.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Knock on the hatch and say who you are",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 2,
+          "success_node": "the_bunker",
+          "hazard_id": "knock_answered"
+        },
+        {
+          "label": "Work the hatch lock quietly",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_bunker",
+          "hazard_id": "hatch_lock"
+        }
+      ]
+    },
+    "the_bunker": {
+      "text": "The bunker is fifteen years of preparation for the wrong disaster. Water drums. Generators. A shortwave. Three hundred kilos of rice, a chemical toilet, an emergency fold-out chessboard. On the wall, the whole plan is pinned up in careful columns, and column one, in red, says: THE COMPUTERS WILL ALL FAIL AT MIDNIGHT ON THE 31ST. Column two says: THEN THE GOVERNMENT COLLAPSES. Column three is blank. Someone has added, below it, in a different pen: The computers did not fail. You can tell because they were the only things that worked.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Read the logbook by the shortwave",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_shortwave",
+          "hazard_id": "logbook_ink"
+        },
+        {
+          "label": "Take the good tinned goods and go",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 1,
+          "success_node": "the_shortwave",
+          "hazard_id": "tin_avalanche"
+        }
+      ],
+      "loot_table": "urban_common"
+    },
+    "the_shortwave": {
+      "text": "The shortwave is on, and its dial is on a station that is not there. Beside it, the logbook: DEC 31, 23:55: Neighbours arrive to sit it out with me, all six. They brought a bottle. DEC 31, 23:59: We count it down together, out loud. DEC 31, 24:00: Nothing. Cheering, then quiet. JAN 1, 00:01: The sky has a line in it. JAN 1, 00:02: Through the hatch, a line of light, going up from the road to somewhere, and along it a low sound, the same note all the time, like a very large glass being rubbed. JAN 1, 00:04: It is 1966 in the line. I can see the road as it was, in colour, and the neighbours have gone to look. The log ends there. The neighbours' six glasses of champagne are on the table, still full, and untouched, and still cold.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "drop_1966_diary"
+    }
+  },
+  "hazards": {
+    "knock_answered": {
+      "text": "Somebody knocks back. Three, and then two, and then three, and then a long pause in exactly the rhythm you used. The hatch bursts open, an arm shoots out, and a strong hand hauls you in by the collar and shouts 'Are you the government?' before you have finished falling.",
+      "penalty": {
+        "ll": -3
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "hatch_lock": {
+      "text": "The lock is booby-trapped, with the honest brilliance of a man who has had fifteen years and a lot of cans. The hatch pops, the cans on the shelf above tip, and you learn something about the terminal velocity of beans.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        1,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "logbook_ink": {
+      "text": "The ink is still wet. It was written this morning, in the same hand, in the same bunker, by a man you cannot see. The last line reads: Somebody has come in. Please don't tell them what's in the line.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "tin_avalanche": {
+      "text": "The whole formation of cans, sixty years of careful stacking, lets go at once. You are buried to the ribs in the finest preserved beans in the county, and it takes a long time, and it is extremely humiliating, and it is not the worst thing that has happened to you this month.",
+      "penalty": {
+        "ll": -3,
+        "water": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {}
+}

@@ -1,0 +1,139 @@
+{
+  "id": "settlement_millennium_vigil_01",
+  "title": "The Millennium Vigil",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The community hall is hung with foil streamers and a banner: WELCOME 2000 — 33 YEARS OF NOTHING AND COUNTING! The tables are set for a party and the party is in progress: paper hats, party poppers, a long buffet, two hundred people sitting in the folding chairs with their faces turned to the big clock over the stage, waiting. Their hats are crooked. Their drinks are sixty years flat. Every eye is fixed on the second hand, and not one of them has blinked in sixty years.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Slip through the crowd to the buffet",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 1,
+          "success_node": "the_buffet",
+          "hazard_id": "streamer_snare"
+        },
+        {
+          "label": "Take a folding chair and wait with them",
+          "cost": {},
+          "base_risk": 28,
+          "skill": 2,
+          "success_node": "the_countdown",
+          "hazard_id": "the_wait"
+        }
+      ]
+    },
+    "the_buffet": {
+      "text": "The buffet is a forty-metre table of food that has not spoiled, and this is the first thing that is wrong. The second thing is the place cards. Every one is a name, and every name is a survivor of the end of the world, thirty-three years on, still here, still counting. There are a few empty places. One has a card that says GUEST, and the card is in your handwriting.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Sit down in your place and eat",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_countdown",
+          "hazard_id": "guest_seat"
+        },
+        {
+          "label": "Read the seating plan on the wall",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 1,
+          "success_node": "the_countdown",
+          "hazard_id": "seating_plan"
+        }
+      ],
+      "loot_table": "settlement_common"
+    },
+    "the_countdown": {
+      "text": "At a quarter to midnight the hall begins to count out loud, in the low even voice of people who have rehearsed it. Ten. Nine. The second hand on the clock is very slow. Eight. Seven. The band, in the corner, strikes up a tune that no one has played since before the world ended. Six. Five. The doors, at the back of the hall, swing open to the night, and the night beyond them is not dark, but a narrow, upright, patient line of the palest light. Four. Three. Two. You can see, in the line, a road, in the sun, and a station wagon parked on it, with its engine running.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "settlement_rare"
+    }
+  },
+  "hazards": {
+    "streamer_snare": {
+      "text": "Foil streamers go round your ankles in a lazy, deliberate loop and down you go among the folding chairs, and two hundred people turn to look at you, all at once, in perfect silence.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "guest_seat": {
+      "text": "The chair is set for a much smaller person, and the plate contains a dish you did not order. You eat it anyway. It is delicious. It is somebody's mother's cooking, from the year the world stopped, and you cannot for the life of you recall the taste an hour later.",
+      "penalty": {
+        "ll": -2,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "seating_plan": {
+      "text": "The plan lists every guest, in order, by the hour at which they will step through the light. Yours is marked, in pencil, with a small cross. The hour is the one just past. You leave the hall with the feeling that you are late.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "the_wait": {
+      "text": "You take your chair. You count. It is midnight, and then it is midnight again, and then a long time later you realise you have been counting for six hours, and have not once been bored, and are so thirsty that your lips have split.",
+      "penalty": {
+        "ll": -3,
+        "water": -2
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

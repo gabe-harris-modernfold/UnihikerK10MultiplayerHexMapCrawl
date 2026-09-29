@@ -1680,6 +1680,9 @@ void loop() {
   // the screens render into `canvas` exactly as often as they always did, and
   // fxPresent() composes canvas onto the glass -- every repaint, plus every
   // frame something is moving (a panel, a shake, the hum bar).
+  // A picture screen (ui-scenes.hpp) animates, so it repaints on its own
+  // clock rather than every SCREEN_MS.
+  if (sceneOwns(k10Screen) && !uploadActive && !deathActive) screenInterval = scenePeriod(k10Screen);
   bool repaint = screenChanged || k10Dirty || (now - lastScreenMs >= screenInterval);
   bool pushed  = false;
   if (repaint) {
@@ -1703,7 +1706,10 @@ void loop() {
       // the next frames cut the old one away (ui-fx.hpp).
       if (k10ScreenXition) { k10ScreenXition = false; fxSwitchScreens(now); }
       drawActiveScreen();
-      if (fxLive()) fxContentChanged((const uint16_t*)canvas.getBuffer(), now, screenChanged);
+      // A scene is never "reprinted": nearly every row moves every frame, and
+      // the row diff would read that as the whole screen being retyped.
+      if (fxLive()) fxContentChanged((const uint16_t*)canvas.getBuffer(), now,
+                                     screenChanged || sceneOwns(k10Screen));
     }
     if (!uploadActive && !deathActive) k10ScreenLast = k10Screen;
     else k10ScreenLast = 255;   // force a repaint when the takeover ends
@@ -1722,6 +1728,13 @@ void loop() {
                 (int)G.connectedCount, (unsigned long)G.tickId,
                 (unsigned)(ESP.getFreeHeap() / 1024));
   }
-  // 100 ms as ever when the screen is still; a frame's worth while it moves.
-  delay(fxLoopDelay(now, now));
+  // 100 ms as ever when the screen is still; a frame's worth while it moves --
+  // and no longer than the next scene frame is due.
+  uint32_t loopDelay = fxLoopDelay(now, now);
+  if (sceneOwns(k10Screen) && !uploadActive && !deathActive) {
+    uint32_t el = millis() - lastScreenMs, per = scenePeriod(k10Screen);
+    uint32_t left = el + 5 >= per ? 5 : per - el;
+    if (left < loopDelay) loopDelay = left;
+  }
+  delay(loopDelay);
 }

@@ -1,0 +1,227 @@
+{
+  "id": "null_camp_3_node",
+  "title": "The Null Node",
+  "meridian": {
+    "site": "null_camp",
+    "stage": 3,
+    "of": 3,
+    "hint": "Choose which instrument to sound at the node."
+  },
+  "start_node": "the_node",
+  "nodes": {
+    "the_node": {
+      "text": "Under the glass floor, at the exact centre of the camp, the node: a tuning fork the height of a person, planted tines-down in the earth, silent. Eleven chalk marks surround it where eleven people stood. There is room for a twelfth.",
+      "text_by_lens": {
+        "machine": "The node: a resonator element the height of a person, seated tines-down, out of tune. Eleven chalk positions mark the calibration crew. One position is unassigned.",
+        "ritual": "The node: a great fork planted in the earth like a standing stone, with eleven stations chalked around it and a twelfth left bare.",
+        "resonance": "The node: a fork so large its note is below hearing. The camp, the ring, the eleven marks are its overtones. The twelfth is missing.",
+        "prison": "The node: a bolt driven into the ground, tines-down, holding something under the glass. Eleven guards. One post empty.",
+        "mirror": "The node. You have stood here before. You are standing here now, on the twelfth mark, which was always yours."
+      },
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Hum the note yourself. You have heard it enough times now.",
+          "cost": {},
+          "base_risk": 85,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers"
+        },
+        {
+          "label": "Sound the three-tined fork: a clean reference tone to measure against.",
+          "cost": {},
+          "base_risk": 75,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "machine"
+        },
+        {
+          "label": "Sound the fork bent back into its own handle, and walk it round the node three times.",
+          "cost": {},
+          "base_risk": 75,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "ritual"
+        },
+        {
+          "label": "Sound the fork with no tines. It still rings, and the node rings with it.",
+          "cost": {},
+          "base_risk": 75,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "resonance"
+        },
+        {
+          "label": "Sound the heaviest fork, hard and short, to damp the node rather than wake it.",
+          "cost": {},
+          "base_risk": 75,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "prison"
+        },
+        {
+          "label": "Let the Upside Pendulum find the node's true centre first.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 0,
+          "success_node": "centred",
+          "hazard_id": "rod_rises",
+          "requires_item": 67,
+          "lens": "machine"
+        },
+        {
+          "label": "Look at the node through the Inward Scope.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 0,
+          "success_node": "centred",
+          "hazard_id": "eyepiece_blink",
+          "requires_item": 68,
+          "lens": "prison"
+        },
+        {
+          "label": "Palpate the node with the Dirty Glove.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "centred",
+          "hazard_id": "glove_chooses",
+          "requires_item": 69,
+          "lens": "ritual"
+        }
+      ]
+    },
+    "centred": {
+      "text": "The instrument settles the node. For a moment you can see where each of the eleven stood and which fork they held. The note is waiting.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Hum the note yourself. You have heard it enough times now.",
+          "cost": {},
+          "base_risk": 85,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers"
+        },
+        {
+          "label": "Sound the three-tined fork: a clean reference tone to measure against.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "machine"
+        },
+        {
+          "label": "Sound the fork bent back into its own handle, and walk it round the node three times.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "ritual"
+        },
+        {
+          "label": "Sound the fork with no tines. It still rings, and the node rings with it.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "resonance"
+        },
+        {
+          "label": "Sound the heaviest fork, hard and short, to damp the node rather than wake it.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "sounded",
+          "hazard_id": "node_answers",
+          "requires_item": 66,
+          "lens": "prison"
+        }
+      ]
+    },
+    "sounded": {
+      "text": "The node takes the note and holds it. Under the glass, eleven people lower their eyes at last. The measurement that could not be finished is finished, or it is started again, and you cannot tell which. The camp's supplies are yours. The Perambulator is parked at the edge of the glass, facing you.",
+      "text_by_lens": {
+        "machine": "Resonance locked. The element holds its frequency. Calibration complete, twelve of twelve. The camp stores are released to the crew.",
+        "ritual": "The circuit is walked and the note is sung. The eleven are at rest. What they kept is given to the one who finished.",
+        "resonance": "The node and the fork agree, and the whole camp agrees with them. You can feel the next node, very far off, answer.",
+        "prison": "The lock takes the note and closes. Whatever was pressing up against the glass settles back down. For now.",
+        "mirror": "It worked, because you believed it would. The eleven look up at you, and each of them has your face."
+      },
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            2,
+            3
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "node_answers": {
+      "text": "Wrong. The node answers back. The hex lurches half a step out of true, the chalk marks rub themselves out, and you are standing at the edge of the camp again. The measurement has to be started over.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    },
+    "rod_rises": {
+      "text": "The pendulum's rod rises and points at you, not the node. You are the thing that does not belong.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "eyepiece_blink": {
+      "text": "Through the scope the node is looking at you, and it blinks first.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "glove_chooses": {
+      "text": "The glove chooses where to press, and it chooses wrong. The node's pulse stops. So, for a moment, does yours.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  }
+}

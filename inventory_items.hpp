@@ -55,6 +55,25 @@ static uint8_t effectiveInvSlots(const Player& p) {
   return (uint8_t)constrain(slots, 1, (int)INV_SLOTS_MAX);
 }
 
+// Does pid qualify for an encounter choice carrying "requires_item": itemId?
+// Equipment has to be WORN -- the Dirty Glove palpates with the hand it is
+// on, and a gate that took a glove in the pack would leave its dawn Rad cost
+// buying nothing.  Everything else counts anywhere in the pack.  An id the
+// registry does not know can never be had.  Mirrored by hasForChoice() in
+// mock-server/server.js and ui-encounter.js, and by bots/encounters.py.
+static bool playerHasForChoice(int pid, uint8_t itemId) {
+  const ItemDef* def = getItemDef(itemId);
+  if (!def) return false;
+  const Player& p = G.players[pid];
+  if (def->category == ITEM_EQUIPMENT) {
+    for (int s = 0; s < EQUIP_SLOTS; s++) if (p.equip[s] == itemId) return true;
+    return false;
+  }
+  uint8_t slots = effectiveInvSlots(p);
+  for (int s = 0; s < slots; s++) if (p.invType[s] == itemId && p.invQty[s]) return true;
+  return false;
+}
+
 // Water tokens that ride outside the pack cap: STAT_WATER_CAP summed over
 // equipment (the Canteen's +3).  Water only -- a canteen holds nothing else.
 static int canteenCap(const Player& p) {
@@ -1076,13 +1095,18 @@ static void executeTrade(int fromPid, int toPid, const TradeOffer& offer) {
   }
 }
 
-// Grants one random non-key item (qty 1) to the first free inventory slot.
+// Grants one random tradeable item (qty 1) to the first free inventory slot.
 // Call once for standard survivors, twice for Mule/Quartermaster.
+// trade = no is the pool filter, not just category != key: it also keeps out
+// the recipe-only outputs items.cfg says never drop (Raft, Backpack, Canteen,
+// the concoctions) and the Null Meridian instruments -- a survivor starting
+// with the Dirty Glove would skip the Perambulator entirely. Every key item
+// is trade = no, so the old key-item exclusion still holds.
 static void grantRandomStartItem(Player& p) {
   uint8_t pool[MAX_ITEMS];
   int poolSize = 0;
   for (int i = 0; i < (int)itemCount; i++) {
-    if (itemRegistry[i].id != 0 && itemRegistry[i].category != ITEM_KEY)
+    if (itemRegistry[i].id != 0 && itemRegistry[i].category != ITEM_KEY && itemRegistry[i].tradeable)
       pool[poolSize++] = itemRegistry[i].id;
   }
   if (poolSize == 0) return;

@@ -49,6 +49,7 @@ static inline void* fxAlloc(size_t n) { return calloc(1, n); }
 
 static uint32_t g_now = 1;
 #include "../../ui-fx.hpp"
+#include "../../ui-scenes.hpp"
 
 static uint32_t fxNowMs() { return g_now; }
 static void fxNameOf(int8_t who, char* out, size_t cap) {
@@ -128,6 +129,75 @@ static void run(const char* name, const std::string& in, const std::string& out,
   printf("%-10s %3d frames\n", name, n);
 }
 
+// A picture screen (ui-scenes.hpp): the scene is redrawn into the canvas every
+// scenePeriod() ms, exactly as the board's loop does, and composed on top.
+static SceneSurv surv(const char* nm, uint8_t arch, uint8_t ll, uint8_t cap, uint8_t food, uint8_t water,
+                      uint8_t rad, int8_t moves = 3, uint8_t depth = 0, bool inEnc = false, uint16_t score = 0) {
+  SceneSurv v = {};
+  v.on = true; snprintf(v.name, sizeof(v.name), "%s", nm);
+  v.arch = arch; v.ll = ll; v.llCap = cap; v.food = food; v.water = water; v.rad = rad;
+  v.moves = moves; v.depth = depth; v.inEnc = inEnc; v.score = score;
+  return v;
+}
+static void runScene(const char* name, const std::string& out, uint8_t screen, SceneSnap S,
+                     uint32_t endMs, std::vector<Step> steps, FxDread dread, uint16_t milPerSec = 0) {
+  std::vector<uint16_t> canvasBuf(FX_W * FX_H, 0), frame(FX_W * FX_H, 0), prev(FX_W * FX_H, 0);
+  fxInitTables();
+  fxAllocPools();
+  FX.level = 2;
+  g_now = 1000;
+  FX.lastMs = 0;
+  FX.nextGlitch = g_now + 2500;
+  FX.nextSub = g_now + 999999;
+  FX.nextEyes = g_now + 999999;
+  fxSetDread(dread);
+  FX.madness = FX.madTarget;
+  scRoadSt.last = 0; scRoadSt.walked = 0; scRoadSt.nar = nullptr;
+  FILE* fi = fopen((out + "/" + name + ".txt").c_str(), "w");
+  uint32_t t0 = g_now, lastScene = 0;
+  uint16_t mil0 = S.dayMil;
+  size_t si = 0;
+  int n = 0;
+  bool first = true;
+  while (g_now - t0 < endMs) {
+    uint32_t t = g_now - t0;
+    while (si < steps.size() && steps[si].at <= t) {
+      const Step& s = steps[si++];
+      fxCue((uint8_t)s.kind, (int8_t)s.who, s.cap, s.sfx, (uint16_t)s.arg);
+    }
+    if (first || g_now - lastScene >= scenePeriod(screen)) {
+      if (milPerSec) S.dayMil = (uint16_t)((mil0 + (uint32_t)t * milPerSec / 1000) % 1000);
+      sceneDraw(screen, S, g_now, canvasBuf.data());
+      fxContentChanged(canvasBuf.data(), g_now, true);
+      lastScene = g_now;
+      first = false;
+    }
+    fxCompose(canvasBuf.data(), prev.data(), frame.data(), g_now);
+    char fn[1024];
+    snprintf(fn, sizeof(fn), "%s/%s_%04d.raw", out.c_str(), name, n);
+    FILE* f = fopen(fn, "wb");
+    fwrite(frame.data(), 2, frame.size(), f);
+    fclose(f);
+    uint32_t per = fxAnimating(g_now) ? fxFramePeriod(g_now) : 100;
+    uint32_t sp = scenePeriod(screen), next = lastScene + sp - g_now;
+    if (next < per) per = next < 20 ? 20 : next;
+    fprintf(fi, "%d %u %u\n", n, t, per);
+    n++;
+    g_now += per;
+  }
+  fclose(fi);
+  printf("%-10s %3d frames\n", name, n);
+}
+
+static SceneSnap baseSnap() {
+  SceneSnap S = {};
+  S.day = 12; S.dayMil = 300; S.weather = 0; S.tcWeight = 60; S.threat = 3;
+  snprintf(S.ap, sizeof(S.ap), "192.168.47.1");
+  snprintf(S.lan, sizeof(S.lan), "10.0.0.23");
+  S.lanUp = true;
+  return S;
+}
+
 int main(int argc, char** argv) {
   if (argc < 3) { fprintf(stderr, "usage: fxsim <raw-dir> <frame-dir> [scene]\n"); return 2; }
   std::string in = argv[1], out = argv[2], only = argc > 3 ? argv[3] : "";
@@ -177,5 +247,29 @@ int main(int argc, char** argv) {
       { { 250, FXK_TRIPWIRE, 2, "puts a foot down and hears it click.", nullptr, 0 } }, calm, false);
   if (want("beartrap")) run("beartrap", in, out, "encounters", nullptr, 0, 0, 5200,
       { { 250, FXK_BEARTRAP, 0, "is caught and held while it bites.", nullptr, 0 } }, calm, false);
+  {
+    SceneSnap S = baseSnap();
+    S.s[0] = surv("Vera", 0, 6, 7, 5, 4, 1);
+    S.s[1] = surv("Quartermaster1", 1, 2, 7, 1, 3, 2);
+    S.s[3] = surv("Mox", 3, 5, 7, 4, 1, 0);
+    S.s[4] = surv("Kell", 4, 7, 8, 3, 3, 8);
+    if (want("road_day"))   runScene("road_day", out, 1, S, 6000, {}, calm);
+    SceneSnap D = S; D.dayMil = 690; D.weather = 2; D.doomClose = 200; D.doomAware = 90; D.tcWeight = 215;
+    D.s[1].ll = 0; D.s[3].inEnc = true;
+    if (want("road_storm")) runScene("road_storm", out, 1, D, 6000, {}, doom);
+    SceneSnap N = S; N.dayMil = 860; N.weather = 3; N.s[4].depth = 1;
+    if (want("road_night")) runScene("road_night", out, 1, N, 5000, {}, calm);
+    SceneSnap F = S; F.weather = 5; F.dayMil = 120;
+    if (want("road_fog"))   runScene("road_fog", out, 1, F, 5000, {}, calm);
+    SceneSnap E = baseSnap(); E.dayMil = 450;
+    if (want("road_empty")) runScene("road_empty", out, 1, E, 6000, {}, FxDread{});
+    SceneSnap B = S;
+    B.s[0].score = 3160; B.s[1].score = 2440; B.s[3].score = 900; B.s[4].score = 60;
+    if (want("admired"))    runScene("admired", out, 6, B, 7000, {}, calm);
+    SceneSnap B0 = baseSnap();
+    if (want("admired_empty")) runScene("admired_empty", out, 6, B0, 5000, {}, FxDread{});
+    SceneSnap C = S;
+    if (want("road_cycle")) runScene("road_cycle", out, 1, C, 16000, {}, calm, 62);
+  }
   return 0;
 }

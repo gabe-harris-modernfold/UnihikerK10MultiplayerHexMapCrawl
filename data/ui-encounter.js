@@ -212,6 +212,21 @@ function initEncounterOverlay() {
     return true;
   }
 
+  // "requires_item": N -- the choice only exists for a survivor who has item
+  // N: WORN if it is equipment (the Dirty Glove), anywhere in the pack if not.
+  // Mirrors playerHasForChoice() in inventory_items.hpp, which refuses it
+  // server-side for anyone else. Hidden rather than greyed out: carrying the
+  // right instrument is what opens the door, not something to be told about.
+  function hasForChoice(ch) {
+    const id = ch?.requires_item | 0;
+    if (!id) return true;
+    const p = me(); if (!p) return false;
+    const item = getItemById(id);
+    if (!item) return false;
+    if (item.category === ITEM_CATEGORY.EQUIPMENT) return (p.eq ?? []).includes(id);
+    return (p.it ?? []).some((t, i) => t === id && (p.iq?.[i] ?? 0) > 0);
+  }
+
   function oddsFor(choice) {
     const p = me();
     const dn = encComputeDN(p, choice.base_risk ?? 50);
@@ -429,7 +444,9 @@ function initEncounterOverlay() {
         : 'You’ve seen all there is to see here.'));
       return;
     }
-    node.choices.forEach((ch, idx) => {
+    // Numbered by what is on screen; the ci sent is still the choice's index
+    // in the file (sendChoice looks it up), so hidden choices shift nothing.
+    node.choices.filter(hasForChoice).forEach((ch, idx) => {
       const btn = el('button', 'enc-choice');
       btn.type = 'button';
       const affordable = canAfford(ch.cost);

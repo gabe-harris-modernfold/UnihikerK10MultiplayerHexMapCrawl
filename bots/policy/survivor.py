@@ -985,10 +985,17 @@ class SurvivorPolicy(Policy):
             self.stats["encounters_aborted"] += 1
             return Action("enc_abort", why=f"dead end at node {run.node_key}")
 
-        run.choose(0)
-        p = success_chance(choices[0], obs)
-        return Action("enc_choice", ci=0,
-                      why=f"first option at {run.node_key} (p={p:.2f})")
+        # First option we may take: a "requires_item" choice for an item we
+        # lack is refused server-side, and a refused pick changes nothing,
+        # so sending it would stall the scene (docs/bot-testing.md).
+        ci = run.first_open_choice(obs.me)
+        if ci is None:
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort", why=f"no open option at node {run.node_key}")
+        run.choose(ci)
+        p = success_chance(choices[ci], obs)
+        return Action("enc_choice", ci=ci,
+                      why=f"first open option at {run.node_key} (p={p:.2f})")
 
     def decide_trap(self, obs, run) -> Action:
         """A booby trap (traps.hpp): there is no walking away at the start.

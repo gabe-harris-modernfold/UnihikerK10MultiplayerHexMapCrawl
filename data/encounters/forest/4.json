@@ -1,0 +1,131 @@
+{
+  "id": "forest_evacuation_special_01",
+  "title": "The Evacuation Special",
+  "start_node": "entry",
+  "nodes": {
+    "entry": {
+      "text": "The tracks run straight into the trees and stop, not because the line ended, but because the trees closed over it. On the siding sits a train of eleven cars, doors open, seats full of small coats. Each coat has a paper tag pinned to the collar: NAME, SCHOOL, and DESTINATION. You read one. The destination is MERIDIAN COUNTY. The car is standing, empty, thirty feet from the sign that says MERIDIAN COUNTY.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Board the first car and read the manifest",
+          "cost": {},
+          "base_risk": 22,
+          "skill": 1,
+          "success_node": "the_conductors_car",
+          "hazard_id": "ticket_punch"
+        },
+        {
+          "label": "Walk the length of the train outside",
+          "cost": {},
+          "base_risk": 18,
+          "skill": 2,
+          "success_node": "the_conductors_car",
+          "hazard_id": "coupling_snap"
+        }
+      ]
+    },
+    "the_conductors_car": {
+      "text": "The conductor's cabin is neat as a chapel. A punch on a string. A logbook. SEPT 14, 06:00 DEPART MERIDIAN COUNTY WITH 412 CHILDREN FOR SAFETY. SEPT 14, 06:00 ARRIVE MERIDIAN COUNTY. It is written twice, in the same hand, in the same ink, the second line indented a little as if in apology. Under it: I HAVE DONE THIS SIX TIMES. IT DOES NOT SEEM TO BE GETTING ANYONE ANYWHERE. THE CHILDREN ARE VERY GOOD ABOUT IT.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Leaf back through the log to the first entry",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_last_car",
+          "hazard_id": "log_bites"
+        },
+        {
+          "label": "Look for the children",
+          "cost": {},
+          "base_risk": 38,
+          "skill": 3,
+          "success_node": "the_last_car",
+          "hazard_id": "the_children"
+        }
+      ],
+      "loot_table": "forest_common"
+    },
+    "the_last_car": {
+      "text": "The last car is the mail car, and the mail was never delivered. Sacks of letters, addressed to parents, in the careful sprawling hand of children told to write home. Every one is dated the same day and every one says the same, differently: WE ARE ON THE TRAIN. THE TRAIN IS VERY LONG. WE ARE ALL VERY QUIET. IT IS NOT DARK OUTSIDE BUT THERE ARE NO STARS. MISS CARLISLE SAYS WE ARE NEARLY THERE. She has been saying it for sixty years.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [],
+      "loot_table": "forest_rare"
+    }
+  },
+  "hazards": {
+    "ticket_punch": {
+      "text": "The punch has a fresh bright hole in the last ticket and no one has been here for sixty years. You look down and find a hole in your own sleeve, a neat clean circle the size of a coin.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "coupling_snap": {
+      "text": "The last coupling lets go as you pass and the whole train rolls half a metre forward, and something small and cold catches your ankle and holds it on the rail as the wheel arrives.",
+      "penalty": {
+        "ll": -4
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": false
+    },
+    "log_bites": {
+      "text": "The pages turn faster than your hand. It is not the wind. It reads you six lines of your own arrival, in your own hand, before you can shut the book.",
+      "penalty": {
+        "ll": -3,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "the_children": {
+      "text": "They are not hostile. They sit in rows with their tags on. The eldest looks up, says 'Are we there?', and every child in the car turns to hear the answer, and you find you cannot say it. You leave with their patience on your back like a load.",
+      "penalty": {
+        "ll": -3,
+        "food": -1
+      },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {}
+}

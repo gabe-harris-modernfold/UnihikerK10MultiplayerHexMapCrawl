@@ -1,0 +1,409 @@
+{
+  "id": "null_perambulator_glass",
+  "title": "The Perambulator",
+  "start_node": "arrival",
+  "nodes": {
+    "arrival": {
+      "text": "A flatbed truck stands on the fused glass with no driver's seat and no tracks leading in. The engine is cold. The dust it raised is still settling, and has been, you think, for some time. A tuning fork is planted in the dirt by the rear wheel, humming a note just under hearing. Lichtenberg burns branch across the glass under its wheels. The branches match the map.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb up onto the flatbed.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 0,
+          "success_node": "flatbed",
+          "hazard_id": "lagging_shadow"
+        },
+        {
+          "label": "Pull the planted fork out of the ground.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "fork_pulled",
+          "hazard_id": "fork_answers"
+        },
+        {
+          "label": "Strike your forks against the planted one and listen for which tine agrees.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 4,
+          "success_node": "in_tune",
+          "hazard_id": "wrong_tine",
+          "requires_item": 66,
+          "lens": "resonance"
+        },
+        {
+          "label": "Look at the driver's seat that isn't there through the Inward Scope.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "remembers",
+          "hazard_id": "eyepiece_blink",
+          "requires_item": 68,
+          "lens": "machine"
+        }
+      ]
+    },
+    "fork_pulled": {
+      "text": "It comes out easily, as if it had been waiting for you to ask. It is not one fork but five, bound in wire, and none of them match: three tines, a tine bent back into the handle, one with no tines at all that still rings. The hex rights itself. Your shadow catches up with you.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 66,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Climb onto the flatbed while it is quiet.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "flatbed",
+          "hazard_id": "lagging_shadow"
+        }
+      ]
+    },
+    "in_tune": {
+      "text": "The fork with no tines agrees with theirs. For one breath the hex is exactly where the map says it is, and the flatbed is only a truck. Someone has left a ration tin on the running board, still warm, with a spoon in it that is yours.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Climb onto the flatbed while the note holds.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "flatbed",
+          "hazard_id": "lagging_shadow"
+        }
+      ]
+    },
+    "remembers": {
+      "text": "Through the backward eyepiece the cab is full. Eleven people in lab coats, standing, facing a window that is not there, all looking at something very bright. One of them turns to look at you. You lower the scope. The seat is still missing, but the footwell is full of dropped supplies.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 2,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Climb onto the flatbed. They are still looking.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "flatbed",
+          "hazard_id": "lagging_shadow"
+        }
+      ]
+    },
+    "flatbed": {
+      "text": "The bed is laid out like a lab bench: clamps, a cold soldering iron, eleven clipboards on eleven hooks. A twelfth hook has your name on it in handwriting you almost recognise. Three cases are strapped down. A radio bolted to the rail is quietly saying what you are about to say.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Unstrap the tall case. Something inside is swinging.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "pendulum_case",
+          "hazard_id": "rod_rises"
+        },
+        {
+          "label": "Open the cold box with the brass eyepiece on the lid.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "scope_case",
+          "hazard_id": "eyepiece_blink"
+        },
+        {
+          "label": "Reach into the glove box. There is no cab for it to be in.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 4,
+          "success_node": "glove_box",
+          "hazard_id": "glove_box_bites"
+        },
+        {
+          "label": "Hold the Upside Pendulum over the cases and follow where it leans.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "leaning",
+          "hazard_id": "rod_rises",
+          "requires_item": 67,
+          "lens": "machine"
+        },
+        {
+          "label": "Palpate the flatbed's tyre with the Dirty Glove.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "tyre_pulse",
+          "hazard_id": "glove_chooses",
+          "requires_item": 69,
+          "lens": "ritual"
+        }
+      ]
+    },
+    "pendulum_case": {
+      "text": "A brass bob on a rigid rod, fixed to a base. It does not hang. It stands, and swings upward, toward whatever does not belong here. Right now it is pointing at you. Then, slowly, away.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 67,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Take the clipboard with your name on it.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 0,
+          "success_node": "twelfth_hook",
+          "hazard_id": "static_grammar"
+        }
+      ]
+    },
+    "scope_case": {
+      "text": "A microscope built the wrong way round, eyepiece facing into the body. You look in and see yourself, very small, from below, lit. Something on the slide is looking at the observer, and counting.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 68,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Take the clipboard with your name on it.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 0,
+          "success_node": "twelfth_hook",
+          "hazard_id": "static_grammar"
+        }
+      ]
+    },
+    "glove_box": {
+      "text": "Your hand closes on latex. One left-hand surgical glove, never sterile, stained in a pattern you do not want to read. It is warm inside, as if someone just took it off. It fits.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 69,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Take the clipboard with your name on it.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 0,
+          "success_node": "twelfth_hook",
+          "hazard_id": "static_grammar"
+        }
+      ]
+    },
+    "leaning": {
+      "text": "The bob leans past the cases to a panel in the bed you would never have found. Under it, packed in straw, is what the group kept for themselves.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "glass_rare",
+      "choices": [
+        {
+          "label": "Take the clipboard with your name on it.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "twelfth_hook",
+          "hazard_id": "static_grammar"
+        }
+      ]
+    },
+    "tyre_pulse": {
+      "text": "Through the glove the tyre has a pulse, slower than yours and very patient. The truck is alive the way a tuning fork is alive. It lets you take the fuel can lashed behind the wheel. The glove is darker than it was.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Take the clipboard with your name on it.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "twelfth_hook",
+          "hazard_id": "static_grammar"
+        }
+      ]
+    },
+    "twelfth_hook": {
+      "text": "The roster on it lists eleven staff of the resonator tuning group, and a twelfth line, blank, already initialled. The last entry in the log is tomorrow's date. When you look up, the Perambulator has not moved, but it has left.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "lagging_shadow": {
+      "text": "Your shadow is a step behind you. Then two. Then it stays where it is while you go on without it. It catches up eventually, cold.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "fork_answers": {
+      "text": "The fork comes free and the hex answers back: a tone in your fillings, your ears, the long bones of your arms. It goes back into the ground on its own.",
+      "penalty": {
+        "ll": -1,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "wrong_tine": {
+      "text": "The wrong tine. The hex answers back, and everything in it is suddenly half a step to the left of itself.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "eyepiece_blink": {
+      "text": "Something on the other side of the eyepiece blinks first. You lose a minute. Your scrap has been recounted and comes out different.",
+      "penalty": {
+        "scrap": -1
+      },
+      "ends_encounter": false
+    },
+    "rod_rises": {
+      "text": "The rod rises out of its case toward you and taps you, once, over the heart. You are, apparently, the thing that does not belong.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "glove_box_bites": {
+      "text": "The glove box shuts on your wrist. Not hard. Long enough for you to understand it could.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "glove_chooses": {
+      "text": "The glove chooses where to press, and it chooses wrong. The tyre flinches. So do you.",
+      "penalty": {
+        "radiation": 1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "static_grammar": {
+      "text": "The radio on the rail stops saying what you will say and starts saying what you are thinking. The static has grammar. You get down off the truck.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": true
+    }
+  }
+}

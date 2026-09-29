@@ -218,7 +218,7 @@ in `poi` first and only falls back to the pool when there is no entry.
 | Key | Cell | Pinned by | Subject |
 |----|----|----|----|
 | `0_10` | Open Scrub cell 10 (was `poi_jacks_chopper.png`) | hex-map.hpp Phase 5.5 — the scrub hex holding `scrub/19.json` | named landmark, already shipped |
-| `4_10`, `4_11`, `4_12` | *(not yet drawn)* Broken Urban cells 10–12 | hex-map.hpp Phase 4 — any Broken Urban hex with 5+ urban neighbours, one of the three picked at random | **Dense downtown core.** Standing multi-storey hab-block shells rather than ground rubble: walls still up three or four floors, window rows blown out, a street canyon running between them in deep shadow. It must read as *taller and more intact* than `hexBrokenUrban0-9` at a glance — its whole job is to mark the middle of a real city against the fringe rubble around it. Swap-ins for extra variants: a collapsed skybridge between two towers; a toppled crane leaning across the canyon; a gutted parking structure; a billboard frame stripped to its lattice. |
+| `4_10`, `4_11`, `4_12` | Broken Urban cells 10–12 (2026-09-28: apartment block, teal corner block, grey townhouse from gi23, with alternates in `hexBrokenUrban.json`) | hex-map.hpp Phase 4 — any Broken Urban hex with 5+ urban neighbours, one of the three picked at random | **Dense downtown core.** Standing multi-storey hab-block shells rather than ground rubble: walls still up three or four floors, window rows blown out, a street canyon running between them in deep shadow. It must read as *taller and more intact* than `hexBrokenUrban0-9` at a glance — its whole job is to mark the middle of a real city against the fringe rubble around it. Swap-ins for extra variants: a collapsed skybridge between two towers; a toppled crane leaning across the canyon; a gutted parking structure; a billboard frame stripped to its lattice. |
 
 Notes on the downtown core tiles:
 
@@ -229,7 +229,7 @@ Notes on the downtown core tiles:
   the same few cities, which is why one tile is not enough.
 - Phase 4 pins them only where a city has a genuinely dense interior, so a
   typical world marks ~11 hexes and small townships mark none at all.
-- Until the cells are painted, the renderer silently falls back to the
+- Without the cells (an older tiles.json), the renderer silently falls back to the
   numbered Broken Urban pool (`variant % poolLength`), so the firmware side is
   already live and harmless.
 - The core tiles can't leak into the pool. Broken Urban's `LANDMARKS`
