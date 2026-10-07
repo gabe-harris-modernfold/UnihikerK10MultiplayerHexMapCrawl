@@ -391,6 +391,30 @@ static void tickGame() {
     groundAged = groundAgeOut();
   }
 
+  // ── Daily-cost items waiting on fuel ────────────────────────────────────
+  // A Motorbike that could not be fuelled at dawn starts the moment there is
+  // fuel in the pack, and runs for the rest of the day (kickStartItems,
+  // inventory_items.hpp). Not mid-scene: an encounter's choices may be
+  // priced in the fuel it would burn.
+  for (int pid = 0; pid < MAX_PLAYERS; pid++) {
+    Player& p = G.players[pid];
+    if (!p.connected || encounters[pid].active) continue;
+    int8_t  mp0     = p.movesLeft;
+    uint8_t started = kickStartItems(pid);
+    if (!started) continue;
+    int s = 0;
+    while (!(started & (1 << s))) s++;
+    Log.notice("kick-start pid=%d item=%d mp %d->%d", pid, (int)p.equip[s], (int)mp0, (int)p.movesLeft);
+    GameEvent kev = {};
+    kev.type          = EVT_REFUEL;
+    kev.pid           = (uint8_t)pid;
+    kev.res           = p.equip[s];                              // the first item that started
+    kev.amt           = (uint8_t)max(0, p.movesLeft - mp0);      // MP it brought
+    kev.moveMP        = p.movesLeft;
+    kev.dawnUnfuelled = unfuelledMask(pid);                      // still dormant after this
+    enqEvt(kev);
+  }
+
   // ── Resource respawn ────────────────────────────────────────────────────────
   // The Understory's blight (ecology.hpp, ecoBlightMap): a surface hex with
   // visible mould on it loses its resource and grows none back. One hex is

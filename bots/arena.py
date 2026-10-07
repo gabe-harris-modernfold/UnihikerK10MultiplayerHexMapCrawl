@@ -329,6 +329,16 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       # Death drops: loots sent at graves, steps walked back
                       # to our own -- whether a fall still costs the canteen.
                       f"loots={c.get('loots', 0)} recover={c.get('recover_moves', 0)}")
+            bike = (c or {}).get("bike")
+            if bike:
+                # The Biker: did it get the Backpack, build the bike, and how
+                # much fuel did it pull in once it was riding?
+                print(f"       bike: phase={bike['phase']} backpacks={bike['backpacks']} "
+                      f"(day {bike['pack_day']}) built={bike['bikes']} "
+                      f"found={bike['bikes_found']} (day {bike['bike_day']}) "
+                      f"fuel={bike['fuel']} peak={bike['fuel_peak']} "
+                      f"gained={bike['fuel_gained']} ride_moves={bike['ride_moves']} "
+                      f"kickstarts={bike.get('kickstarts', 0)}")
             camp = (c or {}).get("camp")
             if camp:
                 # The Sentinel's camp: did it get one, cover it, and sleep in it?

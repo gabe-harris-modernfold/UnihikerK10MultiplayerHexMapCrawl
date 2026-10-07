@@ -14,6 +14,7 @@ pushes them to the board. They are lossless RGBA; edit those:
     shelterImproved.png   shelter sprites, cell.shelter 2
     forrageAnimal.png     forage animals, drawn on food (resource 2) hexes
     caravan.png           the caravan's convoy sticker (worldState.caravan)
+    bike.png              the Motorbike a survivor pawn rides (drawCharIcon)
     tunCorridor.png, tunRoom.png, tunFixture.png
                           the bunker tunnel board (see TUNNEL_SHEETS below),
                           with tunCorridor.json / tunFixture.json sidecars
@@ -24,9 +25,11 @@ read.
 
 Sheet layout: square cells in a grid, a gutter of clear space around and
 between every cell -- 256 px / 32 px for terrain, 224 / 16 for shelters,
-80 / 16 for forage, 384 / 16 for the caravan. A cell holds the sprite exactly
-as the renderer draws it, stretched to a square (a tile is a 2*HEX_SZ square,
-a shelter 0.9*HEX_SZ, a forage animal 0.45*HEX_SZ, the caravan 1.5*HEX_SZ):
+80 / 16 for forage, 384 / 16 for the caravan, 272 / 16 for the bike. A cell
+holds the sprite exactly as the renderer draws it, stretched to a square (a
+tile is a 2*HEX_SZ square, a shelter 0.9*HEX_SZ, a forage animal
+0.45*HEX_SZ, the caravan 1.5*HEX_SZ, the bike sized off the portrait it
+carries -- BIKE_RIDER in renderer.js):
     x = gutter + col * (cell + gutter),  y = gutter + row * (cell + gutter)
 Cells run left to right, top to bottom. A fully transparent cell is empty.
 
@@ -90,6 +93,10 @@ FORAGE = Grid(80, 16, True)
 # The caravan (the roaming trader, world-entities.js) is one convoy sticker
 # drawn as a 1.5*HEX_SZ square: 384 device px at the top zoom on a 2x screen.
 CARAVAN = Grid(384, 16, False)
+# The Motorbike (item 26), drawn under the portrait so the bubble rides it. The
+# cell is the source painting's own resolution (the bike is 265 px across):
+# ~1.05*HEX_SZ wide: 1:1 at the top zoom (HEX_SZ 128) on a 2x screen.
+BIKE = Grid(272, 16, False)
 MAX_COLS = 4
 QUALITY_LADDER = (90, 92, 95)
 MAX_RMSE = 3.5
@@ -114,6 +121,8 @@ FAMILIES = [
     # worldState.caravan: the APC-led convoy. One cell today; more would be
     # picked by position like the others.
     Family('caravan', 'caravanCounts', 'caravanCell', ['caravan'], CARAVAN),
+    # a pawn with the Motorbike equipped rides it; one cell, the firmware ignores it
+    Family('bike', 'bikeCounts', 'bikeCell', ['bike'], BIKE),
 ]
 # The bunker tunnel board (tunnels.hpp) is not drawn per terrain. Each cell
 # carries a 6-bit open-sides mask on the wire (`op`), and the art follows it:

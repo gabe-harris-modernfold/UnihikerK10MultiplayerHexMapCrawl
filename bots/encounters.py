@@ -15,6 +15,7 @@ chosen branch's `success_node`; a failure applies the hazard and `ends` in
 the enc_res event says whether the scene is over.
 """
 import json
+import time
 from pathlib import Path
 
 from config import ITEM_CATEGORY
@@ -86,6 +87,23 @@ def has_for_choice(choice: dict, me) -> bool:
     if cat == "equipment":
         return iid in (me.equip or [])
     return any(t == iid and q > 0 for t, q in zip(me.inv_type or [], me.inv_qty or []))
+
+
+def can_pay(choice: dict, me) -> bool:
+    """Can `me` afford this choice's "cost"?  Port of canAfford in
+    handleEncChoice() (network-msg-encounter.hpp): LL, radiation headroom to
+    10, and the four tokens it charges -- food, water, scrap, medicine.  The
+    board nacks anything else "no_res" and changes nothing, so a policy that
+    picks it without asking waits forever: a Biker spent the last 3 minutes of
+    a K10 run re-sending a 1-scrap option it could not pay for, 477 times."""
+    cost = choice.get("cost") or {}
+    if not cost or me is None:
+        return True
+    inv = list(getattr(me, "inv", None) or [0] * 5)
+    n = lambda k: int(cost.get(k, 0) or 0)
+    return (me.ll >= n("ll") and getattr(me, "rad", 0) + n("radiation") <= 10
+            and inv[1] >= n("food") and inv[0] >= n("water")
+            and inv[4] >= n("scrap") and inv[3] >= n("med"))
 
 
 class EncounterLibrary:
@@ -163,6 +181,11 @@ class EncounterRun:
         # chosen, and it cannot be walked away from at the start.
         self.trap = False
         self.pushed = 0          # caches pressed on from, in a trap
+        self.last_ci = None      # the choice last sent
+        self.sent_at = None      # when it was sent; cleared by its enc_res
+        # (node, ci) pairs the board refused outright.  A refusal changes
+        # nothing, so the same pick comes straight back; this is what stops it.
+        self.refused: set[tuple[str, int]] = set()
 
     @property
     def node(self) -> dict:
@@ -184,6 +207,17 @@ class EncounterRun:
         nxt = (self.enc.get("nodes") or {}).get(ch.get("success_node", ""), {})
         return bool(nxt.get("escape"))
 
+    def awaiting(self, wait: float) -> bool:
+        """A choice is in flight and its enc_res has not come back yet (for
+        at most `wait` seconds -- after that it was lost, and the next pick
+        finds out where the board really is).  Sending another meanwhile
+        answers a node the board has already left: on a busy K10 the result
+        took seconds, and a trap was re-worked every cycle into no_choice."""
+        return self.sent_at is not None and time.monotonic() - self.sent_at < wait
+
+    def is_refused(self, ci) -> bool:
+        return ci is not None and (self.node_key, ci) in self.refused
+
     def escape_choice(self):
         """Index of the choice that backs out of a trap, or None."""
         for i, ch in enumerate(self.choices):
@@ -199,11 +233,20 @@ class EncounterRun:
         return None
 
     def first_open_choice(self, me):
-        """Index of the first choice `me` is allowed to pick, or None."""
+        """Index of the first choice `me` is allowed to pick and can pay for,
+        and that the board has not already refused, or None."""
         for i, ch in enumerate(self.choices):
-            if has_for_choice(ch, me):
+            if ((self.node_key, i) not in self.refused
+                    and has_for_choice(ch, me) and can_pay(ch, me)):
                 return i
         return None
+
+    def refuse(self) -> None:
+        """The board refused the choice last sent: never offer it again here."""
+        if self.last_ci is not None:
+            self.refused.add((self.node_key, self.last_ci))
+        self.pending_next = None
+        self.sent_at = None
 
     def loot_here(self) -> list:
         return self.node.get("loot") or []
@@ -211,6 +254,8 @@ class EncounterRun:
     def choose(self, ci: int) -> None:
         """Record that we sent choice ci, so on success we know where we land."""
         self.rolls += 1
+        self.last_ci = ci
+        self.sent_at = time.monotonic()
         chs = self.choices
         self.pending_next = chs[ci].get("success_node") if 0 <= ci < len(chs) else None
 
@@ -222,9 +267,59 @@ class EncounterRun:
             self.node_key = self.pending_next
             self.visited.append(self.node_key)
         self.pending_next = None
+        self.sent_at = None
 
     def summary(self) -> dict:
         return {"biome": self.biome, "id": self.eid,
                 "title": self.enc.get("title", ""), "node": self.node_key,
                 "rolls": self.rolls, "visited": self.visited,
                 "banked": self.banked, "trap": self.trap}
+
+
+def item_drop_terrains(item_id: int, root: Path | None = None) -> dict[int, float]:
+    """{terrain index: share of that terrain's POI pool that can pay item_id}.
+
+    A POI's scene is dealt from the pool index.json names for the terrain it
+    stands on, and an item reaches the pack on a bank -- through a node's
+    "loot_table" (data/encounters/loot_tables.json) or a literal "item" in
+    its "loot".  A scene counts if any of its nodes can pay it; terrains
+    whose pool never can are left out.  The Biker ranks POIs by this when it
+    is hunting the Sparky Bits for its bike: those come out of urban, glass,
+    mountain and settlement scenes and never out of the marsh.
+    """
+    root = Path(root) if root else REPO_ENCOUNTERS
+    try:
+        index = json.loads((root / "index.json").read_text(encoding="utf-8"))
+        tables = json.loads((root / "loot_tables.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    paying = {name for name, rows in tables.items() if isinstance(rows, list)
+              and any(isinstance(r, dict) and r.get("item") == item_id for r in rows)}
+
+    def pays(node) -> bool:
+        if isinstance(node, dict):
+            if node.get("loot_table") in paying:
+                return True
+            for row in node.get("loot") or []:
+                if isinstance(row, dict) and row.get("item") == item_id:
+                    return True
+            return any(pays(v) for v in node.values())
+        if isinstance(node, list):
+            return any(pays(v) for v in node)
+        return False
+
+    out = {}
+    for key, pool in index.items():
+        if not key.isdigit() or not isinstance(pool, dict):
+            continue
+        seen = hits = 0
+        for eid in range(1, int(pool.get("count", 0)) + 1):
+            try:
+                enc = json.loads((root / pool["path"] / f"{eid}.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, KeyError):
+                continue
+            seen += 1
+            hits += pays(enc.get("nodes", {}))
+        if hits:
+            out[int(key)] = hits / seen
+    return out

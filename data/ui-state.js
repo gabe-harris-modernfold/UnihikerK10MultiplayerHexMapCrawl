@@ -33,9 +33,10 @@ const uiLLCap = van.state(7);
 // water tokens ride outside the pack cap; the Water readouts show how full it
 // is (min(water, wc)/wc) and hide it at 0 — nothing worn, nothing to show.
 const uiCanteenCap = van.state(0);
-// Equipment slots whose daily *_cost went unpaid at the last dawn (bitmask,
-// bit 0 = head .. bit 4 = vehicle). EVT_DAWN "unf". A fuel-gated MP bonus is
-// dormant on such a day, and the equipment panel greys it out to say so.
+// Equipment slots whose daily *_cost is not paid for today (bitmask, bit 0 =
+// head .. bit 4 = vehicle): the tick's "uf", or EVT_DAWN "unf" from a board
+// that doesn't send it. A fuel-gated MP bonus is dormant until the item pays
+// (at dawn, or the moment fuel turns up), and the equipment panel greys it out.
 const uiUnfuelled = van.state(0);
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')
 const uiMenuPage    = van.state(null);

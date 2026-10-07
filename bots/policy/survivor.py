@@ -70,6 +70,19 @@ EQUIP_RETRY_S = 5.0
 # corrects our view arrives, the decision that sent them comes straight back.
 PICKUP_RETRY_S = 5.0
 LOOT_RETRY_S = 5.0
+# A scene the board says is open for us (the "enc" flag, or an in_enc nack)
+# whose enc_path never arrived.  handleMsg_enc_start() and the trap step send
+# enc_path with a bare client->text(), which a socket whose queue is full
+# drops; on a busy board it is (broadcastPartial in the thousands).  Without
+# the biome and id there is no way to play the scene, and every m and act is
+# refused in_enc -- on 2026-09-29 two bots froze like this and held the whole
+# fleet's day open, since nobody in a scene rests.  Wait this long for a late
+# enc_path, then enc_abort, retrying at most this often.
+LOST_SCENE_GRACE_S = 2.0
+LOST_SCENE_RETRY_S = 3.0
+# Longest to wait for a choice's enc_res before assuming it was lost
+# (EncounterRun.awaiting).
+CHOICE_WAIT_S = 6.0
 # Death drops (dropRemains): a fall leaves the whole pack on the hex, and the
 # survivor who comes back for it is a fresh one.  How far it will walk: the
 # same reach as the canteen errand, since the canteen it would otherwise
@@ -194,6 +207,9 @@ class SurvivorPolicy(Policy):
         self._pickup_sent: dict[tuple[int, int], float] = {}  # (gslot, item) -> t
         self._loot_sent: dict[tuple[int, int], float] = {}    # (q, r) -> t
         self._had_canteen = False
+        self._shelter_sent = None   # (day, q, r) of the last SHELTER sent
+        self._lost_since = None     # when a scene we cannot see was first noticed
+        self._lost_abort = 0.0      # when we last walked away from one
 
     # --- event plumbing -------------------------------------------------
     def on_event(self, ev):
@@ -225,6 +241,16 @@ class SurvivorPolicy(Policy):
         elif k == "downed":
             self.stats["downed"] += 1
 
+    def on_reply(self, cmd, ok, why):
+        # No scene is open on the board (see BotClient._on_reply): drop the
+        # node tracker too, or the next scene with the same id resumes it.
+        if not ok and why == "no_enc":
+            self.run = None
+        # A choice refused outright (can't pay, no item, gone) changed
+        # nothing: strike it off so the next cycle picks something else.
+        elif not ok and cmd == "enc_choice" and self.run is not None:
+            self.run.refuse()
+
     def content_score(self) -> dict:
         s = dict(self.stats)
         s["nodes_seen"] = len(self.stats["nodes_seen"])
@@ -245,7 +271,11 @@ class SurvivorPolicy(Policy):
         self._had_canteen = have
 
         if obs.encounter is not None:
+            self._lost_since = None
             return self.decide_encounter(obs)
+        if me.in_encounter:
+            return self.lost_scene_action(obs)
+        self._lost_since = None
 
         # Stood on a grave: what is on it is free (no MP, no check) and ours
         # for the taking, so take it before any errand walks us off the hex.
@@ -528,16 +558,47 @@ class SurvivorPolicy(Policy):
             return None
         if not self.can_afford(me, CANTEEN_RECIPE):
             return self.scrap_errand(obs, max_cost)
-        # A free item slot for the result (applyRecipe's invRoomFor check).
-        if sum(1 for t in me.inv_type[:me.inv_slots] if t) >= me.inv_slots:
+        return self.craft_at_settlement(obs, CANTEEN_RECIPE, max_cost, "canteen",
+                                        f"craft canteen ({me.inv[RES_SCRAP]} scrap)")
+
+    @staticmethod
+    def result_fits(me, rid) -> bool:
+        """Would applyRecipe()'s invRoomFor check pass?  It looks at the pack
+        AFTER the materials come out, so a material whose last unit sits in a
+        slot frees that slot for the result.  Every craftable here stacks 1,
+        so the result needs an empty slot."""
+        rec = RECIPES.get(rid)
+        if rec is None:
+            return False
+        types, qtys = list(me.inv_type), list(me.inv_qty)
+        for item, need in rec["mats"]:
+            for s in range(len(types)):
+                if need <= 0:
+                    break
+                if types[s] != item:
+                    continue
+                take = min(need, qtys[s])
+                qtys[s] -= take
+                need -= take
+                if qtys[s] <= 0:
+                    types[s] = 0
+        return any(not t for t in types[:me.inv_slots])
+
+    def craft_at_settlement(self, obs, rid, max_cost, label, why) -> Action | None:
+        """CRAFT `rid` here if this is a Settlement, else walk to the nearest
+        one within `max_cost`.  The caller has checked the recipe is known and
+        affordable; this checks the rest of doCraft(): the surface, 1 MP, and
+        room for the result.  `label` prefixes the walk's why, `why` is the
+        craft's."""
+        me = obs.me
+        if obs.underground or me.mp < 1 or not self.result_fits(me, rid):
             return None
         if time.monotonic() - self._craft_sent < CRAFT_RETRY_S:
             return None
         cell = obs.here()
         if cell is not None and cell.terrain == TERR_SETTLEMENT:
             self._craft_sent = time.monotonic()
-            return Action("act", a=ACT_CRAFT, recipe=CANTEEN_RECIPE,
-                          why=f"craft canteen ({me.inv[RES_SCRAP]} scrap)")
+            return Action("act", a=ACT_CRAFT, recipe=rid, why=why)
         legal = me.legal_dirs()
         if not legal:
             return None
@@ -552,7 +613,7 @@ class SurvivorPolicy(Policy):
         if target is None or target[2] not in legal:
             return None
         q, r, d, cost, _ = target
-        return Action("move", d=d, why=f"canteen: to settlement ({q},{r}) c={cost}")
+        return Action("move", d=d, why=f"{label}: to settlement ({q},{r}) c={cost}")
 
     def scrap_errand(self, obs, max_cost) -> Action | None:
         """Short of the canteen's scrap: salvage here, or walk to a scrap pile
@@ -656,7 +717,7 @@ class SurvivorPolicy(Policy):
         return self.pickup_gear(obs, why="recover gear {id} from the grave")
 
     def recovery_target(self, obs, max_cost=RECOVER_SEARCH_COST,
-                        canteen_only=False):
+                        canteen_only=False, item=None):
         """The grave of ours worth walking back to, as best_target()'s
         (q, r, dir, cost, value), or None.
 
@@ -666,8 +727,11 @@ class SurvivorPolicy(Policy):
         today's MP arrives RECOVER_MP_PER_DAY at a time.  Never one on a
         hatch -- stepping onto a hatch IS the descent, so a surface grave on
         one cannot be reached on foot (a fall underground leaves it there).
-        `canteen_only` narrows it to graves with the canteen on them.
+        `canteen_only` narrows it to graves with the canteen on them, and
+        `item` to graves with that item on them (the Biker's bike).
         """
+        if canteen_only:
+            item = CANTEEN_ITEM
         me = obs.me
         if me.depth or me.mp < 1 or not obs.remains:
             return None
@@ -678,8 +742,8 @@ class SurvivorPolicy(Policy):
                 continue                # malformed, or remains_action's job
             if not self.is_my_grave(obs, rm) or not self.worth_recovering(obs, rm):
                 continue
-            if canteen_only and not any(
-                    gi.get("id") == CANTEEN_ITEM and (gi.get("q"), gi.get("r")) == at
+            if item is not None and not any(
+                    gi.get("id") == item and (gi.get("q"), gi.get("r")) == at
                     for gi in obs.ground_items):
                 continue
             cell = obs.map[at]
@@ -794,6 +858,12 @@ class SurvivorPolicy(Policy):
 
         return None
 
+    def wants_shelter(self, obs) -> bool:
+        """Subclass hook: may shelter_here() spend scrap on a roof tonight?
+        The --shelter experiment arm by default; the Biker also spends the
+        scrap its build does not need."""
+        return self.shelter_when_exposed
+
     def shelter_here(self, obs) -> Action | None:
         """Build a basic shelter if this is where the day is going to end.
 
@@ -803,7 +873,7 @@ class SurvivorPolicy(Policy):
         could have been a step, later is a dawn too late.
         """
         me = obs.me
-        if not self.shelter_when_exposed:
+        if not self.wants_shelter(obs):
             return None
         # SHELTER is one of the three actions still refused at depth 1, and
         # the exposure check it answers is off underground anyway -- a
@@ -823,6 +893,15 @@ class SurvivorPolicy(Policy):
         cell = obs.here()
         if cell is None or cell.shelter > 0 or not is_exposed(cell.terrain):
             return None
+        # Once per hex per day.  A shelter that lands shows on the act
+        # event's cnd, so the cell.shelter check above stops the next one; a
+        # refusal the bot did not predict changes nothing, and at low LL this
+        # fires on every MP, so without it one refusal ate the whole day.
+        # The mock has no doShelter() at all, which is how it was found.
+        key = (obs.day, me.q, me.r)
+        if self._shelter_sent == key:
+            return None
+        self._shelter_sent = key
         return Action("act", a=ACT_SHELTER,
                       why=f"exposed at SV<2, {me.inv[RES_SCRAP]} scrap, mp={me.mp}")
 
@@ -958,6 +1037,23 @@ class SurvivorPolicy(Policy):
             if self.run.node_key:
                 self.stats["nodes_seen"].add(f"{biome}/{eid}/{self.run.node_key}")
 
+    def lost_scene_action(self, obs) -> Action:
+        """The board has a scene open for us that we never heard about (see
+        LOST_SCENE_GRACE_S): give its enc_path a moment, then walk away.  A
+        trap's start is a back-out roll, and a failed one nacks "trap" and
+        leaves us in -- the retry rolls again.  The enc_end that follows, or
+        the next broadcast's enc flag, is what clears me.in_encounter."""
+        now = time.monotonic()
+        if self._lost_since is None:
+            self._lost_since = now
+        if now - self._lost_since < LOST_SCENE_GRACE_S:
+            return Action("noop", why="in a scene, waiting for its enc_path")
+        if now - self._lost_abort < LOST_SCENE_RETRY_S:
+            return Action("noop", why="lost scene: abort sent, waiting")
+        self._lost_abort = now
+        self.stats["encounters_aborted"] += 1
+        return Action("enc_abort", why="in a scene whose enc_path never came: walking away")
+
     def decide_encounter(self, obs) -> Action:
         self.ensure_run(obs)
         run = self.run
@@ -965,6 +1061,8 @@ class SurvivorPolicy(Policy):
             # No local copy (new content, or a biome path we do not know).
             # Banking keeps whatever was already won rather than gambling blind.
             return Action("enc_bank", why="unknown encounter, bank out")
+        if run.awaiting(CHOICE_WAIT_S):
+            return Action("noop", why=f"waiting for the roll at {run.node_key}")
         if run.trap:
             return self.decide_trap(obs, run)
 
@@ -1012,7 +1110,8 @@ class SurvivorPolicy(Policy):
             return Action("enc_bank", why=f"trap: out at {run.node_key}")
         if run.can_bank():
             p = success_chance(run.choices[0], obs)
-            if run.pushed < 1 and me.ll > self.trap_min_ll and p >= self.trap_push:
+            if (run.pushed < 1 and me.ll > self.trap_min_ll and p >= self.trap_push
+                    and not run.is_refused(0)):
                 run.pushed += 1
                 run.choose(0)
                 return Action("enc_choice", ci=0, why=f"trap: press on from {run.node_key} (p={p:.2f})")
@@ -1020,6 +1119,12 @@ class SurvivorPolicy(Policy):
             self.stats["trap_banked"] += 1
             return Action("enc_bank", why=f"trap: take it from {run.node_key}")
         esc, work = run.escape_choice(), run.work_choice()
+        # A door the board refused (the node moved on under us) is shut.
+        esc = None if run.is_refused(esc) else esc
+        work = None if run.is_refused(work) else work
+        if esc is None and work is None and run.is_refused(0):
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort", why=f"trap: every door at {run.node_key} refused")
         if work is not None:
             pw = success_chance(run.choices[work], obs)
             if me.ll >= self.trap_min_ll and pw >= self.trap_nerve:

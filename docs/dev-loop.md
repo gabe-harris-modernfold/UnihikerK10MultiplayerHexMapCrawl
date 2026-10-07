@@ -228,7 +228,7 @@ came up. Hold the K10 reset/boot button briefly while replugging USB to recover.
 | Black / nothing | Crash before `M5.begin()` or `k10.begin()` returned |
 | WASTELAND splash → "SD %dMB/%dMB used" | Boot OK; if held, **A** triggers USB-MSC next |
 | `USB DRIVE` (teal) | Hold-A path; SD is enumerated as a removable drive on the host |
-| The road / chronicle / resources / encounters / map / the admired (cycle with **B**) | Normal gameplay. Screens 1 (the road) and 6 (the admired) are animated pictures from [ui-scenes.hpp](../ui-scenes.hpp); the join and LAN addresses are in the road screen's footer |
+| The road / chronicle / resources / encounters / map / the admired (cycle with **B**) | Normal gameplay. All six are animated pictures -- 1 the road, 2 the chronicle (a three-panel comic page), 3 the stash, 4 the odds (a strength-tester), 5 the waste (radar map), 6 the admired -- from [ui-scenes.hpp](../ui-scenes.hpp); the join and LAN addresses are in the road screen's footer |
 | `FILE UPLOAD` (teal banner, scrolling bar, byte counter) | A `/upload` POST is in progress; auto-clears 1.5 s after last byte |
 | `OK` (green) / `FAIL` (red) on the upload screen | Final-chunk flash from [ui-upload.hpp](../ui-upload.hpp) |
 
@@ -298,6 +298,9 @@ python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
 python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
 python scripts/fxsim/fxsim.py tripwire beartrap      # the traps' two
 python scripts/fxsim/fxsim.py road_day road_storm road_night admired   # the picture screens
+python scripts/fxsim/fxsim.py chronicle chron_g0 chron_g10   # the comic page; chron_g0-10 = every event picture
+python scripts/fxsim/fxsim.py stash odds_win odds_lose waste       # screens 3-5
+python scripts/fxsim/fxsim.py figs figs_big figs_night              # the party: every archetype x pose (scFigure), no FX
 ```
 
 The picture screens ([ui-scenes.hpp](../ui-scenes.hpp)) run through the same
@@ -614,6 +617,59 @@ python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, f
   - `tiles.json` carries `caravanCounts` (the firmware ignores it),
     `caravanCell` and `caravan`. Without the sheet the client falls back to
     the old brown canvas badge.
+- **The Motorbike** is one sheet, `art/hex-sheets/bike.png`: the user's
+  chopper, drawn under a survivor's portrait while item 26 is equipped, so the
+  bubble looks like it's riding it (`drawCharIcon()` in renderer.js).
+  - The grid is 272 px cells with a 16 px gutter, lossy (q90, 22 KB).
+  - The source is `art/hex-sheets/src/bike-chopper-src.png`. It was matted
+    like the convoy. The spoke gaps are transparent and the halftone shadow
+    is kept as dots.
+  - `BIKE_RIDER` sets where the portrait sits on the seat and how big the
+    bike is relative to it (~1.05×HEX_SZ). Rider plus bike is centred on the
+    hex. The art faces right; it mirrors while the pawn heads west
+    (`renderPos[i].face`).
+  - `tiles.json` carries `bikeCounts` (the firmware ignores it), `bikeCell`
+    and `bike`. Without the sheet, the pawn is the bare portrait.
+  - Getting one: recipe 20 is a `starter` (7 scrap + 1 fuel + 1 Sparky Bits
+    at a Settlement). Its 8 tokens fill a bare 8-slot pack with no room for
+    food or water, so a Backpack (or Rig, or a Mule) comes first in
+    practice; there is no worn-item check. A pack too small for a recipe's
+    tokens gets "a bigger pack (N tokens to carry)" on the craft card. The bike adds
+    `slots = +2` of its own. It is `trade = no` (out of the spawn draw);
+    Jack's Chopper still gives one free. The `biker` bot builds and rides it
+    (docs/bot-testing.md, "The Biker").
+  - **Out of fuel, the bike stalls and fades off the map.** A daily-cost
+    item (the bike, the Rust Rocket) grants its MP once a game-day, when that
+    day's cost is paid (inventory_items.hpp):
+    - It pays at dawn if it can (`applyDawnItemCosts()`).
+    - Otherwise it pays the moment the pack can cover it: `kickStartItems()`
+      is polled from `tickGame()` and skips anyone in a scene, resting or
+      downed. The first fuel a stalled bike finds is burned, and +5 MP lands
+      on today's budget (EVT_REFUEL, `ev refuel`: a log line and a toast for
+      the rider).
+    - An item put on mid-day pays the same way.
+    - `s_paidItem` records the item ids paid for today, so unequipping and
+      re-equipping can't buy the MP twice.
+    - The paid list is not saved. After a boot, whatever is equipped counts
+      as paid.
+  - **Drawing it.** The tick broadcast carries `uf` (`unfuelledMask()`, the
+    unpaid slots). `bikeStalled()` in renderer.js reads it, and the bike fades
+    out over `BIKE_FADE_S` (0.9 s) while the rider slides off the seat onto
+    the ground shadow. Fuel fades it back in. It stays equipped, and its +2
+    slots still count. Equipping or unequipping fades it too (`easeBikes()`,
+    `renderPos[i].bike`). A board without `uf` falls back to dawn's `unf`
+    plus an empty pack.
+  - Survivors sharing a hex ride as a pack (`packSlot()` in renderer.js): two
+    staggered lanes, each pawn shrunk by `PACK_SCALE[n]`, call signs and
+    scores hidden. This replaced the ring of full-size markers, which buried
+    most faces under the bikes.
+  - Riding throws dust (`data/bike-dust.js`, the `bike_dust` layer, under the
+    pawns). It is kept in map space (hex units), not screen px: the camera
+    follows your own bike, and screen-space dust would ride along with it.
+    The colour is per terrain; wet terrain (Marsh, Flooded District, River
+    Channel) throws none. Lifetimes count frames, like the other particle
+    systems. To judge the timing, step `render()` by hand at 60 fps: the
+    headless browser renders at about 19 fps.
 - Neither shelters nor forage have a variant on the wire. The client picks a
   sprite by position, so order doesn't matter. Both draw through
   `drawAtlasCell()` in engine.js, which switches to the half- or

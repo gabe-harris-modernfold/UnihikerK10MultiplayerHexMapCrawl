@@ -21,6 +21,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <functional>
 
 // LovyanGFX's GFX font headers name their types GFXglyph / GFXfont. These are
 // field-for-field lgfx::GFXglyph / lgfx::GFXfont minus the IFont base, which is
@@ -140,7 +141,8 @@ static SceneSurv surv(const char* nm, uint8_t arch, uint8_t ll, uint8_t cap, uin
   return v;
 }
 static void runScene(const char* name, const std::string& out, uint8_t screen, SceneSnap S,
-                     uint32_t endMs, std::vector<Step> steps, FxDread dread, uint16_t milPerSec = 0) {
+                     uint32_t endMs, std::vector<Step> steps, FxDread dread, uint16_t milPerSec = 0,
+                     std::function<void(SceneSnap&, uint32_t)> mut = nullptr) {
   std::vector<uint16_t> canvasBuf(FX_W * FX_H, 0), frame(FX_W * FX_H, 0), prev(FX_W * FX_H, 0);
   fxInitTables();
   fxAllocPools();
@@ -167,6 +169,7 @@ static void runScene(const char* name, const std::string& out, uint8_t screen, S
     }
     if (first || g_now - lastScene >= scenePeriod(screen)) {
       if (milPerSec) S.dayMil = (uint16_t)((mil0 + (uint32_t)t * milPerSec / 1000) % 1000);
+      if (mut) mut(S, t);
       sceneDraw(screen, S, g_now, canvasBuf.data());
       fxContentChanged(canvasBuf.data(), g_now, true);
       lastScene = g_now;
@@ -184,6 +187,78 @@ static void runScene(const char* name, const std::string& out, uint8_t screen, S
     fprintf(fi, "%d %u %u\n", n, t, per);
     n++;
     g_now += per;
+  }
+  fclose(fi);
+  printf("%-10s %3d frames\n", name, n);
+}
+
+// Contact sheets of the party (scFigure), straight into the canvas with no FX
+// over them: every archetype in every pose, walking in place.
+//   figs        k 1.2, a row per archetype: walk stand reach hold crouch sit lie
+//   figs_big    k 2.1, three archetypes a frame (walk, stand, crouch), turning every 1.5 s
+//   figs_night  k 1.35, round a fire: the firelight rim
+static void figSheet(uint16_t* buf, uint32_t now, int mode) {
+  scReset(buf);
+  scFigT = now;
+  const float ph = now * 0.0105f;
+  if (mode == 0) {
+    static const uint8_t PO[7] = { SCP_WALK, SCP_STAND, SCP_REACH, SCP_HOLD, SCP_CROUCH, SCP_SIT, SCP_LIE };
+    static const float   PXs[7] = { 16, 48, 78, 106, 134, 170, 204 };
+    for (int a = 0; a < 6; a++) {
+      int y0 = a * 53, gy = y0 + 47;
+      for (int y = y0; y < y0 + 53; y++) scTone(y, 0, FX_W, y < gy ? fxLerp(4.0f, 10.5f, (float)(y - y0) / 47.0f) : 2.0f);
+      for (int p = 0; p < 7; p++) {
+        ScFig F = { PXs[p], (float)gy, 1, (uint8_t)a, PO[p], (uint8_t)a, ph + p, FXP_BRICK, -0.7f, -0.7f, 1.2f };
+        if (p == 0) F.shadow = 1.2f;
+        for (int q = 0; q < 3; q++) scFigure(F, q);
+      }
+    }
+  } else if (mode == 1) {
+    int g0 = ((now / 1500) & 1) * 3;
+    static const uint8_t PO[3] = { SCP_WALK, SCP_STAND, SCP_CROUCH };
+    static const float   PXs[3] = { 44, 128, 190 };
+    for (int r = 0; r < 3; r++) {
+      int y0 = r * 106, gy = y0 + 98;
+      for (int y = y0; y < y0 + 106; y++) scTone(y, 0, FX_W, y < gy ? fxLerp(3.0f, 10.8f, (float)(y - y0) / 98.0f) : 2.0f);
+      for (int p = 0; p < 3; p++) {
+        ScFig F = { PXs[p], (float)gy, 1, (uint8_t)(g0 + r), PO[p], (uint8_t)(g0 + r), ph, FXP_BRICK, -0.7f, -0.7f, 2.1f };
+        for (int q = 0; q < 3; q++) scFigure(F, q);
+      }
+    }
+  } else {
+    for (int y = 0; y < FX_H; y++) scTone(y, 0, FX_W, y < 150 ? 0.4f : 1.0f);
+    const float fx = 120, fy = 150;
+    scFireGlow(fx, fy, now);
+    static const float CAMP[6] = { -38, 38, -74, 74, -104, 104 };
+    for (int a = 0; a < 6; a++) {
+      float x = fx + CAMP[a], dir = x < fx ? 1.0f : -1.0f;
+      ScFig F = { x, fy + (a & 2 ? 2.0f : 0.0f), dir, (uint8_t)a, SCP_SIT, (uint8_t)a, 0, FXP_FLAME, dir, -0.4f, 1.35f };
+      for (int q = 0; q < 3; q++) scFigure(F, q);
+    }
+    scFire(fx, fy, now);
+    // and by day, the same six standing: the sky rim
+    for (int y = 170; y < FX_H; y++) scTone(y, 0, FX_W, y < 300 ? fxLerp(2.0f, 11.0f, (y - 170) / 130.0f) : 1.5f);
+    for (int a = 0; a < 6; a++) {
+      ScFig F = { 20.0f + a * 40, 300, 1, (uint8_t)a, SCP_STAND, (uint8_t)a, 0, FXP_BRICK, 0.7f, -0.7f, 1.35f };
+      F.shadow = 1.4f;
+      for (int q = 0; q < 3; q++) scFigure(F, q);
+    }
+  }
+  scReset(buf);
+}
+static void runFigs(const char* name, const std::string& out, int mode, uint32_t endMs) {
+  std::vector<uint16_t> canvasBuf(FX_W * FX_H, 0);
+  fxInitTables();
+  FILE* fi = fopen((out + "/" + name + ".txt").c_str(), "w");
+  int n = 0;
+  for (uint32_t t = 0; t < endMs; t += 140, n++) {
+    figSheet(canvasBuf.data(), 1000 + t, mode);
+    char fn[1024];
+    snprintf(fn, sizeof(fn), "%s/%s_%04d.raw", out.c_str(), name, n);
+    FILE* f = fopen(fn, "wb");
+    fwrite(canvasBuf.data(), 2, canvasBuf.size(), f);
+    fclose(f);
+    fprintf(fi, "%d %u %u\n", n, t, 140);
   }
   fclose(fi);
   printf("%-10s %3d frames\n", name, n);
@@ -268,8 +343,126 @@ int main(int argc, char** argv) {
     if (want("admired"))    runScene("admired", out, 6, B, 7000, {}, calm);
     SceneSnap B0 = baseSnap();
     if (want("admired_empty")) runScene("admired_empty", out, 6, B0, 5000, {}, FxDread{});
+    auto logAt = [](SceneSnap& X, int i, const char* txt, uint8_t gly, uint8_t tone, int8_t who, int8_t who2, uint16_t serial) {
+      SceneLog& e = X.log[i];
+      snprintf(e.text, sizeof(e.text), "%s", txt);
+      e.glyph = gly; e.tone = tone; e.day = X.day; e.who = who; e.who2 = who2; e.serial = serial;
+    };
+    // The chronicle: three pages of it, each one a set of three panels.
+    struct Ev { const char* t; uint8_t g, tone; int8_t w, w2; };
+    static const Ev EV[] = {
+      { "Vera finds a seep still running.",                SC_GLY_WATER,     SC_TONE_GOOD,  0, -1 },
+      { "Mox gets the panel open and the dark gives.",     SC_GLY_LIGHT,     SC_TONE_GOOD,  3, -1 },
+      { "Kell is caught out when the rain turns wrong.",   SC_GLY_CHEM,      SC_TONE_ILL,   4, -1 },
+      { "Quartermaster1 trades Vera two tins for a filter.", SC_GLY_TRADE,   SC_TONE_PLAIN, 1,  0 },
+      { "Day 13 comes up grey over the waste.",            SC_GLY_DAWN,      SC_TONE_PLAIN, -1, -1 },
+      { "Mox walks into fire and wears it out.",           SC_GLY_FIRE,      SC_TONE_ILL,   3, -1 },
+      { "Kell goes through a door that was shut for a reason.", SC_GLY_THRESHOLD, SC_TONE_OMEN, 4, -1 },
+      { "Vera meets something with too many teeth.",       SC_GLY_CLASH,     SC_TONE_ILL,   0, -1 },
+      { "The Doom turns its head toward Quartermaster1.",  SC_GLY_DOOM,      SC_TONE_OMEN,  1, -1 },
+      { "Mox beds down and the night lets them.",          SC_GLY_REST,      SC_TONE_PLAIN, 3, -1 },
+      { "A storm walks in off the flats.",                 SC_GLY_STORM,     SC_TONE_ILL,   4, -1 },
+      { "Commended: Heavy Load. Vera, for carrying it all out.", SC_GLY_MEDAL, SC_TONE_GOOD, 0, -1 },
+    };
+    SceneSnap H = S;
+    for (int i = 0; i < 3; i++) logAt(H, i, EV[i].t, EV[i].g, EV[i].tone, EV[i].w, EV[i].w2, (uint16_t)(40 + i));
+    H.logN = 3; H.logTotal = 42;
+    if (want("chronicle")) runScene("chronicle", out, 2, H, 6000, {}, calm);
+    for (int page = 1; page < 4; page++) {
+      char nm[32];
+      snprintf(nm, sizeof(nm), "chronicle%d", page);
+      SceneSnap Hp = S;
+      for (int i = 0; i < 3; i++) { const Ev& e = EV[page * 3 + i]; logAt(Hp, i, e.t, e.g, e.tone, e.w, e.w2, (uint16_t)(50 + page * 3 + i)); }
+      Hp.logN = 3; Hp.logTotal = (uint16_t)(53 + page * 3);
+      if (want(nm)) runScene(strdup(nm), out, 2, Hp, 5000, {}, calm);
+    }
+    // Every picture, three to a page: chron_g0 .. chron_g10 (a contact sheet).
+    for (int pg = 0; pg < 11; pg++) {
+      char nm[32];
+      snprintf(nm, sizeof(nm), "chron_g%d", pg);
+      if (!want(nm)) continue;
+      SceneSnap Hg = S;
+      static const char* const TN[4] = { "plain", "good", "ill", "omen" };
+      for (int i = 0; i < 3; i++) {
+        int g = pg * 3 + i;
+        if (g >= SC_GLY_COUNT) g = 0;
+        char txt[64];
+        snprintf(txt, sizeof(txt), "Glyph %d, %s tone. Vera did a thing here.", g, TN[g % 4]);
+        logAt(Hg, i, txt, (uint8_t)g, (uint8_t)(g % 4), (int8_t)(g % 5 == 2 ? 2 : g % 5), 1, (uint16_t)(100 + g));
+      }
+      Hg.logN = 3; Hg.logTotal = 200;
+      runScene(strdup(nm), out, 2, Hg, 1500, {}, calm);
+    }
+    // The stash: a Mule with a full pack, and a Scout with nothing.
+    {
+      SceneSnap T = S;
+      T.s[3].res[0] = 5; T.s[3].res[1] = 4; T.s[3].res[2] = 1; T.s[3].res[3] = 2; T.s[3].res[4] = 11;
+      T.s[3].packCap = 16; T.s[3].packUsed = 14;
+      static const char* IT[14] = { "Rusty Knife", "Sock Puppet Bandage", "Rope", "Gas Mask Filter", "Tin Opener",
+        "Canteen", "Raft Kit", "Hand Crank Radio", "Duct Tape", "Iodine Tabs", "Road Map (wrong)", "Spark Plug",
+        "Lucky Bottlecap", "Uranium Candy" };
+      for (int i = 0; i < 14; i++) { snprintf(T.item[i], sizeof(T.item[i]), "%s", IT[i]); T.itemQty[i] = (uint8_t)(1 + (i * 7) % 4); }
+      T.itemN = 14; T.page = 3;
+      if (want("stash")) runScene("stash", out, 3, T, 5000, {}, calm);
+      SceneSnap U = S; U.page = 4; U.s[4].res[0] = 0; U.s[4].res[1] = 1; U.s[4].res[2] = 0; U.s[4].res[3] = 0; U.s[4].res[4] = 2;
+      U.s[4].packCap = 8; U.s[4].packUsed = 0; U.itemN = 0;
+      if (want("stash_bare")) runScene("stash_bare", out, 3, U, 4000, {}, calm);
+      // stash_cast: the same stash knelt over by each archetype in turn, 1.5 s each
+      auto kneel = [](SceneSnap& X, uint32_t t) { X.s[3].arch = (uint8_t)((t / 1500) % 6); };
+      if (want("stash_cast")) runScene("stash_cast", out, 3, T, 9000, {}, calm, 0, kneel);
+    }
+    // The odds: a record so far, then a roll lands at 0.6 s -- a win, and a loss.
+    {
+      SceneSnap O = S;
+      O.rolls = 18; O.wins = 11; O.poiLeft = 34; O.poiTotal = 80;
+      O.hasRoll = true; O.rollWho = 1; O.rollSkill = 2; O.rollDN = 8; O.rollTotal = 5; O.rollWon = false;
+      O.s[0].encRolls = 7; O.s[0].encWins = 5; O.s[0].hasEnd = true; O.s[0].lastEnd = 6; O.s[0].encCount = 7;
+      O.s[1].encRolls = 6; O.s[1].encWins = 2; O.s[1].hasEnd = true; O.s[1].lastEnd = 0; O.s[1].encCount = 6;
+      O.s[3].inEnc = true; snprintf(O.s[3].biome, sizeof(O.s[3].biome), "flooded"); O.s[3].loot = 4;
+      O.s[4].encCount = 0;
+      auto win = [](SceneSnap& X, uint32_t t) { if (t >= 600) { X.rolls = 19; X.wins = 12; X.rollWho = 0; X.rollSkill = 1; X.rollDN = 7; X.rollTotal = 10; X.rollWon = true; } };
+      auto lose = [](SceneSnap& X, uint32_t t) { if (t >= 600) { X.rolls = 19; X.rollWho = 4; X.rollSkill = 4; X.rollDN = 11; X.rollTotal = 6; X.rollWon = false; } };
+      if (want("odds_win"))  runScene("odds_win", out, 4, O, 3600, {}, calm, 0, win);
+      if (want("odds_lose")) runScene("odds_lose", out, 4, O, 3600, {}, calm, 0, lose);
+      SceneSnap O0 = S;
+      if (want("odds_none")) runScene("odds_none", out, 4, O0, 2500, {}, calm);
+      // odds_cast: every archetype takes a swing, one every 2.4 s (win, lose, win...)
+      auto cast = [](SceneSnap& X, uint32_t t) {
+        int a = (int)(t / 2400) % 6;
+        X.s[0].arch = (uint8_t)a; X.rollWho = 0; X.rolls = (uint16_t)(20 + t / 2400);
+        X.rollWon = (a & 1) == 0; X.rollTotal = X.rollWon ? 10 : 5; X.rollDN = 8; X.rollSkill = (uint8_t)(a % 5);
+      };
+      if (want("odds_cast")) runScene("odds_cast", out, 4, O, 14400, {}, calm, 0, cast);
+    }
+    // The waste: a made-up ring of terrain from value noise, the party spread over it.
+    {
+      static uint8_t T[57][75];
+      for (int r = 0; r < 57; r++)
+        for (int q = 0; q < 75; q++) {
+          float n = fxNoise2(q * 0.11f, r * 0.13f, 5) * 0.7f + fxNoise2(q * 0.3f, r * 0.3f, 9) * 0.3f;
+          float rv = fabsf(fxNoise2(q * 0.05f, r * 0.05f, 21) - 0.5f);
+          uint8_t t = n < 0.3f ? 1 : n < 0.42f ? 0 : n < 0.5f ? 2 : n < 0.57f ? 3 : n < 0.68f ? 4 : n < 0.76f ? 6 : 0;
+          if (rv < 0.02f) t = 11;
+          uint32_t h = fxHash2((uint32_t)(r * 75 + q), 77);
+          if (h % 211 == 0) t = 9;
+          if (h % 397 == 0) t = 10;
+          T[r][q] = t;
+        }
+      SceneSnap M = S;
+      M.terr = &T[0][0]; M.cols = 75; M.rows = 57;
+      M.s[0].q = 30; M.s[0].r = 20; M.s[1].q = 33; M.s[1].r = 24; M.s[3].q = 28; M.s[3].r = 26; M.s[4].q = 52; M.s[4].r = 12; M.s[4].depth = 1;
+      M.caravanOn = true; M.caravanQ = 12; M.caravanR = 40;
+      M.doomQ = 47; M.doomR = 30; M.doomRadius = 5; M.doomAware = 82;
+      M.hatchN = 3; M.hatchQ[0] = 52; M.hatchR[0] = 12; M.hatchQ[1] = 8; M.hatchR[1] = 8; M.hatchQ[2] = 66; M.hatchR[2] = 48;
+      if (want("waste")) runScene("waste", out, 5, M, 6000, {}, calm);
+    }
+    SceneSnap H0 = S;
+    if (want("chronicle_empty")) runScene("chronicle_empty", out, 2, H0, 4000, {}, calm);
     SceneSnap C = S;
     if (want("road_cycle")) runScene("road_cycle", out, 1, C, 16000, {}, calm, 62);
   }
+  if (want("figs"))       runFigs("figs", out, 0, 1400);
+  if (want("figs_big"))   runFigs("figs_big", out, 1, 3000);
+  if (want("figs_night")) runFigs("figs_night", out, 2, 1400);
   return 0;
 }

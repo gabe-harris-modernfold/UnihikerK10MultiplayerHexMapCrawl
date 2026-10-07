@@ -259,13 +259,15 @@ const terrainImgVariants = Array.from({ length: NUM_TERRAIN }, () => []);   // l
 // loadShelterVariants / loadForrageAnimalImgs).
 // caravan: one such list too, the convoy sticker (caravanSprite). Null
 // without it: renderCaravan() falls back to its plain canvas badge.
+// bike: the same again, the Motorbike a pawn rides (bikeSprite). Null
+// without it: drawCharIcon() draws the bare portrait, as it always did.
 // tunnel: the bunker board's corridor/room/fixture cells (tiles.json "tunnel",
 // drawn through tunnelTile() in tunnel-board.js), null without them.
 // alts: {terrain: {variant: [[page, sx, sy], ...]}}, more cells sharing a
 // variant's slot; altPick() deals one by position.
 const tileAtlas = { state: 'idle', pages: [], cell: [224, 272], anchor: [112, 167], radius: 112, tiles: [], poi: {}, alts: {}, flat: false,
                     shelters: null, shelterCell: [224, 224], forage: null, forageCell: [80, 80],
-                    caravan: null, caravanCell: [384, 384], tunnel: null };
+                    caravan: null, caravanCell: [384, 384], bike: null, bikeCell: [272, 272], tunnel: null };
 
 function loadTerrainVariants(vc) {
   // Counts are static for the whole session (fixed at boot from the SD card)
@@ -282,6 +284,7 @@ function loadTerrainVariants(vc) {
                                shelters: Array.isArray(m.shelters) ? m.shelters : null, shelterCell: m.shelterCell || tileAtlas.shelterCell,
                                forage: Array.isArray(m.forage?.[0]) ? m.forage[0] : null, forageCell: m.forageCell || tileAtlas.forageCell,
                                caravan: m.caravan?.[0]?.length ? m.caravan[0] : null, caravanCell: m.caravanCell || tileAtlas.caravanCell,
+                               bike: m.bike?.[0]?.length ? m.bike[0] : null, bikeCell: m.bikeCell || tileAtlas.bikeCell,
                                tunnel: Array.isArray(m.tunnel?.corridor) ? m.tunnel : null });
     tileAtlas.pages = m.pages.map(p => {
       // ?v= is the atlas hash: /img/* is cached forever (sw.js, and the
@@ -510,6 +513,18 @@ function caravanSprite() {
   const at = tileAtlas.caravan?.[0];
   const page = at && tileAtlas.pages[at[0]];
   return page?.loaded ? { page, sx: at[1], sy: at[2], s: tileAtlas.caravanCell[0] } : null;
+}
+
+// ── Survivor's bike ───────────────────────────────────────────────
+// /img/bike.webp (scripts/hex_sheets.py), placed by tiles.json `bike`: the
+// user's chopper, painted facing right, that a pawn's portrait rides while
+// the Motorbike is equipped (drawCharIcon). Same deal as the caravan: no
+// per-file fallback, null until
+// the page decodes. Returns { page, sx, sy, s } or null.
+function bikeSprite() {
+  const at = tileAtlas.bike?.[0];
+  const page = at && tileAtlas.pages[at[0]];
+  return page?.loaded ? { page, sx: at[1], sy: at[2], s: tileAtlas.bikeCell[0] } : null;
 }
 
 // ── State ───────────────────────────────────────────────────────

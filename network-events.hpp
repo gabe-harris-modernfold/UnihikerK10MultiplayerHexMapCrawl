@@ -250,6 +250,16 @@ static void drainEvents() {
         break;
       }
 
+      case EVT_REFUEL: {
+        // Everyone: each client fades a stalled bike back in for whoever it
+        // was (renderer.js); the rider also gets the log line and the MP.
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"refuel\",\"pid\":%d,\"it\":%d,\"mpd\":%d,\"mp\":%d,\"unf\":%d}",
+          ev.pid, (int)ev.res, (int)ev.amt, (int)ev.moveMP, (int)ev.dawnUnfuelled);
+        evTextAll(buf, len);
+        break;
+      }
+
       case EVT_DAWN: {
         Log.notice("EVT dawn day=%d pid=%d f=%d w=%d ll=%d mp=%d",
                    (int)ev.dawnDay, (int)ev.pid, (int)ev.dawnF,

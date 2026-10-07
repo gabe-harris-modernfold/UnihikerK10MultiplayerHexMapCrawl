@@ -3,6 +3,8 @@ const weatherParticles = (typeof WeatherParticleSystem === 'undefined')
   ? null : new WeatherParticleSystem();
 const lightningSystem = (typeof LightningSystem === 'undefined')
   ? null : new LightningSystem();
+const bikeDust = (typeof BikeDust === 'undefined')
+  ? null : new BikeDust();
 const quakeField = (typeof QuakeField === 'undefined')
   ? null : new QuakeField();
 const fireField = (typeof FireField === 'undefined')
@@ -60,7 +62,11 @@ const QUAKE_TUNNEL_SIFT_CHANCE = 0.25;
 const STORM_WASH_BLEED = 0.75;
 
 // ── Smooth animation state ────────────────────────────────────────
-const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0 }));
+// face: which way the pawn's bike points, +1 right as painted, -1 mirrored.
+// dq, dr: how far the marker moved this frame (what the bike's dust feeds on).
+// bike: how much of the Motorbike is on the map, 0..1 (easeBikes()); null
+// until the seat is first drawn, so it starts where it belongs.
+const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0, face: 1, dq: 0, dr: 0, bike: null }));
 
 // ── Name-tag width cache ──────────────────────────────────────────
 // Avoids a ctx.measureText() call every frame per visible player.
@@ -271,41 +277,131 @@ function drawResourceIcon(ctx, cx, cy, hexSz, resourceType) {
   drawGlyph(ctx, idx, cx - sz / 2, cy - sz / 2, sz, '#FFF', 0.3);
 }
 
+// A survivor with the Motorbike (items.cfg id 26, the vehicle slot) equipped
+// rides it on the map: the user's painting of the chopper (bikeSprite(),
+// engine.js), cut out like the caravan. Every seat's eq[] is in the state
+// broadcast, so everyone sees who is riding. BIKE_RIDER is the portrait in
+// the bike's 272 px cell: x, y where its centre goes -- sat on the seat behind
+// the tank, so the ape-hangers reach up to it -- and r, its radius in cell px,
+// which sets the bike's scale (the bike comes out ~1.05*HEX_SZ across).
+// BIKE_ART is the painted part of the cell; the middle of rider-plus-bike is
+// what sits on the hex centre, and its bottom is where the tyres meet the
+// ground. rearX, rearY: where the back tyre does, which is where the dust
+// comes from (bike-dust.js).
+const BIKE_RIDER = { x: 54, y: 44, r: 70.7 };
+const BIKE_ART   = { left: 3, top: 33, right: 268, bottom: 239, rearX: 42, rearY: 200 };
+const MOTORBIKE_ITEM = 26;
+
+// A Motorbike that has run dry: today's fuel is not paid for, so it gives no
+// MP. It stays equipped -- the saddlebags still count -- but it fades off the
+// map until the first fuel that turns up starts it again (kickStartItems(),
+// inventory_items.hpp). The tick's "uf" says so for every seat. A board
+// older than the kick-start sends no "uf": there, it is dawn's "unf" plus an
+// empty pack, and a seat whose dawn we missed is judged on its fuel alone.
+function bikeStalled(p) {
+  const slot = p.eq ? p.eq.indexOf(MOTORBIKE_ITEM) : -1;
+  if (slot < 0) return false;
+  if (p.uf !== undefined) return !!(p.uf & (1 << slot));
+  if ((p.inv?.[2] | 0) >= (getItemMods(MOTORBIKE_ITEM)?.fuelCost ?? 1)) return false;   // inv[2] = Fuel
+  return p.unf === undefined || !!(p.unf & (1 << slot));
+}
+
+// Eases every seat's renderPos.bike toward 1 while its Motorbike runs and 0
+// while it is stalled or not equipped, over BIKE_FADE_S: the bike fades away
+// when the fuel runs out and back in when fuel turns up (and in or out on an
+// equip or unequip). A seat just come online starts at its target rather
+// than fading in from nothing.
+const BIKE_FADE_S = 0.9;
+let bikeClock = 0;
+function easeBikes() {
+  const now = performance.now();
+  const dt  = bikeClock ? Math.min(0.1, (now - bikeClock) / 1000) : 0;
+  bikeClock = now;
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    const p = players[i], rp = renderPos[i];
+    if (!p.on) { rp.bike = null; continue; }
+    const want = p.eq?.includes(MOTORBIKE_ITEM) && !bikeStalled(p) ? 1 : 0;
+    if (rp.bike === null) { rp.bike = want; continue; }
+    const step = dt / BIKE_FADE_S;
+    rp.bike = want > rp.bike ? Math.min(want, rp.bike + step) : Math.max(want, rp.bike - step);
+  }
+}
+
 /**
- * Draw character/player icon on the hex grid.
- * Includes head, torso, name label, and ground shadow.
+ * Draw character/player icon on the hex grid: the portrait, riding the
+ * Motorbike when one is equipped and running (the bare portrait over a
+ * ground shadow otherwise, or while the bike sheet loads), the call sign
+ * above and the score below.
  * @param {CanvasRenderingContext2D} ctx - Canvas context
  * @param {number} cx - Center X coordinate
  * @param {number} cy - Center Y coordinate
  * @param {number} hexSz - Hex size in pixels
- * @param {object} opts - { color, label, isMe, nm, arch, sc }
+ * @param {object} opts - { color, label, isMe, nm, arch, sc, ride, face } --
+ *   ride: how much of the bike is there, 0 (on foot) .. 1 (riding); in
+ *   between, the bike is fading and the rider stepping off or back on;
+ *   face: +1 rides right (as painted), -1 left
+ * @returns {{x: number, y: number}|null} where the bike's rear tyre meets the
+ *   ground, screen px, or null when there is no bike under the rider
  */
-function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc } = {}) {
+function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ride = 0, face = 1 } = {}) {
   const scale      = hexSz * ICON_SIZE_SCALE;
   const r          = Math.max(10, hexSz * 0.28);   // portrait circle radius
-  const portraitCY = cy - scale * 0.15;            // circle center, slightly above hex centre
+  let   portraitCX = cx;
+  let   portraitCY = cy - scale * 0.15;            // circle center, slightly above hex centre
+  let   bottomY    = portraitCY + r;               // lowest point of the pawn
+  let   rearTyre   = null;
 
-  // Ground shadow — fuzzy ellipse beneath the circle
-  ctx.save();
-  ctx.filter = 'blur(3px)';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + r * 0.85, r * 0.65, r * 0.18, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fill();
-  ctx.restore();
+  const bike = ride > 0 ? bikeSprite() : null;
+  const e    = bike ? ride * ride * (3 - 2 * ride) : 0;   // eased: 0 standing .. 1 in the saddle
+  if (bike) {
+    // Rider-plus-bike is centred on the hex, so the saddle sits up and back
+    // from the centre, and swaps sides when the bike is mirrored.
+    const R     = BIKE_RIDER;
+    const k     = r / R.r;                         // screen px per cell px
+    const midX  = (Math.min(R.x - R.r, BIKE_ART.left) + Math.max(R.x + R.r, BIKE_ART.right))  / 2;
+    const midY  = (Math.min(R.y - R.r, BIKE_ART.top)  + Math.max(R.y + R.r, BIKE_ART.bottom)) / 2;
+    const seatX = cx - (midX - R.x) * k * face;
+    const seatY = cy - (midY - R.y) * k;
+    ctx.save();
+    ctx.globalAlpha = e;
+    ctx.translate(seatX, seatY);
+    if (face < 0) ctx.scale(-1, 1);
+    drawAtlasCell(ctx, bike.page, bike.sx, bike.sy, bike.s, bike.s,
+                  -BIKE_RIDER.x * k, -BIKE_RIDER.y * k, bike.s * k, bike.s * k);
+    ctx.restore();
+    // The rider slides between the saddle and where a walker stands, so a
+    // bike fading away sets them down on the hex.
+    portraitCX += (seatX - portraitCX) * e;
+    portraitCY += (seatY - portraitCY) * e;
+    bottomY    += (seatY + (BIKE_ART.bottom - R.y) * k - bottomY) * e;
+    if (e > 0.5) rearTyre = { x: seatX + (BIKE_ART.rearX - R.x) * k * face,
+                              y: seatY + (BIKE_ART.rearY - R.y) * k };
+  }
+  if (e < 1) {
+    // Ground shadow — fuzzy ellipse beneath the circle. The bike brings its
+    // own painted one, so this one comes up as the bike fades.
+    ctx.save();
+    ctx.globalAlpha = 1 - e;
+    ctx.filter = 'blur(3px)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.85, r * 0.65, r * 0.18, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fill();
+    ctx.restore();
+  }
 
   // Portrait circle (clipped image, or fallback solid colour + number)
   const img = pawnImgs[arch];
   if (img?.loaded) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.arc(portraitCX, portraitCY, r, 0, Math.PI * 2);
     ctx.clip();
-    ctx.drawImage(img, cx - r, portraitCY - r, r * 2, r * 2);
+    ctx.drawImage(img, portraitCX - r, portraitCY - r, r * 2, r * 2);
     ctx.restore();
   } else {
     ctx.beginPath();
-    ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+    ctx.arc(portraitCX, portraitCY, r, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
     ctx.save();
@@ -313,14 +409,14 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc } =
     ctx.font         = `bold ${Math.max(7, Math.round(r * 0.9))}px monospace`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, cx, portraitCY + 0.5);
+    ctx.fillText(label, portraitCX, portraitCY + 0.5);
     ctx.restore();
   }
 
   // Coloured outline — archetype ring (all players)
   const outlineW = Math.max(1.5, r * 0.09);
   ctx.beginPath();
-  ctx.arc(cx, portraitCY, r, 0, Math.PI * 2);
+  ctx.arc(portraitCX, portraitCY, r, 0, Math.PI * 2);
   ctx.strokeStyle = color;
   ctx.lineWidth   = outlineW;
   ctx.stroke();
@@ -328,7 +424,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc } =
   // Current player: brighter/thicker second ring just outside
   if (isMe) {
     ctx.beginPath();
-    ctx.arc(cx, portraitCY, r + outlineW + 1, 0, Math.PI * 2);
+    ctx.arc(portraitCX, portraitCY, r + outlineW + 1, 0, Math.PI * 2);
     ctx.strokeStyle = color;
     ctx.lineWidth   = Math.max(2, outlineW * 0.7);
     ctx.globalAlpha = 0.7;
@@ -347,14 +443,14 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc } =
     ctx.textBaseline  = 'bottom';
     ctx.fillStyle     = '#000';
     ctx.letterSpacing = '1px';
-    ctx.fillText(tag, cx, topY);
+    ctx.fillText(tag, portraitCX, topY);
     ctx.restore();
   }
 
-  // Score below circle
+  // Score below the pawn -- under the circle, or under the bike's wheels
   if (sc !== undefined && sc !== null) {
     const scoreStr = String(sc);
-    const botY     = portraitCY + r + nameSz + 6;
+    const botY     = bottomY + nameSz + 6 * (1 - e);
     ctx.save();
     ctx.font          = `${nameSz}px 'Courier New', monospace`;
     ctx.textAlign     = 'center';
@@ -364,6 +460,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc } =
     ctx.fillText(scoreStr, cx, botY);
     ctx.restore();
   }
+  return rearTyre;
 }
 
 // ── Time-of-day clock ────────────────────────────────────────────
@@ -413,6 +510,7 @@ const ashParticles = (typeof AshParticleSystem === 'undefined')
 function lerpPlayerPositions() {
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i];
+    renderPos[i].dq = renderPos[i].dr = 0;
     if (!p.on) { renderPos[i].q = p.q; renderPos[i].r = p.r; continue; }
     // Where this player sits on the board WE are looking at. null means they
     // are on the other one; leave their marker where it was rather than
@@ -437,8 +535,13 @@ function lerpPlayerPositions() {
       while (tr - renderPos[i].r >  MAP_ROWS / 2) tr -= MAP_ROWS;
       while (renderPos[i].r - tr >  MAP_ROWS / 2) tr += MAP_ROWS;
     }
-    renderPos[i].q += (tq - renderPos[i].q) * LERP_RATE;
-    renderPos[i].r += (tr - renderPos[i].r) * LERP_RATE;
+    // The bike turns to the way the pawn is heading across the screen (x is
+    // 1.5*q). A move straight up or down the column keeps the last facing.
+    if (Math.abs(tq - renderPos[i].q) > 0.25) renderPos[i].face = Math.sign(tq - renderPos[i].q);
+    renderPos[i].dq = (tq - renderPos[i].q) * LERP_RATE;
+    renderPos[i].dr = (tr - renderPos[i].r) * LERP_RATE;
+    renderPos[i].q += renderPos[i].dq;
+    renderPos[i].r += renderPos[i].dr;
   }
 }
 
@@ -1066,13 +1169,27 @@ function renderRemains(cam) {
   }
 }
 
+// Survivors sharing a hex ride as a pack: two staggered lanes, the leader at
+// the front (right), every pawn shrunk to fit -- the old ring of full-size
+// markers buried most of the faces under each other's bikes. PACK_SCALE[n]
+// is the pawn size for n on the hex; packSlot() gives the idx'th pawn's
+// offset from the hex centre, in HEX_SZ.
+const PACK_SCALE = [1, 1, 0.8, 0.72, 0.66, 0.6, 0.56];
+function packSlot(idx, n) {
+  if (n < 2) return { fx: 0, fy: 0, s: 1 };
+  const span = Math.min(1.28, 0.32 * (n - 1));
+  return { fx: -span / 2 + idx * span / (n - 1), fy: idx % 2 ? 0.24 : -0.24,
+           s: PACK_SCALE[Math.min(n, PACK_SCALE.length - 1)] };
+}
+
 // ── Pass 2: Character icons ────────────────────────────────────────
 function renderCharacters(cam) {
   const { ox, oy, meRp } = cam;
+  easeBikes();
 
   // Group active players by their snapped hex key so co-located players
-  // can be spread into a small cluster instead of stacking on one point.
-  const hexGroups = new Map(); // "q_r" -> [playerIndex, ...]
+  // can ride as a pack instead of stacking on one point.
+  const hexGroups = new Map(); // "q_r" -> [{ i, vq, vr }, ...]
   for (let i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].on) continue;
     // Only survivors on the board we are looking at get a marker. Someone
@@ -1081,40 +1198,45 @@ function renderCharacters(cam) {
     const { vq, vr } = closestWrapCoords(renderPos[i], meRp);
     const key = `${Math.round(vq)}_${Math.round(vr)}`;
     if (!hexGroups.has(key)) hexGroups.set(key, []);
-    hexGroups.get(key).push(i);
+    hexGroups.get(key).push({ i, vq, vr });
   }
 
-  for (let i = 0; i < MAX_PLAYERS; i++) {
+  const pawns = [];
+  for (const group of hexGroups.values()) {
+    group.forEach(({ i, vq, vr }, idx) => {
+      const pp = hexToPixel(vq, vr, HEX_SZ);
+      const { fx, fy, s } = packSlot(idx, group.length);
+      pawns.push({ i, n: group.length, s, x: pp.x + ox + fx * HEX_SZ, y: pp.y + oy + fy * HEX_SZ });
+    });
+  }
+  // Top of the screen first: a pawn on a bike spans most of its hex, so
+  // the one nearer the viewer has to overlap the one behind, not the reverse.
+  pawns.sort((a, b) => a.y - b.y);
+
+  for (const { i, n, s, x, y } of pawns) {
+    if (x < -HEX_SZ * 2 || x > cssWidth  + HEX_SZ * 2) continue;
+    if (y < -HEX_SZ * 2 || y > cssHeight + HEX_SZ * 2) continue;
     const p = players[i];
-    if (!p.on) continue;
-    if (!playerViewPos(i)) continue;   // on the other board
-
-    const { vq, vr } = closestWrapCoords(renderPos[i], meRp);
-    const pp  = hexToPixel(vq, vr, HEX_SZ);
-    const pcx = pp.x + ox;
-    const pcy = pp.y + oy;
-    if (pcx < -HEX_SZ * 2 || pcx > cssWidth  + HEX_SZ * 2) continue;
-    if (pcy < -HEX_SZ * 2 || pcy > cssHeight + HEX_SZ * 2) continue;
-
-    // Cluster offset: solo player stays centred; 2+ players spread in a ring.
-    const key     = `${Math.round(vq)}_${Math.round(vr)}`;
-    const group   = hexGroups.get(key);
-    const n       = group.length;
-    const idx     = group.indexOf(i);
-    const clusterR = HEX_SZ * 0.38;  // ring radius as fraction of hex size
-    const angle   = (idx / n) * Math.PI * 2; // right-first (horizontal)
-    const offX    = n > 1 ? Math.cos(angle) * clusterR : 0;
-    const offY    = n > 1 ? Math.sin(angle) * clusterR : 0;
-
     const _archColor = ARCHETYPE_COLORS[p.arch ?? 0] ?? PLAYER_COLORS[i];
-    drawCharIcon(ctx, pcx + offX, pcy + offY, HEX_SZ, {
+    const tyre = drawCharIcon(ctx, x, y, HEX_SZ * s, {
       color: _archColor,
       label: i,
       isMe:  i === myId,
-      nm:    p.nm,
+      // A pack drops the call signs and scores: at pack size they only
+      // collide with the lane in front. The portraits say who is who.
+      nm:    n > 1 ? undefined : p.nm,
       arch:  p.arch ?? 0,
-      sc:    p.sc   ?? 0,
+      sc:    n > 1 ? undefined : (p.sc ?? 0),
+      ride:  renderPos[i].bike ?? 0,
+      face:  renderPos[i].face,
     });
+    if (tyre && bikeDust) {
+      const rp   = renderPos[i];
+      const v    = hexToPixel(rp.dq, rp.dr, 1);
+      const cell = boardCell(Math.round(rp.q), Math.round(rp.r));
+      bikeDust.kick(i, (tyre.x - ox) / HEX_SZ, (tyre.y - oy) / HEX_SZ, v.x, v.y,
+                    cell ? cell.terrain : null, s);
+    }
   }
 
   // Survivors who have gone below. Their q/r is still pinned to the hatch they
@@ -1308,6 +1430,10 @@ const LAYERS = [
   // The caravan's convoy sticker spans most of its hex, so it goes UNDER the
   // survivors: a pawn trading at the caravan stays on top of it.
   { name: 'caravan',      draw: (cam) => { if (!myDepth) renderCaravan(cam); } },
+  // The dust the Motorbikes kick up (bike-dust.js), under the pawns so each
+  // bike sits in front of its own cloud. Fed by renderCharacters() below, so
+  // it draws what the bikes threw up to last frame.
+  { name: 'bike_dust',    draw: (cam) => { if (bikeDust) { bikeDust.update(); bikeDust.render(ctx, cam.ox, cam.oy, HEX_SZ, myDepth, cssWidth, cssHeight); } } },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
   // The Understory's spore flights and burst motes: in the air over the

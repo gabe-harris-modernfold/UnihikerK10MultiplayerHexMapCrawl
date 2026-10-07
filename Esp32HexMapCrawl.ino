@@ -691,7 +691,11 @@ enum EvtType : uint8_t {
   // amt = TRAP_OUT_*. TRAP_OUT_KNOWN is unicast to that survivor alone (it
   // is the one piece of trap news nobody else gets to hear); the other two
   // are broadcast so anyone who knew about the trap stops drawing it.
-  EVT_TRAP          = 32
+  EVT_TRAP          = 32,
+  // A daily-cost item that stalled at dawn found its fuel and started
+  // (kickStartItems, inventory_items.hpp): pid, res = item id, amt = MP it
+  // brought, moveMP = movesLeft now, dawnUnfuelled = slots still dormant.
+  EVT_REFUEL        = 33
 };
 static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
 static constexpr uint8_t TRAP_OUT_SPRUNG = 1;   // a check failed: it went off, and it is gone
@@ -1108,11 +1112,11 @@ static LGFX_Sprite    canvas(&tft);
 // sentences about two people.
 #define K10_LOG_SIZE 16
 enum K10Tone : uint8_t { TONE_PLAIN = 0, TONE_GOOD, TONE_ILL, TONE_OMEN, TONE_COUNT };
-// Every entry is also stamped with a mark in the chronicle's margin — a small
-// 3x2-character pictogram of the thing that happened, set beside the words it
-// belongs to. This enum is only the index; the art itself is BOOK_GLYPH in
-// ui-screens.hpp. GLY_NONE leaves the gutter empty, which is what a new log
-// line gets until someone picks it a mark.
+// Every entry is also stamped with a mark: what kind of thing happened. This
+// enum is only the index; the picture each one gets on the chronicle's comic
+// page is scPanelArt() in ui-scenes.hpp (SC_GLY_* mirrors it, asserted).
+// GLY_NONE draws the party on the road, which is what a new log line gets
+// until someone picks it a mark.
 enum K10Glyph : uint8_t {
   GLY_NONE = 0,
   GLY_DAWN, GLY_FORAGE, GLY_WATER, GLY_MEDIC, GLY_SALVAGE, GLY_SHELTER,

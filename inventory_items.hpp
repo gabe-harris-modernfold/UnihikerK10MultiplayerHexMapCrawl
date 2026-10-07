@@ -209,46 +209,91 @@ static void dispatchEffect(int pid, const ItemDef& item) {
     effectTable[item.effectId2](pid, item.id, item.effectParam2);
 }
 
+// ── Daily-cost items: paid for today ─────────────────────────────────────
+// An equipped item with an opCost[] (the Rust Rocket, the Motorbike) grants
+// its STAT_MP once per game-day, when that day's cost is paid. It pays at
+// dawn if the pack can cover it (applyDawnItemCosts), and otherwise the
+// moment it can (kickStartItems, polled by tickGame): a bike that stalled at
+// dawn burns the first fuel that turns up and runs for the rest of the day.
+// The client draws a bike only while it runs (renderer.js bikeStalled()), so
+// what the map shows is what the rider gets.
+//
+// s_paidItem[pid] lists the item ids paid for today, so taking one off and
+// putting it back on can't buy its MP twice; dawn clears it. Not saved:
+// after a boot s_paidKnown is false, and the first look (kickStartItems)
+// takes whatever is equipped as paid rather than charging it again.
+static uint8_t s_paidItem[MAX_PLAYERS][EQUIP_SLOTS];
+static bool    s_paidKnown[MAX_PLAYERS];
+
+static bool itemHasOpCost(const ItemDef* def) {
+  if (!def) return false;
+  for (int k = 0; k < 5; k++) if (def->opCost[k]) return true;
+  return false;
+}
+
+static bool itemPaidToday(int pid, uint8_t eid) {
+  for (int i = 0; i < EQUIP_SLOTS; i++) if (s_paidItem[pid][i] == eid) return true;
+  return false;
+}
+
+static void markItemPaid(int pid, uint8_t eid) {
+  if (itemPaidToday(pid, eid)) return;
+  for (int i = 0; i < EQUIP_SLOTS; i++)
+    if (!s_paidItem[pid][i]) { s_paidItem[pid][i] = eid; return; }
+  s_paidItem[pid][EQUIP_SLOTS - 1] = eid;   // only with more daily-cost items than slots
+}
+
+// A new day, or a new survivor in the seat: nothing is paid for yet.
+static void clearItemsPaid(int pid) {
+  memset(s_paidItem[pid], 0, sizeof(s_paidItem[pid]));
+  s_paidKnown[pid] = true;
+}
+
+// Slots holding a daily-cost item not paid for today, whose STAT_MP is
+// dormant (bit 0 = head .. bit 4 = vehicle). The tick broadcast's "uf".
+static uint8_t unfuelledMask(int pid) {
+  const Player& p = G.players[pid];
+  uint8_t m = 0;
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    uint8_t eid = p.equip[s];
+    if (eid && itemHasOpCost(getItemDef(eid)) && !itemPaidToday(pid, eid)) m |= (uint8_t)(1 << s);
+  }
+  return m;
+}
+
+// Pay today's cost of the item in slot s out of the pack and add its STAT_MP
+// to movesLeft. False, with nothing taken, when the pack can't cover it.
+static bool payItemCost(int pid, int s) {
+  Player& p = G.players[pid];
+  const ItemDef* def = getItemDef(p.equip[s]);
+  if (!def) return false;
+  for (int k = 0; k < 5; k++) if (def->opCost[k] > p.inv[k]) return false;
+  for (int k = 0; k < 5; k++) p.inv[k] -= def->opCost[k];
+  p.movesLeft = (int8_t)min(127, (int)p.movesLeft + (int)def->statMods[STAT_MP]);
+  markItemPaid(pid, p.equip[s]);
+  return true;
+}
+
 // ── applyDawnItemCosts ────────────────────────────────────────────────────
-// Called at dawn for each connected player. For each equipped item with an
-// opCost[], checks if the player can afford it. If yes: deducts resources and
-// the item's statMods are considered active for the day (they are always
-// included in calcEffectiveStat). If no: marks the item as "unfuelled" this
-// dawn by logging — statMods via calcEffectiveStat remain present in code
-// but the STAT_MP bonus is gated here by conditionally adding to movesLeft.
-// We gate STAT_MP specifically because it's the only stat that is set once at
-// dawn (movesLeft) rather than computed dynamically.
+// Called at dawn for each connected player, after dawnUpkeep has set
+// movesLeft. Starts the day's bookkeeping, then each equipped daily-cost
+// item pays out of the pack and adds its STAT_MP. STAT_MP is gated because
+// it is the only stat set once at dawn (movesLeft) rather than computed live;
+// an item's other statMods apply whether it paid or not -- equipment stays
+// on, and the Motorbike's saddlebags hold either way. Returns the slots that
+// could not pay, for EVT_DAWN; kickStartItems() starts them later.
 static uint8_t applyDawnItemCosts(int pid) {
   Player& p = G.players[pid];
   uint8_t unfuelled = 0;
+  clearItemsPaid(pid);
   // A survivor who went down during this dawn has had movesLeft zeroed and is
   // not going anywhere; charging their vehicle a fuel token and handing the
   // corpse +5 MP is both wrong and expensive.
   bool downed = (p.ll == 0);
-  for (int s = 0; s < EQUIP_SLOTS; s++) {
+  for (int s = 0; s < EQUIP_SLOTS && !downed; s++) {
     uint8_t eid = p.equip[s];
-    if (!eid) continue;
-    const ItemDef* def = getItemDef(eid);
-    if (!def) continue;
-    bool hasCost = false;
-    for (int k = 0; k < 5; k++) if (def->opCost[k]) { hasCost = true; break; }
-    if (!hasCost) continue;
-    // Check affordability
-    bool canAfford = !downed;
-    for (int k = 0; k < 5; k++) {
-      if (def->opCost[k] > p.inv[k]) { canAfford = false; break; }
-    }
-    if (canAfford) {
-      for (int k = 0; k < 5; k++) p.inv[k] -= def->opCost[k];
-      // STAT_MP bonus is added to movesLeft here (set by dawnUpkeep BEFORE this call)
-      p.movesLeft = (int8_t)min(127, (int)p.movesLeft + (int)def->statMods[STAT_MP]);
-    } else if (!downed) {
-      // Can't afford it: the item's STAT_MP bonus does NOT apply.  Other
-      // statMods (LL, etc.) still show via effectiveMaxLL — game design
-      // choice: equipment stays on, but fuel-gated bonuses are dormant.
-      // Flagged so EVT_DAWN can say so; this used to be an empty else.
-      unfuelled |= (uint8_t)(1 << s);
-    }
+    if (!eid || !itemHasOpCost(getItemDef(eid))) continue;
+    if (!payItemCost(pid, s)) unfuelled |= (uint8_t)(1 << s);
   }
   // Passive EFX_THREAT_MOD from equipped items — applied each dawn to keep TC suppressed
   for (int s = 0; s < EQUIP_SLOTS; s++) {
@@ -260,6 +305,36 @@ static uint8_t applyDawnItemCosts(int pid) {
     if (def->effectId2 == EFX_THREAT_MOD) G.threatClock = (uint8_t)constrain((int)G.threatClock + (int)(int8_t)def->effectParam2, 0, 20);
   }
   return unfuelled;
+}
+
+// ── kickStartItems ────────────────────────────────────────────────────────
+// Polled from tickGame() for each connected survivor out of a scene. A
+// daily-cost item that is equipped but not paid for today -- it stalled at
+// dawn, or went on mid-day -- pays the moment the pack can cover it, and its
+// STAT_MP lands on today's movesLeft. Returns the slots that just started,
+// for EVT_REFUEL. Polled, not hooked into each way fuel arrives (piles,
+// remains, collecting, encounter banks, trades, the caravan), so none of
+// them can be missed. Must hold G.mutex.
+static uint8_t kickStartItems(int pid) {
+  Player& p = G.players[pid];
+  if (!s_paidKnown[pid]) {
+    // First look since boot: whatever is on was paid for before the
+    // reboot, as far as anyone can now tell.
+    clearItemsPaid(pid);
+    for (int s = 0; s < EQUIP_SLOTS; s++)
+      if (p.equip[s] && itemHasOpCost(getItemDef(p.equip[s]))) markItemPaid(pid, p.equip[s]);
+    return 0;
+  }
+  // Downed goes nowhere, and a survivor bedded down for the night would
+  // only burn the fuel that dawn is about to ask for.
+  if (p.ll == 0 || p.resting) return 0;
+  uint8_t started = 0;
+  for (int s = 0; s < EQUIP_SLOTS; s++) {
+    uint8_t eid = p.equip[s];
+    if (!eid || !itemHasOpCost(getItemDef(eid)) || itemPaidToday(pid, eid)) continue;
+    if (payItemCost(pid, s)) started |= (uint8_t)(1 << s);
+  }
+  return started;
 }
 
 // ── useItem ───────────────────────────────────────────────────────────────
@@ -1160,6 +1235,10 @@ static void resetSurvivor(Player& p, uint8_t arch) {
   // new world just regenerated out from under it.
   p.depth = 0; p.tq = 0; p.tr = 0; p.hatchIdx = 0;
   p.movesLeft = (int8_t)(p.ll + 3);  // == effectiveMP() for a fresh, unencumbered survivor
+  // Nothing of theirs is paid for today (kickStartItems). Also run by the
+  // boot pass over empty seats, which is harmless: nothing is equipped.
+  int pid = (int)(&p - G.players);
+  if (pid >= 0 && pid < MAX_PLAYERS) clearItemsPaid(pid);
 }
 
 // Random passable spawn hex.  Prefers non-radioactive terrain; after 50 tries

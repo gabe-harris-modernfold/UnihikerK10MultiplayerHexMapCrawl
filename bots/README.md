@@ -54,7 +54,7 @@ Deps: Python 3.12 + `websockets`.
 | `oracles.py` | Invariants checked on every connection and every `/state` read. |
 | `findings.py` | Finding format + CLI. |
 | `fuzz.py`, `chaos.py`, `soak.py` | The three probes. `fuzz_cases.py` is the fuzz corpus. |
-| `policy/` | `decide(obs) -> Action`: `drunk`, `scoremax`, `contentmax`, `coward`, `rival`, the two Subterranean Explorers `subterranean` / `tunnelrunner`, and `sentinel` (soak only: camps under a shelter, rests late in each day). |
+| `policy/` | `decide(obs) -> Action`: `drunk`, `scoremax`, `contentmax`, `coward`, `rival`, the two Subterranean Explorers `subterranean` / `tunnelrunner`, `sentinel` (soak only: camps under a shelter, rests late in each day), `gearmax`, and `biker` (builds a Motorbike, Backpack first, then rides for fuel). |
 | `arena.py` | Supervisor: reset, spawn, run to target, loop. |
 | `telemetry.py` | Polls `/state` for board health. |
 | `causes.py` | Attributes every LL loss, and every death, to a cause. |

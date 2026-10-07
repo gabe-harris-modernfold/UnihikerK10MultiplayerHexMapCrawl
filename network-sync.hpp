@@ -352,7 +352,7 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"id\":%d,\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,",
+      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,\"uf\":%d,",
       i, p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
@@ -362,7 +362,10 @@ static void broadcastState() {
       // Resting used to ride only in sync, so "resting" and "simply out of
       // MP" looked the same from the tick -- and one survivor who never
       // actually rested holds the whole fleet's day open.
-      p.resting ? 1 : 0);
+      p.resting ? 1 : 0,
+      // Equipped daily-cost items not paid for today (unfuelledMask()): a
+      // stalled bike, which every client fades off the map. ~7 B a player.
+      (int)unfuelledMask(i));
     pos = appendPackArrays(buf, sizeof(buf), pos, i);
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       ",\"enc\":%d,\"dp\":%d,\"tq\":%d,\"tr\":%d}",

@@ -209,7 +209,7 @@ function renderEquipment() {
   totals.innerHTML =
     (totalLine ? `<div class="eq-tot-line">${escHtml(totalLine)}</div>` : '') +
     notes.map(n => `<div class="eq-tot-note">• ${escHtml(n.name)}: ${escHtml(n.note)}</div>`).join('') +
-    dormant.map(d => `<div class="eq-tot-warn">NO FUEL: ${escHtml(d.name)} grants nothing today</div>`).join('');
+    dormant.map(d => `<div class="eq-tot-warn">NO FUEL: ${escHtml(d.name)} is stalled until you pick some up</div>`).join('');
 }
 
 // Item action context menu (slide-up sheet)

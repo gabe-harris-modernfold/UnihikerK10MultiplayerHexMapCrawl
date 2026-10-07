@@ -441,6 +441,14 @@ function _msgState(msg) {
     if (pd.is    !== undefined) p.is    = pd.is;
     if (pd.llCap !== undefined) p.llCap = pd.llCap;
     if (pd.wc    !== undefined) p.wc    = pd.wc;     // canteen water cap
+    // Equipped daily-cost items not paid for today (unfuelledMask()): a
+    // stalled bike, faded off the map (bikeStalled(), renderer.js). Live, so
+    // it clears the moment a kick-start pays -- dawn's "unf" is only a
+    // snapshot, and a board older than the kick-start never sends this.
+    if (pd.uf !== undefined) {
+      p.uf = pd.uf;
+      if (i === myId) uiUnfuelled.val = pd.uf;
+    }
     if (pd.kr !== undefined) p.kr = pd.kr;  // known-recipes bitmask (mock's 's' sends it; firmware's doesn't — kr there only ever arrives via 'sync' or a craft item_result)
     if (pd.enc !== undefined) p.enc = !!pd.enc;  // encounter lock
     // Bunker tunnels: which board this survivor is on, and where on it.
@@ -903,6 +911,9 @@ function _applyDawnToPlayer(ev) {
   p.water = ev.w;
   p.ll    = ev.ll;
   p.mp    = ev.mp;
+  // Every seat's, not just ours: the map fades out a Motorbike that could
+  // not be fuelled this dawn (bikeStalled(), renderer.js).
+  p.unf   = ev.unf | 0;
   if (ev.pid === myId) {
     maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT;
     // Which equipped items could not pay their daily cost this dawn (bitmask,
@@ -940,6 +951,26 @@ function _toastDawnSelf(ev) {
   else                 dawnMsg = `☀ Day ${ev.day} — the sun returns. The wastes endure, and so do you.`;
   showToast(dawnMsg);
   // Dawn restores MP and clears the rest flag — relight the action deck.
+  setTimeout(() => globalThis.renderActionDeck?.(), 0);
+}
+
+// A bike that stalled at dawn found fuel and started (kickStartItems,
+// inventory_items.hpp): the fuel is gone and the bike's MP is on today's
+// budget. The fade back in is the tick's "uf"; this is the rider's news.
+function _evRefuel(ev) {
+  const p = players[ev.pid];
+  if (!p) return;
+  p.mp = ev.mp;
+  p.uf = ev.unf | 0;
+  if (ev.pid !== myId) return;
+  uiUnfuelled.val = p.uf;
+  // The day's budget grew, so the MP track and the time-of-day fade (both
+  // measured against maxMP) take the bonus in rather than overflowing.
+  maxMP += ev.mpd | 0; uiMaxMP.val = maxMP;
+  const name = escHtml(getItemById?.(ev.it)?.name ?? 'The engine');
+  addLog(`<span class="log-check-ok">\u26FD Fuel in the tank: the ${name} kicks back to life. +${ev.mpd} MP today.</span>`);
+  showToast(`\u26FD ${name} running again: +${ev.mpd} MP`);
+  updateSidebar();
   setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
 
@@ -1494,6 +1525,7 @@ function handleEvent(ev) {
       break;
     case 'chk':         _evChk(ev);        break;
     case 'dawn':        _evDawn(ev);       break;
+    case 'refuel':      _evRefuel(ev);     break;
     case 'act':         _evAct(ev);        break;
     case 'surv':        _evSurv(ev);       break;
     case 'dusk':        _evDusk(ev);       break;

@@ -129,7 +129,12 @@
       "Bash(python -)",
       "Bash(sed -i 's/^MARGIN = 5$/MARGIN = 6/' ingest_shelters.py)",
       "Bash(rm -f cells224/* cells112/*)",
-      "Bash(python ingest_shelters.py C:/SourceCode/Esp32HexMapCrawl/data/img/shelter-sheet-improved.png cells224 224)"
+      "Bash(python ingest_shelters.py C:/SourceCode/Esp32HexMapCrawl/data/img/shelter-sheet-improved.png cells224 224)",
+      "PowerShell(cd C:\\\\SourceCode\\\\Esp32HexMapCrawl; $ok=$false; for\\($i=0;$i -lt 30;$i++\\){ try{ $s=curl.exe -s --max-time 3 http://k10.local/state; if\\($s\\){$ok=$true;break} }catch{}; Start-Sleep 2 }; \"up=$ok\"; if\\($ok\\){ .\\\\scripts\\\\sync_data.ps1 k10.local })",
+      "PowerShell(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'sync_data|curl' } | Select ProcessId, Name, @{n='cmd';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(150,$_.CommandLine.Length\\)\\)}})",
+      "PowerShell(cd C:\\\\SourceCode\\\\Esp32HexMapCrawl; $ok=$false; for\\($i=0;$i -lt 20;$i++\\){ $s=curl.exe -s --max-time 3 http://k10.local/state; if\\($s\\){$ok=$true;break}; Start-Sleep 2 }; \"up=$ok\"; if\\($ok\\){ .\\\\scripts\\\\sync_data.ps1 k10.local 2>&1 | Select-String -NotMatch '^\\\\s+\\\\d+ bytes' })",
+      "PowerShell(cd C:\\\\SourceCode\\\\Esp32HexMapCrawl; .\\\\scripts\\\\reset_board.ps1 -Port COM5; $s = curl.exe -s --max-time 5 http://k10.local/state | ConvertFrom-Json; $s | Select pv, evtDrops, boot | Format-List; \\(curl.exe -s http://k10.local/assets.json | ConvertFrom-Json\\).version; \\(Get-Content data\\\\assets.json | ConvertFrom-Json\\).version)",
+      "PowerShell(curl.exe -s --max-time 8 http://k10.local/state)"
     ]
   }
 }

@@ -205,6 +205,18 @@ class BotClient:
         self.recorder.write("tx", self._log_arch(), msg)
 
     async def _on_reply(self, msg: dict) -> None:
+        # "no_enc" is the board saying no scene is open for us, whatever we
+        # think.  A bank or choice whose own reply went missing can end the
+        # scene without the enc_bank/enc_end that clears obs.encounter ever
+        # arriving -- a Biker on the K10 then banked out of a finished trap
+        # 400 times, each one nacked no_enc.  Believe the board, even when the
+        # nack itself is late enough to be unmatched.
+        if msg.get("t") == "nack" and msg.get("why") == "no_enc":
+            self.obs.encounter = None
+        # ...and "in_enc" that one IS open, even if its enc_path never came
+        # (SurvivorPolicy.lost_scene_action() walks away from it).
+        elif msg.get("t") == "nack" and msg.get("why") == "in_enc":
+            self.obs.me.in_encounter = True
         r = self.replies.resolve(msg)
         if r is None:
             return                  # unmatched: the tracker has flagged it

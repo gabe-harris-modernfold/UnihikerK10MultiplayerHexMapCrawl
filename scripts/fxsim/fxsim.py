@@ -30,7 +30,8 @@ SCENES = ["quake", "strike", "dawn", "eye", "hunt", "switch", "madness", "fire",
           "chem", "storm", "join", "thrown", "act", "odds", "fog", "reprint", "below", "crafted", "crawl",
           "tripwire", "beartrap",
           "road_day", "road_storm", "road_night", "road_fog", "road_empty", "road_cycle",
-          "admired", "admired_empty"]
+          "admired", "admired_empty",
+          "chronicle", "chronicle1", "chronicle2", "chronicle3", "chronicle_empty"] +          ["chron_g%d" % i for i in range(11)] +          ["stash", "stash_bare", "odds_win", "odds_lose", "odds_none", "waste", "figs", "figs_big", "figs_night", "stash_cast", "odds_cast"]
 
 
 def find_vcvars():

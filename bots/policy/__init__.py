@@ -9,6 +9,7 @@ from .gearmax import GearMaxPolicy
 from .subterranean import SubterraneanPolicy, TunnelPolicy
 from .tunnelrunner import TunnelRunnerPolicy
 from .sentinel import SentinelPolicy
+from .biker import BikerPolicy
 
 REGISTRY = {
     "drunk": DrunkPolicy,
@@ -26,6 +27,9 @@ REGISTRY = {
     # Collects and wears everything it can find, good or bad, so that
     # gearcheck.py has something to audit and rank.
     "gearmax": GearMaxPolicy,
+    # Builds a Motorbike (a Backpack first, since the parts will not fit a
+    # bare pack), then rides it collecting all the fuel it can carry.
+    "biker": BikerPolicy,
 }
 
 # The encounter library is ~100 JSON files; parse it once and share the
@@ -56,5 +60,5 @@ def make(name: str, rng, **kw) -> Policy:
 __all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
            "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
            "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy", "SentinelPolicy",
-           "GearMaxPolicy",
+           "GearMaxPolicy", "BikerPolicy",
            "REGISTRY", "make", "shared_library"]

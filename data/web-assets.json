@@ -19,6 +19,7 @@
     "tunnel-board.js",
     "ash-particle-system.js",
     "weather-particle-system.js",
+    "bike-dust.js",
     "storm-field.js",
     "quake-field.js",
     "fire-field.js",

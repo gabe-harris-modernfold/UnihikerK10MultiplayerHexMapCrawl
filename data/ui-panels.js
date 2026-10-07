@@ -395,6 +395,11 @@ function initActionPanel() {
         const have = me.inv?.[i] ?? 0;
         if (have < need) missing.push(`${RES_SHORT[i]} ${have}/${need}`);
       }
+      // The tokens have to be carried here, and the pack holds one per slot
+      // (canteen water aside). A pack too small for a recipe's tokens says
+      // so here rather than leaving the player to work out why.
+      const carry = tokenLoadOf(me, r.resCost);
+      if (carry > packSlots(me)) missing.push(`a bigger pack (${carry} tokens to carry)`);
       if (!outputHasRoom(me, r)) missing.push('a free pack slot');
       const affordable = missing.length === 0;
       const reqParts = [];
@@ -1743,11 +1748,15 @@ function initCharSelect() {
       const item = getItemById(rc.outputItem);
       const name = item?.name ?? rc.name;
       const mods = typeof _formatMods === 'function' ? _formatMods(getItemMods?.(rc.outputItem)) : '';
-      const cost = rc.resCost.map((n, r) => (n ? `${n} ${RES_NAMES[r + 1]}` : '')).filter(Boolean).join(' + ');
+      const mats = rc.matItem.map((id, m) => (id ? `${rc.matQty[m]} ${getItemById(id)?.name ?? '?'}` : '')).filter(Boolean);
+      const cost = [...mats, ...rc.resCost.map((n, r) => (n ? `${n} ${RES_NAMES[r + 1]}` : ''))].filter(Boolean).join(' + ');
       return span({ class: 'sv-bp', title: `${name}${mods ? ' (' + mods + ')' : ''} \u2014 costs ${cost}` },
         img({ class: 'item-icon-img', src: getItemIcon(rc.outputItem, _CS_BP_PX), alt: '',
               width: _CS_BP_PX, height: _CS_BP_PX, draggable: false }),
         span({ class: 'sv-bp-name' }, name),
+        ...rc.matItem.map((id, m) => (id ? span({ class: 'sv-bp-cost' }, `${rc.matQty[m]}\u00D7`,
+          img({ class: 'item-icon-img', src: getItemIcon(id, _CS_COST_PX), alt: '',
+                width: _CS_COST_PX, height: _CS_COST_PX, draggable: false })) : null)),
         ...rc.resCost.map((n, r) => (n ? span({ class: 'sv-bp-cost' }, `${n}\u00D7`, token(r + 1, _CS_COST_PX)) : null))
       );
     });

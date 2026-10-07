@@ -72,7 +72,6 @@ const VARIANT_COUNTS = scanVariantCounts();
 // "q_r" -> { res: 1-5 (0 = empty), amt, respawnTimer }
 const resources = {};
 const RESPAWN_TICKS = 8;       // ~8 seconds (1 tick/sec)
-const INV_SLOTS     = 6;       // small cap so we can test inv-full path
 const RES_MAX_TYPE  = 5;
 
 // ── Build a fully-revealed map with sprinkled features ──────────────────────
@@ -185,6 +184,26 @@ function buildVisDisk(pq, pr, vr, pid) {
       const res     = cell ? cell.res : 0;
       const vv = hex2((res << 4) | (variant & 0x0F));
       cells += hex2(cq) + hex2(cr) + tt + dd + vv;
+    }
+  }
+  return cells;
+}
+
+// Just the outer ring of buildVisDisk() -- buildSurveyDisk() in hex-map.hpp.
+// `ring` is already visR + 1.
+function buildSurveyRing(pq, pr, ring, pid) {
+  let cells = '';
+  for (let dr = -ring; dr <= ring; dr++) {
+    for (let dq = -ring; dq <= ring; dq++) {
+      const s = -(dq + dr);
+      if ((Math.abs(dq) + Math.abs(dr) + Math.abs(s)) / 2 !== ring) continue;
+      const cq = ((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+      const cr = ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+      const baseIdx = (cr * MAP_COLS + cq) * 6;
+      const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) | trapBit(0, cq, cr, pid));
+      const dd = hex2(ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)));
+      const cell = resources[`${cq}_${cr}`];
+      cells += hex2(cq) + hex2(cr) + tt + dd + hex2(((cell ? cell.res : 0) << 4) | (baseIdx & 0x0F));
     }
   }
   return cells;
@@ -523,7 +542,9 @@ function surfaceVis(p) {
   // playerVisParams(). Passing no player keeps the old bare-radius behaviour
   // for the few callers that have none to hand.
   const gear = p ? equipVisionBonus(p) : 0;
-  return Math.max(0, SURFACE_VIS_BASE + gear - WEATHER_VIS_PENALTY[weatherPhase]);
+  // Scout: +2 vision radius, applied before the weather penalty like the firmware.
+  const scout = p && p.arch === 4 ? 2 : 0;
+  return Math.max(0, SURFACE_VIS_BASE + scout + gear - WEATHER_VIS_PENALTY[weatherPhase]);
 }
 
 function tunCellHex(q, r, pid) {
@@ -674,6 +695,7 @@ function pickSpawnPos(id) {
 
 function makePlayer(id) {
   const spawn = pickSpawnPos(id);
+  itemsPaid[id] = [];   // a fresh survivor has paid for nothing today
   return {
     id, on: true,
     // The firmware sets both of these on pick (network-msg-player.hpp) and
@@ -768,6 +790,49 @@ function itemHasOpCost(def) {
   return !!(def?.opCost && def.opCost.some(c => c > 0));
 }
 
+// Item ids each seat has paid today's cost for -- mirrors s_paidItem in
+// inventory_items.hpp. Kept off the player object, which playerView() puts
+// on the wire whole. A daily-cost item grants its mp once a day: at dawn if
+// the pack can pay (applyDawnItemCosts), else the moment it can
+// (kickStartItems, polled by the day tick). Dawn and a fresh survivor clear it.
+const itemsPaid = [];
+function paidToday(p, eid) { return (itemsPaid[p.id] ?? []).includes(eid); }
+
+// Equipped daily-cost items not paid for today: the wire's "uf" (bit per
+// equip slot), which the client fades a stalled bike on. Mirrors unfuelledMask().
+function unfuelledMask(p) {
+  let m = 0;
+  p.eq.forEach((eid, slot) => {
+    if (eid && itemHasOpCost(ITEM_DEFS[eid]) && !paidToday(p, eid)) m |= (1 << slot);
+  });
+  return m;
+}
+
+// Mirrors payItemCost(): today's cost out of the pack, the item's mp onto
+// today's budget. False, with nothing taken, when the pack can't cover it.
+function payItemCost(p, slot) {
+  const eid = p.eq[slot];
+  const def = ITEM_DEFS[eid];
+  if (!def || !def.opCost.every((c, k) => c <= p.inv[k])) return false;
+  def.opCost.forEach((c, k) => { p.inv[k] -= c; });
+  p.mp = Math.min(127, p.mp + (def.mp | 0));
+  (itemsPaid[p.id] ??= []).push(eid);
+  return true;
+}
+
+// Mirrors kickStartItems(): a daily-cost item equipped but unpaid today --
+// stalled at dawn, or put on mid-day -- pays the moment the pack can cover
+// it. Returns the slots that just started. The caller skips anyone in a scene.
+function kickStartItems(p) {
+  if (p.ll === 0 || p.rt) return 0;
+  let started = 0;
+  p.eq.forEach((eid, slot) => {
+    if (!eid || !itemHasOpCost(ITEM_DEFS[eid]) || paidToday(p, eid)) return;
+    if (payItemCost(p, slot)) started |= (1 << slot);
+  });
+  return started;
+}
+
 // 7 plus every equipped item's "ll", minus any permanent penalty from
 // Uranium Candy. Mirrors effectiveMaxLL(); LL_CAP is the base it starts from.
 function effectiveMaxLL(p) {
@@ -794,17 +859,11 @@ function effectiveMP(p) {
 // "unf" so the client can grey out a bonus that is dormant today.
 function applyDawnItemCosts(p) {
   let unfuelled = 0;
-  const downed = p.ll === 0;
+  itemsPaid[p.id] = [];
+  if (p.ll === 0) return 0;
   p.eq.forEach((eid, slot) => {
-    const def = ITEM_DEFS[eid];
-    if (!def || !itemHasOpCost(def)) return;
-    const canAfford = !downed && def.opCost.every((c, k) => c <= p.inv[k]);
-    if (canAfford) {
-      def.opCost.forEach((c, k) => { p.inv[k] -= c; });
-      p.mp = Math.min(127, p.mp + (def.mp | 0));
-    } else if (!downed) {
-      unfuelled |= (1 << slot);
-    }
+    if (!eid || !itemHasOpCost(ITEM_DEFS[eid])) return;
+    if (!payItemCost(p, slot)) unfuelled |= (1 << slot);
   });
   return unfuelled;
 }
@@ -899,7 +958,8 @@ function effectiveInvSlots(p) {
 // happen here, at serialisation, exactly once -- mirrors appendPackArrays()
 // in inventory_items.hpp, which is the only place the firmware emits them.
 function playerView(p) {
-  return { ...p, is: effectiveInvSlots(p), llCap: effectiveMaxLL(p), wc: canteenCap(p) };
+  return { ...p, is: effectiveInvSlots(p), llCap: effectiveMaxLL(p), wc: canteenCap(p),
+           uf: unfuelledMask(p) };
 }
 // The same fields for a targeted item_result ack.
 function packFields(p) {
@@ -1327,8 +1387,13 @@ function openEncounter(ws, id, p, q, r, biome, encId, consumePoi, opts) {
 let   threatClock = 0;
 let   forcedOutcome = null;   // dbg_force: null | 0 | 1 — overrides the next roll
 
+// The terrain id alone. ttFor() builds the wire TT byte, which carries the
+// tire-track flag in bit 7, and this used to return that byte whole -- so any
+// hex a Motorbike or the caravan had crossed read as terrain 128+: no CRAFT or
+// TREAT in a tracked Settlement, no dawn rest-heal there, SV 0, no encounter
+// pool. The firmware keeps tireTrack in its own HexCell field and never had it.
 function terrainAt(q, r) {
-  return ttFor(q, r, parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6, 2), 16));
+  return ttFor(q, r, parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6, 2), 16)) & 0x0F;
 }
 function hasPoi(q, r) {
   const dd = parseInt(MAP_HEX.substr((r * MAP_COLS + q) * 6 + 2, 2), 16);
@@ -1713,6 +1778,19 @@ setInterval(() => {
   if (dayTick >= DAY_TICKS || allResting) {
     dayTick = 0;
     dawnUpkeepAll();
+  }
+  // A bike that stalled at dawn starts the moment there is fuel -- mirrors
+  // the kickStartItems() poll in tickGame(). Not mid-scene.
+  for (const p of connected) {
+    if (encounters[p.id]) continue;
+    const mp0 = p.mp;
+    const started = kickStartItems(p);
+    if (!started) continue;
+    const slot = p.eq.findIndex((_, s) => started & (1 << s));
+    console.log(`[kick] pid=${p.id} item=${p.eq[slot]} mp ${mp0}->${p.mp}`);
+    broadcast({ t: 'ev', k: 'refuel', pid: p.id, it: p.eq[slot], mpd: p.mp - mp0, mp: p.mp,
+                unf: unfuelledMask(p) });
+    broadcast(stateMsg());
   }
   // Weather and the world system act on the surface only -- firmware skips
   // depth != 0 players in every one of these (world-system.hpp, the fog tick
@@ -2944,12 +3022,15 @@ function tryCollect(p, ws) {
   if (!cell || cell.res === 0 || cell.amt === 0) return; // nothing to collect (and no fail event — server-side knows truly nothing here)
 
   // Canteen water is outside the pack, and water may fill its empty space
-  // even in a full pack — tokenRoomFor() prices both, against the test cap.
-  const room = tokenRoomFor(p, cell.res - 1, INV_SLOTS);
+  // even in a full pack — tokenRoomFor() prices both. Against the real pack
+  // size: this used to be a fixed test cap of 6, which no Backpack could
+  // raise, so the Motorbike's build could never be carried here.
+  const cap  = effectiveInvSlots(p);
+  const room = tokenRoomFor(p, cell.res - 1, cap);
   if (room <= 0) {
     // Inv-full: send col_fail to the moving player only.
     // cap mirrors the firmware's effectiveInvSlots() — the client shows it as "(have/cap)".
-    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2, cap: INV_SLOTS });
+    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2, cap });
     console.log(`[col] FAIL inv-full pid=${p.id} q=${p.q} r=${p.r}`);
     return;
   }
@@ -3727,6 +3808,28 @@ wss.on('connection', (ws) => {
               p.sc += 2;
             }
           }
+        } else if (msg.a === 6) {
+          // ACT_SURVEY — mirrors doSurvey()/buildSurveyDisk(): the Scout (arch
+          // 4) surveys free, anyone else pays 1 MP; +2 pts the first time from
+          // a given hex only. The reply is the ring of cells ONE PAST the
+          // survivor's live sight radius, unicast as a `surv` event -- the
+          // client draws it dimmed until the next step. This branch used to be
+          // the generic one, which paid MP for a resource and never sent the
+          // ring at all, so a Scout's survey did nothing visible on the mock.
+          const isScout = p.arch === 4;
+          if (p.rt) {
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 4, mp: p.mp, ll: p.ll });
+          } else if (!isScout && p.mp < 1) {
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 1, mp: p.mp, ll: p.ll });
+          } else {
+            if (!isScout) p.mp -= 1;
+            p.surveyed = p.surveyed || new Set();
+            const hexKey = `${p.q}_${p.r}`;
+            let scoreD = 0;
+            if (!p.surveyed.has(hexKey)) { p.surveyed.add(hexKey); scoreD = 2; p.sc += 2; }
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 1, mp: p.mp, ll: p.ll, scoreD });
+            send(ws, { t: 'ev', k: 'surv', pid: id, cells: buildSurveyRing(p.q, p.r, surfaceVis(p) + 1, id) });
+          }
         } else if (msg.a === 5) {
           // ACT_CRAFT — mirrors doCraft()/applyRecipe() in
           // actions_game_loop.hpp/inventory_items.hpp: Settlement-only,
@@ -3782,9 +3885,19 @@ wss.on('connection', (ws) => {
                         bw: 1, mp: p.mp, ll: p.ll });
             break;
           }
-          p.mp = Math.max(0, p.mp - (msg.mp || 1));
-          if (slot !== undefined) p.inv[slot] = (p.inv[slot] || 0) + 1;
-          p.sc += 1;
+          if ((msg.a | 0) === 1) {
+            // COLLECT WATER mirrors doWater(): 1-3 MP, one water per MP. It
+            // was the generic +1 for whatever MP was sent, which made water
+            // twice as dear as on the board and every bot's day a pond run.
+            const spend = Math.max(1, Math.min(3, msg.mp || 1, p.mp));
+            p.mp = Math.max(0, p.mp - spend);
+            p.inv[0] = Math.min(99, (p.inv[0] || 0) + spend);
+            p.sc += spend;
+          } else {
+            p.mp = Math.max(0, p.mp - (msg.mp || 1));
+            if (slot !== undefined) p.inv[slot] = (p.inv[slot] || 0) + 1;
+            p.sc += 1;
+          }
         }
         broadcast(stateMsg());
         break;

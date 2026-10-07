@@ -287,7 +287,7 @@ import policy as pmod
 
 check("registry has every policy", set(pmod.REGISTRY) ==
       {"drunk", "scoremax", "contentmax", "coward", "rival",
-       "subterranean", "tunnelrunner", "sentinel", "gearmax"})
+       "subterranean", "tunnelrunner", "sentinel", "gearmax", "biker"})
 # GearMax is the only policy that will wear a net-negative item, which is
 # what makes its runs usable for auditing whether penalties land at all.
 check("only gearmax wears junk on purpose",
@@ -314,7 +314,7 @@ for pname in sorted(pmod.REGISTRY):
             json.dumps(m)
     check(f"{pname} yields valid actions", kinds and kinds <= {
         "move", "act", "noop", "enc_start", "enc_choice", "enc_bank",
-        "enc_abort", "use_item", "trade_offer"})
+        "enc_abort", "use_item", "trade_offer", "drop_res"})
 
 sm = pmod.make("scoremax", random.Random(3))
 check("scoremax walks toward the pile", sm.decide(o3).kind == "move")
@@ -350,7 +350,9 @@ a = cm2.decide(o3)
 check("encounter binds to local json", a.kind in ("enc_choice", "enc_bank", "enc_abort"))
 # Drive the first branch until the node is bankable, then take the haul.
 check("takes the first option", a.kind == "enc_choice" and a.ci == 0)
+check("and sends nothing more until that roll comes back", cm2.decide(o3).kind == "noop")
 cm2.run.node_key = [k for k, n in cm2.run.enc["nodes"].items() if n.get("can_bank")][0]
+cm2.run.sent_at = None                      # its enc_res landed
 check("banks once bankable", cm2.decide(o3).kind == "enc_bank")
 check("content stats accumulate", cm2.content_score()["encounters_opened"] == 1)
 o3.encounter = {"biome": "nosuch", "id": 999}
@@ -519,6 +521,7 @@ me7.archetype = 2
 # whole dawn loss, so it has to outrank the emergency hunt *here* only.
 me7.inv = [0, 4, 0, 0, 2]
 w3.grid[10][16] = mk(resource=config.RES_WATER + 1)
+ps._shelter_sent = None     # a separate scenario on the same hex and day
 check("shelter beats the water hunt on the last MP",
       ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
 me7.mp = 6
@@ -526,6 +529,10 @@ check("but the water hunt still wins earlier in the day",
       ps.decide(o7).kind == "move")
 w3.grid[10][16] = mk()
 me7.mp = 1
+ps._shelter_sent = None
+check("shelters once", ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
+check("and a SHELTER that built nothing is not re-sent the same day",
+      ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
 
 print("exposure never lands the killing blow")
 # dawnUpkeep applies exposure last and floors it at LL 1, so a dawn whose only
@@ -1441,12 +1448,22 @@ async def _reply_checks():
     # A reply nobody asked for -- answered twice, or never sent -- is a finding.
     await bc._on_message({"t": "ack", "rid": rids[0], "cmd": "m"})
     ok5 = any(s[0] == "reply_unmatched" for s in bc.findings.counts)
-    return ok1, ok2, ok5
+    # no_enc: the board has no scene open for us, so neither do we -- even
+    # from a nack too late to match its request.
+    bc.obs.encounter = {"biome": "traps", "id": 14, "trap": 1}
+    await bc._on_message({"t": "nack", "rid": 9999, "cmd": "enc_bank", "why": "no_enc"})
+    ok6 = bc.obs.encounter is None
+    return ok1, ok2, ok5, ok6
 
 _r = asyncio.run(_reply_checks())
 check("acks and nacks are counted per command and reason", _r[0])
 check("a nacked pick releases its slot immediately", _r[1])
 check("a reply to a rid already answered is a finding", _r[2])
+check("a no_enc nack closes the encounter we thought was open", _r[3])
+_sv = pmod.make("scoremax", random.Random(1))
+_sv.run = object()
+_sv.on_reply("enc_bank", False, "no_enc")
+check("and drops the policy's node tracker with it", _sv.run is None)
 
 
 async def _expiry_checks():
@@ -2263,10 +2280,14 @@ check("but an emergency still comes first", "canteen" not in _sub.decide(_o).why
 _CS = config.EQUIPMENT[config.CANTEEN_ITEM]
 _bp = [0] * 5
 _bp[_CS] = 64
-_all = [n for n in pmod.REGISTRY if n != "drunk"]
+# ...except the Biker: its Backpack is the bike's gate, and the canteen would
+# take the body slot it needs.
+_all = [n for n in pmod.REGISTRY if n not in ("drunk", "biker")]
 check("every survivor policy wants a canteen, Backpack or not",
       all(pmod.make(n, random.Random(1)).wants_canteen(canteen_obs(equip=_bp))
           for n in _all))
+check("but the Biker keeps its Backpack instead",
+      not pmod.make("biker", random.Random(1)).wants_canteen(canteen_obs(equip=_bp)))
 # ...puts it on over the Backpack...
 _sm = pmod.make("scoremax", random.Random(1)); _sm.set_pid(2)
 _o = canteen_obs(terrain=0, equip=_bp)
@@ -2511,7 +2532,8 @@ for _name in (n for n in pmod.REGISTRY if n != "drunk"):
             json.dumps(_m)
     check(f"{_name} on a grave yields valid actions",
           _kinds and _kinds <= {"move", "act", "noop", "loot", "pickup_item",
-                                "equip_item", "enc_start", "trade_offer"})
+                                "equip_item", "enc_start", "trade_offer",
+                                "drop_res"})
 
 print("booby traps (traps.hpp)")
 # TT bit 4 is the per-recipient "a trap you escaped" flag; terrain is 0-3.
@@ -2606,8 +2628,9 @@ for _name in (n for n in pmod.REGISTRY if n != "drunk"):
         _k.add(_act.kind)
         if _act.to_msg() is not None:
             json.dumps(_act.to_msg())
+    # noop: waiting for the roll it just sent (EncounterRun.awaiting).
     check(f"{_name} in a trap never walks off or aborts",
-          _k <= {"enc_choice", "enc_bank"})
+          _k <= {"enc_choice", "enc_bank", "noop"} and "enc_choice" in _k)
 
 from causes import DamageLedger as _DL
 _trows = [_ev(1.0, {"k": "enc_res", "pid": 1, "out": 0, "penLL": -2, "trap": 1}),
@@ -2636,5 +2659,220 @@ with tempfile.TemporaryDirectory() as _td_:
 check("metrics counts trap scenes, once each, not POIs", _tr.get("opened") == 2)
 check("metrics reads what the traps took",
       (_tr.get("sprung"), _tr.get("escaped"), _tr.get("ll_lost")) == (1, 1, 2))
+
+print("biker (the Motorbike build)")
+import re as _re
+from encounters import item_drop_terrains as _idt
+_BK = config.BIKE_RECIPE
+_brec = config.RECIPES.get(_BK) or {"cost": [0] * 5, "mats": []}
+check("the bike recipe is found by what it does",
+      _BK is not None and config.EQUIPMENT.get(config.BIKE_ITEM) == 4
+      and _brec.get("starter") and config.EQUIP_STATS[config.BIKE_ITEM]["gated"])
+check("the Backpack is found by what it does, not the saddlebags",
+      config.PACK_RECIPE is not None and config.EQUIPMENT[config.PACK_ITEM] == 1)
+from policy.biker import BUILD_RESERVE as _BR
+check("the build plus a dawn's food and water does not fit a bare pack -- the Backpack gate",
+      8 < sum(_brec["cost"]) + _BR <= 8 + config.EQUIP_STATS[config.PACK_ITEM]["slots"])
+check("the bike carries saddlebags", config.EQUIP_STATS[config.BIKE_ITEM]["slots"] == 2)
+_icfg = (Path(config.__file__).resolve().parent.parent / "data" / "items.cfg").read_text(encoding="utf-8")
+_bblk = next(b for b in _icfg.split("[item]")
+             if _re.search(rf"^id\s*=\s*{config.BIKE_ITEM}\b", b, _re.M))
+check("and it is off the spawn draw (trade = no)",
+      _re.search(r"^trade\s*=\s*no\b", _bblk, _re.M) is not None)
+_share = _idt(22)
+check("Sparky Bits come out of urban scenes and never the marsh",
+      _share.get(4, 0) > 0.5 and 3 not in _share)
+
+_kr = (1 << (config.PACK_RECIPE - 1)) | (1 << (_BK - 1))
+_bk = pmod.make("biker", random.Random(1)); _bk.set_pid(2)
+_o = canteen_obs(kr=_kr, scrap=0, water=2, food=6)
+check("a bare pack builds the Backpack first", _bk.phase(_o) == "pack")
+a = _bk.decide(_o)
+check("at a Settlement with the food, it crafts the Backpack",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_CRAFT
+      and a.to_msg()["r"] == config.PACK_RECIPE)
+_o.me.inv_type[0] = config.PACK_ITEM
+a = _bk.decide(_o)
+check("and wears it", a.kind == "equip_item" and a.slot == 0)
+check("and counts it", _bk.bike["backpacks"] == 1)
+_o = canteen_obs(kr=_kr)
+_o.me.inv_slots = 12
+check("a Mule's 12 slots skip the Backpack", _bk.phase(_o) == "parts")
+
+_bpw = [0, config.PACK_ITEM, 0, 0, 0]
+
+
+def _parts_obs(**kw):
+    o = canteen_obs(kr=_kr, equip=_bpw, **kw)
+    o.me.inv_slots = 12
+    o.me.inv[config.RES_FUEL] = 1
+    o.me.inv_type[0], o.me.inv_qty[0] = 22, 1
+    return o
+
+
+_bk2 = pmod.make("biker", random.Random(1)); _bk2.set_pid(2)
+_o = _parts_obs(scrap=8, water=2, food=1)
+check("Backpack on, it is gathering parts", _bk2.phase(_o) == "parts")
+a = _bk2.decide(_o)
+check("carrying the build at a Settlement, it crafts the Motorbike",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_CRAFT and a.to_msg()["r"] == _BK)
+_o.me.inv_type[0] = config.BIKE_ITEM         # the Sparky Bits' slot, freed
+_o.me.inv = [2, 1, 0, 0, 0]
+a = _bk2.decide(_o)
+check("puts the bike on", a.kind == "equip_item" and a.slot == 0)
+check("and counts it as built", _bk2.bike["bikes"] == 1 and _bk2.phase(_o) == "ride")
+_o = _parts_obs(scrap=8, water=2, food=1, terrain=0)
+_o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("away from one, it walks to the Settlement",
+      a.kind == "move" and "bike: to settlement (13,10)" in a.why)
+_o = _parts_obs(scrap=8, water=2, food=1, terrain=0)
+_o.me.inv_type[0], _o.me.inv_qty[0] = 0, 0
+_o.map.grid[10][12] = mk(4, poi=True)
+_bk3 = pmod.make("biker", random.Random(1)); _bk3.set_pid(2)
+a = _bk3.decide(_o)
+check("short of Sparky Bits, it heads for a scene that can pay them",
+      a.kind == "move" and "(12,10)" in a.why)
+_o = _parts_obs(scrap=8, water=2, food=1, terrain=0)
+_o.me.inv_type[0], _o.me.inv_qty[0] = 0, 0
+_o.ground_items = [{"g": 3, "q": 10, "r": 10, "id": 22, "n": 1, "d": 11}]
+a = _bk3.decide(_o)
+check("and picks them up off a grave underfoot", a.kind == "pickup_item" and a.gslot == 3)
+_o = _parts_obs(scrap=3, water=2, food=1, terrain=4)
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("short of scrap on salvage, it scavenges",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_SCAV)
+
+_o = _parts_obs(scrap=8, water=2, food=1, terrain=0)
+for _rr in range(config.MAP_ROWS):
+    for _qq in range(config.MAP_COLS):
+        if (_qq, _rr) != (10, 10):
+            _o.map.grid[_rr][_qq] = mk(8)          # Mountain, MC 4
+_o.map.grid[10][22] = mk(config.TERR_SETTLEMENT)   # 48 MP: past the craft reach
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("build carried, no Settlement in craft reach: it heads for a far one",
+      a.kind == "move" and "parts: -> (22,10)" in a.why)
+_o = _parts_obs(scrap=10, water=2, food=1, terrain=0)
+_o.me.mp = 1
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("scrap beyond the build goes on a roof for the night",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_SHELTER)
+_o.me.inv[config.RES_SCRAP] = _brec["cost"][config.RES_SCRAP]
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("but never the build's own", not (a.kind == "act" and a.a == config.ACT_SHELTER))
+
+_bk4 = pmod.make("biker", random.Random(1)); _bk4.set_pid(2)
+_o = canteen_obs(kr=_kr, equip=[0, config.PACK_ITEM, 0, 0, config.BIKE_ITEM],
+                 terrain=0, scrap=0, water=4, food=2)
+_o.me.inv_slots = 14
+_o.map.grid[10][13] = mk(resource=config.RES_FUEL + 1)
+_o.map.grid[9][10] = mk(resource=config.RES_SCRAP + 1)
+a = _bk4.decide(_o)
+check("riding, it goes for fuel over a nearer pile of anything else",
+      a.kind == "move" and "(13,10)" in a.why)
+check("and wants every slot the survival floor is not holding",
+      _bk4.plan(_o, "ride")[0] == {config.RES_FUEL: 8})
+_o.me.inv = [4, 2, 8, 0, 0]
+check("until the pack is full", _bk4.plan(_o, "ride")[0] == {})
+_o = canteen_obs(kr=_kr | (1 << 18), equip=_bpw, terrain=0, water=4, food=3)
+_o.me.inv_slots = 12
+_o.me.inv_type[3] = config.CANTEEN_ITEM
+check("a canteen never takes the Backpack's slot",
+      pmod.make("biker", random.Random(1)).decide(_o).kind != "equip_item")
+# Riding with scrap enough for shelters: a scrap pile on the direct line is
+# stepped round, not taken -- stepping on a pile takes it.
+_bk6 = pmod.make("biker", random.Random(1)); _bk6.set_pid(2)
+_o = canteen_obs(kr=_kr, equip=[0, config.PACK_ITEM, 0, 0, config.BIKE_ITEM],
+                 terrain=0, scrap=2, water=4, food=2)
+_o.me.inv_slots = 14
+_o.map.grid[10][11] = mk(resource=config.RES_SCRAP + 1)
+_o.map.grid[10][12] = mk(resource=config.RES_FUEL + 1)
+a = _bk6.decide(_o)
+check("riding, it steps round a scrap pile to reach the fuel",
+      a.kind == "move" and "(12,10)" in a.why and a.d != 0)
+# The haul is trimmed to what the plan can use.
+_bk7 = pmod.make("biker", random.Random(1)); _bk7.set_pid(2)
+_o = canteen_obs(kr=_kr, equip=[0, config.PACK_ITEM, 0, 0, config.BIKE_ITEM],
+                 scrap=2, water=4, food=2)
+_o.me.inv_slots = 14
+_o.me.inv[config.RES_MED] = 1
+_o.encounter = {"biome": "zz_none", "id": 1}          # no local copy: banks out
+a = _bk7.decide(_o)
+check("a haul banks all its fuel, water and food, and no scrap or medicine it cannot use",
+      a.kind == "enc_bank" and a.keep == [99, 99, 99, 0, 0])
+
+# Before the bike, fuel it cannot burn is junk: the mock Quartermaster sat on
+# 11 of it with no room for the scrap.
+_o = _parts_obs(scrap=3, water=2, food=1, terrain=0)
+_o.me.inv[config.RES_FUEL] = 8
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("short of room for the scrap, it puts down the fuel it cannot burn yet",
+      a.kind == "drop_res" and a.to_msg() == {"t": "drop_res", "res": config.RES_FUEL + 1, "qty": 6})
+_o.me.inv[config.RES_FUEL] = 2
+a = pmod.make("biker", random.Random(1)).decide(_o)
+check("but keeps the build's fuel and a spare", a.kind != "drop_res")
+try:
+    Action("drop_res", res=0).to_msg()
+    _dr_ok = False
+except ValueError:
+    _dr_ok = True
+check("drop_res refuses a resource that is not 1-5", _dr_ok)
+
+_bk5 = pmod.make("biker", random.Random(1)); _bk5.set_pid(2)
+_o = canteen_obs(kr=_kr, equip=[0, config.PACK_ITEM, 0, 0, config.BIKE_ITEM],
+                 water=4, food=2)
+_o.me.inv_slots, _o.me.ll, _o.me.ll_cap = 14, 4, 7
+_o.me.inv[config.RES_MED] = 2
+a = _bk5.decide(_o)
+check("hurt in a Settlement, it spends its medicine on the heal",
+      a.kind == "act" and a.to_msg()["a"] == config.ACT_TREAT)
+a = _bk5.decide(_o)
+check("and a TREAT that changed nothing is not re-sent every cycle",
+      not (a.kind == "act" and a.a == config.ACT_TREAT))
+_o.me.ll, _o.me.inv[config.RES_MED] = 5, 1
+a = _bk5.decide(_o)
+check("but one that landed is followed straight away",
+      a.kind == "act" and a.a == config.ACT_TREAT)
+
+print("encounter choices the board would refuse")
+from encounters import EncounterRun as _ER, can_pay as _can_pay
+from state import PlayerState as _PS
+_broke = _PS(inv=[3, 3, 0, 0, 0], ll=6)
+_flush = _PS(inv=[3, 3, 0, 0, 1], ll=6)
+_run = _ER(pmod.shared_library(), "settlement", 5)
+check("a choice's cost is checked the way handleEncChoice() does",
+      not _can_pay(_run.choices[0], _broke) and _can_pay(_run.choices[0], _flush))
+check("so a survivor with no scrap is not offered the 1-scrap loaf",
+      _run.first_open_choice(_broke) == 1 and _run.first_open_choice(_flush) == 0)
+_run.choose(0)
+_run.refuse()
+check("and a choice the board refused is never offered again at that node",
+      _run.first_open_choice(_flush) == 1)
+_sv = pmod.make("scoremax", random.Random(1)); _sv.run = _ER(pmod.shared_library(), "settlement", 5)
+_sv.run.choose(1)
+_sv.on_reply("enc_choice", False, "no_res")
+check("the policy strikes off a nacked choice itself", _sv.run.first_open_choice(_flush) == 0
+      and (_sv.run.node_key, 1) in _sv.run.refused)
+
+print("a scene whose enc_path was lost")
+import time as _time
+_ls = pmod.make("biker", random.Random(1)); _ls.set_pid(2)
+_o = canteen_obs(kr=_kr, terrain=0)
+_o.me.in_encounter = True                   # the board's enc flag, no enc_path
+a = _ls.decide(_o)
+check("it first waits a moment for a late enc_path", a.kind == "noop")
+_ls._lost_since = _time.monotonic() - 5
+a = _ls.decide(_o)
+check("then walks away from the scene it cannot see", a.kind == "enc_abort")
+check("and does not re-send the abort every cycle", _ls.decide(_o).kind == "noop")
+_o.me.in_encounter = False
+check("once the board says it is out, play resumes", _ls.decide(_o).kind != "noop")
+
+async def _in_enc_check():
+    bc, rec, pol, broker = _bot()
+    bc.obs.pid = 0                          # seated: before a pick me is a throwaway
+    await bc._on_message({"t": "nack", "rid": 7777, "cmd": "m", "why": "in_enc"})
+    return bc.obs.me.in_encounter
+check("an in_enc nack marks us in a scene", asyncio.run(_in_enc_check()))
 
 print(f"\n{ok} checks passed")

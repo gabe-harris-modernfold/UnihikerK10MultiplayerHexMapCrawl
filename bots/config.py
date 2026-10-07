@@ -306,6 +306,35 @@ def water_cap_recipe():
 
 CANTEEN_RECIPE, CANTEEN_ITEM = water_cap_recipe()
 
+
+def pack_recipe():
+    """(recipe id, item id) for the starter carry upgrade -- the Backpack: a
+    starter recipe whose output adds pack slots and is not a vehicle (the
+    Motorbike's saddlebags add slots too).  Found by what it does, like the
+    canteen."""
+    for rid, rec in sorted(RECIPES.items()):
+        out = rec["output"]
+        if (rec["starter"] and EQUIP_STATS.get(out, {}).get("slots", 0) > 0
+                and EQUIPMENT.get(out) != EQUIP_SLOT_BY_NAME["vehicle"]):
+            return rid, out
+    return None, None
+
+
+def bike_recipe():
+    """(recipe id, item id) for the craftable fuelled vehicle -- the Motorbike:
+    a vehicle-slot output whose MP is paid for in fuel at dawn."""
+    for rid, rec in sorted(RECIPES.items()):
+        out = rec["output"]
+        st = EQUIP_STATS.get(out, {})
+        if (EQUIPMENT.get(out) == EQUIP_SLOT_BY_NAME["vehicle"]
+                and st.get("mp", 0) > 0 and st.get("gated")):
+            return rid, out
+    return None, None
+
+
+PACK_RECIPE, PACK_ITEM = pack_recipe()
+BIKE_RECIPE, BIKE_ITEM = bike_recipe()
+
 # NAR_* params worth weighting (items.cfg "narrative").
 NAR_FIRE_STARTER, NAR_COLD_IMMUNE = 20, 21
 NAR_SCAV_DOUBLE, NAR_RIVER_FORAGE, NAR_LAND_FORAGE = 30, 31, 32

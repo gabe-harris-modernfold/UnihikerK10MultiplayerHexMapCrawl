@@ -88,6 +88,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `coward` | Refuses all risk, keeps supplies deep, avoids fire/doom/craters. |
 | `rival` | Races for contested POIs to deny them; grabs ground items; makes lopsided trade offers. |
 | `gearmax` | Hunts encounter loot for equipment and wears everything it finds, good or bad. Feeds `gearcheck.py`. |
+| `biker` | **Wants a Motorbike and nothing else.** Crafts a Backpack, gathers the build (7 scrap, 1 fuel, 1 Sparky Bits), crafts the bike at a Settlement, then rides it collecting all the fuel it can carry. See "The Biker" below. |
 | `subterranean` | **Subterranean Explorer.** Lives in the bunker tunnels: maps the corridors, works them for water and scrap, sleeps below, surfaces only for food. |
 | `tunnelrunner` | **Subterranean Explorer.** Uses the tunnels as transport: dives, walks to the shaft that surfaces furthest away, climbs out and works the fresh ground. |
 | `sentinel` | The soak bot. **Makes camp** (water, forage, an existing shelter or a Settlement; never radioactive or a hatch), **builds a shelter** there (improved when it has 2 scrap, upgrades later, rebuilds after a quake), harvests in place, and stays awake until 90% of each day has passed, **then rests in the shelter** — so days run ~4.5 of 5 minutes and it heals every night. Realtime only — arena refuses it in sprint mode. |
@@ -480,6 +481,121 @@ still down there at dawn.
 
 ---
 
+## The Biker (the Motorbike build)
+
+The Motorbike is a `starter` recipe (`recipes.cfg` id 20): **7 scrap + 1 fuel
++ 1 Sparky Bits**, crafted at a Settlement. It was 8 scrap until 2026-09-29;
+the hardware runs below were at 8. There is no "must be wearing a Backpack"
+check anywhere. The gate is the pack: tokens count one per slot
+(`tokenLoad()` against `effectiveInvSlots()`), and the build's 8 tokens fill a
+bare 8-slot pack with no room for food or water. So in practice the order is:
+- a Backpack (5 food), a Hoarder's Rig, or a Mule's 12 slots;
+- then the parts;
+- then the bike.
+
+The bike adds `slots = +2` of its own (saddlebags, fuelled or not). It is
+`trade = no`, so it is out of the spawn draw. Jack's Chopper (scrub 19 → 20)
+still gives one away.
+
+```bash
+python arena.py --host "$HOST" --bots 3 --policies biker,biker,biker --target 0 --max-minutes 15
+```
+
+`policy/biker.py` re-reads its phase off the observation every cycle, so a
+death or a free bike just moves it to the right phase:
+
+| Phase | When | What it does |
+|---|---|---|
+| `pack` | the pack cannot hold the build plus a dawn's food and water (< 12 slots) | gathers 5 food, crafts the Backpack, wears it |
+| `parts` | the pack is big enough | the Sparky Bits first, from POIs ranked by how much of each terrain's pool can pay them (`encounters.item_drop_terrains()`); then the scrap from piles and salvage; then one fuel. With it all carried, walks to a Settlement (looking up to 120 MP out) and crafts it |
+| `ride` | the bike is owned | fills every slot the survival floor does not need with fuel: fuel piles first, fresh ground second |
+
+Things it had to learn on the mock, each of which applies to hardware:
+- **The part before the scrap.** Carrying the scrap while hunting a POI leaves
+  room for one dawn of water.
+- **Floors sized to the room left.** The survival floors shrink to a lean
+  2 water + 1 food only while the pack cannot hold the defaults.
+- **Junk is shed.** Past `KEEP_*`, tokens are junk: before the bike, fuel past
+  the build's one plus a spare, and scrap past the build; always, medicine
+  past one. Junk is trimmed at the bank (`enc_bank` `keep[]`), costs a route
+  `JUNK_PILE_COST` extra MP to step on (stepping on a pile takes it), and is
+  put down with `drop_res` when the pack needs the room. Before this, a
+  Quartermaster sat on 11 fuel it could not burn, with no room for the scrap.
+- **Medicine goes on a Settlement heal** (TREAT), and spare scrap on a roof
+  on the day's last MP.
+- **Nothing it sends is re-sent every cycle when it changes nothing:**
+  TREAT, `drop_res` and (in `SurvivorPolicy`, for everyone) SHELTER once per
+  hex per day.
+
+`arena.py` prints a `bike:` line per Biker: `phase`, `backpacks` built,
+`built` / `found` bikes, the day it first owned one, `fuel` / `peak` /
+`gained`, and `ride_moves`.
+
+**On the K10 (2026-09-29).** Four 3-Biker realtime runs of 15 minutes each:
+
+```bash
+python arena.py --host "$HOST" --bots 3 --policies biker,biker,biker \
+    --target 0 --max-minutes 15 --mode realtime --join-stagger 2
+```
+
+- **Two finished and two were stopped.** Each stopped run froze on a harness
+  bug that is fixed now (see "Scene bookkeeping" under "Deadlocks to
+  avoid"). A bot stuck in a scene never rests, so it held every game-day
+  open at 5 real minutes.
+- **Run 2 (seed 32, 178 game-days).** The Guide built its Backpack on day 4
+  and its bike on day 123, the first Motorbike built on hardware. It then
+  made 483 riding moves and collected 51 fuel, until a 1-scrap choice it
+  could not afford cost it the last 3 minutes. The Quartermaster and Medic
+  built Backpacks on days 57 and 68 and never finished the parts.
+- **Run 4 (seed 52, 282 game-days).** No bikes. The Quartermaster and Medic
+  built Backpacks on days 143 and 145 and died 6 and 4 times. The Guide never
+  got one. The only Settlement near it was about 8 MP from water, and the
+  lean floors made every dawn a water emergency.
+
+- **Run 5, at 7 scrap (seed 62, 233 game-days).** Clean: no stuck loops,
+  and one lost scene recovered by `lost_scene_action()`. The Quartermaster
+  built its Backpack on day 142 and its bike on day 155, then made 526
+  riding moves and collected 92 fuel (peak 9, 7 in the tank at the end). The
+  Guide built a Backpack on day 33, died twice and lost it to a grave. The
+  Medic's Backpack came on day 154. Neither built a bike.
+- **Run 6, first with the kick-start (2026-09-30, seed 72, 213 game-days).**
+  This was firmware f10f5854: a stalled bike starts on the first fuel found
+  (`ev refuel`, the `kickstarts=` count on the `bike:` line). No stuck
+  loops.
+  - The Quartermaster spawned wearing a Hoarder's Rig (12 slots), so it
+    skipped the Backpack. It found Sparky Bits on day 3 and built the bike
+    on day 15. It then made 1148 riding moves and collected 125 fuel.
+  - Its bike stalled at dawn 15 times, and each time started later that day
+    for +5 MP.
+  - An encounter hazard killed the Quartermaster on day ~205, and the bike
+    went to its grave. The other two were heading there when the run ended.
+  - The Guide and Medic had Backpacks by days 6 and 1, then carried 7 scrap
+    and 2 fuel for about 200 days. Neither ever found Sparky Bits.
+
+So on hardware the bike is genuinely hard: 1 of 6 finished Bikers built one
+at 8 scrap, and 2 of 6 at 7. Too few runs to say the easing moved the rate.
+In run 6 the bottleneck was Sparky Bits. Before that, it was surviving while
+carrying the build (water, above all). About a third of every Biker's
+decisions were emergency water walks. The lean 2-water floor is what makes it possible and what kills
+them. The recipe cost is the user's call; if it proves too hard, that floor
+is the harness knob to look at.
+
+**On the mock (same day).** Three Bikers (Guide, Quartermaster, Mule), 8 real
+minutes, 100 game-days:
+- all three built one, the two 8-slot survivors after a day-1 Backpack;
+- bikes on days 14-16, then 450-535 riding moves and 43-45 fuel collected
+  each.
+
+The mock is still not the economy: FORAGE/SCAV are a flat +1, SHELTER builds
+nothing, there are no terrain costs. Take the build rate and fuel figures
+from hardware. Three mock bugs the bike exposed are fixed in
+`mock-server/server.js`:
+- `terrainAt()` returned the wire TT byte, tyre-track bit included, so a
+  Settlement a bike had crossed refused CRAFT and TREAT;
+- pile pickups were capped at a fixed test value of 6, so no Backpack could
+  raise the cap and the build was impossible;
+- COLLECT WATER gave +1 whatever MP it cost, half of `doWater()`'s rate.
+
 ## Auditing the equipment
 
 `gearmax` + `gearcheck.py` exist to answer a question the other policies
@@ -593,6 +709,26 @@ at day 16 this way. Retry on a ~4 s cooldown instead.
 still shows the bit set (`err "Already looted"`, and a `no_poi` nack on
 protocol 2). Cap attempts per hex and fall through to movement.
 
+**Scene bookkeeping on a busy board.** On 2026-09-29 the K10 dropped replies
+and unicast messages. `broadcastPartial` reached the thousands with only
+three bots, and sockets closed with `1002 expected a continuation frame`;
+that last one appears in earlier runs too. Four loops came out of it, all
+fixed in `SurvivorPolicy` / `EncounterRun` / `BotClient`:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `enc_bank` nacked `no_enc` forever | the scene ended but its `enc_bank`/`enc_end` never arrived | a `no_enc` nack clears `obs.encounter` and the policy's run |
+| every `m`/`act` nacked `in_enc` | `enc_path` (a bare `client->text()`) was dropped, so the bot never knew it was in a scene | `lost_scene_action()`: after `LOST_SCENE_GRACE_S`, `enc_abort` on a cooldown |
+| `enc_choice` nacked `no_res` forever | the first "open" choice cost more than the bot carried | `encounters.can_pay()` mirrors `canAfford`, and a nacked choice is struck off at that node (`EncounterRun.refused`) |
+| a trap choice re-sent every cycle, then `no_choice` | the next pick went out before the last roll's `enc_res` came back | one choice in flight (`EncounterRun.awaiting`, up to `CHOICE_WAIT_S`) |
+
+**Still open: moves overshoot on a slow board.** Policies send a move every
+decide cycle, whether or not the last one's `mv` has come back. Most extras
+are refused `cooldown` (about 300 a bot per run), but sometimes both land. A
+Biker one hex from a Settlement stepped onto it and then off it again, and
+its CRAFT was refused on the wrong hex. That predates the Biker and affects
+every policy. The fix is one move in flight, like the choices.
+
 ---
 
 ## Timing: how long is a day?
@@ -671,6 +807,7 @@ already play differently.
 | contentmax | vision, +MP, −threat | POIs must be seen to be opened, and the Threat Clock is what makes them lethal |
 | rival | +MP, vision | denial is a race |
 | subterranean | vision, +MP | tunnel sight is 1 hex, and a corridor step costs 2 MP |
+| biker | +slots, then +MP | the Backpack is the bike's gate, and carry room is fuel room; it skips the canteen so the Backpack keeps the body slot |
 
 Two properties are asserted in `smoke.py` because breaking either is silent:
 the five policies must want **different** loadouts (otherwise the weights are

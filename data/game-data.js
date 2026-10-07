@@ -364,6 +364,9 @@ const RECIPES = [
     matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 5, 0, 0, 0], starter: true },
   { id: 19, name: 'Canteen', outputItem: 65, outputQty: 1,
     matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 0, 0, 0, 3], starter: true },
+  // 8 tokens: all a bare 8-slot pack holds, with no room for food or water.
+  { id: 20, name: 'Motorbike', outputItem: 26, outputQty: 1,
+    matItem: [22, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 1, 0, 7], starter: true },
 ];
 function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
 function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
@@ -824,7 +827,8 @@ function getItemIconFallback(id) {
 // Used by the character sheet to display equipped-item bonuses to the player.
 // NOTE: Display only — actual stat calculations are authoritative on the server.
 //   mp/ll/slots/vision/rad : passive modifier while equipped
-//   fuelCost/waterCost/etc : tokens consumed at dawn while equipped
+//   fuelCost/waterCost/etc : tokens paid per day while equipped -- at dawn, or
+//                            the moment the pack can if it was short then
 //   note                   : qualitative effect (terrain unlock, special)
 const ITEM_MODS = {
   11: { ll: +2 },                                                  // Dent Absorber
@@ -837,7 +841,7 @@ const ITEM_MODS = {
   18: { note: 'Cross River Channel (MC 2)' },                      // Floaty Disaster
   19: { note: 'Climbing gear: Mountain costs MC 2' },              // Vertical Regret
   20: { vision: +1 },                                              // Doom Clicker
-  26: { mp: +5, fuelCost: 1 },                                     // Motorbike
+  26: { mp: +5, slots: +2, fuelCost: 1 },                          // Motorbike
   27: { note: 'Doubles scrap from SCAVENGE' },                     // Portable Forge
   28: { note: 'Cross River Channel; doubles river forage' },       // Fishing Pole
   29: { note: 'Doubles land food forage yield' },                  // Compound Bow

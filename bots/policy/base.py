@@ -17,7 +17,7 @@ class Action:
     kind: str                       # move|act|enc_start|enc_choice|enc_bank|
                                     # enc_abort|use_item|equip_item|
                                     # unequip_item|pickup_item|loot|
-                                    # trade_offer|noop
+                                    # drop_res|trade_offer|noop
     d: int = 0                      # move: direction 0-5
     a: int = 0                      # act: ACT_* id
     mp: int = 1                     # act: MP to spend (ACT_WATER reads this)
@@ -30,6 +30,8 @@ class Action:
     eslot: int = 0                  # unequip_item: equipment slot 0-4
     gslot: int = 0                  # pickup_item: ground-pile slot
     res: int = 0                    # loot: 1-5 for one resource, 0 = all that fits
+                                    # drop_res: 1-5, the resource to put down
+    qty: int = 1                    # drop_res: how many
     to: int = 0                     # trade_offer: target pid
     give: list = field(default_factory=list)
     want: list = field(default_factory=list)
@@ -72,6 +74,12 @@ class Action:
                 raise ValueError("loot res must be 0-5")
             return {"t": "loot", "res": self.res} if self.res else {"t": "loot"}
         if k == "unequip_item": return {"t": "unequip_item", "eslot": self.eslot}
+        if k == "drop_res":
+            # Tokens out of the pack onto our own hex (handleMsg_drop_res) --
+            # the character sheet's inventory boxes. res is 1-based like loot.
+            if not 1 <= self.res <= 5 or self.qty < 1:
+                raise ValueError("drop_res needs res 1-5 and qty >= 1")
+            return {"t": "drop_res", "res": self.res, "qty": self.qty}
         if k == "trade_offer":
             return {"t": "trade_offer", "to": self.to,
                     "give": self.give, "want": self.want}
