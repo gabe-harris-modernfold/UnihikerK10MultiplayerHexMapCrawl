@@ -7,12 +7,19 @@ const bikeDust = (typeof BikeDust === 'undefined')
   ? null : new BikeDust();
 const quakeField = (typeof QuakeField === 'undefined')
   ? null : new QuakeField();
+// Space debris coming down (debris-field.js), fed by the 'debris' event.
+const debrisField = (typeof DebrisField === 'undefined')
+  ? null : new DebrisField();
 const fireField = (typeof FireField === 'undefined')
   ? null : new FireField();
 // The Understory (eco-field.js, docs/ecology-spec.md): veins, fruiting
 // bodies, daisies and scars, fed by the `eco` message in network.js.
 const ecoField = (typeof EcoField === 'undefined')
   ? null : new EcoField();
+// Footprints and tire tracks (trail-field.js): the server's per-hex bits, plus
+// the direction of travel network.js records from every move it hears.
+const trailField = (typeof TrailField === 'undefined')
+  ? null : new TrailField();
 
 // Storm hexes ({x, y, spread, intensity} in screen space) collected during
 // this frame's terrain pass — consumed by renderWeatherOverlay() afterward
@@ -78,7 +85,7 @@ const nameWidthCache = new Array(MAX_PLAYERS).fill(null);
 // Rendered at reduced opacity as scouted-but-not-directly-visible.
 // Cleared whenever the local player moves.
 const surveyedCells = new Set(); // 'q_r' keys — populated from network.js (cross-file; ignore S4158)
-/* global displayMP, nightFade, fireHexPhase */
+/* global displayAP, nightFade, fireHexPhase */
 
 // Stable 1..N permutation keyed by (q,r) — non-positional reference number.
 const hexLabel = (() => {
@@ -293,7 +300,7 @@ const BIKE_ART   = { left: 3, top: 33, right: 268, bottom: 239, rearX: 42, rearY
 const MOTORBIKE_ITEM = 26;
 
 // A Motorbike that has run dry: today's fuel is not paid for, so it gives no
-// MP. It stays equipped -- the saddlebags still count -- but it fades off the
+// AP. It stays equipped -- the saddlebags still count -- but it fades off the
 // map until the first fuel that turns up starts it again (kickStartItems(),
 // inventory_items.hpp). The tick's "uf" says so for every seat. A board
 // older than the kick-start sends no "uf": there, it is dawn's "unf" plus an
@@ -472,10 +479,10 @@ const TIME_PHASES = [
   { name:'DUST HOUR',   icon:'🌆', r:210, g: 90, b: 20, a:0.14 },
   { name:'DARK WATCH',  icon:'🌑', r: 15, g:  8, b: 40, a:0.72 },
 ];
-function getTimePhase(mpVal) {
-  const _mp = mpVal === undefined ? uiMP.val : mpVal;
-  if (myId >= 0 && maxMP > 0) {
-    const f      = Math.max(0, Math.min(1, 1 - _mp / maxMP));
+function getTimePhase(apVal) {
+  const _ap = apVal === undefined ? uiAP.val : apVal;
+  if (myId >= 0 && maxAP > 0) {
+    const f      = Math.max(0, Math.min(1, 1 - _ap / maxAP));
     const scaled = f * (TIME_PHASES.length - 1);
     const i      = Math.floor(scaled);
     const t      = scaled - i;
@@ -556,10 +563,12 @@ function buildCamera() {
   // Whole-view quake shake — applied to the shared camera offset so every
   // layer (terrain, grid, characters, ...) trembles together, not just the
   // fault-line hexes themselves.
+  // Debris adds its own: the breakup's boom on every screen, a landing's
+  // jolt near it. Not depth-gated either -- you feel it in the tunnels.
   const shake = quakeField ? quakeField.peakEnvelope() : 0;
-  const shakeMag = shake * 7;
-  const shakeX = shake > 0 ? (Math.random() - 0.5) * shakeMag : 0;
-  const shakeY = shake > 0 ? (Math.random() - 0.5) * shakeMag : 0;
+  const shakeMag = Math.max(shake * 7, debrisField ? debrisField.peakShake(weatherNow, meRp) : 0);
+  const shakeX = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag : 0;
+  const shakeY = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag : 0;
   return {
     meRp,
     meAct,
@@ -588,33 +597,10 @@ function drawRiverRipples(cx, cy) {
   ctx.restore();
 }
 
-function drawFootprints(cx, cy, cell) {
-  if (cell.footprints <= 0) return;
-  const footprintSize  = Math.max(6, Math.round(HEX_SZ * 0.22));
-  let footprintCount   = 0;
-  for (let i = 0; i < 6; i++) if (cell.footprints & (1 << i)) footprintCount++;
-  let footprintIdx = 0;
-  for (let fpid = 0; fpid < 6; fpid++) {
-    if ((cell.footprints & (1 << fpid)) === 0) continue;
-    const angle  = (footprintIdx * Math.PI * 2) / Math.max(1, footprintCount);
-    const radius = HEX_SZ * FOOTPRINT_RING_RADIUS;
-    const fx = cx + Math.cos(angle) * radius;
-    const fy = cy + Math.sin(angle) * radius;
-    // Worn-in tracks: black boot sole
-    drawGlyph(ctx, GLYPH.FOOTPRINT, fx - footprintSize / 2, fy - footprintSize / 2,
-              footprintSize, '#000000', 0.75);
-    footprintIdx++;
-  }
-}
-
-function drawTireTracks(cx, cy, cell) {
-  if (!cell.tireTrack) return;
-  // Worn-in tracks: same idiom as drawFootprints (dark, semi-transparent),
-  // but a single centered mark — the caravan or a ridden vehicle (e.g. the
-  // Motorbike) leaves it with no per-source attribution, so no ring layout
-  // is needed — sized up slightly to read as a heavier vehicle.
-  const sz = Math.max(8, Math.round(HEX_SZ * 0.32));
-  drawGlyph(ctx, GLYPH.TIRE_TRACK, cx - sz / 2, cy - sz / 2, sz, '#000000', 0.75);
+// Footprints and tire tracks: trails of small prints and ruts across the hex,
+// pointing the way their maker went, one sole per seat (trail-field.js).
+function drawTrails(cx, cy, cell, mapQ, mapR) {
+  if (trailField && (cell.footprints || cell.tireTrack)) trailField.drawHex(ctx, cx, cy, cell, mapQ, mapR, HEX_SZ);
 }
 
 // A booby trap you got back out of (traps.hpp) -- the server only ever sets
@@ -846,8 +832,7 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
     if (cell.terrain === 11) drawRiverRipples(cx, cy);
   }
   ctx.globalAlpha = 1;
-  drawFootprints(cx, cy, cell);
-  drawTireTracks(cx, cy, cell);
+  drawTrails(cx, cy, cell, mapQ, mapR);
   drawCellOverlays(cx, cy, cell, mapQ, mapR);
 }
 
@@ -1362,7 +1347,7 @@ function renderTunnelTremor() {
 // ── Underground tint ──────────────────────────────────────────────
 // A cold, heavy vignette so the bunker tunnels never read as "the surface map
 // at night". Drawn over the board but under the time-of-day tint, because the
-// day/night cycle still runs while you are down there -- your MP budget does
+// day/night cycle still runs while you are down there -- your AP budget does
 // not stop just because you cannot see the sky.
 function renderUnderground() {
   if (!myDepth) return;
@@ -1385,14 +1370,14 @@ function renderUnderground() {
 
 // ── Time-of-day tint overlay ──────────────────────────────────────
 function renderTimeOfDay() {
-  // Lerp displayMP: fast toward uiMP.val normally; slow drift to 0 while resting.
+  // Lerp displayAP: fast toward uiAP.val normally; slow drift to 0 while resting.
   // Exception: if nightFade > 0 a dawn event just fired — don't lerp toward 0 (BUG-13).
-  // nightFade > 0 means dawn already happened; trust displayMP (snapped at dawn) not resting flag.
+  // nightFade > 0 means dawn already happened; trust displayAP (snapped at dawn) not resting flag.
   const stillResting = uiResting.val && nightFade <= 0;
-  const mpTarget = stillResting ? 0 : uiMP.val;
+  const apTarget = stillResting ? 0 : uiAP.val;
   const lerpRate = stillResting ? RESTING_LERP_RATE : MOVING_LERP_RATE;
-  displayMP += (mpTarget - displayMP) * lerpRate;
-  const phase = getTimePhase(displayMP);
+  displayAP += (apTarget - displayAP) * lerpRate;
+  const phase = getTimePhase(displayAP);
   ctx.save();
   ctx.globalAlpha = phase.a;
   ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
@@ -1423,6 +1408,9 @@ const LAYERS = [
   // Surface coordinates, like the piles they mark -- a fall below lands on
   // the hatch above, so underground there is nothing of theirs on this board.
   { name: 'remains',      draw: (cam) => { if (!myDepth) renderRemains(cam); } },
+  // Debris landings on the ground -- scorch, the shockwave's dust ring --
+  // under the pawns. The rest of the fall draws in debris_air/debris_light.
+  { name: 'debris_ground', draw: (cam) => { if (debrisField && !myDepth) debrisField.drawGround(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
   // The world system and the weather live on the surface map. Underground
   // their coordinates would land on the wrong board entirely, so skip them
   // rather than drawing a caravan in a bunker corridor. The quake is the one
@@ -1450,9 +1438,15 @@ const LAYERS = [
   // them by the fire rather than leaving them flatly lit inside it.
   { name: 'weather_particles', draw: (_) => { if (weatherParticles) { weatherParticles.renderFireGlow(ctx, fireHexesThisFrame); weatherParticles.emitFire(fireHexesThisFrame); weatherParticles.update(); weatherParticles.render(ctx); } } },
   { name: 'ash',          draw: (cam) => { if (ashParticles && !myDepth) { ashParticles.update(gameMap, HEX_SZ); ashParticles.render(ctx, cam.ox, cam.oy, HEX_SZ); } } },
+  // Debris smoke trails and plumes: high over everything, but still under the
+  // time-of-day tint -- smoke is not a light source and goes dark at night.
+  { name: 'debris_air',   draw: (cam) => { if (debrisField && !myDepth) debrisField.drawAir(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
   { name: 'underground',  draw: (_)   => renderUnderground() },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },
+  // The fireballs, sparks, flashes and glowing craters go OVER the tint: they
+  // are light, and a fireball at night should be the brightest thing there.
+  { name: 'debris_light', draw: (cam) => { if (debrisField && !myDepth) debrisField.drawLight(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
 ];
 
 // ── Render ──────────────────────────────────────────────────────
@@ -1468,6 +1462,7 @@ function render() {
   tunnelTremorPixelsThisFrame = [];
   fireHexesThisFrame = [];
   if (quakeField) quakeField.update(weatherNow);
+  if (debrisField) debrisField.update(weatherNow);
 
   lerpPlayerPositions();
   const cam = buildCamera();

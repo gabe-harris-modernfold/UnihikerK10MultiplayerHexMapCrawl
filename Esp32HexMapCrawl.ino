@@ -173,7 +173,7 @@ static constexpr int      TUN_COLS       = 16;
 static constexpr int      TUN_ROWS       = 10;
 static constexpr uint8_t  MAX_HATCHES    = 8;
 static constexpr uint8_t  TUNNEL_MC      = 2;   // MC of Tunnel Floor (14); mirrors TERRAIN_MC
-static constexpr uint8_t  VENT_ASCEND_MP = 2;   // climbing out of a Vent Shaft (13) costs double
+static constexpr uint8_t  VENT_ASCEND_AP = 2;   // climbing out of a Vent Shaft (13) costs double
 // Underground sight. Base is your own hex plus one ring -- no terrain, weather
 // or smoke modifiers apply down there. A carried Bile Flare adds 1; a Scout
 // adds TUNNEL_VIS_SCOUT on top (less than their +2 on the surface, so the
@@ -241,14 +241,14 @@ static constexpr int SK_ENDURE   = 4;
 // ── Wound system ────────────────────────────────────────────────
 // Player.wounds[] is indexed by these; each tier caps at WOUND_MAX_EACH.
 // Minor wounds penalise Endure checks only; major wounds penalise every
-// skill check and also cost 1 MP each per day (see effectiveMP).
+// skill check and also cost 1 AP each per day (see effectiveAP).
 static constexpr int     WOUND_MINOR    = 0;
 static constexpr int     WOUND_MAJOR    = 1;
 static constexpr int     NUM_WOUND_TIER = 2;
 static constexpr uint8_t WOUND_MAX_EACH = 3;
 // Medic treats a major wound in the field at this DN; anyone may treat while
-// standing in a Settlement.  Costs 2 MP + 1 Medicine.  With no major wound,
-// TREAT in a Settlement instead spends 1 Medicine + 1 MP for +1 Life Level,
+// standing in a Settlement.  Costs 2 AP + 1 Medicine.  With no major wound,
+// TREAT in a Settlement instead spends 1 Medicine + 1 AP for +1 Life Level,
 // no roll (doTreat).
 static constexpr uint8_t TREAT_DN       = 9;
 
@@ -264,8 +264,8 @@ static constexpr uint8_t ACT_REST    = 7;
 
 static constexpr uint8_t AO_BLOCKED = 0;
 // Why an action came back AO_BLOCKED.  AO_BLOCKED on its own says "refused,
-// no MP spent", which was fine while every reason was something the player
-// could already see on their own screen (wrong terrain, no MP).  "Your pack
+// no AP spent", which was fine while every reason was something the player
+// could already see on their own screen (wrong terrain, no AP).  "Your pack
 // is full of scrap" is not one of those, and a silent refusal there reads
 // exactly like a dead button -- it livelocked the bot harness for a whole run.
 //
@@ -275,7 +275,7 @@ static constexpr uint8_t AO_BLOCKED = 0;
 static constexpr uint8_t ABW_NONE       = 0;
 static constexpr uint8_t ABW_PACK_FULL  = 1;  // no token capacity left
 static constexpr uint8_t ABW_TERRAIN    = 2;  // this action cannot be done on this hex
-static constexpr uint8_t ABW_NO_MP      = 3;
+static constexpr uint8_t ABW_NO_AP      = 3;
 static constexpr uint8_t ABW_NO_RES     = 4;  // missing the resource it consumes (scrap, medicine)
 static constexpr uint8_t ABW_NOT_NEEDED = 5;  // nothing to do: no wound to treat, shelter already improved
 static constexpr uint8_t ABW_RESTING    = 6;  // already resting
@@ -287,7 +287,7 @@ static const char* abwName(uint8_t w) {
   switch (w) {
     case ABW_PACK_FULL:  return "pack_full";
     case ABW_TERRAIN:    return "terrain";
-    case ABW_NO_MP:      return "no_mp";
+    case ABW_NO_AP:      return "no_ap";
     case ABW_NO_RES:     return "no_res";
     case ABW_NOT_NEEDED: return "not_needed";
     case ABW_RESTING:    return "resting";
@@ -325,8 +325,8 @@ static constexpr uint8_t  WEATHER_CLEAR = 0, WEATHER_RAIN = 1, WEATHER_STORM = 2
 // kept distinct from FOG/"Strangle Fog" so the two are never confused in code).
 // Strangle Fog is primarily a sight hazard (vis penalty close to chem's) with
 // only a light per-hex move penalty (near rain's) — but see the per-tick
-// MP/LL hazard below (search WEATHER_FOG in actions_game_loop.hpp) for the
-// "strangle" part: it bleeds MP steadily and, more rarely, LL too. Mist is
+// AP/LL hazard below (search WEATHER_FOG in actions_game_loop.hpp) for the
+// "strangle" part: it bleeds AP steadily and, more rarely, LL too. Mist is
 // purely cosmetic — a plain, opaque whiteout with a mild vis penalty and no
 // per-tick hazard at all, the "everyday" fog as opposed to Strangle Fog's
 // dangerous variant.
@@ -349,7 +349,7 @@ static const uint16_t WEATHER_DUR_MAX[6]     = { 5, 3, 2, 1, 5, 3 };
 // Fog ("Strangle Fog") is worst in dense/wet terrain that tangles and
 // disorients you (Rust Forest, Marsh, Flooded Ruins) and weakest on high dry
 // ground where it thins out (Rolling Hills, Mountain) — drives its own
-// per-tick MP/LL hazard below, same shape as chem's row but a different feel.
+// per-tick AP/LL hazard below, same shape as chem's row but a different feel.
 // Mist's row is all-zero: purely cosmetic, no per-tick hazard.
 // Columns 12-15 (bunker hatches + tunnel interior) are all-zero: weather does
 // not reach underground, and the per-tick hazard loops skip depth>0 players
@@ -409,7 +409,7 @@ enum StatIdx : uint8_t {
   STAT_FOOD    = 1,
   STAT_WATER   = 2,
   STAT_RAD     = 3,
-  STAT_MP      = 4,
+  STAT_AP      = 4,
   STAT_SLOTS   = 5,
   STAT_WATER_CAP = 6,   // water tokens carried outside the pack cap (Canteen)
   STAT_COUNT   = 7
@@ -489,7 +489,7 @@ struct Remains {
 // is basic wasteland know-how everybody walks in with, so its bit is set at
 // spawn (resetSurvivor) and OR'd into every loaded save (tryLoadSave), which
 // is what lets a starter recipe be added later without a save migration.
-// Crafting itself is an MP-costing, Settlement-only action (see ACT_CRAFT).
+// Crafting itself is an AP-costing, Settlement-only action (see ACT_CRAFT).
 static constexpr uint8_t MAX_RECIPES     = 32;
 static constexpr uint8_t RECIPE_MAX_MATS = 3;
 static constexpr uint8_t TERRAIN_SETTLEMENT = 9;
@@ -611,7 +611,7 @@ struct Player {
 
   uint8_t  fThreshBelow;
   uint8_t  wThreshBelow;
-  int8_t   movesLeft;
+  int8_t   apLeft;
 
   uint8_t  wounds[NUM_WOUND_TIER];  // [0]=minor, [1]=major
 
@@ -693,8 +693,8 @@ enum EvtType : uint8_t {
   // are broadcast so anyone who knew about the trap stops drawing it.
   EVT_TRAP          = 32,
   // A daily-cost item that stalled at dawn found its fuel and started
-  // (kickStartItems, inventory_items.hpp): pid, res = item id, amt = MP it
-  // brought, moveMP = movesLeft now, dawnUnfuelled = slots still dormant.
+  // (kickStartItems, inventory_items.hpp): pid, res = item id, amt = AP it
+  // brought, moveAP = apLeft now, dawnUnfuelled = slots still dormant.
   EVT_REFUEL        = 33
 };
 static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
@@ -729,7 +729,12 @@ static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] :
 //      per-recipient "a trap you escaped" flag; ev "trap"; enc_path,
 //      enc_start and enc_res carry "trap"; enc_end reason "escaped"; an
 //      enc_abort refused at a trap's start nacks "trap".
-static constexpr int PROTO_VERSION = 5;
+//   6: trail sides (trails.hpp): vis, surv and sync carry "trl", ev mv
+//      carries "d" (the side stepped through).
+//   7: Action Points: every "mp" key is now "ap" (sync, tick "s", /state,
+//      ev mv/tun_in/tun_out/dawn/act/refuel, the act request), refuel's
+//      "mpd" is "apd", the move nack "no_mp" is "no_ap", items.cfg "ap =".
+static constexpr int PROTO_VERSION = 7;
 
 // ── The Understory (ecology.hpp) ──────────────────────────────────────────
 // Hooks the earlier includes call into. ecology.hpp itself comes after
@@ -755,22 +760,22 @@ struct GameEvent {
   int16_t  q, r;
   uint8_t  res, amt;
   uint8_t  dawnF, dawnW, dawnLL;
-  int8_t   dawnMP, dawnLLDelta;
+  int8_t   dawnAP, dawnLLDelta;
   uint16_t dawnDay;
   uint8_t  dawnFth, dawnWth;
   int8_t   dawnExpD;
   int8_t   dawnAirD;    // bad air: -1 when a rest underground rolled the LL hit
   uint8_t  dawnWndMin, dawnWndMaj;
   // Bitmask of equipment slots whose daily *_cost could not be paid this dawn
-  // (bit 0 = head .. bit 4 = vehicle). Their STAT_MP is dormant for the day.
-  // Without this the Motorbike's "+5 MP" simply failed to appear and nothing
+  // (bit 0 = head .. bit 4 = vehicle). Their STAT_AP is dormant for the day.
+  // Without this the Motorbike's "+5 AP" simply failed to appear and nothing
   // -- no event, no log, no UI state -- said the fuel had run out.
   uint8_t  dawnUnfuelled;
   uint8_t  actWhy;        // ABW_* — why an AO_BLOCKED action was refused
   uint8_t  actType;
   uint8_t  actOut;
   uint8_t  actNewLL;
-  int8_t   actNewMP;
+  int8_t   actNewAP;
   int8_t   actFoodD;
   int8_t   actWatD;
   int8_t   actLLD;
@@ -786,7 +791,7 @@ struct GameEvent {
   int8_t   radD;
   uint8_t  radR;
   int8_t   exploD;
-  int8_t   moveMP;
+  int8_t   moveAP;
   uint8_t  tradeTo;
   uint8_t  tradeGive[5];
   uint8_t  tradeWant[5];
@@ -976,6 +981,11 @@ static const char         SAVE_PLY_F[] = "/save/players.bin";
 // GROUND_AGE_DAYS and no remains. Only read when map.bin itself loaded.
 static const char         SAVE_GND_F[] = "/save/ground.bin";
 static constexpr uint32_t GROUND_SAVE_MAGIC = 0x444E5247ul;   // "GRND"
+// Trail sides (trails.hpp) -- their own file for the same reason: without it a
+// save loads with every record "none" and the client infers directions from
+// the footprint bits, as it did before the file existed.
+static const char         SAVE_TRL_F[] = "/save/trail.bin";
+static constexpr uint32_t TRAIL_SAVE_MAGIC = 0x534C5254ul;    // "TRLS"
 
 struct __attribute__((packed)) SaveHeader {
   uint32_t magic;
@@ -1021,7 +1031,7 @@ struct __attribute__((packed)) SavePlayer {
   uint16_t score;
   uint16_t steps;
   uint16_t encCount;
-  int8_t   movesLeft;
+  int8_t   apLeft;
   uint8_t  fThreshBelow;
   uint8_t  wThreshBelow;
   uint8_t  wounds[NUM_WOUND_TIER];
@@ -1295,6 +1305,7 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
+#include "trails.hpp"        // which way each walker crossed each hex (before hex-map: map gen + encoding use it)
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
 #include "boot-assets.hpp"   // asset loading, item registry, loot tables
 #include "ui-display.hpp"    // K10 screens, LED, audio, boot splash (needs getItemDef from boot-assets)
@@ -1347,6 +1358,8 @@ static void allocPsramGlobals() {
   G.tunnel      = (HexCell(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_BYTES);
   G.tunnelOp    = (uint8_t(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_OP_BYTES);
   W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
+  trailSides    = (uint8_t(*)[MAP_COLS][TRAIL_SLOTS]) psramStaticAlloc(TRAIL_BYTES);
+  memset(trailSides, TRAIL_NONE, TRAIL_BYTES);   // "no record", not side 0 -- psramStaticAlloc zero-fills
   pendingEvents = (GameEvent*)              psramStaticAlloc(sizeof(GameEvent) * EVT_QUEUE_SIZE);
   itemRegistry  = (ItemDef*)                psramStaticAlloc(sizeof(ItemDef)   * MAX_ITEMS);
   recipeRegistry= (RecipeDef*)              psramStaticAlloc(sizeof(RecipeDef) * MAX_RECIPES);

@@ -295,6 +295,7 @@ static void generateMap() {
       cell.trapEnc      = 0;
     }
   }
+  trailClearAll();   // and which way they went (trails.hpp)
 
   // ── Phase 1.5: Forest Belt Pre-seeding ──────────────────────────
   {
@@ -1124,6 +1125,45 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
   return pos;
 }
 
+// ── Trail sides on the wire ────────────────────────────────────
+// The "trl" string beside a surface disk's cells: one record per walker per
+// cell that has one, 7 hex chars apiece -- QQ col, RR row, S slot (0-5 a
+// seat, 6 the caravan), BB the trails.hpp byte. Sparse, because nearly every
+// cell has none. A record goes out only while the mark it describes is on
+// the cell, so a record outliving its bit can never draw a trail.
+// Returns chars written; a record that does not fit whole is left off.
+static int appendTrailRecs(char* buf, int cap, int q, int r) {
+  if (!trailSides) return 0;
+  const HexCell& c = G.map[r][q];
+  if (!c.footprints && !c.tireTrack) return 0;
+  int pos = 0;
+  for (int s = 0; s < TRAIL_SLOTS; s++) {
+    uint8_t b = trailSides[r][q][s];
+    if (b == TRAIL_NONE) continue;
+    bool marked = (s == TRAIL_CARAVAN) ? c.tireTrack : (c.footprints & (1 << s));
+    if (!marked) continue;
+    if (pos + 7 > cap) break;
+    buf[pos++] = HEX_CH[q >> 4]; buf[pos++] = HEX_CH[q & 0xF];
+    buf[pos++] = HEX_CH[r >> 4]; buf[pos++] = HEX_CH[r & 0xF];
+    buf[pos++] = HEX_CH[s];
+    buf[pos++] = HEX_CH[b >> 4]; buf[pos++] = HEX_CH[b & 0xF];
+  }
+  return pos;
+}
+
+// Every record in the surface disk of radius visR round (pq, pr) -- the cells
+// encodeMapFog() sends unfogged. No terminator written; cap is what may be used.
+static int encodeTrailDisk(char* buf, int cap, int pq, int pr, int visR) {
+  int pos = 0;
+  for (int dr = -visR; dr <= visR; dr++) {
+    for (int dq = -visR; dq <= visR; dq++) {
+      if (abs(dq) + abs(dr) + abs(dq + dr) > 2 * visR) continue;
+      pos += appendTrailRecs(buf + pos, cap - pos, wrapQ(pq + dq), wrapR(pr + dr));
+    }
+  }
+  return pos;
+}
+
 // ── Build full vision-disk message ─────────────────────────────
 // depth 0 walks G.map with toroidal wrap; depth 1 walks the bunker tunnel
 // board, which is a different size and does NOT wrap -- off-board cells are
@@ -1132,6 +1172,8 @@ static int encodeMapFog(char* buf, int cap, int pq, int pr, int visR, bool maskR
 // 0 so surface traffic is byte-identical to before. Underground an "op"
 // string follows the cells: each one's open sides (G.tunnelOp), 2 hex chars
 // apiece in the same order, with room reserved for it as the cells go in.
+// On the surface a "trl" string follows instead (appendTrailRecs): the cells
+// come first, and the trail records take whatever room is left after them.
 // pid is who the disk is for: it decides which traps show (encodeCell).
 static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskRes,
                         int* outCells = nullptr, uint8_t depth = 0, int pid = -1) {
@@ -1158,8 +1200,9 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       uint8_t tt, dd, vv;
       encodeCell(depth ? G.tunnel[cr][cq] : G.map[cr][cq], maskRes, pid, &tt, &dd, &vv);
       // reserve 2 extra bytes for closing `"}` + snprintf null -- and below,
-      // the whole "op" tail for every cell so far plus this one
-      const int tail = depth ? 10 + 2 * (cells + 1) : 0;
+      // the whole "op" tail for every cell so far plus this one, or on the
+      // surface the `","trl":"` that opens the trail records
+      const int tail = depth ? 10 + 2 * (cells + 1) : 10;
       if (pos + 12 + tail < cap && (!depth || cells < (int)sizeof(ops))) {
         if (depth) ops[cells] = G.tunnelOp[cr][cq];
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
@@ -1176,6 +1219,9 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
     for (int i = 0; i < cells && pos + 4 < cap; i++) {
       buf[pos++] = HEX_CH[ops[i] >> 4]; buf[pos++] = HEX_CH[ops[i] & 0xF];
     }
+  } else {
+    pos += snprintf(buf + pos, cap - pos, "\",\"trl\":\"");
+    pos += encodeTrailDisk(buf + pos, cap - pos - 3, pq, pr, visR);   // 3: `"}` + null
   }
   pos += snprintf(buf + pos, cap - pos, "\"}");
   if (outCells) *outCells = cells;
@@ -1192,7 +1238,7 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       if ((abs(dq) + abs(dr) + abs(s)) / 2 != ring) continue;
       int cq = wrapQ(pq + dq);
       int cr = wrapR(pr + dr);
-      if (pos + 12 < cap) {  // reserve 2 extra bytes for closing `"}` + snprintf null
+      if (pos + 22 < cap) {  // closing `"}` + snprintf null, and the `","trl":"` below
         uint8_t tt, dd, vv;
         encodeCell(G.map[cr][cq], false, pid, &tt, &dd, &vv);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
@@ -1201,6 +1247,14 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
         buf[pos++] = HEX_CH[dd >> 4]; buf[pos++] = HEX_CH[dd & 0xF];
         buf[pos++] = HEX_CH[vv >> 4]; buf[pos++] = HEX_CH[vv & 0xF];
       }
+    }
+  }
+  // The ring's trail records, as buildVisDisk() sends its disk's.
+  pos += snprintf(buf + pos, cap - pos, "\",\"trl\":\"");
+  for (int dr = -ring; dr <= ring; dr++) {
+    for (int dq = -ring; dq <= ring; dq++) {
+      if ((abs(dq) + abs(dr) + abs(dq + dr)) / 2 != ring) continue;
+      pos += appendTrailRecs(buf + pos, cap - pos - 3, wrapQ(pq + dq), wrapR(pr + dr));
     }
   }
   pos += snprintf(buf + pos, cap - pos, "\"}");

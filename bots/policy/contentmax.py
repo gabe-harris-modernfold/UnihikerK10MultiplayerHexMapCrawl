@@ -33,7 +33,7 @@ class ContentMaxPolicy(SurvivorPolicy):
     # because computeEncounterDN() reads the Threat Clock: every point of it
     # makes the content this bot exists to reach harder to survive.
     gear_weights = {
-        "vision": 4.0, "mp": 3.0, "threat": 2.5, "ll": 2.0,
+        "vision": 4.0, "ap": 3.0, "threat": 2.5, "ll": 2.0,
         "slots": 1.0, "rad": 1.0, "terrain": 1.5, "water_cap": 2.0,
         "nar": {NAR_COLD_IMMUNE: 3.0, NAR_FIRE_STARTER: 1.0,
                 NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
@@ -55,7 +55,7 @@ class ContentMaxPolicy(SurvivorPolicy):
         # it has tried enough -- a consumed POI leaves a stale bit in our map
         # and enc_start is silent, so falling through to movement is the only
         # way out of that.
-        if cell_here is not None and cell_here.poi and me.mp > 0:
+        if cell_here is not None and cell_here.poi and me.ap > 0:
             act = self.try_open_poi(obs, "POI underfoot")
             if act is not None:
                 return act

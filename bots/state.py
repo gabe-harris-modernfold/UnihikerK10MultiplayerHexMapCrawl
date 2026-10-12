@@ -36,7 +36,7 @@ class PlayerState:
     food: int = 0
     water: int = 0
     rad: int = 0
-    mp: int = 0
+    ap: int = 0
     valid_moves: int = 0          # vm: 6-bit mask, bit N = direction N legal
     wounds: list = field(default_factory=lambda: [0, 0])  # [minor, major]
     f_thresh: int = 0
@@ -63,7 +63,7 @@ class PlayerState:
 
     def legal_dirs(self):
         """Directions the server says are enterable right now.  Returns [] when
-        downed, resting, out of MP, or disconnected -- computeValidMoves()
+        downed, resting, out of AP, or disconnected -- computeValidMoves()
         zeroes the mask in all of those cases."""
         return [d for d in range(6) if self.valid_moves & (1 << d)]
 
@@ -85,7 +85,7 @@ class PlayerState:
         if "food"  in d: self.food          = d["food"]
         if "water" in d: self.water         = d["water"]
         if "rad"   in d: self.rad           = d["rad"]
-        if "mp"    in d: self.mp            = d["mp"]
+        if "ap"    in d: self.ap            = d["ap"]
         if "vm"    in d: self.valid_moves   = d["vm"]
         if "wnd"   in d: self.wounds        = list(d["wnd"])
         if "fth"   in d: self.f_thresh      = d["fth"]

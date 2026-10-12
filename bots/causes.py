@@ -208,7 +208,7 @@ class DamageLedger:
                 else:
                     causes = {"fire": 2 if inten >= 3 else 1}
             elif k == "flood_dmg":
-                # A flash flood zeroes MP and takes LL. Older builds sent no
+                # A flash flood zeroes AP and takes LL. Older builds sent no
                 # llLost and cost nothing, so absence means 0, not a default.
                 if d.get("llLost", 0) > 0:
                     causes = {"flood": d["llLost"]}

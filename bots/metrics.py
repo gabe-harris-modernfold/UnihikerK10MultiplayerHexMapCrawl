@@ -48,7 +48,7 @@ TARGET_HOURS = 2.0
 TARGET_BRUSHES = 4
 NEAR_DEATH_LL = 2
 # A day ends the moment every connected player rests, so its real length is
-# set by how long a player takes to spend ~10 MP (six or seven moves), not by
+# set by how long a player takes to spend ~10 AP (six or seven moves), not by
 # DAY_TICKS. 3 real minutes per day is the working estimate for a human at a
 # deliberate pace; DAY_TICKS caps it at 5 and a brisk player is nearer 2.
 EST_MINUTES_PER_DAY = 3.0
@@ -271,11 +271,11 @@ class RunReport:
         """Who used the bunker network, and what it bought them.
 
         Read off the wire rather than the policies, so a surface bot that
-        fell down a hatch shows up here too -- terrain 12/13 costs 1 MP,
+        fell down a hatch shows up here too -- terrain 12/13 costs 1 AP,
         which makes a hatch the cheapest hex on the surface map and an
         accidental descent a genuinely common event.
 
-        The headline is `mp_per_hex`: MP spent underground per surface hex
+        The headline is `ap_per_hex`: AP spent underground per surface hex
         actually crossed, against a surface average MC of ~1.6.
         docs/tunnel-system-spec.md predicts 44-67% savings from the
         generator's own corridor paths; this is the same number measured
@@ -312,7 +312,7 @@ class RunReport:
                 "trips": len(trips), "surface_hexes_crossed": hexes,
                 "longest_crossing": max(gaps, default=0),
                 "mean_crossing": round(hexes / len(gaps), 1) if gaps else None,
-                "mp_per_hex": round(below * 2 / hexes, 2) if hexes else None,
+                "ap_per_hex": round(below * 2 / hexes, 2) if hexes else None,
                 "by_bot": content,
                 "users": sorted({d.get("pid") for _t, d in ins})}
 
@@ -706,10 +706,10 @@ class RunReport:
                      f"{tu['trips']} completed crossings covering "
                      f"{tu['surface_hexes_crossed']} surface hexes "
                      f"(longest {tu['longest_crossing']})")
-            if tu["mp_per_hex"] is not None:
-                verdict = ("cheaper than walking" if tu["mp_per_hex"] < 1.6
+            if tu["ap_per_hex"] is not None:
+                verdict = ("cheaper than walking" if tu["ap_per_hex"] < 1.6
                            else "NOT worth it")
-                L.append(f"   {tu['mp_per_hex']} MP per surface hex crossed "
+                L.append(f"   {tu['ap_per_hex']} AP per surface hex crossed "
                          f"vs ~1.6 over ground -- {verdict}")
                 L.append("   (spec predicts 44-67% savings with a known "
                          "network; this is what one ring of vision achieves)")

@@ -7,7 +7,7 @@ ceiling before investing in real policy logic.
 
 It also doubles as a fuzzer: `wild` is the probability of deliberately
 sending something the server should refuse (a blocked direction, an action
-with no MP).  That exercises the rejection paths and the err channel, which
+with no AP).  That exercises the rejection paths and the err channel, which
 a purely well-behaved bot would never touch.  Keep it low -- refused messages
 still cost the AsyncTCP task a dispatch.
 """
@@ -55,8 +55,8 @@ class DrunkPolicy(Policy):
             return Action("move", d=d, why="random legal move")
 
         a = self.rng.choice(SOAK_ACTIONS)
-        mp = self.rng.randint(1, 3) if a == ACT_WATER else 1
-        return Action("act", a=a, mp=mp, why="random action")
+        ap = self.rng.randint(1, 3) if a == ACT_WATER else 1
+        return Action("act", a=a, ap=ap, why="random action")
 
     def _decide_encounter(self, obs) -> Action:
         enc = obs.encounter or {}

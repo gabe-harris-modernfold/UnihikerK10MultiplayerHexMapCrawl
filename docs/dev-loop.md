@@ -639,17 +639,17 @@ python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, f
     Jack's Chopper still gives one free. The `biker` bot builds and rides it
     (docs/bot-testing.md, "The Biker").
   - **Out of fuel, the bike stalls and fades off the map.** A daily-cost
-    item (the bike, the Rust Rocket) grants its MP once a game-day, when that
+    item (the bike, the Rust Rocket) grants its AP once a game-day, when that
     day's cost is paid (inventory_items.hpp):
     - It pays at dawn if it can (`applyDawnItemCosts()`).
     - Otherwise it pays the moment the pack can cover it: `kickStartItems()`
       is polled from `tickGame()` and skips anyone in a scene, resting or
-      downed. The first fuel a stalled bike finds is burned, and +5 MP lands
+      downed. The first fuel a stalled bike finds is burned, and +5 AP lands
       on today's budget (EVT_REFUEL, `ev refuel`: a log line and a toast for
       the rider).
     - An item put on mid-day pays the same way.
     - `s_paidItem` records the item ids paid for today, so unequipping and
-      re-equipping can't buy the MP twice.
+      re-equipping can't buy the AP twice.
     - The paid list is not saved. After a boot, whatever is equipped counts
       as paid.
   - **Drawing it.** The tick broadcast carries `uf` (`unfuelledMask()`, the
@@ -881,8 +881,8 @@ send({ t: 'dbg_ignite' });                        // ignite the sender's own hex
 send({ t: 'dbg_doom', awareness: 100 });          // teleport Creeping Doom adjacent to the sender, set its awareness (world-system-spec.md)
 send({ t: 'dbg_settle' });                        // force a settlement to form on the sender's hex (actions_game_loop.hpp doShelter())
 send({ t: 'dbg_flood' });                         // force-flood the sender's hex at intensity 2, ignoring the water/storm gates
-send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill MP (tunnel-system-spec.md)
-send({ t: 'dbg_tunnel', h: 2, below: 1, mp: 0 }); // ...underground on that shaft instead, with a pinned MP budget
+send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill AP (tunnel-system-spec.md)
+send({ t: 'dbg_tunnel', h: 2, below: 1, ap: 0 }); // ...underground on that shaft instead, with a pinned AP budget
 send({ t: 'dbg_collapse', d: 0 });                // cave in the tunnel hex in direction d from the sender
 send({ t: 'dbg_die' });                           // the sender's survivor goes down on the spot (death drops, below)
 send({ t: 'dbg_age', days: 29 });                 // age every ground pile + remains by N days, then run the dawn sweep
@@ -967,6 +967,28 @@ items" in `mock-server/server.js`.
   the pack is empty). In the mock the funnel is `downPlayer()`, which also
   fixed two old mock-only bugs: `downed` was *broadcast* (every open tab went
   to the death screen) and the dead seat stayed "on" forever.
+
+### Trails (footprints and tire tracks)
+
+- **Bits say who, sides say which way.** `HexCell.footprints` / `tireTrack`
+  are unchanged. [trails.hpp](../trails.hpp) keeps, per surface hex, each
+  seat's and the caravan's *latest* pass: side in, side out, ridden. That's a
+  PSRAM block, not HexCell, so `SAVE_VERSION` did not move. It's set by
+  `movePlayer()`, the caravan tick, spawns (`trailStart`) and climbing out of
+  a hatch. It's surface only; tunnel trails are inferred from their bits.
+- **Wire (PROTO 6):** surface `vis`, `surv` and `sync` carry `"trl"`, 7 hex
+  chars a record (QQ RR, S slot 0-5 seat / 6 caravan, BB byte). It's sent only
+  while the cell's bit is set. `ev mv` carries `"d"`, the side stepped through.
+- **Save:** `/save/trail.bin`, sparse, written only when changed and loaded
+  only with map.bin. A save without it loads with no sides, and the client
+  infers them. `regen` deletes it.
+- **Client:** [data/trail-field.js](../data/trail-field.js) draws from its own
+  recording first (localStorage `wl.trails.v1`), then the served sides
+  (`cell.trl`), then inference. One sole per seat; a ridden step is a rut, not
+  prints.
+- **Mock:** sides use the firmware DQ/DR. The mock's DIR_DELTA 0/3 (SE/NW)
+  steps jump two hexes, so they start a fresh pass and `d` is -1. Walk with
+  1/2/4/5 to test.
 
 ## Observer screen (`data/observer.html`)
 

@@ -178,7 +178,7 @@ static void placeTraps() {
 // pit, and that ordering is the point. The client is sent enc_path by
 // handleMsg_move(), which sees the scene it did not ask for open under it.
 //
-// Arriving with 0 MP is fine (no trap choice costs MP). Arriving by a board
+// Arriving with 0 AP is fine (no trap choice costs AP). Arriving by a board
 // transition cannot fire one: tunnelStepDown/Up land you on a shaft or a
 // hatch, and placeTraps() never arms either. Two survivors on one hex: the
 // armed bit is held clear while a scene runs, so the second walks in safely

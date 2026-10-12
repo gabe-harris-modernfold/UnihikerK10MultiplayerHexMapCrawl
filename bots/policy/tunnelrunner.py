@@ -6,17 +6,17 @@ surfaces furthest away, climb out, and work the fresh ground it has landed
 on.  Then do it again.
 
 It exists to measure one specific claim.  docs/tunnel-system-spec.md says,
-from 150 generated worlds, that the tunnels save 44% of the MP on a 10-19 hex
+from 150 generated worlds, that the tunnels save 44% of the AP on a 10-19 hex
 crossing rising to 67% on a 40-49 hex one:
 
-    surface gap 20-29 hexes:  39.6 MP over ground  vs  17.0 MP underground
-    surface gap 40-49 hexes:  65.6 MP over ground  vs  21.7 MP underground
+    surface gap 20-29 hexes:  39.6 AP over ground  vs  17.0 AP underground
+    surface gap 40-49 hexes:  65.6 AP over ground  vs  21.7 AP underground
 
 That was computed over the generator's own corridor paths with perfect
 knowledge of the network.  A player has neither: underground vision is a
 single ring, the surface-to-shaft pairing is never sent on the wire, and the
 only way to learn where a shaft comes out is to climb it and look.  So the
-number this bot reports -- `mp_per_surface_hex`, underground MP spent per
+number this bot reports -- `ap_per_surface_hex`, underground AP spent per
 surface hex actually crossed -- is the *achievable* saving rather than the
 theoretical one, and the gap between the two is the cost of not having the
 map.  Anything under ~1.6 (the surface average MC) is a win.
@@ -27,12 +27,12 @@ Two behaviours are deliberate and worth not "fixing":
   to nowhere, and it is what a naive nearest-exit rule does every single
   time.  Only hunger or a failing LL overrides it (`self._urgent`).
 - **It sleeps underground rather than abandoning a crossing.**  Running out
-  of MP mid-corridor is not fatal: dawn refills the budget, REST works at
+  of AP mid-corridor is not fatal: dawn refills the budget, REST works at
   depth 1, and no weather reaches down there.  What it costs is the
   `TUNNEL_REST_LL_PCT` bad-air roll, which the rest-heal absorbs while the
   supplies hold and which can take the last LL when they do not.  The hatch
   it dived through no longer changes that -- it only changes the climb out,
-  1 MP against 2 -- which is still why it prefers a Bunker Entrance.
+  1 AP against 2 -- which is still why it prefers a Bunker Entrance.
 """
 from config import RES_FOOD, RES_WATER, is_hatch_terrain
 from navigate import best_target, frontier_bonus, hex_distance
@@ -46,7 +46,7 @@ GAP_WEIGHT = 6.0
 # learn the pairing, and an unknown shaft is certainly not the one we came in
 # through (that one paired itself the moment we descended).
 UNKNOWN_EXIT_VALUE = 60.0
-# Do not bother crossing for less than this. Below it the descend + ascend MP
+# Do not bother crossing for less than this. Below it the descend + ascend AP
 # is most of the trip and the surface walk would have been cheaper.
 MIN_WORTHWHILE_GAP = 6
 # Diving straight back down the hatch we just climbed out of undoes the whole
@@ -62,7 +62,7 @@ class TunnelRunnerPolicy(TunnelPolicy):
     """Uses the bunker network as transport, not as a place to be."""
 
     name = "tunnelrunner"
-    # Not down there to work the corridors: scavenging costs 2 MP that would
+    # Not down there to work the corridors: scavenging costs 2 AP that would
     # otherwise be a step toward the far exit.
     scav_underground = False
 

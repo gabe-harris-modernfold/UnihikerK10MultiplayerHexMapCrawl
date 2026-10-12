@@ -311,7 +311,7 @@ function initEncounterOverlay() {
   // The reason the steppers exist, made visible. Banking is the one path that
   // can push a survivor past their pack size — handleMsg_enc_bank clamps each
   // resource to 99, not to effectiveInvSlots() — and every token over the cap
-  // costs 1 MP at dawn and refuses every later collect until it's dropped at
+  // costs 1 AP at dawn and refuses every later collect until it's dropped at
   // -10 pts each. A token left here costs only the 3 pts the bank would pay.
   function renderCarry() {
     if (!haulCarry) return;
@@ -324,7 +324,7 @@ function initEncounterOverlay() {
     const over  = after > cap;
     haulCarry.appendChild(el('span', null, 'TOKENS '));
     haulCarry.appendChild(el('span', over ? 'cap-over' : 'cap-ok', `${after} / ${cap}`));
-    if (over) haulCarry.appendChild(el('span', 'cap-over', ' · −1 MP at dawn'));
+    if (over) haulCarry.appendChild(el('span', 'cap-over', ' · −1 AP at dawn'));
     haulCarry.appendChild(el('span', null, ' · '));
     haulCarry.appendChild(el('span', 'pts', `+${kept * 3} pts`));
     if (haulTrimmed()) {
@@ -458,8 +458,13 @@ function initEncounterOverlay() {
 
       const meta = el('span', 'enc-choice-meta');
       const odds = el('span', `enc-odds ${oddsClass(pct)}`);
+      // 10-cell gauge, rounded up so a long shot still lights one cell
+      const bar = el('span', 'enc-odds-bar');
+      bar.style.setProperty('--p', Math.ceil(pct / 10) * 10);
+      bar.setAttribute('aria-hidden', 'true');
+      odds.appendChild(bar);
       odds.appendChild(el('b', '', `${pct}%`));
-      odds.appendChild(el('span', '', ` ${encSkillLabel(ch.skill ?? 0)}`));
+      odds.appendChild(el('span', '', encSkillLabel(ch.skill ?? 0)));
       meta.appendChild(odds);
       costChips(ch.cost).forEach(c => meta.appendChild(el('span', `enc-cost ${c.bad ? 'bad' : 'good'}`, c.txt)));
       if (!affordable) meta.appendChild(el('span', 'enc-cost cant', 'CAN’T AFFORD'));

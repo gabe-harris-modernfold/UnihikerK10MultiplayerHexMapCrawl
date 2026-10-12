@@ -40,8 +40,8 @@ WATER_FLOOR = 4
 # Below this many tokens, finding more overrides everything else.  Measured
 # death spiral from the first four-policy run: water tokens hit 0 on day 2,
 # the track then fell 6 -> 4 -> 1 over four days, LL followed it down, and
-# because MP is ll + 3 the survivor lost the mobility it needed to go find
-# water.  Dead on day 7.  The window to fix it is while MP is still high.
+# because AP is ll + 3 the survivor lost the mobility it needed to go find
+# water.  Dead on day 7.  The window to fix it is while AP is still high.
 EMERGENCY_WATER = 1
 EMERGENCY_FOOD = 0
 # Hunting staples justifies a much longer walk than ordinary pursuit.
@@ -88,17 +88,17 @@ CHOICE_WAIT_S = 6.0
 # same reach as the canteen errand, since the canteen it would otherwise
 # rebuild from three scrap is usually lying on the grave.
 RECOVER_SEARCH_COST = 40
-# MP a day of walking is assumed to cover when asking whether a grave will
-# still be there on arrival.  effectiveMP() is 6 + (ll+1)/2 -- about 10 fresh --
+# AP a day of walking is assumed to cover when asking whether a grave will
+# still be there on arrival.  effectiveAP() is 6 + (ll+1)/2 -- about 10 fresh --
 # so this errs short, which errs toward not setting off for a grave that ages
 # out on the way.
-RECOVER_MP_PER_DAY = 8
+RECOVER_AP_PER_DAY = 8
 # Scrap-errand values: a pile is collected just by stepping on it; salvage
-# terrain needs a 2 MP SCAV and a check, so it is worth less per MP.
+# terrain needs a 2 AP SCAV and a check, so it is worth less per AP.
 SCRAP_PILE_VALUE = 100.0
 SALVAGE_VALUE = 60.0
 # How far to look for a way out when a surface policy falls down a hatch.
-# The whole tunnel board is 16x10 and a corridor step costs 2 MP, so this
+# The whole tunnel board is 16x10 and a corridor step costs 2 AP, so this
 # reaches across all of it.
 TUNNEL_ESCAPE_COST = 80
 
@@ -113,7 +113,7 @@ def token_room(me, res: int = -1) -> int:
     Only SCAVENGE is gated by this: FORAGE and WATER may overfill and pay the
     encumbrance penalty instead. Gating all three is what livelocked the first
     hardware run — four of five bots sat at room 0 asking for water they could
-    not hold, 376 refused actions a minute, no MP spent and no way to tell.
+    not hold, 376 refused actions a minute, no AP spent and no way to tell.
     """
     room = max(0, me.inv_slots - me.carried())
     if res == RES_WATER:
@@ -136,7 +136,7 @@ class SurvivorPolicy(Policy):
     engage_encounters = True    # open a POI when standing on one
     # Does this policy know what to do underground?  Stepping onto a hatch IS
     # the descent -- there is no control to refuse and no confirmation -- and
-    # terrain 12/13 costs 1 MP, which makes it the *cheapest* hex on the
+    # terrain 12/13 costs 1 AP, which makes it the *cheapest* hex on the
     # surface map, so a pile-chasing pathfinder walks onto one sooner or
     # later.  A policy with no tunnel plan must climb straight back out
     # rather than flail on a board it is not reading.
@@ -182,7 +182,7 @@ class SurvivorPolicy(Policy):
         self.run: EncounterRun | None = None
         # REST is idempotent server-side (doRest returns early if already
         # resting) but the periodic broadcast carries no `rt` field, so a
-        # naive "rest while mp <= 0" check re-sends it every cycle forever.
+        # naive "rest while ap <= 0" check re-sends it every cycle forever.
         # Track it against the game-day instead; dawnUpkeep clears resting.
         self._rested_day = None
         self._last_rest_sent = 0.0
@@ -277,23 +277,23 @@ class SurvivorPolicy(Policy):
             return self.lost_scene_action(obs)
         self._lost_since = None
 
-        # Stood on a grave: what is on it is free (no MP, no check) and ours
+        # Stood on a grave: what is on it is free (no AP, no check) and ours
         # for the taking, so take it before any errand walks us off the hex.
         act = self.remains_action(obs)
         if act is not None:
             return act
 
-        # A canteen within today's MP outranks topping up the pack.  The top-up
+        # A canteen within today's AP outranks topping up the pack.  The top-up
         # floor is often above what the economy sustains, so on hardware it
-        # ate every MP of every day and a survivor sat on a pond 4 hexes from a
+        # ate every AP of every day and a survivor sat on a pond 4 hexes from a
         # Settlement for ~100 s holding the scrap (2026-09-23).  Emergencies
         # still win -- this only pre-empts the routine harvest.  A grave of our
-        # own within today's MP goes first: the canteen is usually lying on it.
+        # own within today's AP goes first: the canteen is usually lying on it.
         if not self.in_emergency(obs):
-            act = self.recover_action(obs, max_cost=obs.me.mp)
+            act = self.recover_action(obs, max_cost=obs.me.ap)
             if act is not None:
                 return act
-            act = self.craft_action(obs, max_cost=obs.me.mp)
+            act = self.craft_action(obs, max_cost=obs.me.ap)
             if act is not None:
                 return act
 
@@ -301,7 +301,7 @@ class SurvivorPolicy(Policy):
         if act is not None:
             return act
 
-        # Put on anything useful we are carrying.  Costs no MP and no time, so
+        # Put on anything useful we are carrying.  Costs no AP and no time, so
         # it sits above every goal-directed branch.
         act = self.gear_action(obs)
         if act is not None:
@@ -328,7 +328,7 @@ class SurvivorPolicy(Policy):
         # handleMsg_enc_start() is board-aware, so this works on either board.
         if self.engage_encounters:
             here = obs.here()
-            if here is not None and here.poi and obs.me.mp > 0:
+            if here is not None and here.poi and obs.me.ap > 0:
                 opened = self.try_open_poi(obs, "POI underfoot")
                 if opened is not None:
                     return opened
@@ -348,7 +348,7 @@ class SurvivorPolicy(Policy):
     # The default is the survival floor this class already encodes: staying
     # alive first, then the mobility to go fix a problem.
     gear_weights = {
-        "ll": 3.0, "rad": 1.5, "mp": 1.5, "slots": 1.0,
+        "ll": 3.0, "rad": 1.5, "ap": 1.5, "slots": 1.0,
         "vision": 1.0, "threat": 0.5, "terrain": 0.5, "water_cap": 3.0,
         "nar": {NAR_COLD_IMMUNE: 4.0, NAR_FIRE_STARTER: 2.0,
                 NAR_LAND_FORAGE: 1.5, NAR_RIVER_FORAGE: 0.5,
@@ -400,7 +400,7 @@ class SurvivorPolicy(Policy):
         Nothing here existed before.  The bots parsed eq[] out of every state
         message and never sent a single equip_item, so every number in
         docs/bot-testing.md was measured on a survivor wearing nothing at all:
-        no +LL ceiling, no vision, no carry slots, no fuel-gated MP.
+        no +LL ceiling, no vision, no carry slots, no fuel-gated AP.
         """
         me = obs.me
         if me.in_encounter:
@@ -540,15 +540,15 @@ class SurvivorPolicy(Policy):
     def craft_action(self, obs, max_cost=CRAFT_SEARCH_COST) -> Action | None:
         """Walk to a Settlement and craft the canteen.
 
-        `max_cost` bounds the walk: decide() calls this with today's MP ahead
+        `max_cost` bounds the walk: decide() calls this with today's AP ahead
         of the survival floor, and with CRAFT_SEARCH_COST after it.
 
-        doCraft(): Settlement terrain, 1 MP, the recipe bit, the tokens, and
+        doCraft(): Settlement terrain, 1 AP, the recipe bit, the tokens, and
         item room for the result -- and refused underground outright.  The
         crafted item lands in the pack; gear_action() puts it on.
         """
         me = obs.me
-        if obs.underground or me.mp < 1 or not self.wants_canteen(obs):
+        if obs.underground or me.ap < 1 or not self.wants_canteen(obs):
             return None
         # The canteen we would craft is lying on a grave of ours that we can
         # still reach: walk back for it (recover_action) rather than spend
@@ -587,11 +587,11 @@ class SurvivorPolicy(Policy):
     def craft_at_settlement(self, obs, rid, max_cost, label, why) -> Action | None:
         """CRAFT `rid` here if this is a Settlement, else walk to the nearest
         one within `max_cost`.  The caller has checked the recipe is known and
-        affordable; this checks the rest of doCraft(): the surface, 1 MP, and
+        affordable; this checks the rest of doCraft(): the surface, 1 AP, and
         room for the result.  `label` prefixes the walk's why, `why` is the
         craft's."""
         me = obs.me
-        if obs.underground or me.mp < 1 or not self.result_fits(me, rid):
+        if obs.underground or me.ap < 1 or not self.result_fits(me, rid):
             return None
         if time.monotonic() - self._craft_sent < CRAFT_RETRY_S:
             return None
@@ -617,15 +617,15 @@ class SurvivorPolicy(Policy):
 
     def scrap_errand(self, obs, max_cost) -> Action | None:
         """Short of the canteen's scrap: salvage here, or walk to a scrap pile
-        or salvageable ground.  A pile pays on contact; salvage costs 2 MP and
+        or salvageable ground.  A pile pays on contact; salvage costs 2 AP and
         a check (and a threat tick on ruins).  Both need token room --
         collectResource() and doScav() refuse a full pack."""
         me = obs.me
         if token_room(me, RES_SCRAP) <= 0:
             return None
         cell = obs.here()
-        if cell is not None and can_salvage(cell.terrain) and me.mp >= 2:
-            return Action("act", a=ACT_SCAV, mp=2,
+        if cell is not None and can_salvage(cell.terrain) and me.ap >= 2:
+            return Action("act", a=ACT_SCAV, ap=2,
                           why=f"canteen: salvaging scrap ({me.inv[RES_SCRAP]} held)")
         legal = me.legal_dirs()
         if not legal:
@@ -689,7 +689,7 @@ class SurvivorPolicy(Policy):
     def remains_action(self, obs) -> Action | None:
         """Stood on a grave: take what is on it before anything moves us off.
 
-        Both halves are free -- no MP, no check -- which is why this runs
+        Both halves are free -- no AP, no check -- which is why this runs
         ahead of every errand.  It has to: the canteen errand would otherwise
         walk a respawned survivor off its own grave to hunt scrap for a NEW
         canteen before gear_action() got round to lifting the old one, and
@@ -724,7 +724,7 @@ class SurvivorPolicy(Policy):
         A grave counts while it holds something we can take
         (worth_recovering) and will still be there when we arrive: it goes at
         the dawn that makes it GROUND_AGE_DAYS old, and a walk longer than
-        today's MP arrives RECOVER_MP_PER_DAY at a time.  Never one on a
+        today's AP arrives RECOVER_AP_PER_DAY at a time.  Never one on a
         hatch -- stepping onto a hatch IS the descent, so a surface grave on
         one cannot be reached on foot (a fall underground leaves it there).
         `canteen_only` narrows it to graves with the canteen on them, and
@@ -733,7 +733,7 @@ class SurvivorPolicy(Policy):
         if canteen_only:
             item = CANTEEN_ITEM
         me = obs.me
-        if me.depth or me.mp < 1 or not obs.remains:
+        if me.depth or me.ap < 1 or not obs.remains:
             return None
         graves = {}
         for rm in obs.remains:
@@ -752,19 +752,19 @@ class SurvivorPolicy(Policy):
             graves[at] = rm
         if not graves:
             return None
-        mp_today = me.mp
+        ap_today = me.ap
 
         def value(cell, q, r, cost):
             rm = graves.get((q, r))
             if rm is None or cost <= 0:
                 return None
             left = ground_days_left(obs.day, rm.get("d", obs.day))
-            if cost <= mp_today:
+            if cost <= ap_today:
                 if left < 1:
                     return None
             else:
-                days = -(-(cost - mp_today) // RECOVER_MP_PER_DAY)
-                if left <= days + 1:    # a day of slack: MP is an estimate
+                days = -(-(cost - ap_today) // RECOVER_AP_PER_DAY)
+                if left <= days + 1:    # a day of slack: AP is an estimate
                     return None
             return 100.0 / cost
 
@@ -775,7 +775,7 @@ class SurvivorPolicy(Policy):
         """Walk back toward a grave of ours (recovery_target).
 
         decide() calls this twice, the way it calls craft_action(): with
-        today's MP ahead of the survival floor, and with RECOVER_SEARCH_COST
+        today's AP ahead of the survival floor, and with RECOVER_SEARCH_COST
         once the floor is quiet.  Arriving is the whole errand --
         remains_action() takes it from there.
         """
@@ -803,22 +803,22 @@ class SurvivorPolicy(Policy):
         water_goal = self.water_floor
         if me.water_cap and token_room(me, RES_WATER) > 0:
             water_goal += me.water_cap
-        if me.inv[RES_WATER] < water_goal and has_water(terr) and me.mp >= 1:
+        if me.inv[RES_WATER] < water_goal and has_water(terr) and me.ap >= 1:
             why = (f"water {me.inv[RES_WATER]} low" if me.inv[RES_WATER] < self.water_floor
                    else f"filling the canteen ({me.inv[RES_WATER]}/{water_goal})")
-            return Action("act", a=ACT_WATER, mp=min(2, me.mp), why=why)
-        if me.inv[RES_FOOD] < self.food_floor and can_forage(terr) and me.mp >= 2:
+            return Action("act", a=ACT_WATER, ap=min(2, me.ap), why=why)
+        if me.inv[RES_FOOD] < self.food_floor and can_forage(terr) and me.ap >= 2:
             return Action("act", a=ACT_FORAGE,
                           why=f"food {me.inv[RES_FOOD]} low")
 
-        # About to sleep on exposed ground: 1 scrap and 1 MP buys a basic
+        # About to sleep on exposed ground: 1 scrap and 1 AP buys a basic
         # shelter, and dawnUpkeep does more than cancel the exposure hit --
         # "resting in shelter suppresses all LL losses" zeroes llDelta
         # outright, thirst and hunger included.  It pays 4 points on top and
         # cannot fail.
         #
-        # Deliberately ahead of the staple hunt: on the last MP of a day, one
-        # more step cannot reach water (most terrain costs 2-4 MP to enter)
+        # Deliberately ahead of the staple hunt: on the last AP of a day, one
+        # more step cannot reach water (most terrain costs 2-4 AP to enter)
         # but the shelter cancels the whole night's loss, so building strictly
         # dominates walking there.  The hunt still outranks it on any earlier
         # move, which is where it actually saves a survivor.
@@ -826,7 +826,7 @@ class SurvivorPolicy(Policy):
         if shelter is not None:
             return shelter
 
-        # Out of staples: go and get some while there is still MP to do it
+        # Out of staples: go and get some while there is still AP to do it
         # with.  This deliberately outranks resting -- dawn consumes 1 food
         # and 2 water whether you moved or not, so resting through a shortage
         # makes it strictly worse.
@@ -834,14 +834,14 @@ class SurvivorPolicy(Policy):
         if hunt is not None:
             return hunt
 
-        # Out of MP: resting both heals at dawn and, when every connected
+        # Out of AP: resting both heals at dawn and, when every connected
         # player is resting, ends the day immediately (tickGame).  This holds
         # underground too now -- REST is no longer refused at depth 1, so a
         # bot down a hole still pulls its weight in sprint mode instead of
         # holding the whole fleet's day open.
-        if me.mp <= 0:
-            return self.rest_once(obs, "out of MP underground"
-                                       if obs.underground else "out of MP")
+        if me.ap <= 0:
+            return self.rest_once(obs, "out of AP underground"
+                                       if obs.underground else "out of AP")
 
         # At critical LL the two boards want opposite things.  On the surface
         # a rest is free upside.  Underground it rolls TUNNEL_REST_LL_PCT for
@@ -867,9 +867,9 @@ class SurvivorPolicy(Policy):
     def shelter_here(self, obs) -> Action | None:
         """Build a basic shelter if this is where the day is going to end.
 
-        doShelter() takes 1 scrap and 1 MP and always succeeds -- there is no
+        doShelter() takes 1 scrap and 1 AP and always succeeds -- there is no
         check to fail -- so the only judgement is *when*.  Firing it on the
-        last MP of the day is what a player does: earlier wastes a move that
+        last AP of the day is what a player does: earlier wastes a move that
         could have been a step, later is a dawn too late.
         """
         me = obs.me
@@ -884,11 +884,11 @@ class SurvivorPolicy(Policy):
         # building one is a wasted scrap.
         if me.archetype == 5:
             return None
-        if me.mp < 1 or me.inv[RES_SCRAP] < 1:
+        if me.ap < 1 or me.inv[RES_SCRAP] < 1:
             return None
         # Only on the last move of the day, or when already hurt enough that
         # another exposure tick is the difference.
-        if me.mp > 1 and me.ll > self.rest_below_ll:
+        if me.ap > 1 and me.ll > self.rest_below_ll:
             return None
         cell = obs.here()
         if cell is None or cell.shelter > 0 or not is_exposed(cell.terrain):
@@ -896,14 +896,14 @@ class SurvivorPolicy(Policy):
         # Once per hex per day.  A shelter that lands shows on the act
         # event's cnd, so the cell.shelter check above stops the next one; a
         # refusal the bot did not predict changes nothing, and at low LL this
-        # fires on every MP, so without it one refusal ate the whole day.
+        # fires on every AP, so without it one refusal ate the whole day.
         # The mock has no doShelter() at all, which is how it was found.
         key = (obs.day, me.q, me.r)
         if self._shelter_sent == key:
             return None
         self._shelter_sent = key
         return Action("act", a=ACT_SHELTER,
-                      why=f"exposed at SV<2, {me.inv[RES_SCRAP]} scrap, mp={me.mp}")
+                      why=f"exposed at SV<2, {me.inv[RES_SCRAP]} scrap, ap={me.ap}")
 
     def staple_hunt(self, obs) -> Action | None:
         """Walk toward water or food when critically short of either.
@@ -917,7 +917,7 @@ class SurvivorPolicy(Policy):
         me = obs.me
         dry = me.inv[RES_WATER] <= EMERGENCY_WATER
         starving = me.inv[RES_FOOD] <= EMERGENCY_FOOD
-        if not (dry or starving) or me.mp <= 0:
+        if not (dry or starving) or me.ap <= 0:
             return None
         legal = me.legal_dirs()
         if not legal:
@@ -972,14 +972,14 @@ class SurvivorPolicy(Policy):
         A strict once-per-day latch is worse.  The decision is latched before
         the send clears the rate limiter, so a REST decided just before a
         reconnect never reaches the board while the bot still believes it
-        rested.  It then sits at mp == 0, *not* resting, unable to move and
+        rested.  It then sits at ap == 0, *not* resting, unable to move and
         unable to retry until dawn -- and because tickGame() only ends the day
         early when every connected player is resting, one bot stuck like that
         stops the whole fleet's day from collapsing.  Observed live: five bots
         frozen at day 16, days reverting from ~3 s to the full 5 minutes.
 
         There is no way to confirm it landed: the periodic broadcast carries no
-        `rt` field, so "resting" and "simply out of MP" look identical.  So
+        `rt` field, so "resting" and "simply out of AP" look identical.  So
         retry on a cooldown instead.  REST is idempotent, and one send every
         few seconds is 60x less traffic than the original spam while being
         self-healing.
@@ -1149,7 +1149,7 @@ class SurvivorPolicy(Policy):
           arrived on it by transition, not by a step, and only a fresh step
           onto one crosses the boards. So when we are already on a shaft the
           move is to step OFF it and come back -- which is also why an
-          accidental descent costs about 4 MP to undo, not 1.
+          accidental descent costs about 4 AP to undo, not 1.
         - Shafts hang off the corridor as one-hex spurs, so pathing to one
           never routes *through* another and ejects us somewhere we did not
           choose.
@@ -1157,7 +1157,7 @@ class SurvivorPolicy(Policy):
         `prefer(cell, q, r, cost)` lets a subclass rank the exits (the tunnel
         runner wants a specific distant one); returning None rejects a shaft
         outright. The default prefers the cheapest exit, with a nudge toward
-        Bunker Entrances because a Vent Shaft charges VENT_ASCEND_MP to climb.
+        Bunker Entrances because a Vent Shaft charges VENT_ASCEND_AP to climb.
 
         With `explore_if_blind=False` this returns None instead of wandering
         when no acceptable shaft is in sight, so a caller with its own idea of

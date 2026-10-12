@@ -8,14 +8,14 @@
      fetches it (with retries) and injects it, so a stalled K10 shows the boot
      screen below instead of an unstyled page. Keep this block self-styled. -->
 <style id="boot-loader-style">
-#boot-loader{position:fixed;inset:0;z-index:99999;background:#0b0c0a;color:#c9c19a;font:14px/1.5 ui-monospace,Consolas,monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px;box-sizing:border-box}
-#boot-loader h1{margin:0;font-size:22px;letter-spacing:.2em;color:#e6d98a}
-#boot-loader .bar{width:min(420px,80vw);height:10px;border:1px solid #6a6340;background:#1a1a14}
-#boot-loader .fill{height:100%;width:0;background:#a89c4a;transition:width .15s}
-#boot-loader .status{min-height:1.5em;color:#9a9470;max-width:min(560px,90vw);word-break:break-word}
-#boot-loader .status.err{color:#e06c4a}
-#boot-loader .hint{font-size:12px;color:#6f6a50}
-#boot-loader button{display:none;font:inherit;padding:6px 18px;background:#2a2a20;color:#e6d98a;border:1px solid #a89c4a;cursor:pointer}
+#boot-loader{position:fixed;inset:0;z-index:99999;background:#0a0701 repeating-linear-gradient(to bottom,transparent 0,transparent 2px,rgba(0,0,0,.18) 2px,rgba(0,0,0,.18) 3px);color:#ffb43a;font:bold 15px/1.5 Consolas,ui-monospace,Menlo,'DejaVu Sans Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px;box-sizing:border-box;text-shadow:0 0 1px rgba(255,200,110,.55),0 0 9px rgba(255,160,30,.3)}
+#boot-loader h1{margin:0;font-size:24px;letter-spacing:.2em;color:#ffd98a}
+#boot-loader .bar{width:min(420px,80vw);height:12px;border:1px solid #e99a2e;background:#140e04}
+#boot-loader .fill{height:100%;width:0;background:#ffb43a;box-shadow:0 0 8px rgba(255,170,40,.6);transition:width .15s}
+#boot-loader .status{min-height:1.5em;color:#ffb43a;max-width:min(560px,90vw);word-break:break-word}
+#boot-loader .status.err{color:#ff6a3d}
+#boot-loader .hint{font-size:13px;color:#b98436}
+#boot-loader button{display:none;font:inherit;padding:6px 18px;background:transparent;color:#ffd98a;border:1px solid #e99a2e;cursor:pointer}
 #boot-loader.failed button{display:inline-block}
 </style>
 </head>
@@ -77,8 +77,8 @@
       <meter class="track-boxes" id="hud-ll-track" aria-label="Life Level" min="0" max="7" value="7"></meter>
     </div>
     <div class="hud-ll-row">
-      <span class="hud-ll-lbl">MP</span>
-      <meter class="track-boxes" id="hud-mp-track" aria-label="Movement Points" min="0" max="6" value="6"></meter>
+      <span class="hud-ll-lbl">AP</span>
+      <meter class="track-boxes" id="hud-ap-track" aria-label="Action Points" min="0" max="6" value="6"></meter>
     </div>
   </div>
 </div>
@@ -105,7 +105,7 @@
     <div class="side-panel">
       <h3>Supplies</h3>
       <!-- .res-drop-btn[data-res] mirrors the char-sheet .inv-box drop targets:
-           both open openResDropMenu() in ui-items.js, which sends `drop_res`. -->
+           each tap calls dropOneResource() in ui-items.js, which sends `drop_res` qty 1. -->
       <div class="res-row"><div class="res-dot dot-water"></div><span class="res-val" id="inv0">0</span><span class="res-name">Water</span><span class="canteen-fill" hidden></span><button type="button" class="fab-btn res-drop-btn" data-res="1" title="Abandon Water" aria-label="Abandon Water" disabled>DROP</button></div>
       <div class="res-row"><div class="res-dot dot-food"></div><span class="res-val" id="inv1">0</span><span class="res-name">Food</span><button type="button" class="fab-btn res-drop-btn" data-res="2" title="Abandon Food" aria-label="Abandon Food" disabled>DROP</button></div>
       <div class="res-row"><div class="res-dot dot-fuel"></div><span class="res-val" id="inv2">0</span><span class="res-name">Fuel</span><button type="button" class="fab-btn res-drop-btn" data-res="3" title="Abandon Fuel" aria-label="Abandon Fuel" disabled>DROP</button></div>
@@ -157,18 +157,6 @@
     <button id="action-close" aria-label="close action panel">&#x2715;</button>
     <h2 id="action-panel-title"><span class="act-title-line">&#x261E; ACTIONS</span><span class="act-title-sub" id="act-panel-terrain-sub"></span></h2>
     <div id="action-status-bar"></div>
-    <!-- WATER mp sub-control -->
-    <div id="action-water-ctrl" style="display:none">
-      <div class="check-row">
-        <span class="check-lbl">MP TO SPEND</span>
-        <div class="check-dn-ctrl">
-          <button id="action-water-m">&#x2212;</button>
-          <span id="action-water-v">1</span>
-          <button id="action-water-p">&#x2B;</button>
-        </div>
-      </div>
-      <button id="action-water-go" class="chk-action-btn">&#x2248; COLLECT WATER</button>
-    </div>
     <!-- TRADE resource sub-control -->
     <div id="action-trade-ctrl" style="display:none">
       <div id="action-trade-target-list"><!-- co-located player buttons --></div>
@@ -238,26 +226,6 @@
   <div id="item-menu-story"></div>
   <div id="item-menu-btns"></div>
   <button class="item-menu-btn" id="item-menu-close">&#x2715; Cancel</button>
-</dialog>
-
-<!-- Resource drop sheet (z-index 52, sits above the item menu and char sheet).
-     Opened by clicking an .inv-box[data-res] on the character sheet. -->
-<div id="res-drop-backdrop"></div>
-<dialog id="res-drop-menu" aria-modal="true" aria-labelledby="res-drop-name">
-  <div id="res-drop-title">
-    <span class="dot" id="res-drop-dot"></span>
-    <span id="res-drop-name">&mdash;</span>
-  </div>
-  <div id="res-drop-sub">Abandon how many? Carrying <span id="res-drop-have">0</span>.</div>
-  <div id="res-drop-stepper">
-    <button type="button" class="res-step-btn" id="res-drop-minus" aria-label="One fewer">&minus;</button>
-    <input id="res-drop-qty" type="number" inputmode="numeric" min="1" step="1" value="1" aria-label="How many to abandon">
-    <button type="button" class="res-step-btn" id="res-drop-plus" aria-label="One more">+</button>
-    <button type="button" class="res-step-btn wide" id="res-drop-all">ALL</button>
-  </div>
-  <div id="res-drop-note"></div>
-  <button class="item-menu-btn danger" id="res-drop-confirm">&#x25BC; Abandon <span id="res-drop-confirm-qty">1</span></button>
-  <button class="item-menu-btn" id="res-drop-close">&#x2715; Cancel</button>
 </dialog>
 
 <!-- Incoming trade offer overlay (z-index 19, above action panel) -->
@@ -366,8 +334,8 @@
     <!-- Supplies + typed items -->
     <section id="cs-pack" class="cs-section">
       <h3>Carried Misery <span class="cs-h-aside" id="cs-pack-count"></span></h3>
-      <!-- data-res (1-5) makes a box a drop target: openResDropMenu() in
-           ui-items.js opens the quantity sheet and sends `drop_res`. -->
+      <!-- data-res (1-5) makes a box a drop target: each tap calls
+           dropOneResource() in ui-items.js, which sends `drop_res` qty 1. -->
       <div class="inv-grid">
         <div class="inv-box" data-res="1" role="button" tabindex="0" title="Abandon Water"><div class="qty-row"><div class="dot dot-water"></div><div class="qty" id="cs-inv0">0</div></div><div class="lbl">Water</div><span class="canteen-fill" hidden></span></div>
         <div class="inv-box" data-res="2" role="button" tabindex="0" title="Abandon Food"><div class="qty-row"><div class="dot dot-food"></div><div class="qty" id="cs-inv1">0</div></div><div class="lbl">Food</div></div>
@@ -415,7 +383,7 @@
       <ol>
         <li>Navigate Tab 1 to <code>http://192.168.4.70/</code></li>
         <li>The character select screen will appear. Click <strong>▶ SELECT GUIDE (pid:0)</strong>. Guide has the best NAVIGATE skill (●●) and a trait that reduces movement cost for companions.</li>
-        <li>After selecting, you spawn with LL:7 (full health), 6 MP, and score 0.</li>
+        <li>After selecting, you spawn with LL:7 (full health), 6 AP, and score 0.</li>
         <li>Immediately refresh Tab 3 (<code>/state?pid=0</code>) to read your starting visible cells.</li>
       </ol>
     </div>
@@ -459,19 +427,19 @@
     <div class="help-section">
       <h3>Turn Structure</h3>
       <ol>
-        <li><strong>Wake up</strong> — Click map or dismiss REST popup. Starts with full MP (4–6).</li>
-        <li><strong>Check supplies</strong> — Read <code>/state</code> or <code>window.__gameState.me</code> for food, water, ll, mp, rad, scrap.</li>
+        <li><strong>Wake up</strong> — Click map or dismiss REST popup. Starts with full AP (4–6).</li>
+        <li><strong>Check supplies</strong> — Read <code>/state</code> or <code>window.__gameState.me</code> for food, water, ll, ap, rad, scrap.</li>
         <li><strong>Choose ONE action</strong> — Only one action slot per day:
           <ul>
-            <li>FORAGE (2 MP) — Scrub/Marsh/Rust Forest → food + 3 pts</li>
-            <li>SCAVENGE (2 MP) — Broken Urban/Glass Fields/Flooded Ruins → scrap + 5 pts</li>
-            <li>COLLECT WATER (1 MP) — Marsh/Flooded District → water + pts</li>
-            <li>BUILD SHELTER (1 MP, 2 scrap) — stops LL exposure, 4–8 pts</li>
-            <li>SURVEY (1 MP) — expands visibility, 2 pts</li>
+            <li>FORAGE (2 AP) — Scrub/Marsh/Rust Forest → food + 3 pts</li>
+            <li>SCAVENGE (2 AP) — Broken Urban/Glass Fields/Flooded Ruins → scrap + 5 pts</li>
+            <li>COLLECT WATER (1 AP) — Marsh/Flooded District → water + pts</li>
+            <li>BUILD SHELTER (1 AP, 2 scrap) — stops LL exposure, 4–8 pts</li>
+            <li>SURVEY (1 AP) — expands visibility, 2 pts</li>
           </ul>
         </li>
-        <li><strong>Move</strong> — Use remaining MP toward nearest unvisited high-value hex.</li>
-        <li><strong>REST</strong> — Click REST when MP is 0. Click once, then click map to dismiss dawn popup. Do NOT click REST multiple times — each click advances a full day.</li>
+        <li><strong>Move</strong> — Use remaining AP toward nearest unvisited high-value hex.</li>
+        <li><strong>REST</strong> — Click REST when AP is 0. Click once, then click map to dismiss dawn popup. Do NOT click REST multiple times — each click advances a full day.</li>
       </ol>
     </div>
 
@@ -520,8 +488,8 @@
 2. Filter visibleCells: footprints==0 AND terrain IN [4,5,6,9]
 3. Pick nearest unvisited high-value cell
 4. Use action slot: SCAVENGE if on SV≥1 terrain, else FORAGE if low food
-5. Move toward target using remaining MP
-6. If MP=0 → REST once → click map to dismiss dawn popup
+5. Move toward target using remaining AP
+6. If AP=0 → REST once → click map to dismiss dawn popup
 7. If LL ≤ 4 and scrap ≥ 2 → BUILD SHELTER next action slot
 8. Repeat</pre>
     </div>

@@ -74,7 +74,7 @@ class WorldMap:
                  wraps: bool = True):
         self.rows, self.cols, self.wraps = rows, cols, wraps
         self.grid: list[list[Cell | None]] = [[None] * cols for _ in range(rows)]
-        # MP the pathfinder adds on top of the terrain for hazards the cell
+        # AP the pathfinder adds on top of the terrain for hazards the cell
         # bytes do not carry -- today the Wasteland Daisy patches from the
         # `eco` message (state.py fills it; navigate.dijkstra reads it).
         # Keyed on wrapped (q, r).  A regen replaces the whole map, and with

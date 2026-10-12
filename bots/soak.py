@@ -1,6 +1,6 @@
 """Soak: a long realtime run with the world clock actually ticking.
 
-An all-bot fleet rests the moment it runs out of MP, tickGame() ends the day
+An all-bot fleet rests the moment it runs out of AP, tickGame() ends the day
 as soon as everyone is resting, and so a 5-minute day collapses to seconds.
 The supply economy is measured fine that way; everything on a real clock --
 weather (weatherNextGapMs), fire, flood, Creeping Doom (WORLD_TICK_INTERVAL)

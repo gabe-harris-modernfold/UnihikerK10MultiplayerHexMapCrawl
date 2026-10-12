@@ -195,9 +195,11 @@ static void sendTunnelSync(AsyncWebSocketClient* client) {
 }
 
 // ── Sync message (unicast to one client on connect) ──────────────────────────
-// Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin
+// Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin,
+// + up to SYNC_TRAIL_CAP of trail records
+static constexpr int SYNC_TRAIL_CAP = 3500;   // 500 records: a crowded disk's worth
 static void sendSync(AsyncWebSocketClient* client, int pid) {
-  PSRAM_STATIC(char, buf, [40000]);  // 75×57 map fog encoding (6 chars/cell); PSRAM — was 40 KB of internal .bss
+  PSRAM_STATIC(char, buf, [44000]);  // 75×57 map fog encoding (6 chars/cell); PSRAM — was 40 KB of internal .bss
   // One-shot (join/regen), never on the hot 100ms tick path, so a few retries
   // here is cheap insurance against leaving a joining player with no map at
   // all — previously a single 20ms miss sent the client nothing.
@@ -221,6 +223,9 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   int mapStart = pos;
   pos += encodeMapFog(buf + pos, (int)sizeof(buf) - pos, me.q, me.r, visR, maskRes, pid);
   int mapLen = pos - mapStart;
+  // Which way everyone in sight went (trails.hpp), for the cells just sent.
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"trl\":\"");
+  pos += encodeTrailDisk(buf + pos, min(SYNC_TRAIL_CAP, (int)sizeof(buf) - pos), me.q, me.r, visR);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"p\":[");
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -238,10 +243,10 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     // is what the client sizes its pack grid and LIFE LEVEL track from.
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"arch\":%d,\"fth\":%d,\"wth\":%d,\"mp\":%d,\"wnd\":[%d,%d],\"rt\":%d,",
+      "\"arch\":%d,\"fth\":%d,\"wth\":%d,\"ap\":%d,\"wnd\":[%d,%d],\"rt\":%d,",
       p.ll, p.food, p.water, p.radiation,
       p.archetype,
-      (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.movesLeft,
+      (int)p.fThreshBelow, (int)p.wThreshBelow, (int)p.apLeft,
       (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], p.resting ? 1 : 0);
     // Skills array
     pos += snprintf(buf + pos, sizeof(buf) - pos,
@@ -352,15 +357,15 @@ static void broadcastState() {
     pos += snprintf(buf + pos, sizeof(buf) - pos,
       "{\"id\":%d,\"q\":%d,\"r\":%d,\"sc\":%d,\"inv\":[%d,%d,%d,%d,%d],\"on\":%d,\"sp\":%d,"
       "\"ll\":%d,\"food\":%d,\"water\":%d,\"rad\":%d,"
-      "\"mp\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,\"uf\":%d,",
+      "\"ap\":%d,\"fth\":%d,\"wth\":%d,\"wnd\":[%d,%d],\"vm\":%d,\"rt\":%d,\"uf\":%d,",
       i, p.q, p.r, p.score,
       p.inv[0], p.inv[1], p.inv[2], p.inv[3], p.inv[4],
       p.connected ? 1 : 0, p.steps,
       p.ll, p.food, p.water, p.radiation,
-      (int)p.movesLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
+      (int)p.apLeft, (int)p.fThreshBelow, (int)p.wThreshBelow,
       (int)p.wounds[WOUND_MINOR], (int)p.wounds[WOUND_MAJOR], (int)computeValidMoves(i),
       // Resting used to ride only in sync, so "resting" and "simply out of
-      // MP" looked the same from the tick -- and one survivor who never
+      // AP" looked the same from the tick -- and one survivor who never
       // actually rested holds the whole fleet's day open.
       p.resting ? 1 : 0,
       // Equipped daily-cost items not paid for today (unfuelledMask()): a

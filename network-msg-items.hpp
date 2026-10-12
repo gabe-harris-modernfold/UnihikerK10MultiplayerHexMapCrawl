@@ -19,8 +19,9 @@
 static void pushVisDisk(AsyncWebSocketClient* client, int pid) {
   if (!client || pid < 0) return;
   // 1600: an underground disk at the widest light (radius 6, clipped to the
-  // 16x10 board) is ~110 cells at 12 chars with its "op" tail.
-  PSRAM_STATIC(char, visBuf, [1600]);
+  // 16x10 board) is ~110 cells at 12 chars with its "op" tail. 3200 for the
+  // surface: its "trl" trail records ride after the cells and take what is left.
+  PSRAM_STATIC(char, visBuf, [3200]);
   int visLen = 0;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     int vr; bool mr;

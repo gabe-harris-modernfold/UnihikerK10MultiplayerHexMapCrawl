@@ -108,7 +108,7 @@
         name: p.name || ('P' + p.pid), arch: p.arch | 0, archName: p.archName || '?',
         q: p.q | 0, r: p.r | 0,
         ll: p.ll | 0, llCap: Math.max(1, p.llCap | 0),
-        food: p.food | 0, water: p.water | 0, rad: p.rad | 0, mp: p.mp | 0,
+        food: p.food | 0, water: p.water | 0, rad: p.rad | 0, ap: p.ap | 0,
         wounds: [(p.wounds || [0, 0])[0] | 0, (p.wounds || [0, 0])[1] | 0],
         resting: !!p.resting,
         score: p.score | 0, steps: p.steps | 0,

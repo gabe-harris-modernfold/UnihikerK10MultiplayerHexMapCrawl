@@ -4,7 +4,7 @@
 // it. Exactly one reply comes back per request:
 //
 //   {"t":"ack","rid":N,"cmd":"m"}                    applied
-//   {"t":"nack","rid":N,"cmd":"m","why":"no_mp"}     refused, nothing changed
+//   {"t":"nack","rid":N,"cmd":"m","why":"no_ap"}     refused, nothing changed
 //
 // Without "rid" nothing changes: the browser never sends one, so its traffic
 // and the existing err / item_result / trade_fail replies are untouched. Those
@@ -17,7 +17,7 @@
 //
 // An ack means "no refusal path fired", so every refusal path in a handler
 // must call wsNack() -- one that returns without it acks a request that did
-// nothing. A skill check that rolls and fails is not a refusal (MP was spent,
+// nothing. A skill check that rolls and fails is not a refusal (AP was spent,
 // the world changed): that is an ack, and the outcome rides the usual event.
 //
 // Every WS handler runs on the async_tcp task, one message at a time, so a

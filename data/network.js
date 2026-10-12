@@ -1,4 +1,4 @@
-/* global myId, myVisionR, weatherPhase, groundItems, maxMP, displayMP, nightFade, pickTimeoutId */
+/* global myId, myVisionR, weatherPhase, groundItems, maxAP, displayAP, nightFade, pickTimeoutId */
 
 // ── Client Diagnostics ───────────────────────────────────────────────────────
 // Access via window.diag.report() or window.diag.data in the browser console.
@@ -283,6 +283,7 @@ function _applyWorldState(world) {
   const c = worldState.caravan;
   if (c?.active && (c.q !== _lastCaravanHex?.q || c.r !== _lastCaravanHex?.r)) {
     if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], tireTrack: 1 };
+    trailField?.step('v', 0, c.q, c.r, _lastCaravanHex?.q, _lastCaravanHex?.r);
     _lastCaravanHex = { q: c.q, r: c.r };
   }
 }
@@ -362,6 +363,7 @@ function _msgSync(msg) {
   collectedCells.clear();
   surveyedCells.clear();
   parseMapFog(msg.map);
+  applyTrailRecs(msg.trl);   // which way the footprints in sight went
   if (!Array.isArray(msg.p)) return;
   msg.p.forEach(p => {
     if (typeof p.id !== 'number' || p.id < 0 || p.id >= MAX_PLAYERS) return;
@@ -382,13 +384,13 @@ function _msgSync(msg) {
   if (myId >= 0) hideCharSelect();  // belt-and-suspenders: hide picker if sync arrives before/without asgn
   if (myId >= 0) uiResting.val = !!players[myId].rest;  // sync resting state on reconnect
   updateSidebar();
-  // maxMP is the DAY'S BUDGET and only a dawn event knows it. players[].mp is
-  // what is LEFT, so seeding it here rescaled the MP track (and renderer.js's
-  // time-of-day fade, which divides by maxMP) to whatever was unspent at the
+  // maxAP is the DAY'S BUDGET and only a dawn event knows it. players[].ap is
+  // what is LEFT, so seeding it here rescaled the AP track (and renderer.js's
+  // time-of-day fade, which divides by maxAP) to whatever was unspent at the
   // moment of a mid-day reconnect. Only raise it, never shrink it: on a fresh
   // connect it is the best estimate available, and the next dawn corrects it.
-  if (myId >= 0 && players[myId]?.mp > maxMP) { maxMP = players[myId].mp; uiMaxMP.val = maxMP; }
-  if (myId >= 0) displayMP = players[myId].mp ?? 6;
+  if (myId >= 0 && players[myId]?.ap > maxAP) { maxAP = players[myId].ap; uiMaxAP.val = maxAP; }
+  if (myId >= 0) displayAP = players[myId].ap ?? 6;
   if (myId >= 0 && players[myId]?.llCap) uiLLCap.val = players[myId].llCap;
   updateTerrainCard();
   updateDirButtons();
@@ -423,7 +425,7 @@ function _msgState(msg) {
     p.ll = pd.ll; p.food = pd.food; p.water = pd.water;
     p.rad = pd.rad;
 
-    if (pd.mp  !== undefined) p.mp  = pd.mp;
+    if (pd.ap  !== undefined) p.ap  = pd.ap;
     if (pd.fth !== undefined) p.fth = pd.fth;   // F threshold bitmask
     if (pd.wth !== undefined) p.wth = pd.wth;   // W threshold bitmask
     if (pd.wnd)               p.wnd = pd.wnd;   // [minor, major] wound counts
@@ -479,7 +481,7 @@ function _msgState(msg) {
   updateTerrainCard();
   updateDirButtons();
   _checkDownedState();
-  // MP, terrain, co-located players, wounds: everything the deck lights on
+  // AP, terrain, co-located players, wounds: everything the deck lights on
   // rides this message too (ui-panels.js).
   globalThis.renderActionDeck?.();
   // Both halves of "am I standing on the caravan?" ride this message, so
@@ -531,6 +533,7 @@ function _msgVis(msg) {
     else       { players[myId].q  = msg.q; players[myId].r  = msg.r; }
   }
   applyVisDisk(msg.cells, depth, depth ? msg.op : null);
+  if (!depth) applyTrailRecs(msg.trl);
   if (myId >= 0) _handleSelfVis();
   updateTerrainCard();
   updateSidebar();
@@ -830,13 +833,14 @@ function _narrateMove(ev) {
   const tName = TERRAIN[cell?.terrain ?? 0]?.name ?? 'Unknown';
   const shelterNote = cell?.shelter ? ' Shelter present.' : '';
   const exploNote   = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
-  narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. MP:${ev.mp}.${shelterNote}${exploNote}`);
+  narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. AP:${ev.ap}.${shelterNote}${exploNote}`);
 }
 
 function _evMv(ev) {
   const pm = players[ev.pid];
-  if (ev.mp !== undefined) {
-    pm.mp = ev.mp;
+  const fromQ = pm.q, fromR = pm.r, fromDp = pm.dp;   // before the move overwrites them
+  if (ev.ap !== undefined) {
+    pm.ap = ev.ap;
     if (ev.pid === myId) updateSidebar();
   }
   // Underground, q/r are tunnel coordinates: they belong in tq/tr, and the
@@ -858,6 +862,21 @@ function _evMv(ev) {
   // nothing drives a bunker corridor.
   if (ev.trk && !ev.dp && gameMap[ev.r]?.[ev.q]) {
     gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], tireTrack: 1 };
+  }
+  // And which way this step went: the bits above say only that someone
+  // crossed the hex, and a track you can follow has to point (trail-field.js).
+  // Surface only -- the tunnel board is transient and is read from its bits.
+  if (trailField) {
+    if (ev.dp) { trailField.lose('f', ev.pid); trailField.lose('b', ev.pid); }
+    else {
+      // "d" (PROTO 6) is the side stepped through, which names the hex they
+      // came from outright; without it, the position we last had for them.
+      const side = ev.d >= 0 && ev.d < 6 ? ev.d : -1;
+      const hq = fromDp ? undefined : fromQ, hr = fromDp ? undefined : fromR;
+      // A ridden step leaves a rut and no prints; a walked one the reverse.
+      trailField.step(ev.trk ? 'b' : 'f', ev.pid, ev.q, ev.r, hq, hr, side);
+      trailField.lose(ev.trk ? 'f' : 'b', ev.pid);
+    }
   }
   if (ev.radd && ev.radd > 0) _handleRadiation(ev, pm);
   // Exploration bonus: log first-visit score
@@ -910,14 +929,14 @@ function _applyDawnToPlayer(ev) {
   p.food  = ev.f;
   p.water = ev.w;
   p.ll    = ev.ll;
-  p.mp    = ev.mp;
+  p.ap    = ev.ap;
   // Every seat's, not just ours: the map fades out a Motorbike that could
   // not be fuelled this dawn (bikeStalled(), renderer.js).
   p.unf   = ev.unf | 0;
   if (ev.pid === myId) {
-    maxMP = ev.mp; uiMaxMP.val = ev.mp; displayMP = ev.mp; nightFade = NIGHT_FADE_INIT;
+    maxAP = ev.ap; uiMaxAP.val = ev.ap; displayAP = ev.ap; nightFade = NIGHT_FADE_INIT;
     // Which equipped items could not pay their daily cost this dawn (bitmask,
-    // bit 0 = head .. bit 4 = vehicle). Their MP bonus is dormant for the day
+    // bit 0 = head .. bit 4 = vehicle). Their AP bonus is dormant for the day
     // and the equipment panel greys it out instead of promising it.
     uiUnfuelled.val = ev.unf | 0;
   }
@@ -950,26 +969,26 @@ function _toastDawnSelf(ev) {
   else if (ev.dll > 0) dawnMsg = `☀ Day ${ev.day} — you wake mended. The sun feels kind for once.`;
   else                 dawnMsg = `☀ Day ${ev.day} — the sun returns. The wastes endure, and so do you.`;
   showToast(dawnMsg);
-  // Dawn restores MP and clears the rest flag — relight the action deck.
+  // Dawn restores AP and clears the rest flag — relight the action deck.
   setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
 
 // A bike that stalled at dawn found fuel and started (kickStartItems,
-// inventory_items.hpp): the fuel is gone and the bike's MP is on today's
+// inventory_items.hpp): the fuel is gone and the bike's AP is on today's
 // budget. The fade back in is the tick's "uf"; this is the rider's news.
 function _evRefuel(ev) {
   const p = players[ev.pid];
   if (!p) return;
-  p.mp = ev.mp;
+  p.ap = ev.ap;
   p.uf = ev.unf | 0;
   if (ev.pid !== myId) return;
   uiUnfuelled.val = p.uf;
-  // The day's budget grew, so the MP track and the time-of-day fade (both
-  // measured against maxMP) take the bonus in rather than overflowing.
-  maxMP += ev.mpd | 0; uiMaxMP.val = maxMP;
+  // The day's budget grew, so the AP track and the time-of-day fade (both
+  // measured against maxAP) take the bonus in rather than overflowing.
+  maxAP += ev.apd | 0; uiMaxAP.val = maxAP;
   const name = escHtml(getItemById?.(ev.it)?.name ?? 'The engine');
-  addLog(`<span class="log-check-ok">\u26FD Fuel in the tank: the ${name} kicks back to life. +${ev.mpd} MP today.</span>`);
-  showToast(`\u26FD ${name} running again: +${ev.mpd} MP`);
+  addLog(`<span class="log-check-ok">\u26FD Fuel in the tank: the ${name} kicks back to life. +${ev.apd} AP today.</span>`);
+  showToast(`\u26FD ${name} running again: +${ev.apd} AP`);
   updateSidebar();
   setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
@@ -987,7 +1006,7 @@ function _evDawn(ev) {
 
 function _applyActState(ev, p) {
   if (!p) return;
-  p.mp = ev.mp;
+  p.ap = ev.ap;
   p.ll = ev.ll;
   if (ev.fd)  p.inv[1] = Math.min(99, (p.inv[1] ?? 0) + ev.fd);
   if (ev.wd)  p.inv[0] = Math.min(99, (p.inv[0] ?? 0) + ev.wd);
@@ -1005,7 +1024,7 @@ function _buildActDetail(ev) {
   let d = '';
   // Why an AO_BLOCKED action was refused (ABW_* in the .ino). Blocked used to
   // be silent, which is fine while every reason is visible on the player's own
-  // screen -- "nothing to salvage here", "no MP". A pack full of scrap is not,
+  // screen -- "nothing to salvage here", "no AP". A pack full of scrap is not,
   // and an unexplained dead button is the worst version of that.
   if (ev.out === AO_BLOCKED && ev.bw === ABW_PACK_FULL)
     return ' — pack full, drop something first';
@@ -1036,7 +1055,7 @@ function _narrateActResult(ev, actNm) {
   const actNames = ['Forage','Water','Treat','Scavenge','Shelter','Craft','Survey','Rest'];
   const outNames = ['','Success','Partial','Failed'];
   const pts = ev.scoreD ? ` +${ev.scoreD}pts.` : '';
-  narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. MP:${ev.mp}.${pts}`);
+  narrateState(`${actNames[ev.a] ?? 'Action'} — ${outNames[ev.out] ?? ev.out}. AP:${ev.ap}.${pts}`);
 }
 
 function _evAct(ev) {
@@ -1065,6 +1084,7 @@ function _evSurv(ev) {
   try {
     if (ev.cells) {
       applyVisDisk(ev.cells);
+      applyTrailRecs(ev.trl);
       // Extract q,r coords and add to the surveyed set so the render loop
       // shows these cells as terrain instead of fog.
       for (let i = 0; i < ev.cells.length; i += 10) {
@@ -1443,7 +1463,7 @@ function _evEncEnd(ev) {
 function _evTunIn(ev) {
   const p = players[ev.pid];
   if (p) { p.dp = 1; p.q = ev.q; p.r = ev.r; p.hatchIdx = ev.hatch; }
-  if (ev.mp !== undefined && p) p.mp = ev.mp;
+  if (ev.ap !== undefined && p) p.ap = ev.ap;
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   addLog(`<span class="log-mv">▼ ${escHtml(who)} climbed down into the bunker tunnels</span>`);
   if (ev.pid === myId) {
@@ -1460,8 +1480,10 @@ function _evTunOut(ev) {
     // never lerp it -- snap, or the marker slides across the whole map.
     renderPos[ev.pid].q = ev.q;
     renderPos[ev.pid].r = ev.r;
+    // A surface trail starts again at the hatch they climbed out of.
+    if (trailField) { trailField.lose('f', ev.pid); trailField.step('f', ev.pid, ev.q, ev.r); }
   }
-  if (ev.mp !== undefined && p) p.mp = ev.mp;
+  if (ev.ap !== undefined && p) p.ap = ev.ap;
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   addLog(`<span class="log-mv">▲ ${escHtml(who)} climbed out of the tunnels</span>`);
   if (ev.pid === myId) {
@@ -1502,6 +1524,10 @@ function handleEvent(ev) {
     case 'tun_collapse':_evTunCollapse(ev);break;
     case 'join':
       players[ev.pid].on = true;
+      // Somebody new in the seat, or back from the dead: their trail starts
+      // here, not where the last one stopped.
+      trailField?.lose('f', ev.pid);
+      trailField?.lose('b', ev.pid);
       // Snap renderPos so the new player doesn't lerp from (0,0) to their hex (Bug-4)
       if (ev.q === undefined) { renderPos[ev.pid].q = players[ev.pid].q; renderPos[ev.pid].r = players[ev.pid].r; }
       else { renderPos[ev.pid].q = ev.q; renderPos[ev.pid].r = ev.r; }
@@ -1511,6 +1537,7 @@ function handleEvent(ev) {
       showToast('☠ The wasteland reshapes itself. Every bearing is lost.');
       addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, survivor.</span>');
       ecoField?.reset();   // the species died with its world; the next eco message regrows it
+      trailField?.clear(); // and every trail with it -- these coordinates are new ground
       break;
     case 'downed':      _evDowned(ev);     break;
     case 'left':
@@ -1596,6 +1623,43 @@ function handleEvent(ev) {
         addLog(`<span class="log-check-fail">▪ ${n} settlement${n > 1 ? 's' : ''} leveled to open scrub.</span>`);
         showToast('☠ The quake swallows a settlement whole. Nothing left but scrub.');
       }
+      break;
+    }
+    case 'debris': {
+      // Something broke up on reentry. The server picked the whole fall --
+      // heading, breakup point, every fragment's hex, size and landing time --
+      // so every client streaks the same pieces onto the same hexes; this
+      // hands it to the renderer (debris-field.js). The boom itself is the K10
+      // speaker's, so here it is a log line and the faint shudder the renderer
+      // puts on every screen.
+      debrisField?.spawnFromEvent(ev);
+      addLog('<span class="log-check-fail">▪ A double crack splits the sky. Something is coming apart up there.</span>');
+      showToast('☄ A double boom rolls across the waste. Something is falling.');
+      // Each piece changes the ground when it lands, not at the boom: its
+      // crater (`conv`, a Settlement under it levelled to Ash Dunes) and any
+      // shelter it flattens (`dest`) turn over the instant it hits.
+      (ev.f ?? []).forEach((f, i) => setTimeout(() => {
+        let sheltersLost = 0, townsLost = 0;
+        for (const d of ev.dest ?? []) {
+          if (d.i !== i) continue;
+          sheltersLost++;
+          if (gameMap[d.r]?.[d.q]) gameMap[d.r][d.q] = { ...gameMap[d.r][d.q], shelter: 0 };
+        }
+        for (const c of ev.conv ?? []) {
+          if (c.i !== i) continue;
+          const cell = gameMap[c.r]?.[c.q];
+          if (!cell) continue;
+          if (cell.terrain === 9) townsLost++;
+          gameMap[c.r][c.q] = { ...cell, terrain: c.tr, variant: c.v ?? cell.variant };
+        }
+        if (townsLost) {
+          addLog('<span class="log-check-fail">▪ Debris comes down on a settlement. Nothing left but ash.</span>');
+          showToast('☠ The sky falls on a settlement. It burns down to an ash field.');
+        } else if (sheltersLost) {
+          addLog(`<span class="log-check-fail">▪ Debris flattens ${sheltersLost} shelter${sheltersLost > 1 ? 's' : ''}.</span>`);
+          showToast('☠ A burning piece of sky flattens a shelter.');
+        }
+      }, f.t ?? 0));
       break;
     }
     case 'settle': {

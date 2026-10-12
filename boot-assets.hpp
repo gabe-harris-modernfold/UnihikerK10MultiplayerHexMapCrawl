@@ -279,7 +279,7 @@ static void loadItemRegistry() {
     else if (strcmp(key, "food")     == 0) cur.statMods[STAT_FOOD]    = (int8_t)atoi(val);
     else if (strcmp(key, "water")    == 0) cur.statMods[STAT_WATER]   = (int8_t)atoi(val);
     else if (strcmp(key, "rad")      == 0) cur.statMods[STAT_RAD]     = (int8_t)atoi(val);
-    else if (strcmp(key, "mp")       == 0) cur.statMods[STAT_MP]      = (int8_t)atoi(val);
+    else if (strcmp(key, "ap")       == 0) cur.statMods[STAT_AP]      = (int8_t)atoi(val);
     else if (strcmp(key, "slots")    == 0) cur.statMods[STAT_SLOTS]   = (int8_t)atoi(val);
     else if (strcmp(key, "water_cap") == 0) cur.statMods[STAT_WATER_CAP] = (int8_t)atoi(val);
     else if (strcmp(key, "water_cost") == 0) cur.opCost[0] = (uint8_t)atoi(val);

@@ -2,7 +2,7 @@
 
 Why it exists: tickGame() starts a new day at DAY_TICKS (5 real minutes) or
 the moment every connected player is resting, whichever is first.  An
-all-bot fleet rests the instant it runs out of MP, so days collapse to
+all-bot fleet rests the instant it runs out of AP, so days collapse to
 seconds -- fine for the supply economy, useless for everything on a real
 clock (weather is floored at ~1.1-1.9 real minutes by weatherNextGapMs; fire,
 flood and Creeping Doom tick on WORLD_TICK_INTERVAL).  One player awake
@@ -29,7 +29,7 @@ What it does, in order:
      guaranteed there).  Never radioactive, never a hatch (stepping on one
      is a descent), never impassable.  Re-picked while unbuilt if something
      clearly better comes into view; sticky once a shelter stands on it.
-  2. **Get the scrap.**  A basic shelter is 1 scrap + 1 MP, an improved one
+  2. **Get the scrap.**  A basic shelter is 1 scrap + 1 AP, an improved one
      2 + 2 (doShelter).  Improved is immune to Strangle Fog, basic only
      halves it; either is full cover from exposure and the chem storm.
      Piles first, SCAVENGE where the terrain salvages.
@@ -44,7 +44,7 @@ It plays nothing like ScoreMax any more, and its score is not comparable.
 Read it for what the soak measures: real-clock hazards per real minute,
 and whether a survivor who does everything right can live through them.
 
-Never wrap it in sprint mode: SprintPolicy forces REST the moment MP runs
+Never wrap it in sprint mode: SprintPolicy forces REST the moment AP runs
 out, which collapses the day.  arena.py refuses the combination.
 """
 import time
@@ -162,7 +162,7 @@ class SentinelPolicy(ScoreMaxPolicy):
             if (here is not None and here.shelter == 0
                     and here.terrain != TERR_SETTLEMENT
                     and (at_camp or (is_exposed(here.terrain) and me.archetype != 5))
-                    and me.inv[RES_SCRAP] >= 1 and me.mp >= 1):
+                    and me.inv[RES_SCRAP] >= 1 and me.ap >= 1):
                 act = self._shelter(obs, "bedtime: " + ("finishing camp" if at_camp
                                                         else "cover where I stand"))
                 if act is not None:
@@ -228,8 +228,8 @@ class SentinelPolicy(ScoreMaxPolicy):
         scrap = me.inv[RES_SCRAP]
         if here is not None and t != TERR_SETTLEMENT:
             if here.shelter == 0:
-                if scrap >= 1 and me.mp >= 1:
-                    kind = "improved" if scrap >= 2 and me.mp >= 2 else "basic"
+                if scrap >= 1 and me.ap >= 1:
+                    kind = "improved" if scrap >= 2 and me.ap >= 2 else "basic"
                     act = self._shelter(obs, f"making camp: {kind} shelter")
                     if act is not None:
                         self.camp_stats["shelters"] += 1
@@ -238,22 +238,22 @@ class SentinelPolicy(ScoreMaxPolicy):
                     act = self._fetch_scrap(obs, SCRAP_SEARCH_COST)
                     if act is not None:
                         return act
-            elif here.shelter == 1 and scrap >= 2 and me.mp >= 2:
+            elif here.shelter == 1 and scrap >= 2 and me.ap >= 2:
                 act = self._shelter(obs, "upgrading camp: fog immunity")
                 if act is not None:
                     self.camp_stats["upgrades"] += 1
                     return act
-        if has_water(t) and me.inv[RES_WATER] < WATER_TARGET and me.mp >= 1:
-            return Action("act", a=ACT_WATER, mp=min(3, me.mp),
+        if has_water(t) and me.inv[RES_WATER] < WATER_TARGET and me.ap >= 1:
+            return Action("act", a=ACT_WATER, ap=min(3, me.ap),
                           why=f"camp water {me.inv[RES_WATER]}")
-        if can_forage(t) and me.inv[RES_FOOD] < FOOD_TARGET and me.mp >= 2:
+        if can_forage(t) and me.inv[RES_FOOD] < FOOD_TARGET and me.ap >= 2:
             return Action("act", a=ACT_FORAGE, why=f"camp food {me.inv[RES_FOOD]}")
         # The camp cannot supply what is running out: go and get it.
         act = self.staple_hunt(obs)
         if act is not None:
             return act
-        # Spare MP and a basic shelter: a short trip for upgrade scrap.
-        if (here is not None and here.shelter == 1 and scrap < 2 and me.mp >= 4
+        # Spare AP and a basic shelter: a short trip for upgrade scrap.
+        if (here is not None and here.shelter == 1 and scrap < 2 and me.ap >= 4
                 and not self.late(obs)):
             return self._fetch_scrap(obs, UPGRADE_TRIP_COST)
         return None
@@ -269,7 +269,7 @@ class SentinelPolicy(ScoreMaxPolicy):
     def _fetch_scrap(self, obs, max_cost) -> Action | None:
         me = obs.me
         here = obs.here()
-        if (here is not None and can_salvage(here.terrain) and me.mp >= 2
+        if (here is not None and can_salvage(here.terrain) and me.ap >= 2
                 and token_room(me) > 0):
             return Action("act", a=ACT_SCAV, why="salvaging scrap for a shelter")
         legal = me.legal_dirs()
@@ -294,7 +294,7 @@ class SentinelPolicy(ScoreMaxPolicy):
         me = obs.me
         legal = me.legal_dirs()
         if not legal:
-            return Action("noop", why="out of MP on the way to camp; awake")
+            return Action("noop", why="out of AP on the way to camp; awake")
         _dist, first = dijkstra(obs.map, me.q, me.r, max_cost=80, stop_at=ends_journey)
         d = first.get(self.camp, -1)
         if d < 0:

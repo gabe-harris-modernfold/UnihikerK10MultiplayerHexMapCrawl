@@ -50,8 +50,8 @@ NUM_TERRAIN = 16
 TERRAIN_NAME = ("Scrub", "Dunes", "Forest", "Marsh", "Urban", "Flooded",
                 "Glass", "Hills", "Mountain", "Settlement", "Crater", "River",
                 "Tunnel12", "Tunnel13", "Tunnel14", "Tunnel15")
-# Move cost in MP.  255 == impassable (Crater, River, and one tunnel terrain).
-# River is passable at 1 MP *with a Raft equipped* (TERR_PASS_WATER).
+# Move cost in AP.  255 == impassable (Crater, River, and one tunnel terrain).
+# River is passable at 1 AP *with a Raft equipped* (TERR_PASS_WATER).
 TERRAIN_MC = (1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255, 1, 1, 2, 255)
 IMPASSABLE = 255
 TERR_SETTLEMENT = 9
@@ -72,7 +72,7 @@ TERRAIN_IS_RAD    = (0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0)
 # costs 1 LL per dawn wherever SV < 2 and nothing is built -- which is every
 # terrain except Flooded, Mountain, Settlement and Bunker, i.e. under 4% of a
 # generated map.  It is the single largest LL drain in the game, and the only
-# counter-play on the other 96% is building a shelter (1 scrap, 1 MP).
+# counter-play on the other 96% is building a shelter (1 scrap, 1 AP).
 TERRAIN_SV = (0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 0, 2, 0, 1, 0)
 
 
@@ -106,14 +106,14 @@ def is_exposed(terrain: int) -> bool:
 TUN_COLS, TUN_ROWS = 16, 10
 MAX_HATCHES = 8
 
-TERR_BUNKER      = 12   # Bunker Entrance -- on BOTH boards. 1 MP each way.
-TERR_VENT        = 13   # Vent Shaft      -- on BOTH boards. VENT_ASCEND_MP up.
+TERR_BUNKER      = 12   # Bunker Entrance -- on BOTH boards. 1 AP each way.
+TERR_VENT        = 13   # Vent Shaft      -- on BOTH boards. VENT_ASCEND_AP up.
 TERR_TUNNEL      = 14   # Tunnel Floor    -- tunnel only. Waters and salvages.
 TERR_COLLAPSED   = 15   # Collapsed Tunnel-- tunnel only. Impassable, permanent.
 
 TUNNEL_MC      = 2      # MC of Tunnel Floor; mirrors TERRAIN_MC[14]
-DESCEND_MP     = 1      # tunnelStepDown() always charges 1
-VENT_ASCEND_MP = 2      # climbing out of a Vent Shaft costs double
+DESCEND_AP     = 1      # tunnelStepDown() always charges 1
+VENT_ASCEND_AP = 2      # climbing out of a Vent Shaft costs double
 # Underground sight: your own hex plus one ring, +1 carrying a Bile Flare
 # (item 54, carried NOT equipped -- hasTunnelLight scans invType[]), +1 Scout.
 TUNNEL_VIS_BASE  = 1
@@ -207,7 +207,7 @@ def _parse_items(path=None):
         fx = [(d.get("effect"), d.get("param")), (d.get("effect2"), d.get("param2"))]
         st = {
             "ll":      int(d.get("ll", 0)),
-            "mp":      int(d.get("mp", 0)),
+            "ap":      int(d.get("ap", 0)),
             "slots":   int(d.get("slots", 0)),
             # rad and threat are stored as written: negative is the good one.
             "rad":     int(d.get("rad", 0)),
@@ -217,9 +217,9 @@ def _parse_items(path=None):
             # Water tokens carried OUTSIDE the pack cap (canteenCap()).
             "water_cap": int(d.get("water_cap", 0)),
             "narrative": {int(p) for e, p in fx if e == "narrative" and p},
-            # A *_cost item's mp only lands on a dawn where the cost was paid
+            # A *_cost item's ap only lands on a dawn where the cost was paid
             # (applyDawnItemCosts), so it is worth strictly less than the same
-            # mp for free.
+            # ap for free.
             "gated":   any(d.get(k) for k in
                            ("water_cost", "food_cost", "fuel_cost",
                             "med_cost", "scrap_cost")),
@@ -322,12 +322,12 @@ def pack_recipe():
 
 def bike_recipe():
     """(recipe id, item id) for the craftable fuelled vehicle -- the Motorbike:
-    a vehicle-slot output whose MP is paid for in fuel at dawn."""
+    a vehicle-slot output whose AP is paid for in fuel at dawn."""
     for rid, rec in sorted(RECIPES.items()):
         out = rec["output"]
         st = EQUIP_STATS.get(out, {})
         if (EQUIPMENT.get(out) == EQUIP_SLOT_BY_NAME["vehicle"]
-                and st.get("mp", 0) > 0 and st.get("gated")):
+                and st.get("ap", 0) > 0 and st.get("gated")):
             return rid, out
     return None, None
 
@@ -339,10 +339,10 @@ BIKE_RECIPE, BIKE_ITEM = bike_recipe()
 NAR_FIRE_STARTER, NAR_COLD_IMMUNE = 20, 21
 NAR_SCAV_DOUBLE, NAR_RIVER_FORAGE, NAR_LAND_FORAGE = 30, 31, 32
 
-# How much a fuel-gated mp bonus is discounted. Not zero -- a Motorbike with
+# How much a fuel-gated ap bonus is discounted. Not zero -- a Motorbike with
 # fuel is the best mobility in the game -- but not face value either, because
 # the bots run their fuel down and the bonus silently vanishes on a dry dawn.
-GATED_MP_DISCOUNT = 0.5
+GATED_AP_DISCOUNT = 0.5
 
 
 def gear_score(item_id, weights):
@@ -356,9 +356,9 @@ def gear_score(item_id, weights):
     st = EQUIP_STATS.get(item_id)
     if not st:
         return 0.0
-    mp = st["mp"] * (GATED_MP_DISCOUNT if st["gated"] else 1.0)
+    ap = st["ap"] * (GATED_AP_DISCOUNT if st["gated"] else 1.0)
     score = (weights.get("ll", 0.0)     * st["ll"]
-             + weights.get("mp", 0.0)    * mp
+             + weights.get("ap", 0.0)    * ap
              + weights.get("slots", 0.0) * st["slots"]
              + weights.get("vision", 0.0) * st["vision"]
              # rad and threat are good when negative, so flip them.
@@ -407,8 +407,8 @@ def is_tunnel_terrain(t: int) -> bool:
 
 
 def ascend_cost(shaft_terrain: int) -> int:
-    """MP to climb out through this shaft (tunnelAscendCost)."""
-    return VENT_ASCEND_MP if shaft_terrain == TERR_VENT else 1
+    """AP to climb out through this shaft (tunnelAscendCost)."""
+    return VENT_ASCEND_AP if shaft_terrain == TERR_VENT else 1
 
 
 def can_salvage(terrain: int) -> bool:
@@ -420,11 +420,16 @@ WEATHER_CLEAR, WEATHER_RAIN, WEATHER_STORM = 0, 1, 2
 WEATHER_CHEM, WEATHER_FOG, WEATHER_MIST    = 3, 4, 5
 WEATHER_NAME = ("clear", "rain", "storm", "chem", "strangle-fog", "mist")
 
-# ── MP budget (effectiveMP, inventory_items.hpp:525) ─────────────────────────
-# mp = ll + 3, minus major wounds, minus 1 if encumbered; floor of 2.
-MP_FLOOR = 2
-def base_mp(ll: int) -> int:
-    return max(MP_FLOOR, ll + 3)
+# Oldest firmware PROTO_VERSION these bots can read.  7 renamed every "mp"
+# key to "ap": on an older board me.ap reads 0 forever and every bot just
+# rests, with nothing on the wire to say why.
+MIN_PROTO = 7
+
+# ── AP budget (effectiveAP, inventory_items.hpp:525) ─────────────────────────
+# ap = ll + 3, minus major wounds, minus 1 if encumbered; floor of 2.
+AP_FLOOR = 2
+def base_ap(ll: int) -> int:
+    return max(AP_FLOOR, ll + 3)
 
 # ── Scoring (for the bots' own bookkeeping; server is authoritative) ─────────
 SCORE_PER_RES_TOKEN   = 10   # collectResource(), automatic on stepping onto a pile

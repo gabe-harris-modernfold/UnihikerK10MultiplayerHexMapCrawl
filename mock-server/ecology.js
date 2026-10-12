@@ -21,13 +21,13 @@ const MAP_COLS = 75, MAP_ROWS = 57, NUM_TERRAIN = 16;
 const DQ = [1, 1, 0, -1, -1, 0];
 const DR = [0, -1, -1, 0, 1, 1];
 
-const ECO_TICK_MS = 5000;
+const ECO_TICK_MS = 6667;   // ecology.hpp: 25% slower growth than the original 5 s
 const SUB = 4, W = MAP_COLS * SUB, H = MAP_ROWS * SUB;        // 300 x 228
 const XW = W * 64, YW = H * 64;                               // Q6 wrap
 const TILE = 16, TX = Math.ceil(W / TILE), TY = Math.ceil(H / TILE);
 const HEXES = MAP_ROWS * MAP_COLS;
 const MAX_AGENTS = 4096, MAX_COLONIES = 16, MAX_BODIES = 12, MAX_SPORES = 32, MAX_DAISIES = 48, MAX_FLIGHTS = 24;
-const COVERAGE_CAP = 25, VISIBLE_DENS = 4, AGE_SCAR_TICKS = 60, FIRST_CAP = 256, COLONY_CAP_MAX = 1024;
+const COVERAGE_CAP = 25, VISIBLE_DENS = 4, AGE_SCAR_TICKS = 45, FIRST_CAP = 256, COLONY_CAP_MAX = 1024;
 // Trail units per density step: (max + 3*mean)/4 over the hex's 16 sub-cells,
 // divided by this, capped at 15. 12 needed a mean trail of ~48 before a hex
 // counted as veined and 4096 agents covered 3% of the land; 6 puts a single

@@ -11,6 +11,91 @@ static void sanitizeName(char* s, int maxLen) {
   }
 }
 
+// ── Trail sides (SAVE_TRL_F) ─────────────────────────────────────────────────
+// Sparse: nearly every (hex, walker) has no record, so the file is a list of
+// the cells that have one -- uint16 cell index (r * MAP_COLS + q), a uint8
+// mask of which slots follow, then one trails.hpp byte per set bit. A world
+// walked for days is a few KB; every slot of every hex would be ~42 KB.
+struct __attribute__((packed)) SaveTrailHdr {
+  uint32_t magic;
+  uint8_t  version;
+  uint8_t  cols, rows, slots;   // a file for another board shape is ignored
+  uint16_t cells;
+};
+
+// Inside saveGame()'s G.mutex hold, and only when something moved since the
+// last write: a dawn with nobody walking costs nothing.
+static void saveTrailFile() {
+  if (!trailDirty || !trailSides) return;
+  File f = SD.open(SAVE_TRL_F, FILE_WRITE);
+  if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_TRL_F); return; }
+  SaveTrailHdr h = { TRAIL_SAVE_MAGIC, 1, (uint8_t)MAP_COLS, (uint8_t)MAP_ROWS, (uint8_t)TRAIL_SLOTS, 0 };
+  for (int r = 0; r < MAP_ROWS; r++)
+    for (int q = 0; q < MAP_COLS; q++)
+      for (int s = 0; s < TRAIL_SLOTS; s++)
+        if (trailSides[r][q][s] != TRAIL_NONE) { h.cells++; break; }
+  size_t bytes = f.write((uint8_t*)&h, sizeof(h));
+  uint8_t chunk[512];
+  int n = 0;
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int q = 0; q < MAP_COLS; q++) {
+      uint8_t mask = 0;
+      for (int s = 0; s < TRAIL_SLOTS; s++) if (trailSides[r][q][s] != TRAIL_NONE) mask |= (uint8_t)(1 << s);
+      if (!mask) continue;
+      if (n + 3 + TRAIL_SLOTS > (int)sizeof(chunk)) { bytes += f.write(chunk, n); n = 0; }
+      uint16_t idx = (uint16_t)(r * MAP_COLS + q);
+      chunk[n++] = (uint8_t)(idx & 0xFF);
+      chunk[n++] = (uint8_t)(idx >> 8);
+      chunk[n++] = mask;
+      for (int s = 0; s < TRAIL_SLOTS; s++) if (mask & (1 << s)) chunk[n++] = trailSides[r][q][s];
+    }
+  }
+  if (n) bytes += f.write(chunk, n);
+  f.close();
+  trailDirty = false;
+  Log.verbose("SD WRITE: %s bytes=%u cells=%u", SAVE_TRL_F, (unsigned)bytes, (unsigned)h.cells);
+}
+
+// Called by tryLoadSave() once map.bin has loaded: these sides belong to that
+// map's footprint bits. Without the file (a save older than it) every record
+// is "none" and clients infer the directions, as they did before it existed.
+// A byte that is not a well-formed record is dropped rather than trusted.
+static void loadTrailFile() {
+  trailClearAll();
+  trailDirty = false;   // memory now matches whatever is (or is not) on the card
+  if (!SD.exists(SAVE_TRL_F)) { Log.notice("No %s: trail sides start empty", SAVE_TRL_F); return; }
+  File f = SD.open(SAVE_TRL_F, FILE_READ);
+  if (!f) { Log.error("SD OPEN FAIL (read): %s", SAVE_TRL_F); return; }
+  SaveTrailHdr h;
+  if (f.read((uint8_t*)&h, sizeof(h)) != sizeof(h) || h.magic != TRAIL_SAVE_MAGIC || h.version != 1 ||
+      h.cols != MAP_COLS || h.rows != MAP_ROWS || h.slots != TRAIL_SLOTS) {
+    Log.warning("%s header unreadable or for another board - ignoring", SAVE_TRL_F);
+    f.close();
+    return;
+  }
+  auto side = [](uint8_t v) { return v <= 5 || v == TRAIL_NO_SIDE; };
+  int loaded = 0;
+  for (int i = 0; i < (int)h.cells; i++) {
+    uint8_t rec[3 + TRAIL_SLOTS];
+    if (f.read(rec, 3) != 3) break;
+    int idx = rec[0] | (rec[1] << 8);
+    uint8_t mask = rec[2];
+    int want = 0;
+    for (int s = 0; s < TRAIL_SLOTS; s++) if (mask & (1 << s)) want++;
+    if (idx >= MAP_ROWS * MAP_COLS || (mask >> TRAIL_SLOTS) || f.read(rec + 3, want) != want) break;
+    int k = 3;
+    for (int s = 0; s < TRAIL_SLOTS; s++) {
+      if (!(mask & (1 << s))) continue;
+      uint8_t b = rec[k++];
+      if ((b & 0x80) || !side(b & 7) || !side((b >> 3) & 7)) continue;
+      trailSides[idx / MAP_COLS][idx % MAP_COLS][s] = b;
+      loaded++;
+    }
+  }
+  f.close();
+  Log.notice("SD READ: %s records=%d", SAVE_TRL_F, loaded);
+}
+
 // ── SD Save ───────────────────────────────────────────────────────────────────
 void saveGame() {
   if (SD.cardType() == CARD_NONE) { Log.warning("saveGame: no SD card"); return; }
@@ -91,7 +176,7 @@ void saveGame() {
         sp.invSlots = pl.invSlots;
         sp.score = pl.score; sp.steps = pl.steps;
         sp.encCount     = pl.encCount;
-        sp.movesLeft    = pl.movesLeft;
+        sp.apLeft    = pl.apLeft;
         sp.fThreshBelow = pl.fThreshBelow;
         sp.wThreshBelow = pl.wThreshBelow;
         memcpy(sp.wounds, pl.wounds, NUM_WOUND_TIER);
@@ -148,6 +233,8 @@ void saveGame() {
     } else {
       Log.error("SD OPEN FAIL (write): %s", SAVE_GND_F);
     }
+    // Which way everyone went (trails.hpp): its own file, only when it changed.
+    saveTrailFile();
     // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
     // task has published a change, and on this same serialised save path.
     ecoSaveScarsIfDirty();
@@ -338,6 +425,7 @@ bool tryLoadSave() {
              (unsigned)G.dayCount, (unsigned long)G.dayTick, (unsigned)G.threatClock,
              (unsigned)G.weatherPhase, giLoaded);
   loadGroundFile();   // needs G.dayCount, set above
+  loadTrailFile();    // the sides of the footprints just loaded (trails.hpp)
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());
@@ -360,7 +448,7 @@ bool tryLoadSave() {
       pl.invSlots = sp.invSlots;
       pl.score = sp.score; pl.steps = sp.steps;
       pl.encCount     = sp.encCount;
-      pl.movesLeft    = sp.movesLeft;
+      pl.apLeft    = sp.apLeft;
       pl.fThreshBelow = sp.fThreshBelow;
       pl.wThreshBelow = sp.wThreshBelow;
       memcpy(pl.wounds, sp.wounds, NUM_WOUND_TIER);

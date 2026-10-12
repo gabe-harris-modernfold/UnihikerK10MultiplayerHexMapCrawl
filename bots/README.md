@@ -101,7 +101,7 @@ recording, and the tension metric.
 against `smoke.py` and against `mock-server/`, which speaks the whole tunnel
 protocol — repeated dives, crossings and climb-outs, with the metrics coming
 through. The mock's hex geometry and economy are its own, so treat the
-MP-saving figures from it as a working mechanism, not a measurement.
+AP-saving figures from it as a working mechanism, not a measurement.
 
 Open: the firmware seat-loss fix is written but unflashed, and until it lands
 the churn contaminates balance numbers. See the doc's "Known issues".

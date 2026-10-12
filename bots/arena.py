@@ -32,7 +32,7 @@ import websockets
 
 import policy as policy_mod
 from client import BotClient, RateLimiter, SlotBroker
-from config import MAX_PLAYERS, MAX_SEATED, ARCHETYPE_NAME
+from config import MAX_PLAYERS, MAX_SEATED, ARCHETYPE_NAME, MIN_PROTO
 from findings import FindingLog
 from policy.base import Action, Policy
 from policy.survivor import REST_RETRY_S
@@ -53,7 +53,7 @@ class SprintPolicy(Policy):
     tickGame() ends the day immediately when every connected player is
     resting (`connCount > 0 && allResting`), so a board with only bots on it
     can fast-forward: a day collapses from 5 real minutes to the next tick.
-    This forces REST the moment a survivor is out of MP and lets the wrapped
+    This forces REST the moment a survivor is out of AP and lets the wrapped
     policy play normally the rest of the time.
 
     Caveat: weatherNextGapMs pins real weather changes to a ~1.1-1.9 real
@@ -80,17 +80,17 @@ class SprintPolicy(Policy):
         # Cooldown, not a once-per-day latch.  Unguarded re-sending produced
         # 2054 dead messages in an early run, but latching per day is worse:
         # a REST decided just before a reconnect never reaches the board while
-        # the bot still thinks it rested, leaving it at mp == 0 and awake --
+        # the bot still thinks it rested, leaving it at ap == 0 and awake --
         # and one awake player stops tickGame() ending the day early for the
         # whole fleet.  See SurvivorPolicy.rest_once for the full account.
         if (obs.encounter is None and me.connected and me.ll > 0
-                and me.mp <= 0 and not me.resting
+                and me.ap <= 0 and not me.resting
                 and (self._rested_day != obs.day
                      or time.monotonic() - self._last_rest_sent >= REST_RETRY_S)):
             from config import ACT_REST
             self._rested_day = obs.day
             self._last_rest_sent = time.monotonic()
-            return Action("act", a=ACT_REST, why="sprint: out of MP")
+            return Action("act", a=ACT_REST, why="sprint: out of AP")
         return self.inner.decide(obs)
 
     def on_event(self, ev):
@@ -345,21 +345,21 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                 print(f"       camp: at={camp['at']} sites={camp['camps']} "
                       f"built={camp['shelters']} upgraded={camp['upgrades']} "
                       f"rests={camp['rests']} (in camp {camp['rests_in_camp']})")
-            # Only the tunnel policies carry these. mp_per_surface_hex is the
-            # headline: underground MP spent per surface hex actually crossed,
+            # Only the tunnel policies carry these. ap_per_surface_hex is the
+            # headline: underground AP spent per surface hex actually crossed,
             # against a surface average MC of ~1.6.
             if c and "descents" in c:
-                saving = c.get("mp_per_surface_hex")
+                saving = c.get("ap_per_surface_hex")
                 print(f"       tunnels: dives={c['descents']}/{c['ascents']} "
                       f"steps={c['tunnel_steps']} below/above="
                       f"{c['tunnel_steps']}/{c['surface_steps']} "
                       f"shafts={c['shafts_used']}/{c['hatches_known']} "
                       f"crossed={c['transit_hexes']}hx "
-                      f"mp/hex={saving if saving is not None else '-'} "
+                      f"ap/hex={saving if saving is not None else '-'} "
                       f"dawnsBelow={c['dawns_below']} "
                       f"(bunker={c['bunker_dawns']} vent={c['vent_dawns']})")
                 # dawnsBelow is now a bad-air exposure count, not an LL one:
-                # the split by hatch type only prices the climb out (1 MP
+                # the split by hatch type only prices the climb out (1 AP
                 # against 2) since dawnUpkeep stopped reading the surface hex.
         bd = summary["board"]
         print(f"    board: worst maxTickMs={bd['worst_maxTickMs']} "
@@ -383,6 +383,9 @@ async def main_async(args):
               f"minHeap {st.get('mem', {}).get('minHeap')}")
     except Exception as e:
         raise SystemExit(f"cannot reach board at {args.host}: {e}")
+    if st.get("pv", 1) < MIN_PROTO:
+        raise SystemExit(f"{args.host} reports protocol {st.get('pv', 1)}; these "
+                         f"bots read protocol {MIN_PROTO} (\"ap\", not \"mp\") -- flash it")
 
     summaries = []
     for i in range(1, args.runs + 1):
@@ -427,14 +430,14 @@ def parse_args(argv=None):
                    help="skip eraseslot+regen (keeps the current world/save)")
     p.add_argument("--shelter", action="store_true",
                    help="let the survivor policies build a basic shelter before "
-                        "sleeping on exposed ground (1 scrap, 1 MP). The other "
+                        "sleeping on exposed ground (1 scrap, 1 AP). The other "
                         "arm of the exposure experiment -- see death_causes in "
                         "metrics.py")
     args = p.parse_args(argv)
     if not 1 <= args.bots <= MAX_SEATED:
         p.error(f"--bots must be 1..{MAX_SEATED}")
     if args.mode == "sprint" and "sentinel" in args.policies.split(","):
-        # SprintPolicy forces REST the moment MP runs out, which collapses the
+        # SprintPolicy forces REST the moment AP runs out, which collapses the
         # day the Sentinel exists to hold open.
         p.error("sentinel holds days open and rests only late in each one; "
                 "run it with --mode realtime (or use soak.py)")

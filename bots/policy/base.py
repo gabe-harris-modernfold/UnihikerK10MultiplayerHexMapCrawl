@@ -20,7 +20,7 @@ class Action:
                                     # drop_res|trade_offer|noop
     d: int = 0                      # move: direction 0-5
     a: int = 0                      # act: ACT_* id
-    mp: int = 1                     # act: MP to spend (ACT_WATER reads this)
+    ap: int = 1                     # act: AP to spend (ACT_WATER reads this)
     recipe: int = 0                 # act: ACT_CRAFT recipe id
     ci: int = 0                     # enc_choice: choice index
     q: int = -1                     # enc_start: hex being opened (REQUIRED)
@@ -43,7 +43,7 @@ class Action:
         if k == "noop":        return None
         if k == "move":        return {"t": "m", "d": self.d}
         if k == "act":
-            m = {"t": "act", "a": self.a, "mp": self.mp}
+            m = {"t": "act", "a": self.a, "ap": self.ap}
             if self.recipe:    m["r"] = self.recipe
             return m
         if k == "enc_start":
@@ -117,7 +117,7 @@ class Policy:
     def on_reply(self, cmd: str, ok: bool, why: str | None) -> None:
         """Optional hook: the board's verdict on one of our own requests
         (protocol 2+ only -- see docs/bot-testing.md "Replies").  `why` is
-        the nack code, e.g. "no_mp", "resting", "in_enc"; None on an ack."""
+        the nack code, e.g. "no_ap", "resting", "in_enc"; None on an ack."""
         pass
 
     def __repr__(self):

@@ -14,20 +14,20 @@ are down there.
 
 ## What the tunnels actually cost (tunnels.hpp, actions_game_loop.hpp)
 
-The spec sells the tunnels as a shortcut -- 44-67% of the MP for a long
+The spec sells the tunnels as a shortcut -- 44-67% of the AP for a long
 crossing.  Playing them turns up four prices the surface does not charge, and
 measuring those is the point of these bots:
 
-1. **2 MP a step**, against a surface average of ~1.6, out of a daily budget
+1. **2 AP a step**, against a surface average of ~1.6, out of a daily budget
    of `ll + 3`.  A healthy survivor gets four or five steps underground per
    day.  Everything else follows from that number.
 2. **Bad air.**  REST *is* allowed at depth 1 now (SHELTER, CRAFT and SURVEY
-   are still refused), so running out of MP down there no longer ends the
+   are still refused), so running out of AP down there no longer ends the
    day -- but dawnUpkeep() rolls `TUNNEL_REST_LL_PCT` (30%) for a LL when you
    sleep below.  That point is netted against the rest-heal like any other
    dawn loss, so it is absorbed while the survivor has the food and water to
    heal with (F>=2, W>=2) and it is what kills them when they do not: unlike
-   exposure, bad air is not floored at LL 1.  The budget `mp_reserve()` keeps
+   exposure, bad air is not floored at LL 1.  The budget `ap_reserve()` keeps
    back is therefore no longer about getting out before dark, it is about
    getting out before the *supplies* run out; `stranded_dawns` counts the
    dives that misjudged it.
@@ -47,7 +47,7 @@ measuring those is the point of these bots:
    Entrance was sheltered and a night below a Vent Shaft took the full bite --
    same corridor, opposite answer.  That is fixed, so `bunker_dawns` /
    `vent_dawns` no longer measure LL.  They only separate the two hatch types
-   now, which still differ by the MP it costs to climb out, 1 against 2.
+   now, which still differ by the AP it costs to climb out, 1 against 2.
 
 ## How a dive is steered
 
@@ -81,14 +81,14 @@ from .survivor import SurvivorPolicy, ends_journey
 # 2 water wherever you sleep, and there is no food underground at all.
 #
 # These are deliberately near the floor rather than comfortable.  An earlier
-# cut wanted food 3, water 4, LL 4 and MP 6 *simultaneously*, and measured
+# cut wanted food 3, water 4, LL 4 and AP 6 *simultaneously*, and measured
 # against a real economy that conjunction almost never came true: the
 # survival floor tops the pack up to its own thresholds and no further, LL
-# spends most of a run in the 2-4 band, and MP is gone by mid-afternoon.  The
+# spends most of a run in the 2-4 band, and AP is gone by mid-afternoon.  The
 # bots resupplied forever and never once went underground.  What a dive
 # actually needs is a day's food in hand, water enough to reach a cistern
 # (Tunnel Floor waters, so this one is refillable down there), an LL that is
-# not already critical, and a couple of corridor steps' worth of MP.
+# not already critical, and a couple of corridor steps' worth of AP.
 DIVE_FOOD  = 2
 # Water is deliberately almost not a gate at all.  TERRAIN_HAS_WATER[14] is 1,
 # so *every* corridor cell is drinkable -- underground is the wettest place on
@@ -96,14 +96,14 @@ DIVE_FOOD  = 2
 # somewhere that refills it kept the bots on the surface through an entire
 # 25-day mock run, thirsty, standing on dry scrub.
 DIVE_WATER = 1
-# Enough MP to take a step at all, and no more.  The gate used to want a
+# Enough AP to take a step at all, and no more.  The gate used to want a
 # whole day's budget in hand, which sounds prudent and is not: the walk to
 # the hatch spends exactly that budget, so the bot re-tested it every 0.35 s
 # on the way and turned round each time a pile or a drink dropped it under.
 # One policy in a 25-day mock run reached the gate zero times.  Arriving
 # underground spent is no longer a problem worth avoiding either -- REST
 # works down there, so the survivor sleeps and dawn refills.
-DIVE_MP    = 2
+DIVE_AP    = 2
 # Surface when the food is gone outright.  Any higher and the dive ends the
 # morning after it starts: dawn takes a token, and a bot that leaves at 1
 # would spend its whole life on the ladder.
@@ -115,11 +115,11 @@ EXIT_SLACK = 2
 # underground is 1, so the first steps of a dive are genuinely blind.
 EXIT_UNKNOWN_RESERVE = 6
 
-# The tunnel board is 160 cells at 2 MP a step; this crosses all of it.
+# The tunnel board is 160 cells at 2 AP a step; this crosses all of it.
 TUNNEL_SEARCH_COST = 80
 SURFACE_SEARCH_COST = 45
 # The walk to a hatch gets its own, much longer reach.  There are 8 hatches in
-# 4275 surface hexes, so the nearest known one is routinely past 45 MP -- and
+# 4275 surface hexes, so the nearest known one is routinely past 45 AP -- and
 # a hatch outside the search is a hatch that does not exist.  hatch_bonus/cost
 # already prefers the near ones.
 DIVE_SEARCH_COST = 120
@@ -142,11 +142,11 @@ class TunnelPolicy(SurvivorPolicy):
     # Underground sight is TUNNEL_VIS_BASE 1 -- your own hex and one ring --
     # so a single +1 is proportionally worth far more down there than the
     # same point is on the surface. A corridor step costs TUNNEL_MC 2, which
-    # doubles what every MP is worth. Weather never reaches a corridor, so
+    # doubles what every AP is worth. Weather never reaches a corridor, so
     # exposure immunity and sealed suits are close to dead weight on a bot
     # that spends its life below.
     gear_weights = {
-        "vision": 5.0, "mp": 3.5, "ll": 2.5, "slots": 1.5,
+        "vision": 5.0, "ap": 3.5, "ll": 2.5, "slots": 1.5,
         "rad": 0.5, "threat": 0.5, "terrain": 0.5, "water_cap": 2.5,
         "nar": {NAR_SCAV_DOUBLE: 2.0, NAR_COLD_IMMUNE: 0.5,
                 NAR_FIRE_STARTER: 0.5, NAR_LAND_FORAGE: 0.5,
@@ -156,7 +156,7 @@ class TunnelPolicy(SurvivorPolicy):
     # in data/encounters/index.json yet -- generateTunnels() places none until
     # it does. The handling is here so the bots exercise it the day it lands.
     rest_below_ll = 2
-    # Salvage a corridor when there is MP to spare: Tunnel Floor has
+    # Salvage a corridor when there is AP to spare: Tunnel Floor has
     # TERRAIN_SALVAGE_DN 7 and TERRAIN_IS_RUINS 0, making it the only scrap in
     # the game that does not tick the threat clock up.
     scav_underground = True
@@ -205,7 +205,7 @@ class TunnelPolicy(SurvivorPolicy):
         self._depth = 0             # depth at the last decide(), for dawn
         self._dive_terrain = 0      # 12 or 13: which hatch we came down
         self._surfaced_reason = ""
-        # Walking to a hatch spends the very MP that ready_to_dive() tests,
+        # Walking to a hatch spends the very AP that ready_to_dive() tests,
         # so without a latch the decision flips halfway there and the bot
         # oscillates between the hatch and the nearest berry bush forever.
         self._committed = False
@@ -216,9 +216,9 @@ class TunnelPolicy(SurvivorPolicy):
         s["shafts_used"] = len(self._shafts_used)
         s["hatches_known"] = len(self._hatches_seen)
         steps = s["transit_steps"]
-        # MP per surface hex crossed. Under 1.6 (the surface average MC) the
+        # AP per surface hex crossed. Under 1.6 (the surface average MC) the
         # tunnels paid for themselves on that trip; over it they did not.
-        s["mp_per_surface_hex"] = (
+        s["ap_per_surface_hex"] = (
             round((steps * 2) / s["transit_hexes"], 2) if s["transit_hexes"] else None)
         return s
 
@@ -275,7 +275,7 @@ class TunnelPolicy(SurvivorPolicy):
                 self.stats["vent_dawns"] += 1
             # Wanting out at dawn and still being down here means the dive
             # outlasted its own budget. Not fatal any more -- you sleep where
-            # you stand -- but it is the miss that mp_reserve() exists to
+            # you stand -- but it is the miss that ap_reserve() exists to
             # prevent, so it is worth counting rather than absorbing.
             if self._wanted_out:
                 self.stats["stranded_dawns"] += 1
@@ -290,7 +290,7 @@ class TunnelPolicy(SurvivorPolicy):
         if me.depth:
             # q/r are pinned to the hatch we descended through, so this reads
             # the hatch itself -- which is how we know what climbing out of
-            # this dive will cost (Bunker Entrance 1 MP, Vent Shaft 2).
+            # this dive will cost (Bunker Entrance 1 AP, Vent Shaft 2).
             above = obs.map[(me.q, me.r)]
             if above is not None and is_hatch_terrain(above.terrain):
                 self._dive_terrain = above.terrain
@@ -300,8 +300,8 @@ class TunnelPolicy(SurvivorPolicy):
         return self.pursue_below(obs) if obs.underground else self.pursue_above(obs)
 
     # ── underground ─────────────────────────────────────────────────────
-    def mp_reserve(self, obs) -> int:
-        """MP we must keep back to reach a way out.
+    def ap_reserve(self, obs) -> int:
+        """AP we must keep back to reach a way out.
 
         Measured, not guessed: the real cost of walking to the cheapest shaft
         we have revealed, plus the climb and a step of slack.  Crossing itself
@@ -339,13 +339,13 @@ class TunnelPolicy(SurvivorPolicy):
         # Hurt and under-supplied is the one combination that kills below.
         if me.ll <= self.rest_below_ll + 1 and not (me.food >= 2 and me.water >= 2):
             return f"LL {me.ll} on thin supplies: bad air can finish that"
-        # Deliberately NOT a bare "out of MP": running dry underground means
+        # Deliberately NOT a bare "out of AP": running dry underground means
         # sleeping where we stand, which costs a 30% roll against the 2 LL a
         # night in the open costs for certain. The reserve only matters when
         # the food to walk out on is nearly gone as well.
-        reserve = self.mp_reserve(obs)
-        if me.inv[RES_FOOD] <= SURFACE_FOOD + 1 and me.mp <= reserve:
-            return (f"food {me.inv[RES_FOOD]} with the exit {reserve} MP "
+        reserve = self.ap_reserve(obs)
+        if me.inv[RES_FOOD] <= SURFACE_FOOD + 1 and me.ap <= reserve:
+            return (f"food {me.inv[RES_FOOD]} with the exit {reserve} AP "
                     f"away: leaving while we still can")
         if not self.work_below(obs):
             return "nothing left down here"
@@ -395,7 +395,7 @@ class TunnelPolicy(SurvivorPolicy):
 
     def exit_preference(self, obs):
         """Ranking handed to climb_out().  Default: cheapest way out, with a
-        nudge toward Bunker Entrances -- 1 MP to climb instead of 2."""
+        nudge toward Bunker Entrances -- 1 AP to climb instead of 2."""
         def prefer(cell, q, r, cost):
             if cell is None or not is_hatch_terrain(cell.terrain):
                 return None
@@ -403,9 +403,9 @@ class TunnelPolicy(SurvivorPolicy):
         return prefer
 
     def salvage_here(self, obs) -> Action | None:
-        """Work the corridor for scrap when there is MP going spare.
+        """Work the corridor for scrap when there is AP going spare.
 
-        doScav costs 2 MP and pays 2 scrap plus 5 score on a clean success.
+        doScav costs 2 AP and pays 2 scrap plus 5 score on a clean success.
         Underground it is the only action besides WATER that does anything,
         and TERRAIN_IS_RUINS[14] is 0, so unlike every ruin on the surface it
         does not raise the threat clock.
@@ -418,21 +418,21 @@ class TunnelPolicy(SurvivorPolicy):
             return None
         if me.inv[RES_SCRAP] >= self.scrap_cap or self.pack_full(obs):
             return None
-        # 2 MP for the action and one step's worth left over. This used to
+        # 2 AP for the action and one step's worth left over. This used to
         # demand the whole walk-out reserve on top, which in practice meant
         # never: the reserve is the cost of crossing the network, so it is
-        # routinely larger than a day's MP, and the bots salvaged nothing at
+        # routinely larger than a day's AP, and the bots salvaged nothing at
         # all in a 36-day run. Ending the day down here is not the disaster
         # it was when REST was refused -- you sleep where you stand.
-        if me.mp < 4:
+        if me.ap < 4:
             return None
         # SCAVENGE is the one yield action still bound by the pack size
         # (doScav). Asking with a full pack is refused with ABW_PACK_FULL and
-        # costs no MP, so a policy that does not check simply asks again next
+        # costs no AP, so a policy that does not check simply asks again next
         # cycle -- which is how the first hardware run livelocked.
         if not token_room(me):
             return None
-        return Action("act", a=ACT_SCAV, mp=2,
+        return Action("act", a=ACT_SCAV, ap=2,
                       why=f"salvaging the corridor ({me.inv[RES_SCRAP]} scrap, "
                           f"no threat clock down here)")
 
@@ -456,23 +456,23 @@ class TunnelPolicy(SurvivorPolicy):
                      or (me.food >= 2 and me.water >= 2)))
 
     def ready_to_dive(self, obs) -> bool:
-        """Stocked, healthy and with a day's MP in hand.
+        """Stocked, healthy and with a day's AP in hand.
 
-        The MP gate is what stops the hatch becoming a revolving door: we
-        surface at low MP, so we cannot immediately turn round and go back
+        The AP gate is what stops the hatch becoming a revolving door: we
+        surface at low AP, so we cannot immediately turn round and go back
         down -- we have to resupply and sleep first.  It is checked only to
         *start* a dive; once committed, the walk to the hatch is allowed to
         spend it, or the bot would change its mind halfway there every time.
         """
         if self._committed:
             return self.provisioned(obs)
-        return self.provisioned(obs) and obs.me.mp >= DIVE_MP
+        return self.provisioned(obs) and obs.me.ap >= DIVE_AP
 
     def hatch_bonus(self, obs, cell, q, r) -> float:
         """Subclass hook: how much we want to dive through THIS hatch,
         before the walk to it is priced in."""
         base = 60.0
-        # A Bunker Entrance costs 1 MP to climb back out against the Vent
+        # A Bunker Entrance costs 1 AP to climb back out against the Vent
         # Shaft's 2. That used to be the smaller half of the difference --
         # the hatch overhead also decided the dawn exposure -- and it is now
         # the whole of it.
@@ -602,9 +602,9 @@ class SubterraneanPolicy(TunnelPolicy):
 
     The measurement it exists for: **is the underground worth living in?**
     It collects the same 10-points-a-token piles as a surface bot, out of a
-    board of ~50 walkable cells instead of 4275, at 2 MP a step instead of
+    board of ~50 walkable cells instead of 4275, at 2 AP a step instead of
     1.6, with no food and no rest.  Run it alongside a `scoremax` and the
-    score gap is the price of the tunnels -- and `mp_per_surface_hex`,
+    score gap is the price of the tunnels -- and `ap_per_surface_hex`,
     `dawns_below` and `stranded_dawns` say where that price was paid.
     """
 

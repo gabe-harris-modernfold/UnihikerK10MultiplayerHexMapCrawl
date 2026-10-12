@@ -87,13 +87,13 @@ function renderInventory() {
   }
 }
 
-// Format a single mods object into compact "MP +1 \u00b7 LL +2" style.
+// Format a single mods object into compact "AP +1 \u00b7 LL +2" style.
 // Display only \u2014 server is authoritative for actual gameplay effects.
 function _formatMods(m) {
   if (!m) return '';
   const parts = [];
   const sign = (n) => (n > 0 ? '+' : '') + n;
-  if (m.mp)        parts.push(`MP ${sign(m.mp)}`);
+  if (m.ap)        parts.push(`AP ${sign(m.ap)}`);
   if (m.ll)        parts.push(`LL ${sign(m.ll)}`);
   if (m.slots)     parts.push(`SLOTS ${sign(m.slots)}`);
   if (m.waterCap)  parts.push(`WATER CAP ${sign(m.waterCap)}`);
@@ -126,7 +126,7 @@ function tokenLoadOf(player, inv = player?.inv) {
   return total - Math.min(inv[0] || 0, player?.wc || 0);
 }
 
-// Does this item's MP bonus depend on paying a daily resource cost?
+// Does this item's AP bonus depend on paying a daily resource cost?
 // applyDawnItemCosts() only grants such a bonus on a dawn where the cost was
 // actually paid, so the panel must not promise it unconditionally.
 function _isCostGated(m) {
@@ -134,7 +134,7 @@ function _isCostGated(m) {
 }
 
 function computeEquipBonuses(player) {
-  const tot = { mp:0, ll:0, slots:0, waterCap:0, vision:0, rad:0,
+  const tot = { ap:0, ll:0, slots:0, waterCap:0, vision:0, rad:0,
                 fuelCost:0, waterCost:0, foodCost:0, medCost:0, scrapCost:0 };
   const notes = [];
   const dormant = [];   // cost-gated items that went unpaid at the last dawn
@@ -148,10 +148,10 @@ function computeEquipBonuses(player) {
     for (const k in tot) {
       if (!m[k]) continue;
       // A Motorbike with no fuel in the pack grants nothing that day: the
-      // server skips its STAT_MP and reports the slot in EVT_DAWN "unf".
+      // server skips its STAT_AP and reports the slot in EVT_DAWN "unf".
       // This panel used to add the +5 regardless, which is a good part of
-      // what "the MP bonus doesn't work" looked like from the player's side.
-      if (starved && (k === 'mp' || k.endsWith('Cost'))) continue;
+      // what "the AP bonus doesn't work" looked like from the player's side.
+      if (starved && (k === 'ap' || k.endsWith('Cost'))) continue;
       tot[k] += m[k];
     }
     const item = getItemById?.(id);
@@ -345,114 +345,36 @@ function groundDaysLeft(d) {
 document.getElementById('item-menu-close')?.addEventListener('click', closeItemMenu);
 document.getElementById('item-menu-backdrop')?.addEventListener('click', closeItemMenu);
 
-// ── Resource drop sheet ───────────────────────────────────────────
-// The five char-sheet inventory boxes (.inv-box[data-res]) are the only way to
-// dump resource *tokens*, which is what the carry cap counts — `drop_item`
-// only touches the typed item grid. Clicking one asks how many to abandon and
-// sends {t:'drop_res',res,qty}; the server drops them on the current hex when
-// it can hold them (see dropResource() in survival_state.hpp) and refunds the
-// 10 pts/token the pickup awarded.
+// ── Resource drop ─────────────────────────────────────────────────
+// The five char-sheet inventory boxes (.inv-box[data-res]) and the sidebar
+// Supplies DROP buttons are the only way to dump resource *tokens*, which is
+// what the carry cap counts — `drop_item` only touches the typed item grid.
+// No dialog: each tap sends {t:'drop_res',res,qty:1}; the server drops it on
+// the current hex when it can hold it (see dropResource() in
+// survival_state.hpp) and refunds the 10 pts the pickup awarded. Where it went
+// (still on the hex, or gone for good) is toasted by _evResResult in network.js.
 const RES_DOT_CLASSES = ['dot-water', 'dot-food', 'dot-fuel', 'dot-med', 'dot-scrap'];
 
-let _resDropRes = 0;   // 1-5 while the sheet is open, 0 when closed
-
-function _resDropHave() {
-  if (_resDropRes < 1 || myId < 0) return 0;
-  return players[myId]?.inv?.[_resDropRes - 1] ?? 0;
-}
-
-// Clamp the box to 1..have and mirror it onto the buttons/confirm label.
-function _resDropSync() {
-  const have  = _resDropHave();
-  const input = document.getElementById('res-drop-qty');
-  if (!input) return 0;
-  let qty = parseInt(input.value, 10);
-  if (!Number.isFinite(qty)) qty = 1;
-  qty = Math.max(1, Math.min(have, qty));
-  input.value = String(qty);
-  input.max   = String(have);
-  document.getElementById('res-drop-have').textContent = String(have);
-  document.getElementById('res-drop-confirm-qty').textContent = String(qty);
-  document.getElementById('res-drop-minus').disabled = qty <= 1;
-  document.getElementById('res-drop-plus').disabled  = qty >= have;
-  document.getElementById('res-drop-all').disabled   = qty >= have;
-  return qty;
-}
-
-function openResDropMenu(res) {
+function dropOneResource(res) {
   if (myId < 0 || res < 1 || res > 5) return;
   const have = players[myId]?.inv?.[res - 1] ?? 0;
   const name = RES_NAMES[res];
-  console.log('%c[INV] openResDropMenu', 'color:#fc0;font-weight:bold', `res=${res} name="${name}" have=${have}`);
-  if (have <= 0) { showToast(`Nothing to abandon \u2014 you carry no ${name}.`); return; }
-  _resDropRes = res;
-
-  document.getElementById('res-drop-dot').className  = 'dot ' + RES_DOT_CLASSES[res - 1];
-  document.getElementById('res-drop-name').textContent = 'Abandon ' + name;
-  document.getElementById('res-drop-qty').value = '1';
-
-  // Tell the player where the tokens go before they commit: a hex already
-  // holding a different resource cannot take them and they are gone for good.
-  const me   = players[myId];
-  const cell = gameMap[me.r]?.[me.q];
-  const note = document.getElementById('res-drop-note');
-  const lost = !!(cell && cell.resource > 0 && cell.resource !== res);
-  note.classList.toggle('warn', lost);
-  note.textContent = lost
-    ? `This hex already holds ${RES_NAMES[cell.resource]} \u2014 anything you drop here is lost for good.`
-    : 'Dropped on this hex \u2014 you can pick it back up. Costs back the 10 pts per token you scored for it.';
-
-  _resDropSync();
-  document.getElementById('res-drop-menu').classList.add('open');
-  document.getElementById('res-drop-backdrop').classList.add('open');
-}
-
-function closeResDropMenu() {
-  _resDropRes = 0;
-  document.getElementById('res-drop-menu')?.classList.remove('open');
-  document.getElementById('res-drop-backdrop')?.classList.remove('open');
+  if (have <= 0) { showToast(`Nothing to abandon — you carry no ${name}.`); return; }
+  console.log('%c[INV] drop_res', 'color:#fc0;font-weight:bold', `res=${res} name="${name}" qty=1 have=${have}`);
+  send({ t: 'drop_res', res, qty: 1 });
 }
 
 // Wire the five inventory boxes (click + keyboard, they are role="button")
 document.querySelectorAll('.inv-box[data-res]').forEach(box => {
   const res = parseInt(box.dataset.res, 10);
-  box.addEventListener('click', () => openResDropMenu(res));
+  box.addEventListener('click', () => dropOneResource(res));
   box.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openResDropMenu(res); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropOneResource(res); }
   });
 });
 
-// ...and the sidebar Supplies DROP buttons, which open the same sheet. Real
-// <button>s, so Enter/Space already fire click - no keydown handler here.
+// ...and the sidebar Supplies DROP buttons. Real <button>s, so Enter/Space
+// already fire click - no keydown handler here.
 document.querySelectorAll('.res-drop-btn[data-res]').forEach(btn => {
-  btn.addEventListener('click', () => openResDropMenu(parseInt(btn.dataset.res, 10)));
+  btn.addEventListener('click', () => dropOneResource(parseInt(btn.dataset.res, 10)));
 });
-
-document.getElementById('res-drop-minus')?.addEventListener('click', () => {
-  const input = document.getElementById('res-drop-qty');
-  input.value = String(parseInt(input.value, 10) - 1);
-  _resDropSync();
-});
-document.getElementById('res-drop-plus')?.addEventListener('click', () => {
-  const input = document.getElementById('res-drop-qty');
-  input.value = String(parseInt(input.value, 10) + 1);
-  _resDropSync();
-});
-document.getElementById('res-drop-all')?.addEventListener('click', () => {
-  document.getElementById('res-drop-qty').value = String(_resDropHave());
-  _resDropSync();
-});
-document.getElementById('res-drop-qty')?.addEventListener('input', _resDropSync);
-document.getElementById('res-drop-qty')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('res-drop-confirm').click(); }
-});
-document.getElementById('res-drop-confirm')?.addEventListener('click', () => {
-  const res = _resDropRes;
-  const qty = _resDropSync();
-  if (res < 1 || qty < 1) { closeResDropMenu(); return; }
-  console.log('%c[INV] drop_res', 'color:#fc0;font-weight:bold', `res=${res} name="${RES_NAMES[res]}" qty=${qty}`);
-  closeResDropMenu();
-  send({ t: 'drop_res', res, qty });
-});
-document.getElementById('res-drop-close')?.addEventListener('click', closeResDropMenu);
-document.getElementById('res-drop-backdrop')?.addEventListener('click', closeResDropMenu);

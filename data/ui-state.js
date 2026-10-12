@@ -15,7 +15,7 @@ const uiCooldown    = van.state(0);
 const uiLL          = van.state(7);
 const uiFood        = van.state(6);
 const uiWater       = van.state(6);
-const uiMP          = van.state(6);
+const uiAP          = van.state(6);
 // §6.2 Radiation track
 const uiRad         = van.state(0);
 // §5 Action tracking
@@ -23,7 +23,7 @@ const uiResting     = van.state(false);  // true after REST until dawn
 // Bunker tunnels (tunnel-board.js): 0 = surface, 1 = underground. Drives the
 // HUD depth chip and the underground styling; set via setMyDepth().
 const uiDepth       = van.state(0);
-const uiMaxMP = van.state(6);  // reactive — drives MP track box count in HUD
+const uiMaxAP = van.state(6);  // reactive — drives AP track box count in HUD
 // Reactive LL ceiling — drives the LIFE LEVEL track box count. 7 plus every
 // equipped item's "ll" bonus minus any permanent penalty; the server sends it
 // as llCap (appendPackArrays). The track used to be a hardcoded 7, so +LL
@@ -35,7 +35,7 @@ const uiLLCap = van.state(7);
 const uiCanteenCap = van.state(0);
 // Equipment slots whose daily *_cost is not paid for today (bitmask, bit 0 =
 // head .. bit 4 = vehicle): the tick's "uf", or EVT_DAWN "unf" from a board
-// that doesn't send it. A fuel-gated MP bonus is dormant until the item pays
+// that doesn't send it. A fuel-gated AP bonus is dormant until the item pays
 // (at dawn, or the moment fuel turns up), and the equipment panel greys it out.
 const uiUnfuelled = van.state(0);
 // Menu navigation (null=closed, 'main'|'howto'|'settings'|'about')

@@ -35,10 +35,10 @@ from config import (DQ, DR, MAP_COLS, MAP_ROWS, TERRAIN_MC, IMPASSABLE,
 UNKNOWN_COST = 2
 
 # The Wasteland Daisy (docs/ecology-spec.md): a bloomed patch bites for 1 LL
-# on entry, a bud blooms at the next dawn.  Priced as extra MP in
+# on entry, a bud blooms at the next dawn.  Priced as extra AP in
 # WorldMap.extra_cost rather than made impassable, so a bot still crosses
 # one when it is the only way through -- it just stops being the cheap way.
-# 6 MP is most of a day's movement: a detour of up to five hexes is taken
+# 6 AP is most of a day's movement: a detour of up to five hexes is taken
 # before a bite is.  Stage 1 shoots cost nothing; they are three dawns out.
 DAISY_BLOOM_COST = 6
 DAISY_BUD_COST = 1
@@ -51,7 +51,7 @@ TRAP_KNOWN_COST = 8
 
 
 def step_cost(cell) -> int | None:
-    """MP to enter, or None if impassable.  Unknown cells get UNKNOWN_COST."""
+    """AP to enter, or None if impassable.  Unknown cells get UNKNOWN_COST."""
     if cell is None:
         return UNKNOWN_COST
     t = cell.terrain
@@ -78,7 +78,7 @@ def walled(here, there, direction) -> bool:
 def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
     """Cost-to-reach every cell within max_cost.
 
-    Returns (dist, first_dir): dist[(q, r)] -> MP, first_dir[(q, r)] -> the
+    Returns (dist, first_dir): dist[(q, r)] -> AP, first_dir[(q, r)] -> the
     direction to step from the start to begin that path.  Frontier is capped
     by max_cost so this stays bounded on a 4275-cell map.
 

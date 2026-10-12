@@ -28,6 +28,10 @@ knows about the game it learns through the same WebSocket a browser uses.
   `ack` or `nack` — see "Replies" below. The client sends `rid` on everything;
   the per-bot `replies:` line at the end of a run is the first place to look
   when a policy is stuck.
+- **The budget is Action Points, `ap` on the wire, from protocol 7.** Older
+  firmware sent `mp`; against it `me.ap` reads 0 and every bot just rests,
+  so `arena.py` refuses a board below `config.MIN_PROTO`. The run logs in
+  `runs/` were migrated (2026-10-12), so the analysers read old runs too.
 - **Run an arena:** `python arena.py --host 192.168.4.234 --bots 5
   --policies scoremax,contentmax,coward,rival,scoremax --target 1000`
 - **Analyse:** `python metrics.py` (newest run) or `python metrics.py runs/run-*.jsonl`
@@ -168,7 +172,7 @@ count mid-run means its balance numbers stand on a board that misbehaved.
 
 **What the oracles check** (all derived from the firmware source; the full
 list with file references is `oracles.py`'s docstring): LL within `llCap`,
-food/water in [1, 6], radiation in [0, 10], a downed survivor at 0 MP, no
+food/water in [1, 6], radiation in [0, 10], a downed survivor at 0 AP, no
 move mask while unable to move, steps and tick never going backwards, `sq`
 never repeating or going backwards on a socket, at most one death per life
 (the double-`EVT_DOWNED` seat-count bug), an acked `m` producing an `mv`, an
@@ -227,11 +231,11 @@ message that carries `"rid":N` with exactly one reply
 
 ```
 {"t":"ack","rid":N,"cmd":"m"}                   applied
-{"t":"nack","rid":N,"cmd":"m","why":"no_mp"}    refused -- nothing changed
+{"t":"nack","rid":N,"cmd":"m","why":"no_ap"}    refused -- nothing changed
 ```
 
 Without `rid` nothing changes, so the browser is unaffected. A failed skill
-check is an **ack**: MP was spent and the outcome rides the usual event. A
+check is an **ack**: AP was spent and the outcome rides the usual event. A
 nack means the request was refused before it did anything.
 
 | `why` | Means |
@@ -240,7 +244,7 @@ nack means the request was refused before it did anything.
 | `not_seated`, `not_in_lobby`, `slot_taken`, `full` | seat state: act before pick, pick twice, pick a taken seat, pick with `MAX_SEATED` already seated |
 | `busy` | `G.mutex` timeout — safe to retry |
 | `downed`, `in_enc`, `resting`, `underground` | player state forbids it |
-| `bad_dir`, `terrain`, `wall`, `no_mp`, `cooldown` | move refusals (`movePlayer` / `moveTunnel`) |
+| `bad_dir`, `terrain`, `wall`, `no_ap`, `cooldown` | move refusals (`movePlayer` / `moveTunnel`) |
 | `pack_full`, `no_res`, `not_needed`, `archetype`, `craft` | action refusals (`ABW_*`, also on the `act` event as `bw`) |
 | `not_here`, `no_poi`, `claimed`, `no_pool`, `load_failed`, `no_enc`, `no_choice`, `cannot_bank` | encounter refusals |
 | `trap` | `enc_abort` at a booby trap's start and the escape roll failed: still in the scene |
@@ -321,7 +325,7 @@ connected client. Policies filter on their own `pid`; `metrics.py` dedupes on
 **Also worth knowing:**
 
 - **`rt` is in the periodic broadcast from protocol 2 on.** Before that only
-  `sync` carried the resting flag, so "resting" and "simply out of MP" were
+  `sync` carried the resting flag, so "resting" and "simply out of AP" were
   indistinguishable from `s` alone. REST is still retried on a cooldown, never
   latched — see "Deadlocks" — and a refused REST now comes back as a nack.
 - **The board can drop a player slot while the socket stays open.** The
@@ -355,7 +359,7 @@ The second board ([tunnel-system-spec.md](tunnel-system-spec.md)) is 16x10,
 walled where the surface is a torus, and reached by stepping onto a hatch.
 Two policies play it on purpose — the **Subterranean Explorers**,
 `subterranean` and `tunnelrunner` — and the other five have to survive
-falling into it, because terrain 12/13 costs 1 MP, which makes a hatch the
+falling into it, because terrain 12/13 costs 1 AP, which makes a hatch the
 cheapest hex on the surface map and a pile-chasing pathfinder walks onto one
 eventually.
 
@@ -397,7 +401,7 @@ ejected mid-journey.
 
 **4. You cannot ascend from the shaft you are standing on.** You arrived by
 transition, not by a step, and only a fresh step onto one crosses. So an
-accidental descent costs about 4 MP to undo — step off the shaft, step back
+accidental descent costs about 4 AP to undo — step off the shaft, step back
 on — not 1.
 
 **5. The hatch pairings are never sent.** Which surface hatch comes out at
@@ -428,7 +432,7 @@ The numbers the Explorers exist to measure, all from `tunnels.hpp` and
 
 | | Underground | Surface |
 |---|---|---|
-| Move cost | 2 MP flat | ~1.6 MP average |
+| Move cost | 2 AP flat | ~1.6 AP average |
 | Sleeping out | 30% roll for 1 LL (`TUNNEL_REST_LL_PCT`) | 2 LL, certain, on 96% of terrain |
 | Food | none — `TERRAIN_FORAGE_DN[14]` is 0 | forageable on 4 terrains |
 | Water | every corridor cell | 4.7% of hexes |
@@ -451,7 +455,7 @@ fire (F >= 2 and W >= 2) and surface when it will not.
 
 ### Reading the metrics
 
-`mp_per_surface_hex` is the headline: MP spent underground per surface hex
+`ap_per_surface_hex` is the headline: AP spent underground per surface hex
 actually crossed, against ~1.6 over ground. The spec predicts a 44-67% saving
 measured over the generator's own corridor paths with the whole network
 known; these bots have one ring of vision and learn the pairings by using
@@ -475,7 +479,7 @@ still down there at dawn.
   Its `DIR_DELTA` is its own approximate geometry (no `(+-1, 0)` step), it
   charges no terrain cost on the surface, and its actions succeed regardless
   of terrain. **Dive counts and crossings from a mock run prove the mechanism;
-  the MP-saving number from one means nothing.** Take that from hardware.
+  the AP-saving number from one means nothing.** Take that from hardware.
 - **`arena.py` cannot drive the mock** — no `/state`, so `fetch_state()` and
   `verify_reset()` both fail. Drive `BotClient` directly for offline work.
 
@@ -507,7 +511,7 @@ death or a free bike just moves it to the right phase:
 | Phase | When | What it does |
 |---|---|---|
 | `pack` | the pack cannot hold the build plus a dawn's food and water (< 12 slots) | gathers 5 food, crafts the Backpack, wears it |
-| `parts` | the pack is big enough | the Sparky Bits first, from POIs ranked by how much of each terrain's pool can pay them (`encounters.item_drop_terrains()`); then the scrap from piles and salvage; then one fuel. With it all carried, walks to a Settlement (looking up to 120 MP out) and crafts it |
+| `parts` | the pack is big enough | the Sparky Bits first, from POIs ranked by how much of each terrain's pool can pay them (`encounters.item_drop_terrains()`); then the scrap from piles and salvage; then one fuel. With it all carried, walks to a Settlement (looking up to 120 AP out) and crafts it |
 | `ride` | the bike is owned | fills every slot the survival floor does not need with fuel: fuel piles first, fresh ground second |
 
 Things it had to learn on the mock, each of which applies to hardware:
@@ -518,11 +522,11 @@ Things it had to learn on the mock, each of which applies to hardware:
 - **Junk is shed.** Past `KEEP_*`, tokens are junk: before the bike, fuel past
   the build's one plus a spare, and scrap past the build; always, medicine
   past one. Junk is trimmed at the bank (`enc_bank` `keep[]`), costs a route
-  `JUNK_PILE_COST` extra MP to step on (stepping on a pile takes it), and is
+  `JUNK_PILE_COST` extra AP to step on (stepping on a pile takes it), and is
   put down with `drop_res` when the pack needs the room. Before this, a
   Quartermaster sat on 11 fuel it could not burn, with no room for the scrap.
 - **Medicine goes on a Settlement heal** (TREAT), and spare scrap on a roof
-  on the day's last MP.
+  on the day's last AP.
 - **Nothing it sends is re-sent every cycle when it changes nothing:**
   TREAT, `drop_res` and (in `SurvivorPolicy`, for everyone) SHELTER once per
   hex per day.
@@ -549,7 +553,7 @@ python arena.py --host "$HOST" --bots 3 --policies biker,biker,biker \
   built Backpacks on days 57 and 68 and never finished the parts.
 - **Run 4 (seed 52, 282 game-days).** No bikes. The Quartermaster and Medic
   built Backpacks on days 143 and 145 and died 6 and 4 times. The Guide never
-  got one. The only Settlement near it was about 8 MP from water, and the
+  got one. The only Settlement near it was about 8 AP from water, and the
   lean floors made every dawn a water emergency.
 
 - **Run 5, at 7 scrap (seed 62, 233 game-days).** Clean: no stuck loops,
@@ -566,7 +570,7 @@ python arena.py --host "$HOST" --bots 3 --policies biker,biker,biker \
     skipped the Backpack. It found Sparky Bits on day 3 and built the bike
     on day 15. It then made 1148 riding moves and collected 125 fuel.
   - Its bike stalled at dawn 15 times, and each time started later that day
-    for +5 MP.
+    for +5 AP.
   - An encounter hazard killed the Quartermaster on day ~205, and the bike
     went to its grave. The other two were heading there when the run ended.
   - The Guide and Medic had Backpacks by days 6 and 1, then carried 7 scrap
@@ -594,7 +598,7 @@ from hardware. Three mock bugs the bike exposed are fixed in
   Settlement a bike had crossed refused CRAFT and TREAT;
 - pile pickups were capped at a fixed test value of 6, so no Backpack could
   raise the cap and the build was impossible;
-- COLLECT WATER gave +1 whatever MP it cost, half of `doWater()`'s rate.
+- COLLECT WATER gave +1 whatever AP it cost, half of `doWater()`'s rate.
 
 ## Auditing the equipment
 
@@ -627,7 +631,7 @@ per item, because "the item did something" is not a test -- an item declaring
 | `slots` | `is` delta, allowing for the INV_SLOTS_MAX clamp | hard |
 | `water_cap` | `wc` delta (`canteenCap()`, same emitter) -- the Canteen | hard |
 | `vision` | `vr` on the vis disk `pushVisDisk()` sends straight after the equip | hard |
-| `mp` | dawn MP against `ll + 3` + declared, unwounded dawns only | soft |
+| `ap` | dawn AP against `ll + 3` + declared, unwounded dawns only | soft |
 | `rad` | direction of change at the dawns it was worn | soft |
 | `terrain`, `threat`, narrative | **nothing on the wire carries them** | untested |
 
@@ -700,7 +704,7 @@ no-op (`doRest` returns early when already resting) but burns a message each
 time — 2054 dead sends in one early run. Latching it once per game-day is
 *worse*: the decision is latched before the send clears the rate limiter, so a
 REST decided just before a reconnect never lands while the bot believes it
-rested. It then sits at `mp == 0`, awake, unable to move until dawn — and
+rested. It then sits at `ap == 0`, awake, unable to move until dawn — and
 because `tickGame()` only ends the day early when **every** connected player is
 resting, one bot stuck like that freezes the whole fleet. Five bots sat frozen
 at day 16 this way. Retry on a ~4 s cooldown instead.
@@ -735,7 +739,7 @@ every policy. The fix is one move in flight, like the choices.
 
 `DAY_TICKS` (3000) × `TICK_MS` (100) = 5 real minutes — **but** `tickGame()`
 ends the day the moment every connected player is resting. An all-bot fleet all
-rests when out of MP, so days collapse to a few seconds regardless of `--mode`.
+rests when out of AP, so days collapse to a few seconds regardless of `--mode`.
 That is genuine multiplayer behaviour, not an artefact: a real party would do
 the same.
 
@@ -744,7 +748,7 @@ the same.
 | `sprint` | ~2.3 s | Soak and stress only |
 | `realtime` | ~3–5 s with an all-bot fleet; 5 min if anyone stays awake | Everything else |
 
-**Sprint distorts balance measurement.** A survivor gets `ll + 3` ≈ 10 MP per
+**Sprint distorts balance measurement.** A survivor gets `ll + 3` ≈ 10 AP per
 day, enough for six or seven moves, but at a 2.3 s day with a shared send
 budget each bot only gets four or five *messages* per day. The bots then play
 every day on a third of their action budget, which makes survival look far
@@ -803,11 +807,11 @@ already play differently.
 | policy | wants | why |
 |---|---|---|
 | coward | exposure immunity, +LL, rad | its whole plan is not dying; exposure is the biggest measured LL drain |
-| scoremax | +MP, +slots | the economy is "keep moving, prefer piles, keep pack space free" |
-| contentmax | vision, +MP, −threat | POIs must be seen to be opened, and the Threat Clock is what makes them lethal |
-| rival | +MP, vision | denial is a race |
-| subterranean | vision, +MP | tunnel sight is 1 hex, and a corridor step costs 2 MP |
-| biker | +slots, then +MP | the Backpack is the bike's gate, and carry room is fuel room; it skips the canteen so the Backpack keeps the body slot |
+| scoremax | +AP, +slots | the economy is "keep moving, prefer piles, keep pack space free" |
+| contentmax | vision, +AP, −threat | POIs must be seen to be opened, and the Threat Clock is what makes them lethal |
+| rival | +AP, vision | denial is a race |
+| subterranean | vision, +AP | tunnel sight is 1 hex, and a corridor step costs 2 AP |
+| biker | +slots, then +AP | the Backpack is the bike's gate, and carry room is fuel room; it skips the canteen so the Backpack keeps the body slot |
 
 Two properties are asserted in `smoke.py` because breaking either is silent:
 the five policies must want **different** loadouts (otherwise the weights are
@@ -816,7 +820,7 @@ because `equipItem()` returns the displaced item to the pack — a policy that
 ever prefers what it just took off loops forever at one message per cycle and
 looks like nothing at all from either end.
 
-A fuel-gated `mp` is discounted (`GATED_MP_DISCOUNT`), not taken at face
+A fuel-gated `ap` is discounted (`GATED_AP_DISCOUNT`), not taken at face
 value: the bots run their fuel down and the bonus vanishes on a dry dawn.
 
 `drunk` does not inherit `SurvivorPolicy`, so it never equips anything — that
@@ -871,7 +875,7 @@ What the harness does with it:
   least `trap_push` and LL has a point to spare, else bank; out of an escape
   node, `enc_bank` with nothing — which is also what the browser sends. The
   coward sets `trap_nerve = 2.0` and never works one.
-- **Pathing:** a known trap costs `TRAP_KNOWN_COST` (8) extra MP in
+- **Pathing:** a known trap costs `TRAP_KNOWN_COST` (8) extra AP in
   `navigate.step_cost()` — a detour of most of a day is taken first, but a
   trap is never a wall.
 - **Causes:** a failed trap check is its own cause, `booby trap`, not
@@ -907,7 +911,7 @@ What `SurvivorPolicy` does with it:
 - **It walks back to its own grave** (`recover_action()`) while the grave holds
   something it can actually lift — tokens with room, equipment with a free
   slot — and will still exist on arrival. Same two-call shape as the canteen
-  errand: within today's MP ahead of the survival floor, up to
+  errand: within today's AP ahead of the survival floor, up to
   `RECOVER_SEARCH_COST` after it. "Own" is the seat's `pid` on the record, or a
   grave recorded from a `why:"fell"` naming our seat (`Observation.my_graves`),
   because a respawn can land in a different seat.
@@ -1043,7 +1047,7 @@ python metrics.py --compare baseline=runs/armA --compare shelter=runs/armB
 Exposure (`dawnUpkeep` §7.3: −1 LL per dawn wherever terrain SV < 2 and
 nothing is built) covers **96% of the map** — only Flooded, Mountain,
 Settlement and Bunker are SV ≥ 2. It is the largest single LL drain measured,
-and its counter-play costs 1 scrap and 1 MP, always succeeds, and pays 4
+and its counter-play costs 1 scrap and 1 AP, always succeeds, and pays 4
 points.
 
 And it does more than cancel exposure. `dawnUpkeep`'s next clause —
@@ -1056,12 +1060,12 @@ No policy used it. `SHELTER` was one of the five never-used verbs, while bots
 walked around carrying 5–6 scrap. Measuring exposure against a fleet with no
 answer to it measures the bot's blind spot, not the game's balance — so
 `--shelter` turns on a survival-floor step that builds a basic shelter on the
-last MP of a day spent on exposed ground, and the two arms are run and pooled
+last AP of a day spent on exposed ground, and the two arms are run and pooled
 separately. Anything that moves between the arms is policy, not balance.
 
-It is placed ahead of the emergency staple hunt, but only fires at `mp <= 1`
-(or when LL is already critical). On the last MP of a day one more step
-cannot reach water — most terrain costs 2–4 MP to enter — while the shelter
+It is placed ahead of the emergency staple hunt, but only fires at `ap <= 1`
+(or when LL is already critical). On the last AP of a day one more step
+cannot reach water — most terrain costs 2–4 AP to enter — while the shelter
 cancels the whole night, so building strictly dominates walking *there*. The
 hunt still outranks it on every earlier move.
 
@@ -1117,7 +1121,7 @@ Walking is the game:
 | FORAGE success / partial | 3 / 1 |
 
 48.5% of hexes hold a pile, so roughly every other step pays 10–30 points
-against 3 for a 2-MP FORAGE. **Pile density is the highest-leverage balance
+against 3 for a 2-AP FORAGE. **Pile density is the highest-leverage balance
 lever in the game.**
 
 **Engaging with content costs about half your score.** The bot that opened the
@@ -1170,7 +1174,7 @@ the last point once they are there. That is because the water thresholds
 again — so thirst is a one-off drop of a few LL, while exposure is −1 every
 single dawn, forever, on 96% of the map.
 
-**Root cause, restated.** The earlier reading blamed `effectiveMP = ll + 3`
+**Root cause, restated.** The earlier reading blamed `effectiveAP = ll + 3`
 and the scarcity of water terrain. The cause data says the spiral is real but
 the *terminal* step is exposure, and the chain is:
 
@@ -1179,7 +1183,7 @@ the *terminal* step is exposure, and the chain is:
 3. `restedWell` is the **only** source of the +1 LL that cancels the −1
    exposure tick, outside a Settlement.
 4. So the moment W latches low, every dawn is a guaranteed −1 with no ceiling,
-   and `effectiveMP = ll + 3` removes the mobility needed to fix it.
+   and `effectiveAP = ll + 3` removes the mobility needed to fix it.
 
 The dial is not exposure's damage. It is that recovery is gated on the one
 resource the map is stingiest with.
@@ -1283,7 +1287,7 @@ yet**, so the figures above are still the under-sampled ones.
 - **The mock cannot stand in for the shelter arm.** `mock-server/server.js`
   mirrors `dawnUpkeep()` closely, exposure and shelter-protects-rest
   included, but it has no `doShelter()`: `ACT_SHELTER` falls through to the
-  generic act stub, which drains MP and then *adds* a token to `inv[a % 5]`
+  generic act stub, which drains AP and then *adds* a token to `inv[a % 5]`
   — slot 4, scrap. So SHELTER on the mock pays you a scrap instead of
   costing one and never sets the cell's shelter bit. Any balance number for
   the shelter arm has to come from hardware.

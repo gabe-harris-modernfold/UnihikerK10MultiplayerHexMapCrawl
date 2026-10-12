@@ -41,7 +41,7 @@ class RivalPolicy(SurvivorPolicy):
     # matters more here than for ContentMax because this bot also hoovers up
     # dropped ground items to keep them from anyone else.
     gear_weights = {
-        "mp": 4.0, "vision": 3.0, "slots": 2.0, "ll": 1.5,
+        "ap": 4.0, "vision": 3.0, "slots": 2.0, "ll": 1.5,
         "threat": 1.0, "rad": 0.5, "terrain": 1.5, "water_cap": 1.5,
         "nar": {NAR_COLD_IMMUNE: 2.0, NAR_SCAV_DOUBLE: 1.5,
                 NAR_LAND_FORAGE: 1.0, NAR_RIVER_FORAGE: 0.5,
@@ -72,7 +72,7 @@ class RivalPolicy(SurvivorPolicy):
         self._since_trade += 1
 
         cell_here = obs.map[(me.q, me.r)]
-        if cell_here is not None and cell_here.poi and me.mp > 0:
+        if cell_here is not None and cell_here.poi and me.ap > 0:
             act = self.try_open_poi(obs, "deny POI")
             if act is not None:
                 return act

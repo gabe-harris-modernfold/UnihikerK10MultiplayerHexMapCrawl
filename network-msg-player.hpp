@@ -73,6 +73,7 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
 
       G.connectedCount++;
       G.map[p.r][p.q].footprints |= (1 << arch);
+      trailStart(arch, p.q, p.r);   // trails.hpp: kept as-is if this is where they stopped
 
       { GameEvent ev = {}; ev.type = EVT_JOINED; ev.pid = (uint8_t)arch;
         ev.q = p.q; ev.r = p.r; enqEvt(ev); }
@@ -117,8 +118,9 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   int dir = atoi(dv + 1);
 
   // 1600: an underground disk at the widest light (radius 6, clipped to the
-  // 16x10 board) is ~110 cells at 12 chars with its "op" tail.
-  PSRAM_STATIC(char, visBuf, [1600]);
+  // 16x10 board) is ~110 cells at 12 chars with its "op" tail. 3200 for the
+  // surface: its "trl" trail records ride after the cells and take what is left.
+  PSRAM_STATIC(char, visBuf, [3200]);
   int visLen = 0, visCells = 0;
   int vr = VISION_R; bool mr = false;
   int slot = -1;
@@ -394,10 +396,11 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     return;
   }
   {
-    Log.notice("Regen: removing %s, %s, %s and %s", SAVE_MAP_F, SAVE_PLY_F, SAVE_GND_F, SAVE_SCAR_F);
+    Log.notice("Regen: removing %s, %s, %s, %s and %s", SAVE_MAP_F, SAVE_PLY_F, SAVE_GND_F, SAVE_TRL_F, SAVE_SCAR_F);
     SD.remove(SAVE_MAP_F);
     SD.remove(SAVE_PLY_F);
     SD.remove(SAVE_GND_F);
+    SD.remove(SAVE_TRL_F);   // generateMap() below clears the sides themselves
     ecoDiscardScarFile();   // the scars belong to the land they were made on
     ecoRequestRegen();      // the Eco task re-runs genesis on its next tick (ecology.hpp)
     // A new world: nothing from the old one may leak through.
@@ -434,6 +437,7 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
         if (G.map[nr][nq].terrain == 0) { pl.q = (int16_t)nq; pl.r = (int16_t)nr; break; }
       }
       G.map[pl.r][pl.q].footprints |= (1 << i);
+      trailStart(i, pl.q, pl.r);
     }
     xSemaphoreGive(G.mutex);
     GameEvent ev = {}; ev.type = EVT_REGEN; enqEvt(ev);
@@ -468,7 +472,7 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
     memset(p.inv,  0, sizeof(p.inv));
     p.ll = 0; p.food = 0; p.water = 0;
     p.score = 0; p.steps = 0; p.encCount = 0;
-    p.movesLeft = 0;
+    p.apLeft = 0;
     xSemaphoreGive(G.mutex);
   } else {
     // Nothing was erased, but the left/lobby broadcasts below still go out
@@ -506,16 +510,16 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   int actType = atoi(av + 1);
   if (actType < 0 || actType > 7) { wsNack(client, "bad_act"); return; }
 
-  int mpParam = 1;
-  const char* mpp = strstr(data, "\"mp\"");
-  if (mpp) { const char* mpv = strchr(mpp + 4, ':'); if (mpv) mpParam = atoi(mpv + 1); }
+  int apParam = 1;
+  const char* apKey = strstr(data, "\"ap\"");
+  if (apKey) { const char* apColon = strchr(apKey + 4, ':'); if (apColon) apParam = atoi(apColon + 1); }
 
   int recipeId = 0;  // ACT_CRAFT only — which known recipe to craft
   const char* rp = strstr(data, "\"r\"");
   if (rp) { const char* rv = strchr(rp + 3, ':'); if (rv) recipeId = atoi(rv + 1); }
   if (recipeId < 0 || recipeId > 255) recipeId = 0;
 
-  PSRAM_STATIC(char, survBuf, [1100]);
+  PSRAM_STATIC(char, survBuf, [1600]);   // the ring's cells, then its "trl" trail records
   int  survLen = 0;
   int  slot    = -1;
   bool actOk   = false;
@@ -540,7 +544,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
         return;
       }
-      actOk = handleAction(slot, (uint8_t)actType, mpParam, (uint8_t)recipeId,
+      actOk = handleAction(slot, (uint8_t)actType, apParam, (uint8_t)recipeId,
                             survBuf, sizeof(survBuf), &survLen, settleResult, &craftWhy,
                             &refused);
       if (actType == ACT_CRAFT && actOk) {

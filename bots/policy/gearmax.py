@@ -6,7 +6,7 @@ them accumulates enough gear to ask:
 1. **How much equipment can a survivor actually get hold of?**
 2. **Does each item's declared benefit or penalty actually land?**
    `bots/gearcheck.py` audits that from this policy's run log, comparing the
-   wire's effective `llCap` / `is` / `mp` against what items.cfg promises.
+   wire's effective `llCap` / `is` / `ap` against what items.cfg promises.
 3. **Which items keep a survivor alive?**  Same tool, ranking items by LL
    lost per game-day worn.
 
@@ -75,7 +75,7 @@ class GearMaxPolicy(SurvivorPolicy):
     # measure them. Steeper weights would make it re-swap toward the same few
     # favourites and leave most of the registry untested.
     gear_weights = {
-        "ll": 1.0, "rad": 0.5, "mp": 0.5, "slots": 0.5,
+        "ll": 1.0, "rad": 0.5, "ap": 0.5, "slots": 0.5,
         "vision": 0.5, "threat": 0.25, "terrain": 0.25, "water_cap": 0.5,
         "nar": {},
     }

@@ -238,11 +238,11 @@ const TERRAIN = [
   { name:'Bunker Entrance', mc:1,   sv:2, vis: 0, icon:'🚪',
     fill:'#1C1A22', stroke:'#4A4458',   /* cold concrete, faint blue cast */
     tags:['Bunker','Waypoint'],
-    desc:'A pre-war blast door set into a concrete apron, hinges still sound. Step onto it and you go down — the stairwell beyond drops straight into the bunker tunnel network, for 1 MP on top of the step. Climbing back out costs the same. The doorway itself blocks weather.' },
+    desc:'A pre-war blast door set into a concrete apron, hinges still sound. Step onto it and you go down — the stairwell beyond drops straight into the bunker tunnel network, for 1 AP on top of the step. Climbing back out costs the same. The doorway itself blocks weather.' },
   { name:'Vent Shaft',      mc:1,   sv:0, vis: 0, icon:'🕳',
     fill:'#16140E', stroke:'#38321F',   /* rusted grating over dark earth */
     tags:['Bunker','Treacherous'],
-    desc:'A collapsed air intake — a rusted grate over a drop into the tunnels. Step onto it and you slide down for 1 MP; climbing back out of one costs 2. Connects to the same network as every other entrance.' },
+    desc:'A collapsed air intake — a rusted grate over a drop into the tunnels. Step onto it and you slide down for 1 AP; climbing back out of one costs 2. Connects to the same network as every other entrance.' },
   { name:'Tunnel Floor',    mc:2,   sv:1, vis: 0, icon:'⬛',
     fill:'#141210', stroke:'#2A2622',   /* near-black service corridor */
     tags:['Bunker','Water','Salvage','Blind Ground'],
@@ -370,7 +370,7 @@ const RECIPES = [
 ];
 function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
 function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
-// MP costs live on the action cards in ui-panels.js (shelter and water are dynamic).
+// AP costs live on the action cards in ui-panels.js (shelter and water are dynamic).
 // Which terrain indices allow each action (matches server terrain arrays)
 // Forage: Open Scrub(0) DN7, Rust Forest(2) DN6, Marsh(3) DN8, River(11) DN6
 // Water:  Marsh(3), Flooded(5), River(11)
@@ -455,7 +455,7 @@ const ARCHETYPES = [
     skills: [0, 0, 1, 0, 2],
     invSlots: 8,
     kitBonus: [0, 0, 0, 1, 0],
-    desc: 'Field surgeon. Can stabilise Major Wounds anywhere, at 2\u00a0MP and 1\u00a0Medicine a time.',
+    desc: 'Field surgeon. Can stabilise Major Wounds anywhere, at 2\u00a0AP and 1\u00a0Medicine a time.',
     flavor: 'Patches survivors back together. What remains is... functional.'
   },
   {
@@ -473,7 +473,7 @@ const ARCHETYPES = [
     name: 'SCOUT',
     icon: '\u25CE',   // ◎ circle
     color: '#7A6055',
-    trait: 'Survey costs 0\u00a0MP, and your vision radius is +2.',
+    trait: 'Survey costs 0\u00a0AP, and your vision radius is +2.',
     skills: [2, 1, 1, 0, 1],
     invSlots: 8,
     desc: 'Recon specialist. Sees two rings further than anyone else and surveys for free, giving the group an early read on the terrain ahead.',
@@ -546,7 +546,7 @@ const ITEMS = [
   { id:8,  name:'Screaming Spike',  category:0, slot:0,
     img:'img/items/item_8.png',  icon:'img/items/icon_8.png',
     preUse:  'You won\'t feel the needle. You won\'t remember using it either.',
-    postUse: 'Your legs move before your brain does. +3 MP now.',
+    postUse: 'Your legs move before your brain does. +3 AP now.',
     story:   null },
   { id:9,  name:'Anti-Rot Kit',     category:0, slot:0,
     img:'img/items/item_9.png',  icon:'img/items/icon_9.png',
@@ -577,7 +577,7 @@ const ITEMS = [
   { id:15, name:'Trudge Stompers',  category:1, slot:4,
     img:'img/items/item_15.png', icon:'img/items/icon_15.png',
     preUse:  null, postUse: null,
-    story:   'Steel-toed, broken-in to someone else\'s feet. +1 MP while equipped.' },
+    story:   'Steel-toed, broken-in to someone else\'s feet. +1 AP while equipped.' },
   { id:64, name:'Backpack',         category:1, slot:2,
     img:'img/items/item_64.png', icon:'img/items/icon_64.png',
     preUse:  null, postUse: null,
@@ -593,7 +593,7 @@ const ITEMS = [
   { id:17, name:'Rust Rocket',      category:1, slot:5,
     img:'img/items/item_17.png', icon:'img/items/icon_17.png',
     preUse:  null, postUse: null,
-    story:   'Still runs. Barely. Costs 1 fuel at dawn — feed it and it moves fast. +4 MP while fuelled.' },
+    story:   'Still runs. Barely. Costs 1 fuel at dawn — feed it and it moves fast. +4 AP while fuelled.' },
   { id:18, name:'Floaty Disaster',  category:1, slot:5,
     img:'img/items/item_18.png', icon:'img/items/icon_18.png',
     preUse:  null, postUse: null,
@@ -601,11 +601,11 @@ const ITEMS = [
   { id:63, name:'Raft', category:1, slot:5,
     img:'img/items/item_63.png', icon:'img/items/icon_63.png',
     preUse:  null, postUse: null,
-    story:   'Scrap wood lashed tight with salvaged cord. Slow, ugly, and it floats. Crosses Marsh, Flooded District and River Channel at the standard 1 MP.' },
+    story:   'Scrap wood lashed tight with salvaged cord. Slow, ugly, and it floats. Crosses Marsh, Flooded District and River Channel at the standard 1 AP.' },
   { id:19, name:'Vertical Regret',  category:1, slot:3,
     img:'img/items/item_19.png', icon:'img/items/icon_19.png',
     preUse:  null, postUse: null,
-    story:   'Forty metres of woven polyester. Rated to 500kg. You\'re betting your life on it. Mountains cost 2 MP instead of 4.' },
+    story:   'Forty metres of woven polyester. Rated to 500kg. You\'re betting your life on it. Mountains cost 2 AP instead of 4.' },
   { id:20, name:'Doom Clicker',     category:1, slot:3,
     img:'img/items/item_20.png', icon:'img/items/icon_20.png',
     preUse:  null, postUse: null,
@@ -629,7 +629,7 @@ const ITEMS = [
   { id:26, name:'Motorbike',        category:1, slot:5,
     img:'img/items/item_26.png', icon:'img/items/icon_26.png',
     preUse: null, postUse: null,
-    story: 'Louder than a landmine and twice as reckless. Drinks fuel like it has a personal grievance against your reserves. +5 MP when fuelled.' },
+    story: 'Louder than a landmine and twice as reckless. Drinks fuel like it has a personal grievance against your reserves. +5 AP when fuelled.' },
   { id:27, name:'Portable Forge',   category:1, slot:3,
     img:'img/items/item_27.png', icon:'img/items/icon_27.png',
     preUse: null, postUse: null,
@@ -700,7 +700,7 @@ const ITEMS = [
   { id:44, name:'Jar of Sweats',    category:0, slot:0,
     img:'img/items/item_44.png', icon:'img/items/icon_44.png',
     preUse:  'You open it. The smell is a physical force.',
-    postUse: 'You drink it. Your body accepts the hydration and immediately rejects the experience. +4 Water, −2 MP.',
+    postUse: 'You drink it. Your body accepts the hydration and immediately rejects the experience. +4 Water, −2 AP.',
     story:   null },
   { id:45, name:'Glow Dentures',    category:1, slot:1,
     img:'img/items/item_45.png', icon:'img/items/icon_45.png',
@@ -712,7 +712,7 @@ const ITEMS = [
   { id:47, name:'Lead Snuggie',     category:1, slot:2,
     img:'img/items/item_47.png', icon:'img/items/icon_47.png',
     preUse: null, postUse: null,
-    story: 'A full-body lead-lined fleece blanket with a hood. Near-total radiation immunity. Weighs as much as a bad decision. -1 MP, but you never glow. -5 Rad each dawn.' },
+    story: 'A full-body lead-lined fleece blanket with a hood. Near-total radiation immunity. Weighs as much as a bad decision. -1 AP, but you never glow. -5 Rad each dawn.' },
   { id:48, name:'Corrosive Syrup',  category:2, slot:0,
     img:'img/items/item_48.png', icon:'img/items/icon_48.png',
     preUse: null, postUse: null, story: null },
@@ -762,7 +762,7 @@ const ITEMS = [
   { id:58, name:'Nostril Salts',      category:0, slot:0,
     img:'img/items/item_58.png', icon:'img/items/icon_58.png',
     preUse:  'One whiff and your eyes are already open.',
-    postUse: 'A jolt of ammonia-and-worse snaps you upright, wide awake. +1 MP.',
+    postUse: 'A jolt of ammonia-and-worse snaps you upright, wide awake. +1 AP.',
     story:   null },
   { id:59, name:'Marrow Jelly',       category:0, slot:0,
     img:'img/items/item_59.png', icon:'img/items/icon_59.png',
@@ -823,10 +823,10 @@ function getItemIconFallback(id) {
 }
 
 // ── Equipment stat modifiers ────────────────────────────────────────────────
-// Mirrors stat fields in /data/items.cfg (mp, ll, slots, rad, vision, *_cost).
+// Mirrors stat fields in /data/items.cfg (ap, ll, slots, rad, vision, *_cost).
 // Used by the character sheet to display equipped-item bonuses to the player.
 // NOTE: Display only — actual stat calculations are authoritative on the server.
-//   mp/ll/slots/vision/rad : passive modifier while equipped
+//   ap/ll/slots/vision/rad : passive modifier while equipped
 //   fuelCost/waterCost/etc : tokens paid per day while equipped -- at dawn, or
 //                            the moment the pack can if it was short then
 //   note                   : qualitative effect (terrain unlock, special)
@@ -835,13 +835,13 @@ const ITEM_MODS = {
   12: { rad: -1, note: 'Sealed: no rad check entering hot terrain' }, // Glow Suit
   13: { note: 'Sealed: no rad check entering hot terrain' },       // Wheeze Filter
   14: { vision: +1 },                                              // Dark Goggles
-  15: { mp: +1 },                                                  // Trudge Stompers
+  15: { ap: +1 },                                                  // Trudge Stompers
   16: { slots: +4 },                                               // Hoarder's Rig
-  17: { mp: +4, fuelCost: 1 },                                     // Rust Rocket
+  17: { ap: +4, fuelCost: 1 },                                     // Rust Rocket
   18: { note: 'Cross River Channel (MC 2)' },                      // Floaty Disaster
   19: { note: 'Climbing gear: Mountain costs MC 2' },              // Vertical Regret
   20: { vision: +1 },                                              // Doom Clicker
-  26: { mp: +5, slots: +2, fuelCost: 1 },                          // Motorbike
+  26: { ap: +5, slots: +2, fuelCost: 1 },                          // Motorbike
   27: { note: 'Doubles scrap from SCAVENGE' },                     // Portable Forge
   28: { note: 'Cross River Channel; doubles river forage' },       // Fishing Pole
   29: { note: 'Doubles land food forage yield' },                  // Compound Bow
@@ -852,8 +852,8 @@ const ITEM_MODS = {
   41: { note: 'Threat Clock −4 each dawn' },                       // Squatch Sliprs
   42: { slots: +1 },                                               // Knife-Wrench
   45: { vision: +1 },                                              // Glow Dentures
-  47: { mp: -1, rad: -5 },                                         // Lead Snuggie
-  63: { note: 'Crosses any water terrain at 1 MP' },               // Raft
+  47: { ap: -1, rad: -5 },                                         // Lead Snuggie
+  63: { note: 'Crosses any water terrain at 1 AP' },               // Raft
   64: { slots: +4 },                                               // Backpack
   65: { waterCap: +3 },                                            // Canteen
   69: { rad: +1, note: 'Opens palpate choices while worn' },       // Dirty Glove
@@ -894,7 +894,7 @@ function terrainMCFor(terr, player) {
   let mc = TERRAIN[terr]?.mc;
   if (mc === undefined) return 0;
   if (TERRAIN_HAS_WATER[terr] && hasPassTerrainBit(player, TERR_PASS_WATER)) {
-    mc = RAFT_MC;                       // raft: any water terrain at the standard 1 MP
+    mc = RAFT_MC;                       // raft: any water terrain at the standard 1 AP
   } else if (mc === 255) {
     if (terr === 11 && hasPassTerrainBit(player, TERR_PASS_RIVER)) mc = RIVER_MC;
     else return 0;                      // genuinely impassable
@@ -932,7 +932,7 @@ function getResIcon(res, px = 26) {
 const SK_SHORT = ['Nav', 'For', 'Scav', 'Shel', 'End'];
 
 // ── Wounds (mirrors server WOUND_* / Player.wounds[]) ────────────
-// wd[0] = minor (−1 Endure each), wd[1] = major (−1 all skills and −1 MP each)
+// wd[0] = minor (−1 Endure each), wd[1] = major (−1 all skills and −1 AP each)
 const WOUND_MINOR = 0, WOUND_MAJOR = 1, WOUND_MAX_EACH = 3;
 const WOUND_NAMES = ['MINOR', 'MAJOR'];
 const TREAT_DN    = 9;
@@ -957,7 +957,7 @@ const WEATHER_MOVE_PENALTY = [0, 1, 2, 3, 1, 1];
 // Columns 12-15 are all-zero: weather does not reach underground.
 // Fog is worst in dense/wet terrain (Rust Forest, Marsh, Flooded Ruins) and
 // weakest on high dry ground (Rolling Hills, Mountain) — drives its own
-// per-tick MP/LL hazard on the firmware, same shape as chem's row. Mist's
+// per-tick AP/LL hazard on the firmware, same shape as chem's row. Mist's
 // row is all-zero: purely cosmetic, no per-tick hazard.
 const WEATHER_INTENSITY = [
   [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0],

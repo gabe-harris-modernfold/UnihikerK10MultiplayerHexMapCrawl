@@ -67,7 +67,7 @@ static void sceneSnapFill(SceneSnap& S) {
       v.food  = p.food;
       v.water = p.water;
       v.rad   = p.radiation;
-      v.moves = p.movesLeft;
+      v.ap = p.apLeft;
       v.depth = p.depth;
       v.inEnc = (encounters[i].active & 1) != 0;
       v.score = p.score;

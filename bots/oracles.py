@@ -13,9 +13,9 @@ firmware source rather than from observation:
     ll <= llCap                     llCap is appendPackArrays' effectiveMaxLL
     1 <= food, water <= 6           applyFStep / applyWStep clamp [1, 6]
     0 <= rad <= 10                  every rad write constrains to [0, 10]
-    mp >= 0, inv[] in [0, 99]
-    ll == 0  ->  mp == 0            every EVT_DOWNED site zeroes movesLeft
-    resting / mp == 0 / ll == 0  ->  vm == 0     computeValidMoves()
+    ap >= 0, inv[] in [0, 99]
+    ll == 0  ->  ap == 0            every EVT_DOWNED site zeroes apLeft
+    resting / ap == 0 / ll == 0  ->  vm == 0     computeValidMoves()
     steps never go down within one life
     tk never goes backwards on one socket
 
@@ -55,7 +55,7 @@ HEAP_FLOOR = 24 * 1024
 TICK_STALL_MS = 1000
 
 # ABW_* in Esp32HexMapCrawl.ino, keyed by the nack code abwName() emits.
-ABW_CODE = {"blocked": 0, "pack_full": 1, "terrain": 2, "no_mp": 3,
+ABW_CODE = {"blocked": 0, "pack_full": 1, "terrain": 2, "no_ap": 3,
             "no_res": 4, "not_needed": 5, "resting": 6, "archetype": 7,
             "craft": 8, "bad_act": 9}
 # act nacks that come from inside handleAction's switch -- those still
@@ -142,12 +142,12 @@ class WireOracle:
                 self.steps[pid] = sp
             if not full:
                 continue
-            mp = d.get("mp", 0)
+            ap = d.get("ap", 0)
             if ll == 0:
-                if mp:
-                    self.flag("downed_with_mp", "major",
-                              "a downed survivor still has MP", key=(pid,),
-                              pid=pid, mp=mp)
+                if ap:
+                    self.flag("downed_with_ap", "major",
+                              "a downed survivor still has AP", key=(pid,),
+                              pid=pid, ap=ap)
                 continue
             cap = d.get("llCap")
             if isinstance(cap, int) and ll > cap:
@@ -163,19 +163,19 @@ class WireOracle:
             if isinstance(rad, int) and not 0 <= rad <= 10:
                 self.flag("rad_out_of_range", "major", "radiation outside [0, 10]",
                           key=(pid,), pid=pid, rad=rad)
-            if isinstance(mp, int) and mp < 0:
-                self.flag("mp_negative", "major", "negative MP", key=(pid,),
-                          pid=pid, mp=mp)
+            if isinstance(ap, int) and ap < 0:
+                self.flag("ap_negative", "major", "negative AP", key=(pid,),
+                          pid=pid, ap=ap)
             inv = d.get("inv")
             if isinstance(inv, list) and any(not 0 <= x <= 99 for x in inv):
                 self.flag("inv_out_of_range", "major",
                           "a resource count outside [0, 99]", key=(pid,),
                           pid=pid, inv=inv)
             vm = d.get("vm", 0)
-            if vm and (mp == 0 or d.get("rt")):
+            if vm and (ap == 0 or d.get("rt")):
                 self.flag("vm_when_immobile", "minor",
                           "legal-move mask set while unable to move",
-                          key=(pid,), pid=pid, vm=vm, mp=mp, rt=d.get("rt"))
+                          key=(pid,), pid=pid, vm=vm, ap=ap, rt=d.get("rt"))
 
     def _on_event(self, msg, obs) -> None:
         k = msg.get("k")

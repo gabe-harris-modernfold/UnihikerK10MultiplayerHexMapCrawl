@@ -399,18 +399,18 @@ static void tickGame() {
   for (int pid = 0; pid < MAX_PLAYERS; pid++) {
     Player& p = G.players[pid];
     if (!p.connected || encounters[pid].active) continue;
-    int8_t  mp0     = p.movesLeft;
+    int8_t  ap0     = p.apLeft;
     uint8_t started = kickStartItems(pid);
     if (!started) continue;
     int s = 0;
     while (!(started & (1 << s))) s++;
-    Log.notice("kick-start pid=%d item=%d mp %d->%d", pid, (int)p.equip[s], (int)mp0, (int)p.movesLeft);
+    Log.notice("kick-start pid=%d item=%d ap %d->%d", pid, (int)p.equip[s], (int)ap0, (int)p.apLeft);
     GameEvent kev = {};
     kev.type          = EVT_REFUEL;
     kev.pid           = (uint8_t)pid;
     kev.res           = p.equip[s];                              // the first item that started
-    kev.amt           = (uint8_t)max(0, p.movesLeft - mp0);      // MP it brought
-    kev.moveMP        = p.movesLeft;
+    kev.amt           = (uint8_t)max(0, p.apLeft - ap0);      // AP it brought
+    kev.moveAP        = p.apLeft;
     kev.dawnUnfuelled = unfuelledMask(pid);                      // still dormant after this
     enqEvt(kev);
   }
@@ -466,7 +466,7 @@ static void tickGame() {
   // world system. Rather than remember to surface them at each of those
   // eight EVT_DOWNED sites (and forget it at the ninth), sweep for it once
   // here: downed + underground means haul them up to their hatch, because
-  // movesLeft is zeroed on downing and the bad air keeps ticking.
+  // apLeft is zeroed on downing and the bad air keeps ticking.
   for (int pid = 0; pid < MAX_PLAYERS; pid++) {
     Player& p = G.players[pid];
     if (p.connected && p.depth && p.ll == 0) surfacePlayer(pid);
@@ -508,7 +508,7 @@ static void tickGame() {
           dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg);
         }
         if (p.ll == 0) {
-          p.movesLeft = 0;
+          p.apLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
           dev.res = DC_CHEM;
           dev.evWsId = p.wsClientId; enqEvt(dev);
@@ -518,18 +518,18 @@ static void tickGame() {
   }
 
   // ── Strangle Fog per-tick hazard ──────────────────────────────────────────
-  // Fog costs you two different ways: MP bleeds away steadily (turned around,
+  // Fog costs you two different ways: AP bleeds away steadily (turned around,
   // fighting through it — no LED/sound cue, it'd be constant noise at this
   // cadence) while LL loss is far rarer, a real but occasional risk of
   // getting properly lost rather than a steady bleed like chem's.
-  // FOG_MP_TICK_RATE ~= 1 MP lost per 30s of full exposure on the worst
+  // FOG_AP_TICK_RATE ~= 1 AP lost per 30s of full exposure on the worst
   // terrain — enough to strand a lingering survivor well before a 300s day
   // is out. FOG_LL_TICK_RATE ~= 1 LL per 3 real minutes at worst, rarely more
   // than 1 LL across a whole day spent in it. Same shelter/terrain immunity
   // shape as chem: basic shelter halves both, improved shelter/Settlement/
   // Broken Urban are immune.
   if (G.weatherPhase == WEATHER_FOG) {
-    static constexpr float FOG_MP_TICK_RATE = 1.0f / 300.0f;
+    static constexpr float FOG_AP_TICK_RATE = 1.0f / 300.0f;
     static constexpr float FOG_LL_TICK_RATE = 1.0f / 1800.0f;
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
@@ -541,11 +541,11 @@ static void tickGame() {
       uint8_t shelter = G.map[p.r][p.q].shelter;
       if (shelter >= 2) continue;
       float intensity = WEATHER_INTENSITY[WEATHER_FOG][t];
-      float mpProb = intensity * FOG_MP_TICK_RATE;
+      float apProb = intensity * FOG_AP_TICK_RATE;
       float llProb = intensity * FOG_LL_TICK_RATE;
-      if (shelter == 1) { mpProb *= 0.5f; llProb *= 0.5f; }
-      if (p.movesLeft > 0 && esp_random() < (uint32_t)(mpProb * 0xFFFFFFFFul)) {
-        p.movesLeft--;
+      if (shelter == 1) { apProb *= 0.5f; llProb *= 0.5f; }
+      if (p.apLeft > 0 && esp_random() < (uint32_t)(apProb * 0xFFFFFFFFul)) {
+        p.apLeft--;
       }
       if (esp_random() < (uint32_t)(llProb * 0xFFFFFFFFul)) {
         if (p.ll > 0) {
@@ -554,7 +554,7 @@ static void tickGame() {
           dmg.amt = 1; dmg.res = DC_FOG; dmg.actNewLL = p.ll; enqEvt(dmg);
         }
         if (p.ll == 0) {
-          p.movesLeft = 0;
+          p.apLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
           dev.res = DC_FOG;
           dev.evWsId = p.wsClientId; enqEvt(dev);
@@ -613,13 +613,13 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   uint8_t dn = TERRAIN_FORAGE_DN[terr];
   // FORAGE is deliberately NOT capped by tokenRoomFor(): you can always feed
   // yourself, and the overflow is priced by the encumbrance penalty in
-  // effectiveMP() rather than refused.  Capping it here meant a pack full of
+  // effectiveAP() rather than refused.  Capping it here meant a pack full of
   // scrap could starve a survivor through a button that did nothing and said
   // nothing -- the bot harness livelocked on exactly that.  SCAVENGE, which
   // is loot rather than survival, does keep the cap.
   if (!dn)              { ev.actWhy = ABW_TERRAIN; return; }
-  if (p.movesLeft < 2)  { ev.actWhy = ABW_NO_MP;   return; }
-  spendMP(p, 2);
+  if (p.apLeft < 2)  { ev.actWhy = ABW_NO_AP;   return; }
+  spendAP(p, 2);
   CheckResult cr = resolveCheck(pid, SK_FORAGE, dn, 0);
   ev.actDn  = dn; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_FORAGE, cr);
@@ -643,14 +643,14 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
   }
 }
 
-static void doWater(int pid, uint8_t terr, int mpParam, GameEvent& ev) {
+static void doWater(int pid, uint8_t terr, int apParam, GameEvent& ev) {
   Player& p = G.players[pid];
   // Uncapped for the same reason as FORAGE: drinking is survival, and the
   // overflow is paid for in encumbrance, not refused.
   if (!TERRAIN_HAS_WATER[terr]) { ev.actWhy = ABW_TERRAIN; return; }
-  if (p.movesLeft < 1)          { ev.actWhy = ABW_NO_MP;   return; }
-  int spend = max(1, min(3, min(mpParam, (int)p.movesLeft)));
-  spendMP(p, spend);
+  if (p.apLeft < 1)          { ev.actWhy = ABW_NO_AP;   return; }
+  int spend = max(1, min(3, min(apParam, (int)p.apLeft)));
+  spendAP(p, spend);
   p.inv[0]     = (uint8_t)min((int)p.inv[0] + spend, 99);
   ev.actWatD   = (int8_t)spend;
   addScore(p, ev, spend);
@@ -661,12 +661,12 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
   Player& p  = G.players[pid];
   uint8_t dn = TERRAIN_SALVAGE_DN[terr];
   if (!dn)             { ev.actWhy = ABW_TERRAIN; return; }
-  if (p.movesLeft < 2) { ev.actWhy = ABW_NO_MP;   return; }
+  if (p.apLeft < 2) { ev.actWhy = ABW_NO_AP;   return; }
   // Salvage is loot, not survival, so this one IS bound by the pack size --
   // and says so, because "my pack is full of scrap" is not visible from the
   // SCAVENGE button the way "there is nothing to salvage here" is.
   if (tokenRoomFor(p) <= 0) { ev.actWhy = ABW_PACK_FULL; return; }
-  spendMP(p, 2);
+  spendAP(p, 2);
   if (TERRAIN_IS_RUINS[terr] && G.threatClock < 20) {
     G.threatClock++;
   }
@@ -694,10 +694,10 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
 // Treat.  Two jobs, checked in this order:
 //   1. A major wound.  The Medic (archetype 2) may close one anywhere — that
 //      is the archetype's trait; everyone else must be standing in a
-//      Settlement.  Costs 2 MP + 1 Medicine and rolls Endure vs TREAT_DN.  On
+//      Settlement.  Costs 2 AP + 1 Medicine and rolls Endure vs TREAT_DN.  On
 //      a partial the major wound is downgraded to a minor one rather than
 //      cleared outright.
-//   2. No major wound.  In a Settlement anyone may spend 1 Medicine + 1 MP to
+//   2. No major wound.  In a Settlement anyone may spend 1 Medicine + 1 AP to
 //      restore 1 Life Level, no roll.  This is medicine's everyday sink; the
 //      Medic's field privilege stays wound-only, so a Medic outside a
 //      Settlement with nothing to stitch is refused on terrain.
@@ -710,8 +710,8 @@ static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
     if (!inSettlement)                 { ev.actWhy = ABW_TERRAIN;    return; }
     if (p.ll >= effectiveMaxLL(pid))   { ev.actWhy = ABW_NOT_NEEDED; return; }
     if (p.inv[3] == 0)                 { ev.actWhy = ABW_NO_RES;     return; }
-    if (p.movesLeft < 1)               { ev.actWhy = ABW_NO_MP;      return; }
-    spendMP(p, 1);
+    if (p.apLeft < 1)               { ev.actWhy = ABW_NO_AP;      return; }
+    spendAP(p, 1);
     p.inv[3]--;
     p.ll++;
     ev.actMedD   = -1;
@@ -723,8 +723,8 @@ static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
     return;
   }
   if (p.inv[3] == 0)               { ev.actWhy = ABW_NO_RES;     return; }
-  if (p.movesLeft < 2)             { ev.actWhy = ABW_NO_MP;      return; }
-  spendMP(p, 2);
+  if (p.apLeft < 2)             { ev.actWhy = ABW_NO_AP;      return; }
+  spendAP(p, 2);
   p.inv[3]--;
   ev.actMedD = -1;
   CheckResult cr = resolveCheck(pid, SK_ENDURE, TREAT_DN, 0);
@@ -797,9 +797,9 @@ static bool findShelterTriangle(int16_t q, int16_t r, int16_t triQ[3], int16_t t
 }
 
 // Build or upgrade the shelter on the current hex.
-//   empty hex : 2+ scrap and 2+ MP → improved (2 scrap, 2 MP, +8);
-//               otherwise basic (1 scrap, 1 MP, +4)
-//   basic here: upgrade to improved only (2 scrap, 2 MP, +8)
+//   empty hex : 2+ scrap and 2+ AP → improved (2 scrap, 2 AP, +8);
+//               otherwise basic (1 scrap, 1 AP, +4)
+//   basic here: upgrade to improved only (2 scrap, 2 AP, +8)
 //   improved  : nothing to build — blocked
 // A hex is never downgraded and a finished shelter never pays out twice.
 // Keep data/ui-panels.js getShelterDesc() in step with these rules.
@@ -811,11 +811,11 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
   settle.fired = false;
   if (current >= 2) { ev.actWhy = ABW_NOT_NEEDED; return; }  // already improved
   if (p.inv[4] == 0) { ev.actWhy = ABW_NO_RES;     return; }  // no scrap
-  uint8_t shelterType = (p.inv[4] >= 2 && p.movesLeft >= 2) ? 2 : 1;
+  uint8_t shelterType = (p.inv[4] >= 2 && p.apLeft >= 2) ? 2 : 1;
   if (current == 1 && shelterType < 2) { ev.actWhy = ABW_NO_RES; return; }  // can't afford the upgrade
-  uint8_t mpCost = shelterType;
-  if (p.movesLeft < (int8_t)mpCost)    { ev.actWhy = ABW_NO_MP;  return; }
-  spendMP(p, mpCost);
+  uint8_t apCost = shelterType;
+  if (p.apLeft < (int8_t)apCost)    { ev.actWhy = ABW_NO_AP;  return; }
+  spendAP(p, apCost);
   p.inv[4]                 = (uint8_t)max(0, (int)p.inv[4] - shelterType);
   G.map[p.r][p.q].shelter  = shelterType;
   int scoreD = (shelterType == 2) ? 8 : 4;
@@ -886,11 +886,11 @@ static void broadcastSettle(const SettleResult& s) {
 
 static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* survLen) {
   Player& p      = G.players[pid];
-  bool    isScout = (p.archetype == 4);  // Scout: Survey costs 0 MP
+  bool    isScout = (p.archetype == 4);  // Scout: Survey costs 0 AP
   if (p.resting)                   { ev.actWhy = ABW_RESTING; return; }
-  if (!isScout && p.movesLeft < 1) { ev.actWhy = ABW_NO_MP;   return; }
+  if (!isScout && p.apLeft < 1) { ev.actWhy = ABW_NO_AP;   return; }
   if (!isScout) {
-    spendMP(p, 1);
+    spendAP(p, 1);
   }
   // Per-hex cap: +2 pts first survey only; repeats still reveal terrain
   int  hexIdx        = (int)p.r * MAP_COLS + (int)p.q;
@@ -929,23 +929,23 @@ static void doRest(int pid, GameEvent& ev) {
   ev.actOut = AO_SUCCESS;
 }
 
-// CRAFT: Settlement-only, 1 MP, deterministic — no skill roll. Requires the
+// CRAFT: Settlement-only, 1 AP, deterministic — no skill roll. Requires the
 // player to have already discovered recipeId via an encounter (see
 // encounter_engine.hpp's "recipe" loot entries). applyRecipe() (in
 // inventory_items.hpp) does the material/resource bookkeeping and confirms
 // the output has somewhere to go before anything is consumed, so a blocked
-// craft never costs MP or materials. Every AO_BLOCKED path names its reason
+// craft never costs AP or materials. Every AO_BLOCKED path names its reason
 // in *why (a static string) so handleMsg_act can toast it back to the
 // crafting client — the 'act' broadcast alone only says "blocked".
 static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev, const char** why) {
   Player& p = G.players[pid];
   if (terr != TERRAIN_SETTLEMENT) { *why = "CRAFT requires a Settlement"; return; }
-  if (p.movesLeft < 1)            { *why = "Not enough MP";               return; }
+  if (p.apLeft < 1)            { *why = "Not enough AP";               return; }
   // recipeId is client-supplied — bound it before the shift (1u << 32+ is UB).
   if (!recipeId || recipeId > MAX_RECIPES)        { *why = "No such recipe";             return; }
   if (!(p.knownRecipes & (1u << (recipeId - 1)))) { *why = "You don't know that recipe"; return; }
   if (const char* blocked = applyRecipe(pid, recipeId)) { *why = blocked; return; }  // can't afford it / pack full
-  spendMP(p, 1);
+  spendAP(p, 1);
   ev.actOut    = AO_SUCCESS;
   ev.actRecipe = recipeId;
   addScore(p, ev, 2);
@@ -965,8 +965,8 @@ static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev, cons
 // to the acting client.
 // refuse: out-param set to a nack code (network-reply.hpp) when the action was
 // refused outright, and left nullptr when it was carried out -- including a
-// failed skill check, which spent MP and is not a refusal.
-static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId,
+// failed skill check, which spent AP and is not a refusal.
+static bool handleAction(int pid, uint8_t actType, int apParam, uint8_t recipeId,
                          char* survBuf, int survCap, int* survLen,
                          SettleResult& settleOut, const char** blockWhy,
                          const char** refuse) {
@@ -1007,7 +1007,7 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
 
   switch (actType) {
     case ACT_FORAGE:  doForage (pid, terr, ev);                      break;
-    case ACT_WATER:   doWater  (pid, terr, mpParam, ev);             break;
+    case ACT_WATER:   doWater  (pid, terr, apParam, ev);             break;
     case ACT_TREAT:   doTreat  (pid, terr, ev);                      break;
     case ACT_SCAV:    doScav   (pid, terr, ev);                      break;
     case ACT_SHELTER: doShelter(pid, ev, settleOut);                 break;
@@ -1022,7 +1022,7 @@ static bool handleAction(int pid, uint8_t actType, int mpParam, uint8_t recipeId
   }
 
   ev.actNewLL  = p.ll;
-  ev.actNewMP  = p.movesLeft;
+  ev.actNewAP  = p.apLeft;
   enqEvt(ev);
   return ev.actOut == AO_SUCCESS;
 }

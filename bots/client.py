@@ -22,7 +22,7 @@ having joined.
 
 **Replies (protocol 2+).** Every send carries a "rid", and firmware at
 PROTO_VERSION 2 answers each with exactly one ack or nack (network-reply.hpp).
-A nack names why -- "slot_taken", "no_mp", "in_enc" -- so a refused pick is
+A nack names why -- "slot_taken", "no_ap", "in_enc" -- so a refused pick is
 retried at once instead of after the sync watchdog, and every refusal lands
 in the run log.  Older firmware and the mock ignore "rid" and never reply;
 nothing here depends on a reply arriving, and unanswered requests are only
@@ -438,7 +438,7 @@ class BotClient:
         **Death.** handleMsg_pick treats a pick on an LL-0 slot as a respawn:
         fresh survivor, lifetime score and steps carried over. So reconnecting
         is the respawn mechanism, exactly as it is for the browser client.
-        Without this a downed bot sits at 0 MP for the rest of the run and the
+        Without this a downed bot sits at 0 AP for the rest of the run and the
         fleet quietly hollows out.
 
         Returns True if the connection was closed and the caller should stop
@@ -490,7 +490,7 @@ class BotClient:
         # are the EFFECTIVE values (base + equipment), straight from
         # appendPackArrays() -- never re-add the bonuses client-side.
         return {"tk": self.obs.tick, "day": self.obs.day, "wp": self.obs.weather,
-                "sc": me.score, "sp": me.steps, "ll": me.ll, "mp": me.mp,
+                "sc": me.score, "sp": me.steps, "ll": me.ll, "ap": me.ap,
                 "eq": list(me.equip), "is": me.inv_slots, "llCap": me.ll_cap,
                 "wnd": list(me.wounds), "it": list(me.inv_type),
                 "food": me.food, "water": me.water, "rad": me.rad,
@@ -532,7 +532,7 @@ class BotClient:
                     self.recorder.write("noop", self._log_arch(),
                                         {"why": action.why,
                                          "repeats": self._noop_streak,
-                                         "mp": self.obs.me.mp,
+                                         "ap": self.obs.me.ap,
                                          "vm": self.obs.me.valid_moves,
                                          "day": self.obs.day})
                     self._last_noop_log = now

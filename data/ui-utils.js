@@ -169,7 +169,7 @@ function move(dir) {
     return;
   }
   if (myId >= 0 && players[myId]?.enc) return;
-  if (myId >= 0 && uiMP.val <= 0) return;
+  if (myId >= 0 && uiAP.val <= 0) return;
   const vm = myId >= 0 ? (players[myId].vm ?? 0x3F) : 0x3F;
   if (!(vm & (1 << dir))) return;
   const now = Date.now();
@@ -253,15 +253,6 @@ const keyMap = {
 };
 const heldKeys = new Map();
 document.addEventListener('keydown', e => {
-  // Innermost overlay first: the resource-drop sheet (ui-items.js) sits above
-  // the char sheet, so Escape must dismiss it *instead of* closing the sheet
-  // underneath. Checked before the INPUT guard so Escape also works while the
-  // quantity box has focus.
-  if (e.key === 'Escape' && document.getElementById('res-drop-menu')?.classList.contains('open')) {
-    e.preventDefault();
-    globalThis.closeResDropMenu?.();
-    return;
-  }
   if (e.target.tagName === 'INPUT') return;
   // Prevent scroll keys from scrolling any overlay or page
   if (['Space','PageUp','PageDown','Home','End'].includes(e.code)) { e.preventDefault(); return; }
@@ -283,11 +274,8 @@ document.addEventListener('keydown', e => {
     const cell = document.querySelectorAll('#action-deck .act-btn')[Number(e.code.slice(5)) - 1];
     if (cell) { e.preventDefault(); cell.click(); return; }
   }
-  // Block movement while the character selection screen or the resource-drop
-  // sheet is showing — stepping off the hex mid-drop would land the tokens
-  // somewhere other than the hex the sheet just described.
+  // Block movement while the character selection screen is showing
   if (document.getElementById('char-select-overlay')?.classList.contains('open')) return;
-  if (document.getElementById('res-drop-menu')?.classList.contains('open')) return;
   const dir = keyMap[e.code];
   if (dir === undefined) return;
   e.preventDefault();

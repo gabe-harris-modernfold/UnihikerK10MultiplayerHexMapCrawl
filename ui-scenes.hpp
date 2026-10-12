@@ -28,7 +28,7 @@ struct SceneSurv {
   char     name[16];
   uint8_t  arch;                 // 0 Guide 1 Quartermaster 2 Medic 3 Mule 4 Scout 5 Endurer
   uint8_t  ll, llCap, food, water, rad;
-  int8_t   moves;
+  int8_t   ap;
   uint8_t  depth;                // 0 on the surface
   bool     inEnc;
   uint16_t score;
@@ -1145,7 +1145,7 @@ static const char* scQuip(const SceneSurv& v, uint32_t now) {
   if (v.food <= 1)          return v.arch == 3 ? "eyeing the pack straps. hungrily." : "eyeing the Mule. the Mule knows.";
   if (v.rad >= 7)           return alt ? "glows. saves on torches." : "can read in the dark. by self.";
   if (v.rad >= 4)           return "faintly luminous.";
-  if (v.moves == 0)         return "out of legs for today.";
+  if (v.ap == 0)         return "out of legs for today.";
   return SC_QUIP_ARCH[v.arch < 6 ? v.arch : 0][alt];
 }
 

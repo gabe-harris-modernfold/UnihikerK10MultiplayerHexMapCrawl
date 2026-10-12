@@ -224,9 +224,9 @@ is short on scares, not short on deaths.
 **Traps maim. The wasteland kills.**
 
 A trap hazard can leave you at 1 LL with two major wounds, your water gone and
-your MP wiped — and then it lets you walk. It never takes the last point.
+your AP wiped — and then it lets you walk. It never takes the last point.
 Everything that makes the walk home lethal already exists: thirst is 34% of
-all LL lost, and a major wound is −1 on every skill plus an MP cost for the
+all LL lost, and a major wound is −1 on every skill plus an AP cost for the
 rest of the day. A trap that leaves you crippled twenty hexes from water is a
 better story than one that kills you outright, and it feeds the death into
 systems that are already instrumented.
@@ -321,7 +321,7 @@ on its own.
 
 Cases it has to survive:
 
-- Arriving with 0 MP.
+- Arriving with 0 AP.
 - Arriving via `tunnelStepDown()` / `tunnelStepUp()`.
 - Dawn or a disconnect firing mid-scene. `endEncounter(restorePoi=true)`
   restores a POI; a trap needs its own restore path (armed, not spent).
@@ -338,8 +338,8 @@ into the punji pit. That ordering is intentional.
 
 **As built**, case by case:
 
-- **0 MP** — the scene needs none; `trapOnArrival()` runs after the step
-  whatever MP is left.
+- **0 AP** — the scene needs none; `trapOnArrival()` runs after the step
+  whatever AP is left.
 - **Tunnels** — `moveTunnel()` calls it too. A shaft step (`tunnelStepDown()`
   / `tunnelStepUp()`) lands on a junction, which never carries a trap.
 - **Dawn / disconnect mid-scene** — `trapSettle(TRAP_SETTLE_REARM)`: armed

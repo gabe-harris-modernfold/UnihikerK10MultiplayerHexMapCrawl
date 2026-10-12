@@ -211,7 +211,7 @@ static void dispatchEffect(int pid, const ItemDef& item) {
 
 // ── Daily-cost items: paid for today ─────────────────────────────────────
 // An equipped item with an opCost[] (the Rust Rocket, the Motorbike) grants
-// its STAT_MP once per game-day, when that day's cost is paid. It pays at
+// its STAT_AP once per game-day, when that day's cost is paid. It pays at
 // dawn if the pack can cover it (applyDawnItemCosts), and otherwise the
 // moment it can (kickStartItems, polled by tickGame): a bike that stalled at
 // dawn burns the first fuel that turns up and runs for the rest of the day.
@@ -219,7 +219,7 @@ static void dispatchEffect(int pid, const ItemDef& item) {
 // what the map shows is what the rider gets.
 //
 // s_paidItem[pid] lists the item ids paid for today, so taking one off and
-// putting it back on can't buy its MP twice; dawn clears it. Not saved:
+// putting it back on can't buy its AP twice; dawn clears it. Not saved:
 // after a boot s_paidKnown is false, and the first look (kickStartItems)
 // takes whatever is equipped as paid rather than charging it again.
 static uint8_t s_paidItem[MAX_PLAYERS][EQUIP_SLOTS];
@@ -249,7 +249,7 @@ static void clearItemsPaid(int pid) {
   s_paidKnown[pid] = true;
 }
 
-// Slots holding a daily-cost item not paid for today, whose STAT_MP is
+// Slots holding a daily-cost item not paid for today, whose STAT_AP is
 // dormant (bit 0 = head .. bit 4 = vehicle). The tick broadcast's "uf".
 static uint8_t unfuelledMask(int pid) {
   const Player& p = G.players[pid];
@@ -261,24 +261,24 @@ static uint8_t unfuelledMask(int pid) {
   return m;
 }
 
-// Pay today's cost of the item in slot s out of the pack and add its STAT_MP
-// to movesLeft. False, with nothing taken, when the pack can't cover it.
+// Pay today's cost of the item in slot s out of the pack and add its STAT_AP
+// to apLeft. False, with nothing taken, when the pack can't cover it.
 static bool payItemCost(int pid, int s) {
   Player& p = G.players[pid];
   const ItemDef* def = getItemDef(p.equip[s]);
   if (!def) return false;
   for (int k = 0; k < 5; k++) if (def->opCost[k] > p.inv[k]) return false;
   for (int k = 0; k < 5; k++) p.inv[k] -= def->opCost[k];
-  p.movesLeft = (int8_t)min(127, (int)p.movesLeft + (int)def->statMods[STAT_MP]);
+  p.apLeft = (int8_t)min(127, (int)p.apLeft + (int)def->statMods[STAT_AP]);
   markItemPaid(pid, p.equip[s]);
   return true;
 }
 
 // ── applyDawnItemCosts ────────────────────────────────────────────────────
 // Called at dawn for each connected player, after dawnUpkeep has set
-// movesLeft. Starts the day's bookkeeping, then each equipped daily-cost
-// item pays out of the pack and adds its STAT_MP. STAT_MP is gated because
-// it is the only stat set once at dawn (movesLeft) rather than computed live;
+// apLeft. Starts the day's bookkeeping, then each equipped daily-cost
+// item pays out of the pack and adds its STAT_AP. STAT_AP is gated because
+// it is the only stat set once at dawn (apLeft) rather than computed live;
 // an item's other statMods apply whether it paid or not -- equipment stays
 // on, and the Motorbike's saddlebags hold either way. Returns the slots that
 // could not pay, for EVT_DAWN; kickStartItems() starts them later.
@@ -286,9 +286,9 @@ static uint8_t applyDawnItemCosts(int pid) {
   Player& p = G.players[pid];
   uint8_t unfuelled = 0;
   clearItemsPaid(pid);
-  // A survivor who went down during this dawn has had movesLeft zeroed and is
+  // A survivor who went down during this dawn has had apLeft zeroed and is
   // not going anywhere; charging their vehicle a fuel token and handing the
-  // corpse +5 MP is both wrong and expensive.
+  // corpse +5 AP is both wrong and expensive.
   bool downed = (p.ll == 0);
   for (int s = 0; s < EQUIP_SLOTS && !downed; s++) {
     uint8_t eid = p.equip[s];
@@ -311,7 +311,7 @@ static uint8_t applyDawnItemCosts(int pid) {
 // Polled from tickGame() for each connected survivor out of a scene. A
 // daily-cost item that is equipped but not paid for today -- it stalled at
 // dawn, or went on mid-day -- pays the moment the pack can cover it, and its
-// STAT_MP lands on today's movesLeft. Returns the slots that just started,
+// STAT_AP lands on today's apLeft. Returns the slots that just started,
 // for EVT_REFUEL. Polled, not hooked into each way fuel arrives (piles,
 // remains, collecting, encounter banks, trades, the caravan), so none of
 // them can be missed. Must hold G.mutex.
@@ -370,13 +370,13 @@ static bool useItem(int pid, uint8_t slotIdx) {
   // LL-to-zero path queues EVT_DOWNED; without this one the survivor would sit
   // at LL 0 never downed -- no respawn, no seat freed, no death on the wire.
   if (llBefore > 0 && p.ll == 0) {   // never a second EVT_DOWNED for one death
-    p.movesLeft = 0;
+    p.apLeft = 0;
     GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
     dev.res = DC_ACTION;
     dev.evWsId = p.wsClientId; enqEvt(dev);
   }
   if (def->statMods[STAT_RAD]) p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD], 0, 10);
-  if (def->statMods[STAT_MP])  p.movesLeft = (int8_t)max(0, (int)p.movesLeft + def->statMods[STAT_MP]);
+  if (def->statMods[STAT_AP])  p.apLeft = (int8_t)max(0, (int)p.apLeft + def->statMods[STAT_AP]);
 
   // Dispatch effects
   dispatchEffect(pid, *def);
@@ -426,7 +426,7 @@ static bool equipItem(int pid, uint8_t slotIdx) {
   // are deliberately NOT part of this test: a typed item past the cap is
   // unreachable (every pack loop stops at effectiveInvSlots), whereas tokens
   // over the cap are merely encumbering -- a legal, reachable state that
-  // effectiveMP() already prices at -1 MP, and one enc_bank's haul tray can
+  // effectiveAP() already prices at -1 AP, and one enc_bank's haul tray can
   // put you in anyway.  Different failure modes, deliberately different rules.
   for (int i = newSlots; i < INV_SLOTS_MAX; i++) {
     if (i != (int)slotIdx && p.invType[i]) return false;
@@ -864,7 +864,7 @@ static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
 // the pack AFTER the materials come out of it: a full pack whose last unit
 // of a material occupies a slot can still take the result in that slot.
 // Must hold G.mutex. Caller (doCraft in actions_game_loop.hpp) has already
-// verified terrain, MP, and that the player has discovered this recipe.
+// verified terrain, AP, and that the player has discovered this recipe.
 static const char* applyRecipe(int pid, uint8_t recipeId) {
   Player& p = G.players[pid];
   const RecipeDef* r = getRecipeDef(recipeId);
@@ -951,7 +951,7 @@ static bool canEnterTerrain(int pid, uint8_t t, uint8_t* mcOut) {
   if (t >= NUM_TERRAIN) return false;
   uint8_t mc = TERRAIN_MC[t];
   if (TERRAIN_HAS_WATER[t] && hasPassTerrainBit(pid, TERR_PASS_WATER)) {
-    mc = RAFT_MC;  // raft: any water terrain crosses at the standard 1 MP
+    mc = RAFT_MC;  // raft: any water terrain crosses at the standard 1 AP
   } else if (mc == 255) {
     if (t == 11 && hasPassTerrainBit(pid, TERR_PASS_RIVER)) mc = RIVER_MC;
     else return false;
@@ -963,14 +963,14 @@ static bool canEnterTerrain(int pid, uint8_t t, uint8_t* mcOut) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Effective Movement Points = LL + 3 − major wounds − encumbrance penalty
-//   + STAT_MP from equipment (items with no opCost always active;
-//     fuel-gated items like motorbike have STAT_MP applied in applyDawnItemCosts).
-// Floored at 2.  Keep data/ui-panels.js's MP help text in sync with this.
+// Effective Action Points = LL + 3 − major wounds − encumbrance penalty
+//   + STAT_AP from equipment (items with no opCost always active;
+//     fuel-gated items like motorbike have STAT_AP applied in applyDawnItemCosts).
+// Floored at 2.  Keep data/ui-panels.js's AP help text in sync with this.
 // Called while holding G.mutex.
-static int effectiveMP(int pid) {
+static int effectiveAP(int pid) {
   Player& p  = G.players[pid];
-  // Softened LL coupling.  This was `ll + 3`, one MP lost per point of LL,
+  // Softened LL coupling.  This was `ll + 3`, one AP lost per point of LL,
   // which made the death spiral self-accelerating: losing health cost
   // mobility, and mobility is how you reach water, which is what was killing
   // people.  Bot runs measured the consequences — survivors spent only 2.4%
@@ -987,22 +987,22 @@ static int effectiveMP(int pid) {
   //
   // One line to dial if it overshoots; docs/bot-testing.md covers measuring
   // the effect.
-  int     mp = 6 + ((int)p.ll + 1) / 2;
-  mp -= (int)p.wounds[WOUND_MAJOR];        // each major wound costs 1 MP/day
-  // Encumbrance: resource tokens carried above the pack size cost 1 MP
+  int     ap = 6 + ((int)p.ll + 1) / 2;
+  ap -= (int)p.wounds[WOUND_MAJOR];        // each major wound costs 1 AP/day
+  // Encumbrance: resource tokens carried above the pack size cost 1 AP
   // (canteen water excluded -- see tokenLoad())
-  if (tokenLoad(p) > (int)effectiveInvSlots(p)) mp--;
-  // Add free (no opCost) STAT_MP bonuses from equipped items
+  if (tokenLoad(p) > (int)effectiveInvSlots(p)) ap--;
+  // Add free (no opCost) STAT_AP bonuses from equipped items
   for (int s = 0; s < EQUIP_SLOTS; s++) {
     if (!p.equip[s]) continue;
     const ItemDef* def = getItemDef(p.equip[s]);
-    if (!def || !def->statMods[STAT_MP]) continue;
-    // Check if this item has any opCost — if yes, its MP bonus is handled by applyDawnItemCosts
+    if (!def || !def->statMods[STAT_AP]) continue;
+    // Check if this item has any opCost — if yes, its AP bonus is handled by applyDawnItemCosts
     bool hasCost = false;
     for (int k = 0; k < 5; k++) if (def->opCost[k]) { hasCost = true; break; }
-    if (!hasCost) mp += (int)def->statMods[STAT_MP];
+    if (!hasCost) ap += (int)def->statMods[STAT_AP];
   }
-  return max(2, mp);  // floor of 2
+  return max(2, ap);  // floor of 2
 }
 
 // ── effectiveMaxLL ────────────────────────────────────────────────────────────
@@ -1194,7 +1194,7 @@ static void grantRandomStartItem(Player& p) {
 
 // ── Survivor (re)initialisation ───────────────────────────────────────────────
 // Resets every gameplay field of a Player for archetype `arch`: vitals, skills,
-// pack, equipment, wounds, MP, and the starting resource kit.  Position, name,
+// pack, equipment, wounds, AP, and the starting resource kit.  Position, name,
 // score, steps, and connection fields are left to the caller.
 //
 // The starting kit must fit under the archetype's pack size, otherwise the
@@ -1234,7 +1234,7 @@ static void resetSurvivor(Player& p, uint8_t arch) {
   // eraseslot safe: a stale depth/tq/tr would index a tunnel board that the
   // new world just regenerated out from under it.
   p.depth = 0; p.tq = 0; p.tr = 0; p.hatchIdx = 0;
-  p.movesLeft = (int8_t)(p.ll + 3);  // == effectiveMP() for a fresh, unencumbered survivor
+  p.apLeft = (int8_t)(p.ll + 3);  // == effectiveAP() for a fresh, unencumbered survivor
   // Nothing of theirs is paid for today (kickStartItems). Also run by the
   // boot pass over empty seats, which is harmless: nothing is equipped.
   int pid = (int)(&p - G.players);

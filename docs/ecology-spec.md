@@ -126,10 +126,10 @@ veins can fuse (they share the trail grid), but each keeps its own stage.
 
 | Stage | Enters when | What happens | Typical length |
 |---|---|---|---|
-| **Spore** | Genesis, or a burst lands spores on a hex | Nothing visible. Dormant for a genome-set delay | 1–5 min |
-| **Germinate** | Dormancy ends | 32–64 agents appear on the hex. Faint filament | ~1 min |
-| **Forage** | Immediately after germinating | Physarum agents sense, turn, move, deposit (below). Agents on food spawn new agents at vein tips, up to the colony's **wave cap** | 15–35 min |
-| **Fruit** | Colony reaches its wave cap, **or** finds no new food for N ticks (starvation — real Physarum fruits when it runs out) | No more spawning. Agents stop exploring and steer to 1–3 **fruiting sites** (the colony's densest hexes on liked terrain). Outer trail decays, so the network visibly retracts. Fruiting bodies form in stages: forming → mature | 3–6 min |
+| **Spore** | Genesis, or a burst lands spores on a hex | Nothing visible. Dormant for a genome-set delay | 1.3–6.5 min |
+| **Germinate** | Dormancy ends | 32–64 agents appear on the hex. Faint filament | ~1.3 min |
+| **Forage** | Immediately after germinating | Physarum agents sense, turn, move, deposit (below). Agents on food spawn new agents at vein tips, up to the colony's **wave cap** | 20–47 min |
+| **Fruit** | Colony reaches its wave cap, **or** finds no new food for N ticks (starvation — real Physarum fruits when it runs out) | No more spawning. Agents stop exploring and steer to 1–3 **fruiting sites** (the colony's densest hexes on liked terrain). Outer trail decays, so the network visibly retracts. Fruiting bodies form in stages: forming → mature | 4–8 min |
 | **Burst** | Mature body has held for M ticks | Colony agents die off (the plasmodium was spent building the bodies). Each body releases K spores, placed by the dispersal vector. The fruiting hex takes a scar (see "Scars") | instant, plus a short client animation |
 
 **Waves grow.** Each spore generation's wave cap is ×1.4–1.8 (genome) of the
@@ -343,6 +343,20 @@ and 7):
      hex whose density is falling (a spent colony) rots black as it fades.
      Geometry is cached per hex as Path2D; a frame only draws it plus the
      live bits.
+   - **Nothing snaps (2026-10-12):** each grid is played out across the gap
+     to the next one (measured, so a fast mock clock paces it too). A cord
+     into a newly reached hex crawls there -- out of the hex that already
+     had growth, over the seam, in to the new knot -- with an inchworm gait,
+     its head tapered to a probing tip and slithering in a slow S-wave that
+     settles as it docks. The new hex's knot swells, and its own fronts set
+     off, only once the crawl arrives, so a front the board advanced several
+     hexes in one tick still crawls them in order. Two hexes that both had
+     growth reach for each other and fuse at the seam. A lost cord withdraws
+     the same way in reverse (out of the dying hex first, then home).
+     Density eases linearly over the gap, and every density-earned detail
+     (runners, hyphae, fuzz, creases, mottle, stain, boils, the knot) ramps
+     in from nothing instead of appearing at a threshold. Crawling growth
+     is rebuilt at ~15 fps and merged into the cached shape.
    - **Fruiting bodies:** drawn on their hex from `fruit` + body `seed`:
      2-4 small clumps, each a squat mound crowded with stubby stalks
      carrying a blood-blister / gill-cap / red-cage / seamed-pod head
@@ -438,7 +452,7 @@ right where it already sets the `DownCause`. That pushes `{q, r}` of the
 player's current hex into a 16-entry ring. Every damage site already holds
 `G.mutex`, and the Eco task drains the ring during its own `G.mutex`
 snapshot, so the ring needs no lock of its own. A full ring drops the
-oldest entry (at 5 s drain intervals it never fills in practice).
+oldest entry (at 6.7 s drain intervals it never fills in practice).
 
 This is the only write the game makes into the Understory, and it carries
 nothing back: the game never reads the ring.
@@ -483,9 +497,9 @@ seeds and blooms included, like the slime. They are not written to
   `bots/causes.py` reports and downed messages), a snap motif / LED flash in
   the style of the other damage feedback, and `ecoNoteHurt(pid, DC_DAISY)` —
   which adds a flower to the same patch.
-- **Stale bitset:** the bitset can be up to one eco tick (5 s) old. A patch
-  that burned in the last 5 s might still bite once; one that bloomed in the
-  last 5 s might not yet. Acceptable. Fire also clears the hex's bit in the
+- **Stale bitset:** the bitset can be up to one eco tick (6.7 s) old. A patch
+  that burned in the last few seconds might still bite once; one that bloomed
+  in the last few seconds might not yet. Acceptable. Fire also clears the hex's bit in the
   GameLoop's copy the moment it ignites the hex, so the common case — "I
   burned them, now I walk through" — is exact.
 - **Visibility:** bites are only fair if players can see the flowers. Bloomed
@@ -595,7 +609,10 @@ inline on GameLoop:
 
 - **Task:** `Eco`, pinned to core 1, priority 1 (below GameLoop's 2), ~8 KB
   stack. It runs in the gaps between game ticks and can never delay one.
-- **Eco tick:** every 5 s (`ECO_TICK_MS = 5000`), paced by `vTaskDelayUntil`.
+- **Eco tick:** every 6.67 s (`ECO_TICK_MS = 6667`), paced by `vTaskDelayUntil`.
+  It was 5 s until 2026-10-12, when the growth was slowed by 25%: every
+  stage length in ticks stayed the same, so the whole life cycle runs 4/3
+  longer in wall time (`ECO_AGE_SCAR_TICKS` went 60 -> 45 to keep its 5 min).
 - **Ownership:** every ecology buffer belongs to the Eco task. Nothing else
   touches them except through the two published buffers below.
 - **Per tick:**
@@ -610,7 +627,7 @@ inline on GameLoop:
 - **New client / `pick`:** `sendSync` (async_tcp) sends the *published*
   buffer, read through the swapped index, so it never races the encoder.
 - **Budget:** log `eco tick us=` at verbose level; target < 40 ms of CPU per
-  5 s tick. Levers if it's over: fewer agents, 3× instead of 4× trail
+  6.7 s tick. Levers if it's over: fewer agents, 3× instead of 4× trail
   resolution, fewer substeps. Watch GameLoop's tick timing and the heap
   line, not just the Eco task.
 - **Tunnels:** the ecology is surface-only.
@@ -647,7 +664,7 @@ New server → client message, plus the new `DC_DAISY` down/damage cause
   revealed hexes. A client reading the raw message can infer the outline of
   water barriers under fog; that leak is accepted (decided), so there is no
   per-player masking or per-client encode.
-- At 5 clients × ~9 KB every 5 s this is ~9 KB/s — small next to the
+- At 5 clients × ~9 KB every 6.7 s this is ~7 KB/s — small next to the
   10 Hz `s` broadcast, and one PSRAM buffer shared by all clients, not a
   queue. The per-client WS queue is capped at 8 (`build_opt.h`), so it must
   never be sent more often than every few seconds.
@@ -662,7 +679,8 @@ as a no-op (`client.py` / `wire.py`) before shipping.
 "Slight" is a tuning target, checked in the mock-server harness and then on
 hardware with a pinned seed:
 
-- First fruiting ~25–40 min after boot; 2–3 waves in a 2-hour session.
+- First fruiting ~33–53 min after boot; 1.5–2.5 waves in a 2-hour session
+  (since the 25% slowdown; it was 25–40 min and 2–3 waves).
 - After ~2 h, roughly 10–15% of land hexes carry a visible vein (density
   ≥ 4); never more than ~25% for any genome in the style table. Enforced by
   the global agent cap and a global coverage cap on germination.

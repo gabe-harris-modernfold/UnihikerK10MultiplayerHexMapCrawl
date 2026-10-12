@@ -74,7 +74,7 @@ function updateSidebar() {
   uiCanteenCap.val = me.wc ?? 0;   // canteenCap() — the Water readouts' fill tag
   uiFood.val    = me.food ?? 6;
   uiWater.val   = me.water ?? 6;
-  uiMP.val      = me.mp   ?? 0;
+  uiAP.val      = me.ap   ?? 0;
   uiRad.val     = me.rad  ?? 0;
   uiPlayers.val = players
     .map((p, i) => ({ p, i }))
@@ -85,11 +85,11 @@ function updateSidebar() {
   const _dayEl = document.getElementById('hud-day');
   if (_dayEl) _dayEl.textContent = gameState.dc > 0 ? `DAY ${gameState.dc}` : '';
   updateClock();
-  // REST button turns dark green when any connected player is resting
+  // REST button takes a lit phosphor fill when any connected player is resting
   const restBtn = document.getElementById('fab-rest-btn');
   if (restBtn) {
     const anyResting = players.some(p => p.on && p.rest);
-    restBtn.style.background = anyResting ? '#1a4a1a' : '';
+    restBtn.style.background = anyResting ? 'rgba(255,180,58,0.22)' : '';
   }
   updateRestIndicator();
 }
@@ -128,13 +128,13 @@ function updateDirButtons() {
   const me       = players[myId];
   const inEnc    = !!me.enc;
   const resting  = me.rest || uiResting.val;
-  const exhausted = (me.mp ?? 1) === 0;
+  const exhausted = (me.ap ?? 1) === 0;
   // While in encounter, resting, or exhausted, show all 6 buttons dimmed with a helpful tooltip (BUG-12)
   const vm = (inEnc || resting || exhausted) ? 0 : (me.vm ?? 0x3F);
   let blockMsg;
   if (inEnc)           blockMsg = 'Inside encounter \u2014 complete or bank first';
   else if (resting)    blockMsg = 'Resting \u2014 waiting for dawn';
-  else if (exhausted)  blockMsg = 'No MP \u2014 REST to recover';
+  else if (exhausted)  blockMsg = 'No AP \u2014 REST to recover';
   else                 blockMsg = 'Blocked (impassable)';
   for (let d = 0; d < 6; d++) {
     const btn = document.getElementById(`dir-btn-${d}`);
@@ -250,7 +250,7 @@ function renderWounds(me) {
   });
 }
 const MINOR_EFFECT = n => `−${n} Endure`;
-const MAJOR_EFFECT = n => `−${n} all skills, −${n} MP`;
+const MAJOR_EFFECT = n => `−${n} all skills, −${n} AP`;
 
 document.getElementById('menu-btn').addEventListener('click', () => openMenu('main'));
 document.getElementById('menu-overlay').addEventListener('click', e => {
@@ -327,7 +327,7 @@ function initHudBindings() {
   if (connDot) {
     van.derive(() => {
       const conn = uiConn.val;
-      connDot.style.color = (conn === 'Connected' ? 'var(--gold-hi)' : '#C06030');
+      connDot.style.color = (conn === 'Connected' ? 'var(--gold-hi)' : 'var(--crt-alarm)');
       let ariaLabel;
       if (conn === 'Connected')     ariaLabel = 'connected';
       else if (conn === 'Connecting...') ariaLabel = 'connecting';
@@ -344,7 +344,7 @@ function initHudBindings() {
     });
   }
 
-  // Movement points — rendered as track boxes in #hud-mp-track (see #hud-ll)
+  // Action points — rendered as track boxes in #hud-ap-track (see #hud-ll)
 
   // Inventory: sidebar + mobile HUD + char sheet; bump animation on increase
   for (let i = 0; i < 5; i++) {
@@ -445,7 +445,7 @@ function _trackBoxClass(filled, thr, fired) {
 function renderTrackBoxes(containerId, value, thresholds, firedMask = 0, count = 6) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  // Trim excess boxes when count decreases (e.g. maxMP changes between days)
+  // Trim excess boxes when count decreases (e.g. maxAP changes between days)
   while (el.children.length > count) el.lastChild.remove();
   while (el.children.length < count) {
     const b = document.createElement('div');
@@ -524,7 +524,7 @@ function initSurvivalTracks() {
   }
 
   // HUD tracks — replace static meter elements in-place
-  ['hud-ll-track', 'hud-mp-track'].forEach(oldId => {
+  ['hud-ll-track', 'hud-ap-track'].forEach(oldId => {
     const old = document.getElementById(oldId);
     if (!old) return;
     const count = oldId === 'hud-ll-track' ? 7 : 6;
@@ -557,9 +557,9 @@ function initCharSheetBindings() {
     if (v) v.textContent = String(uiLL.val);
   });
 
-  // MP mini-track (HUD) — boxes match player's actual maxMP for the day
+  // AP mini-track (HUD) — boxes match player's actual maxAP for the day
   van.derive(() => {
-    renderTrackBoxes('hud-mp-track', uiMP.val, [], 0, uiMaxMP.val || 6);
+    renderTrackBoxes('hud-ap-track', uiAP.val, [], 0, uiMaxAP.val || 6);
   });
 
   // Food track (thresholds at boxes 4, 2)

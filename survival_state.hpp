@@ -55,7 +55,7 @@ static void duskCheck() {
     if (ev.actOut == AO_FAIL) {
       if (p.ll > 0) { p.ll--; ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
       if (p.ll == 0) {
-        p.movesLeft = 0;  // zero MP immediately — prevents phantom moves if dawn fires before slot reset
+        p.apLeft = 0;  // zero AP immediately — prevents phantom moves if dawn fires before slot reset
         GameEvent devt = {}; devt.type = EVT_DOWNED; devt.pid = (uint8_t)pid; devt.evWsId = p.wsClientId;
         devt.res = DC_RADIATION;
         enqEvt(devt);
@@ -272,7 +272,7 @@ static void dawnUpkeep() {
     // grind you to the brink while reserving the last point for an actual
     // event is the arc the design asks for.
     //
-    // A survivor pinned at LL 1 by exposure is not safe -- effectiveMP still
+    // A survivor pinned at LL 1 by exposure is not safe -- effectiveAP still
     // sags, and now literally anything else finishes them.
     uint8_t prevLL = p.ll;  // snapshot before changes to compute actual delta
     int  expLoss    = -expDelta;            // 0 or 1; exposure's own contribution
@@ -313,9 +313,9 @@ static void dawnUpkeep() {
     if (actualDelta < 0) { ledFlash(255, 0, 0); k10Play(MOTIF_GROSS_SLUDGE); }  // red = LL lost
 
     // ── Reset daily move budget and action flags ────────────────────────────
-    p.movesLeft    = (p.ll == 0) ? 0 : (int8_t)effectiveMP(pid);  // downed: no moves
+    p.apLeft    = (p.ll == 0) ? 0 : (int8_t)effectiveAP(pid);  // downed: no moves
     p.resting      = false;
-    // Apply equipped item operating costs (fuel-gated MP bonuses added here).
+    // Apply equipped item operating costs (fuel-gated AP bonuses added here).
     // Returns the slots that could not pay, so EVT_DAWN can report it.
     uint8_t unfuelled = applyDawnItemCosts(pid);
 
@@ -327,7 +327,7 @@ static void dawnUpkeep() {
     ev.dawnF       = p.food;
     ev.dawnW       = p.water;
     ev.dawnLL      = p.ll;
-    ev.dawnMP      = p.movesLeft;
+    ev.dawnAP      = p.apLeft;
     ev.dawnLLDelta = actualDelta;
     ev.dawnDay     = G.dayCount;
     ev.dawnFth     = p.fThreshBelow;
@@ -410,7 +410,7 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
     enqEvt(ev); }
   // Note: gain is clamped to remaining pack room above, so collection can
   // never push a survivor over the cap.  Actions, encounter loot, and trades
-  // can; effectiveMP() charges the encumbrance penalty at the next dawn.
+  // can; effectiveAP() charges the encumbrance penalty at the next dawn.
 }
 
 // ── Voluntary resource drop ────────────────────────────────────
@@ -467,7 +467,7 @@ static uint8_t dropResource(int pid, uint8_t res, uint8_t qty,
 static uint8_t computeValidMoves(int pid) {
   Player& p = G.players[pid];
   if (!p.connected) return 0;
-  if ((p.ll == 0) || p.resting || p.movesLeft == 0) return 0;
+  if ((p.ll == 0) || p.resting || p.apLeft == 0) return 0;
   uint8_t mask = 0;
   // Underground the board is a different size and does NOT wrap, so an
   // off-board neighbour is simply not a legal move. Collapsed Tunnel (15) is
@@ -496,7 +496,7 @@ static uint8_t computeValidMoves(int pid) {
 // there anyway), no flood penalty, no tire tracks (nothing drives a bunker
 // corridor), no radiation check (TERRAIN_IS_RAD[14] is 0). What it keeps is
 // everything the client depends on -- canEnterTerrain(), the MOVE_CD_MS * mc
-// cooldown, the MP deduction, footprints, first-visit score and the EVT_MOVE
+// cooldown, the AP deduction, footprints, first-visit score and the EVT_MOVE
 // shape -- so the existing D-pad / keyboard / swipe handlers work unchanged.
 //
 // p.q/p.r are NOT touched: they stay pinned to the hatch this player descended
@@ -532,7 +532,7 @@ static const char* moveTunnel(int pid, int dir) {
     }
   }
 
-  if (p.movesLeft == 0) return "no_mp";
+  if (p.apLeft == 0) return "no_ap";
 
   uint32_t cd  = (uint32_t)MOVE_CD_MS * mc;
   uint32_t now = millis();
@@ -549,14 +549,15 @@ static const char* moveTunnel(int pid, int dir) {
   int8_t exploGain = firstVisit ? 1 : 0;
   cell.footprints |= (1 << pid);
 
-  p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
+  p.apLeft = (int8_t)max(0, (int)p.apLeft - (int)mc);
 
   { GameEvent ev = {}; ev.type = EVT_MOVE; ev.pid = (uint8_t)pid;
     ev.q = p.tq; ev.r = p.tr; ev.depth = 1;
     ev.radD = 0; ev.radR = p.radiation;
     ev.exploD = exploGain;
-    ev.moveMP = p.movesLeft;
+    ev.moveAP = p.apLeft;
     ev.amt = 0;                        // no tire tracks underground
+    ev.res = (uint8_t)(dir + 1);       // EVT_MOVE reuse of res: the side stepped through, +1
     enqEvt(ev); }
   collectResource(pid, p.tq, p.tr, 1);
   // A booby trap on this corridor cell fires now (traps.hpp) -- after the
@@ -603,9 +604,9 @@ static const char* movePlayer(int pid, int dir) {
     }
   }
 
-  // ── MP budget check (§4.5 hard daily cap) ──────────────────────────────
-  if (p.movesLeft == 0) {
-    return "no_mp";
+  // ── AP budget check (§4.5 hard daily cap) ──────────────────────────────
+  if (p.apLeft == 0) {
+    return "no_ap";
   }
 
   uint32_t cd  = (uint32_t)MOVE_CD_MS * mc;
@@ -613,6 +614,7 @@ static const char* movePlayer(int pid, int dir) {
   if (now - p.lastMoveMs < cd) return "cooldown";  // normal behaviour, not an error
   p.lastMoveMs = now;
 
+  const int fromQ = p.q, fromR = p.r;   // for the trail sides below
   p.q = (int16_t)nq;
   p.r = (int16_t)nr;
   p.steps++;
@@ -636,9 +638,12 @@ static const char* movePlayer(int pid, int dir) {
   // the same reason footprints ride that event instead of waiting on vision.
   bool laidTrack = hasTireTracks(pid);
   if (laidTrack) G.map[p.r][p.q].tireTrack = 1;
+  // And which way: out of the hex left by `dir`, into this one by the side
+  // opposite (trails.hpp), so a track can be followed.
+  trailStep(pid, fromQ, fromR, dir, laidTrack);
 
-  // Deduct movement cost from daily MP budget
-  p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)mc);
+  // Deduct movement cost from daily AP budget
+  p.apLeft = (int8_t)max(0, (int)p.apLeft - (int)mc);
   wOnPlayerAction(p.q, p.r, (uint8_t)mc);  // travelling lays a scent track too (world-system-spec.md)
 
   // ── Chem storm travel ─────────────────────────────────────────────────────
@@ -665,7 +670,7 @@ static const char* movePlayer(int pid, int dir) {
         { GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
           dmg.amt = 1; dmg.res = DC_CHEM; dmg.actNewLL = p.ll; enqEvt(dmg); }
         if (p.ll == 0) {
-          p.movesLeft = 0;
+          p.apLeft = 0;
           GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
           dev.res = DC_CHEM;
           dev.evWsId = p.wsClientId; enqEvt(dev);
@@ -693,8 +698,9 @@ static const char* movePlayer(int pid, int dir) {
     ev.q = p.q; ev.r = p.r;
     ev.radD = radGain; ev.radR = p.radiation;
     ev.exploD = exploGain;
-    ev.moveMP = p.movesLeft;
+    ev.moveAP = p.apLeft;
     ev.amt = laidTrack ? 1 : 0;  // EVT_MOVE-specific reuse of the generic amt field: 1 = this step laid a tire track
+    ev.res = (uint8_t)(dir + 1);  // and of res: the side stepped through, +1 (0 = unknown), wire "d"
     enqEvt(ev); }
   // Wasteland Daisies (ecology.hpp): stepping onto a bloomed patch costs 1 LL.
   // After the move event so the client sees the step, then the bite; before

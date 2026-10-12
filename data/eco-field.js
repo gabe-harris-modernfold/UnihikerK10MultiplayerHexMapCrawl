@@ -4,9 +4,11 @@
 // the latest `eco` message and the terrain pass queries it per hex, so
 // nothing here runs a simulation of its own -- the veins, fruiting bodies,
 // daisies and scars are all server-authoritative. What the client adds is
-// the *time* between messages: veins fill in rather than pop, a fruiting
-// body grows and pulses, a burst throws spores, a daisy sways and turns its
-// head toward whoever is standing next to it.
+// the *time* between messages: nothing pops. A cord into a new hex crawls
+// there -- out of the old growth, over the seam, a slithering head feeling
+// its way -- and the hex swells only once it arrives; a lost cord withdraws
+// the same way. A fruiting body grows and pulses, a burst throws spores, a
+// daisy sways and turns its head toward whoever is standing next to it.
 //
 // Everything is drawn with math -- no image assets. The look is mycelium
 // runners in blood and bruise-purple: tapered, creased cords that fork into
@@ -18,9 +20,10 @@
 // client that joins mid-boot sees the same species as one that watched it
 // germinate.
 //
-// Each hex's growth is built once as Path2D in hex-local coordinates and
-// cached by (hex, half-step density, mask, open sides, size, hue); a frame
-// only fills/strokes those plus the live bits (heartbeat, pulse, tips, boils).
+// Each hex's settled growth is built as Path2D in hex-local coordinates and
+// cached by (hex, quarter-step density, settled sides, seam widths, size,
+// hue); a frame fills/strokes those plus the live bits (heartbeat, pulse,
+// tips, boils) and whatever is still crawling, which is built fresh.
 //
 // Surface only. The renderer gates every call on !myDepth, like the fire
 // field: the grid is keyed by surface q/r and would land on tunnel cells that
@@ -63,6 +66,16 @@ const ECO_DIR = ECO_DQ.map((dq, d) => {
   return { x: o.x / len, y: o.y / len, a: Math.atan2(o.y, o.x) };
 });
 const ECO_BEAT_MS = 1700;
+// The mould is ~35% transparent, unevenly (2026-10-12): EcoField._alphaAt is
+// a slow, smooth drift across the map, and each hex's flesh gradient thins in
+// hashed bands out from its knot. Every hex's gradient ends at this alpha, so
+// where cords cross a seam both sides match and the bands never show the grid.
+const ECO_SEAM_ALPHA = 0.95;
+// Each hex's veins are clipped to its hexagon scaled out to where the tile
+// art bleeds (~1.035) plus a hair: the cords' seam overshoot still closes the
+// gap under the next tile's bleed, but two hexes' translucent cords never
+// stack into a darker joint at every crossing.
+const ECO_CLIP = 1.045;
 
 // Lub-dub: a sharp beat, a smaller one 0.2 later, then rest.
 function ecoBeat(ph) {
@@ -154,15 +167,66 @@ function dzLancet(ctx, L, W) {
   ctx.closePath();
 }
 
+// The board's eco tick (ECO_TICK_MS in ecology.hpp). Only a first guess: the
+// gap between grids is measured as they arrive, so the mock's fast clock
+// paces the crawl too.
+const ECO_IV_MS = 6667;
+// Crawling growth is rebuilt at most this often (it moves well under a pixel
+// in that time); the tips and the heartbeat still animate every frame.
+const ECO_LIVE_MS = 66;
+// Rebuild time a frame may spend on shapes that only eased a quarter-step;
+// past it they wait a frame. Shapes whose sides changed always rebuild.
+const ECO_BUILD_BUDGET_MS = 3;
+
+// A level easing linearly from wherever it is now to a target over [t0, t1]:
+// one per hex (density) and one per hex side (cords, growth fronts).
+// Retargeting starts from the current value, so a message that lands
+// mid-crawl never makes anything jump. With `gait` the motion surges and
+// slows like something pulling itself along, but never stops or backs up.
+class EcoTween {
+  constructor(n, gait) {
+    this.a = new Float32Array(n); this.b = new Float32Array(n);
+    this.t0 = new Float64Array(n); this.t1 = new Float64Array(n);
+    this.gait = gait;
+  }
+  u(j, now) {
+    const t0 = this.t0[j], t1 = this.t1[j];
+    if (now >= t1) return 1;
+    if (now <= t0) return 0;
+    const u = (now - t0) / (t1 - t0);
+    if (!this.gait) return u;
+    const k = Math.max(1, Math.round((t1 - t0) / 1300));   // a surge every ~1.3 s
+    return u - 0.6 / (ECO_TAU * k) * Math.sin(ECO_TAU * k * u);
+  }
+  at(j, now) { return this.a[j] + (this.b[j] - this.a[j]) * this.u(j, now); }
+  busy(j, now) { return now < this.t1[j]; }
+  go(j, to, t0, t1, now) {
+    this.a[j] = this.at(j, now); this.b[j] = to;
+    this.t0[j] = t0; this.t1[j] = Math.max(t0 + 1, t1);
+  }
+  set(j, v) { this.a[j] = this.b[j] = v; this.t0[j] = this.t1[j] = 0; }
+  clear() { this.a.fill(0); this.b.fill(0); this.t0.fill(0); this.t1.fill(0); }
+}
+
 class EcoField {
   constructor() {
     this.cols = MAP_COLS;
     this.rows = MAP_ROWS;
     const n = this.cols * this.rows;
-    this.dens  = new Uint8Array(n);    // 0-15 vein density, from the message
-    this.mask  = new Uint8Array(n);    // 6-bit edge mask, from the message
+    this.dens  = new Uint8Array(n);    // 0-15 vein density, from the latest message
+    this.mask  = new Uint8Array(n);    // 6-bit edge mask, from the latest message
     this.scar  = new Uint8Array(n);    // 0-15 scar level, from the rarer `s` message
-    this.shown = new Float32Array(n);  // density eased toward dens, so growth fills in
+    // What is drawn plays the latest message out across the gap to the next:
+    this.dTw   = new EcoTween(n, false);       // density
+    this.arm   = new EcoTween(n * 6, true);    // how far each cord (hex, side) has crawled, 0-1
+    this.armIn = new Uint8Array(n * 6);        // 0 = crawling out of the knot, 1 = in over the seam
+    this.front = new EcoTween(n * 6, false);   // growth-front runner toward an empty side, 0-1
+    this.iso   = new EcoTween(n, false);       // the every-way sprawl of a hex with no crossings
+    this.quiet = new Float64Array(n);          // when every tween on the hex has settled
+    this._nd = new Uint8Array(n); this._nm = new Uint8Array(n);
+    this._lvl = new Int16Array(n); this._qu = new Int32Array(n);
+    this._lastV = 0; this._iv = ECO_IV_MS; this._joinAt = 0;
+    this._frame = 0; this._spent = 0;   // rebuild time spent in the current frame (ms)
     this.bodies  = new Map();          // hex index -> {q,r,stage,seed,stageAt,seen}
     this.daisies = new Map();          // hex index -> {q,r,stage,count,seed,stageAt,snapAt}
     this.flights = [];                 // spore flights in the air: {fq,fr,tq,tr,t0}
@@ -177,10 +241,12 @@ class EcoField {
   // A world regen kills the species and clears the scars (ecoRequestRegen).
   // The next message rebuilds all of it.
   reset() {
-    this.dens.fill(0); this.mask.fill(0); this.scar.fill(0); this.shown.fill(0);
+    this.dens.fill(0); this.mask.fill(0); this.scar.fill(0);
+    this.dTw.clear(); this.arm.clear(); this.armIn.fill(0); this.front.clear(); this.iso.clear();
+    this.quiet.fill(0); this._lastV = 0;
     this.bodies.clear(); this.daisies.clear();
     this.flights.length = 0; this.bursts.length = 0;
-    this._geo.clear(); this._scarGeo?.clear();
+    this._geo.clear(); this._live.clear(); this._scarGeo?.clear();
     this.live = false;
   }
 
@@ -201,6 +267,7 @@ class EcoField {
     this.cPus    = [196, 170, 156];
     // Colours are baked into the cached gradients: a new species rebuilds.
     this._geo = new Map();
+    this._live = new Map();
   }
 
   // ── Wire ─────────────────────────────────────────────────────────────────
@@ -218,13 +285,14 @@ class EcoField {
       }
     }
     if (typeof msg.v === 'string' && msg.v.length >= n * 2) {
-      const b64 = this._b64;
+      const b64 = this._b64, nd = this._nd, nm = this._nm;
       for (let i = 0, j = 0; i < n; i++, j += 2) {
         const c = msg.v.charCodeAt(j);
-        this.dens[i] = c <= 57 ? c - 48 : ((c & 0xDF) - 55);
+        nd[i] = c <= 57 ? c - 48 : ((c & 0xDF) - 55);
         const m = b64[msg.v.charCodeAt(j + 1) & 127];
-        this.mask[i] = m < 0 ? 0 : m;
+        nm[i] = m < 0 ? 0 : m;
       }
+      this._applyGrid(now);
       this.live = true;
     }
     if (typeof msg.n === 'string') this.name = msg.n;
@@ -239,6 +307,144 @@ class EcoField {
         this.flights.push({ fq: e[0], fr: e[1], tq: e[2], tr: e[3], t0: now });
       }
     }
+  }
+
+  // ── Growth between messages ──────────────────────────────────────────────
+  // A new grid is never shown as it stands: it becomes a set of crawls that
+  // play out across the gap to the next one. A cord into a newly reached hex
+  // creeps out of the hex that already had growth, over the seam, and on in
+  // to the new hex's knot, which only then swells; the cords leaving that hex
+  // set off after it, so a front the board advanced several hexes in one tick
+  // still crawls them one after another. Two hexes that both had growth reach
+  // for each other and fuse at the seam. A lost cord withdraws the same way
+  // in reverse: out of the dying hex first, then home into the survivor.
+  _applyGrid(now) {
+    const n = this.dens.length, cols = this.cols;
+    const nd = this._nd, nm = this._nm, od = this.dens;
+    const gap = now - this._lastV;
+    if (this.live && this._lastV && gap > 150 && gap < 30000) this._iv += (gap - this._iv) * 0.35;
+    this._lastV = now;
+    const I = Math.max(300, Math.min(15000, this._iv));
+
+    if (!this.live || gap >= 30000) {
+      // Joining, or back from a long gap: nothing to crawl from. A join fades
+      // the network in where it stands; a return eases quickly to it.
+      const join = !this.live;
+      if (join) this._joinAt = now;
+      for (let i = 0; i < n; i++) {
+        if (join) this.dTw.set(i, nd[i]); else this.dTw.go(i, nd[i], now, now + 1800, now);
+        for (let d = 0; d < 6; d++) {
+          const j = i * 6 + d, a = (nm[i] >> d) & 1, f = this._open(i, d, nd, nm) ? 1 : 0;
+          if (join) { this.arm.set(j, a); this.front.set(j, f); this.armIn[j] = 0; }
+          else { this._armGo(j, a, 0, now, now + 1800, now); this.front.go(j, f, now, now + 1800, now); }
+        }
+        const iv = nd[i] && !nm[i] ? 1 : 0;
+        if (join) this.iso.set(i, iv); else this.iso.go(i, iv, now, now + 1800, now);
+        this.quiet[i] = join ? 0 : now + 1800;
+      }
+      od.set(nd); this.mask.set(nm);
+      return;
+    }
+
+    // Level: how many hex crossings each newly grown hex is from growth that
+    // was already there, along the cords that are new this message.
+    const lvl = this._lvl, qu = this._qu;
+    lvl.fill(-1);
+    let qh = 0, qt = 0;
+    for (let i = 0; i < n; i++) if (od[i] && nd[i]) { lvl[i] = 0; qu[qt++] = i; }
+    const spread = () => {
+      while (qh < qt) {
+        const i = qu[qh++], q = i % cols, r = (i / cols) | 0;
+        for (let d = 0; d < 6; d++) {
+          if (!((nm[i] >> d) & 1) || this.arm.b[i * 6 + d] > 0.5) continue;
+          const j = this._nbr(q, r, d);
+          if (lvl[j] < 0) { lvl[j] = lvl[i] + 1; qu[qt++] = j; }
+        }
+      }
+    };
+    spread();
+    // Anything new and still unreached sprang up on its own -- a spore
+    // germinating -- and roots itself, densest first.
+    const orphans = [];
+    for (let i = 0; i < n; i++) if (nd[i] && lvl[i] < 0) orphans.push(i);
+    orphans.sort((x, y) => nd[y] - nd[x]);
+    for (const i of orphans) if (lvl[i] < 0) { lvl[i] = 0; qu[qt++] = i; spread(); }
+    let maxL = 1;
+    for (let k = 0; k < qt; k++) if (lvl[qu[k]] > maxL) maxL = lvl[qu[k]];
+    const S = I * 0.9 / maxL;   // one crossing: half a cord out, half a cord in
+
+    for (let i = 0; i < n; i++) {
+      const q = i % cols, r = (i / cols) | 0;
+      for (let d = 0; d < 3; d++) {
+        const j = this._nbr(q, r, d), ai = i * 6 + d, aj = j * 6 + d + 3;
+        const on = ((nm[i] >> d) | (nm[j] >> (d + 3))) & 1;
+        const was = this.arm.b[ai] > 0.5 || this.arm.b[aj] > 0.5 ? 1 : 0;
+        if (on === was) continue;
+        if (on) {
+          const li = Math.max(0, lvl[i]), lj = Math.max(0, lvl[j]);
+          if (li === lj) {
+            const s = now + li * S;
+            this._armGo(ai, 1, 0, s, s + S * 0.5, now);
+            this._armGo(aj, 1, 0, s, s + S * 0.5, now);
+          } else {
+            const [as, ad] = li < lj ? [ai, aj] : [aj, ai];
+            const s = now + Math.min(li, lj) * S;
+            this._armGo(as, 1, 0, s, s + S * 0.5, now);
+            this._armGo(ad, 1, 1, s + S * 0.5, s + S, now);
+          }
+        } else if (!nd[i] !== !nd[j]) {
+          const [as, ad] = nd[i] ? [ai, aj] : [aj, ai];
+          this._armGo(ad, 0, 1, now, now + I * 0.4, now);
+          this._armGo(as, 0, 0, now + I * 0.4, now + I * 0.8, now);
+        } else {
+          // Thinned out with both sides living on, or both dying: each half
+          // withdraws into its own knot.
+          this._armGo(ai, 0, 0, now, now + I * 0.6, now);
+          this._armGo(aj, 0, 0, now, now + I * 0.6, now);
+        }
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      const L = lvl[i];
+      // A newly reached hex only swells once the crawl is at its knot, and
+      // only then sends out fronts of its own.
+      if (nd[i] !== this.dTw.b[i] || L > 0) {
+        const s = L > 0 ? now + L * S : now;
+        this.dTw.go(i, nd[i], s, L > 0 ? Math.max(now + I, now + L * S + I * 0.35) : now + I, now);
+      }
+      const sF = L > 0 ? now + L * S : now;
+      let qt1 = this.dTw.t1[i];
+      for (let d = 0; d < 6; d++) {
+        const j = i * 6 + d, f = this._open(i, d, nd, nm) ? 1 : 0;
+        if (f !== this.front.b[j]) {
+          // A front that a new cord is replacing draws back as the cord
+          // crawls out over it.
+          if (!f && this.arm.busy(j, now) && this.arm.b[j] > 0.5) this.front.go(j, 0, this.arm.t0[j], this.arm.t1[j], now);
+          else this.front.go(j, f, sF, sF + I * (f ? 0.5 : 0.4), now);
+        }
+        qt1 = Math.max(qt1, this.arm.t1[j], this.front.t1[j]);
+      }
+      const iv = nd[i] && !nm[i] ? 1 : 0;
+      if (iv !== this.iso.b[i]) this.iso.go(i, iv, sF, sF + I * (iv ? 0.7 : 0.4), now);
+      this.quiet[i] = Math.max(qt1, this.iso.t1[i]);
+    }
+    od.set(nd); this.mask.set(nm);
+  }
+
+  // Toward side d this hex has no cord and the neighbour has no growth: a
+  // growth front reaches that way (only off a hex that has cords at all).
+  _open(i, d, nd, nm) {
+    if (!nd[i] || !nm[i] || ((nm[i] >> d) & 1)) return false;
+    return !nd[this._nbr(i % this.cols, (i / this.cols) | 0, d)];
+  }
+
+  // Mid-crawl a cord keeps the direction it was crawling in, so turning it
+  // round never makes it jump; settled at either end it is free to pick.
+  _armGo(j, to, inward, t0, t1, now) {
+    const v = this.arm.at(j, now);
+    if (v <= 0.001 || v >= 0.999) this.armIn[j] = inward;
+    this.arm.go(j, to, t0, t1, now);
   }
 
   _mergeBodies(list, now) {
@@ -289,6 +495,16 @@ class EcoField {
     if (d) d.snapAt = Date.now();
   }
 
+  // How opaque the mould is around a hex: a smooth field of three slow waves
+  // that wraps with the map and drifts over a minute or so, 0.65-0.77.
+  // Smooth enough that neighbouring hexes differ by under 2%, so no seam shows.
+  _alphaAt(q, r, now) {
+    const u = ECO_TAU * q / this.cols, v = ECO_TAU * r / this.rows, t = now * 0.001;
+    const n = Math.sin(3 * u + 2 * v + t * 0.11) + Math.sin(-2 * u + 3 * v + 1.7 - t * 0.07)
+            + Math.sin(4 * u - v + 4.1 + t * 0.05);
+    return 0.71 + 0.06 * n / 3;
+  }
+
   // Heartbeat phase for a hex: one wave rolling across the map in a
   // species-set direction, ~7 hexes long, so the pumping visibly travels
   // through the network rather than every knot beating in lockstep.
@@ -303,21 +519,15 @@ class EcoField {
   // ── Per-hex drawing (called from drawCellOverlays for every visible hex) ──
   drawHex(ctx, cx, cy, q, r, sz, now, players, renderPos) {
     const i = r * this.cols + q;
-    const scar   = this.scar[i];
-    const target = this.dens[i];
-    let shown = this.shown[i];
-    if (shown !== target) {
-      shown += (target - shown) * 0.06;
-      if (Math.abs(target - shown) < 0.05) shown = target;
-      this.shown[i] = shown;
-    }
+    const scar  = this.scar[i];
     const body  = this.bodies.get(i);
     const patch = this.daisies.get(i);
-    if (!scar && shown < 0.5 && !body && !patch) return;
-    if (scar)         this._drawScar(ctx, cx, cy, q, r, sz, scar);
-    if (shown >= 0.5) this._drawVeins(ctx, cx, cy, q, r, sz, shown, this.mask[i], now);
-    if (body)         this._drawBody(ctx, cx, cy, sz, body, now);
-    if (patch)        this._drawDaisies(ctx, cx, cy, q, r, sz, patch, now, players, renderPos);
+    const veins = this.dTw.b[i] > 0 || now < this.quiet[i];
+    if (!scar && !veins && !body && !patch) return;
+    if (scar)  this._drawScar(ctx, cx, cy, q, r, sz, scar);
+    if (veins) this._drawVeins(ctx, cx, cy, q, r, sz, now);
+    if (body)  this._drawBody(ctx, cx, cy, sz, body, now);
+    if (patch) this._drawDaisies(ctx, cx, cy, q, r, sz, patch, now, players, renderPos);
   }
 
   // ── Geometry ──────────────────────────────────────────────────────────────
@@ -329,10 +539,18 @@ class EcoField {
 
   _cordW(d, sz) { return sz * (0.014 + 0.036 * Math.pow(Math.max(0, d) / 15, 0.9)); }
 
+  // The density a cord is sized by where it crosses edge d: the thinner of
+  // the two hexes, as drawn this frame, in half steps so both hexes agree
+  // (and rebuild) together.
+  _seamD(i, q, r, d, now) {
+    const j = this._nbr(q, r, d);
+    return Math.round(Math.min(this.dTw.at(i, now), this.dTw.at(j, now)) * 2) / 2;
+  }
+
   // Where a vein crosses edge d, its direction there, and its width -- all
   // hashed from the shared edge so both hexes agree to the pixel and the
   // cord runs straight through the seam instead of meeting at a midpoint.
-  _cross(q, r, d, sz) {
+  _cross(q, r, d, sz, seamD) {
     const ia = r * this.cols + q, ib = this._nbr(q, r, d);
     const lo = Math.min(ia, ib), hi = Math.max(ia, ib);
     const t0 = 0.5 + (ecoHash(lo, hi, 11) - 0.5) * 0.46;
@@ -345,14 +563,14 @@ class EcoField {
     return {
       x: c1x + (c2x - c1x) * t, y: c1y + (c2y - c1y) * t,
       vx: Math.cos(va), vy: Math.sin(va),
-      w: this._cordW(Math.min(this.dens[ia], this.dens[ib]), sz),
+      w: this._cordW(seamD, sz),
     };
   }
 
   // A cord from the knot to an edge crossing: a cubic that leaves the knot
   // on a hashed heading and arrives along the crossing's shared direction,
   // bent by two octaves of wobble that vanish (value and slope) at both ends.
-  _trunk(K, X, wK, grow, seed, sz) {
+  _trunk(K, X, wK, seed, sz) {
     const N = 14;
     const dx = X.x - K.x, dy = X.y - K.y, Ld = Math.hypot(dx, dy) || 1;
     const a0 = Math.atan2(dy, dx) + (ecoHash(seed, 1, 40) - 0.5) * 1.1;
@@ -380,7 +598,7 @@ class EcoField {
       // Lumpy along its length (swollen segments), exact at the seam.
       const lump = 1 + 0.32 * (1 - s) * Math.sin(ECO_TAU * (2.3 * s + ecoHash(seed, 7, 40))) * ecoHash(seed, 8, 40);
       const sm = s * s * (3 - 2 * s);
-      ws.push((wK + (X.w * grow - wK) * sm) * lump);
+      ws.push((wK + (X.w - wK) * sm) * lump);
     }
     // Run on past the seam: whichever of the two hexes draws second lays its
     // overshoot over the other's tile bleed, so the cord never shows a gap.
@@ -391,7 +609,9 @@ class EcoField {
 
   // A runner that wanders off a point and tapers to nothing, forking.
   // Ribbon while it is wider than a hair, hair after; its end is a tip.
-  _branch(g, x, y, a, len, w, depth, seed, sz, creep) {
+  // `deep` scales the forks two levels down, so they creep out rather than
+  // appear when the density earns them.
+  _branch(g, x, y, a, len, w, depth, seed, sz, creep, deep = 1) {
     const steps = 9, hairW = g.hairW;
     const pts = [{ x, y }], ws = [w];
     const ph = ecoHash(seed, 1, 50) * ECO_TAU, bend = (ecoHash(seed, 2, 50) - 0.5) * 0.5;
@@ -414,12 +634,15 @@ class EcoField {
     const tip = pts[pts.length - 1];
     if (creep) g.tips.push({ x: tip.x, y: tip.y, a, L: sz * (0.07 + 0.08 * ecoHash(seed, 3, 50)), ph: ecoHash(seed, 4, 50) * ECO_TAU, sp: 0.7 + ecoHash(seed, 5, 50) * 0.8 });
     else this._fuzz(g, tip.x, tip.y, a, sz * 0.045, seed);
-    if (depth > 0 && len > sz * 0.1) {
-      const at = 4 + ((ecoHash(seed, 6, 50) * 3) | 0);
-      const side = ecoHash(seed, 7, 50) < 0.5 ? -1 : 1;
-      const p = pts[at];
-      this._branch(g, p.x, p.y, Math.atan2(pts[at + 1].y - p.y, pts[at + 1].x - p.x) + side * (0.55 + 0.45 * ecoHash(seed, 8, 50)),
-                   len * 0.6, ws[at] * 0.8, depth - 1, seed * 7 + 13, sz, creep);
+    if (depth > 0) {
+      const kl = Math.min(1, Math.max(0, (len - sz * 0.1) / (sz * 0.06))) * (depth === 1 ? deep : 1);
+      if (kl > 0) {
+        const at = 4 + ((ecoHash(seed, 6, 50) * 3) | 0);
+        const side = ecoHash(seed, 7, 50) < 0.5 ? -1 : 1;
+        const p = pts[at];
+        this._branch(g, p.x, p.y, Math.atan2(pts[at + 1].y - p.y, pts[at + 1].x - p.x) + side * (0.55 + 0.45 * ecoHash(seed, 8, 50)),
+                     len * 0.6 * kl, ws[at] * 0.8, depth - 1, seed * 7 + 13, sz, creep, deep);
+      }
     }
   }
 
@@ -433,142 +656,255 @@ class EcoField {
     }
   }
 
-  _build(ctx, q, r, sz, d, mask, open) {
-    const seed = r * 977 + q * 131 + 7;
-    const t = Math.min(1, d / 15);
-    const g = {
-      flesh: new Path2D(), core: new Path2D(), hair: new Path2D(), wrinkle: new Path2D(), mottle: new Path2D(), stain: null, grad: null,
-      trunks: [], tips: [], boils: [], hairW: Math.max(0.7, sz * 0.014), t,
+  _geoNew(sz, d) {
+    return {
+      flesh: new Path2D(), core: new Path2D(), hair: new Path2D(), wrinkle: new Path2D(), mottle: new Path2D(),
+      stain: null, grad: null, fleshGrad: null,
+      trunks: [], tips: [], boils: [], hairW: Math.max(0.7, sz * 0.014), t: Math.min(1, d / 15),
     };
-    const K = { x: (ecoHash(q, r, 1) - 0.5) * sz * 0.5, y: (ecoHash(q, r, 2) - 0.5) * sz * 0.5 };
+  }
+  _knot(q, r, sz) { return { x: (ecoHash(q, r, 1) - 0.5) * sz * 0.5, y: (ecoHash(q, r, 2) - 0.5) * sz * 0.5 }; }
+
+  // One cord from the knot K to edge dd, and everything that hangs off it.
+  // crawl = null is the whole cord (the cached geometry). Otherwise
+  // {v, mode} is the part that has crawled so far -- v of the way out of the
+  // knot (mode 0) or in over the seam (mode 1) -- and the growth along it
+  // sprouts only once the head is well past.
+  _arm(g, q, r, dd, d, sz, K, wK, seed, seamD, crawl, now) {
+    const t = g.t;
+    const X = this._cross(q, r, dd, sz, seamD);
+    const tr = this._trunk(K, X, wK, seed * 11 + dd, sz);
+    const P = tr.pts, n = P.length;
+    let rv = () => 1;
+    if (crawl) {
+      const cl = new Float32Array(n);
+      for (let k = 1; k < n; k++) cl[k] = cl[k - 1] + Math.hypot(P[k].x - P[k - 1].x, P[k].y - P[k - 1].y);
+      const L = cl[n - 1], v = crawl.v, inward = crawl.mode;
+      const aTip = inward ? (1 - v) * L : v * L;
+      // Over the last fifth of the crawl the growth behind the head catches
+      // up, so the cord it docks as is the cached one exactly.
+      const lead = sz * 0.1 - Math.max(0, (v - 0.8) / 0.2) * sz * 0.4;
+      rv = (k) => Math.min(1, Math.max(0, ((inward ? cl[k] - aTip : aTip - cl[k]) - lead) / (sz * 0.25)));
+      this._crawl(g, tr, cl, aTip, inward, v, sz, seed * 11 + dd, now);
+    } else {
+      ecoRibbon(g.flesh, P, tr.ws, false);
+      ecoRibbon(g.core, P, tr.ws.map((w) => w * 0.38), false);
+      g.trunks.push(tr);
+    }
+    // Side runners, coming out one by one as the density climbs, each
+    // creeping out to its length rather than popping in.
+    const deep = Math.min(1, Math.max(0, (d - 7) / 2));
+    for (let b = 0; b < 4; b++) {
+      const hb = dd * 8 + b;
+      const thr = 1.5 + b * 3.2 + ecoHash(seed, hb, 30) * 1.5;
+      const k = 2 + ((ecoHash(seed, hb, 31) * 9) | 0);
+      const len = sz * (0.16 + 0.22 * ecoHash(seed, hb, 34)) * Math.min(1, Math.max(0, (d - thr) / 3)) * rv(k);
+      if (len < 1) continue;
+      const p = P[k], pn = P[k + 1];
+      const side = ecoHash(seed, hb, 32) < 0.5 ? -1 : 1;
+      const a = Math.atan2(pn.y - p.y, pn.x - p.x) + side * (0.6 + 0.6 * ecoHash(seed, hb, 33));
+      this._branch(g, p.x, p.y, a, len,
+                   tr.ws[k] * 0.55, 2, seed * 31 + hb, sz, false, deep);
+    }
+    // Skin: creases across the cord once it is thick enough to crease, and
+    // necrotic patches on the old, thick ones.
+    const mot = Math.min(1, Math.max(0, (d - 6.5) / 1.5));
+    for (let k = 1; k < n - 2; k++) {
+      const s = rv(k);
+      if (s <= 0) continue;
+      const p = P[k], pn = P[k + 1], hk = dd * 40 + k;
+      const ta = Math.atan2(pn.y - p.y, pn.x - p.x), hw = tr.ws[k] * 0.5;
+      const cw = Math.min(1, Math.max(0, (hw - sz * 0.012) / (sz * 0.006))) * s;
+      if (cw > 0 && ecoHash(seed, hk, 39) < 0.75) {
+        const na = ta + Math.PI / 2 + (ecoHash(seed, hk, 41) - 0.5) * 0.6;
+        const cx = (p.x + pn.x) / 2, cy = (p.y + pn.y) / 2, hl = hw * 0.9 * cw;
+        g.wrinkle.moveTo(cx + Math.cos(na) * hl, cy + Math.sin(na) * hl);
+        g.wrinkle.quadraticCurveTo(cx + Math.cos(ta) * hw * 0.4 * cw, cy + Math.sin(ta) * hw * 0.4 * cw,
+                                   cx - Math.cos(na) * hl, cy - Math.sin(na) * hl);
+      }
+      const mt = mot * Math.min(1, Math.max(0, (0.18 + 0.25 * t - ecoHash(seed, hk, 42)) / 0.06)) * s;
+      if (mt > 0) {
+        ecoBlob(g.mottle, p.x + (ecoHash(seed, hk, 43) - 0.5) * hw, p.y + (ecoHash(seed, hk, 44) - 0.5) * hw,
+                hw * (0.5 + 0.6 * ecoHash(seed, hk, 45)) * mt, seed + hk, 0.4, 7);
+      }
+    }
+    // A web of finer hyphae wandering off the cord, forking twice.
+    for (let b = 0; b < 6; b++) {
+      const hb = dd * 16 + b;
+      const thr = 1 + b * 2.2 + ecoHash(seed, hb, 55) * 1.2;
+      const k = 1 + ((ecoHash(seed, hb, 56) * 11) | 0);
+      const len = sz * (0.1 + 0.2 * ecoHash(seed, hb, 59)) * Math.min(1, Math.max(0, (d - thr) / 2.5)) * rv(k);
+      if (len < 1) continue;
+      const p = P[k], pn = P[k + 1];
+      const side = ecoHash(seed, hb, 57) < 0.5 ? -1 : 1;
+      const a = Math.atan2(pn.y - p.y, pn.x - p.x) + side * (0.7 + 0.8 * ecoHash(seed, hb, 58));
+      this._branch(g, p.x, p.y, a, len,
+                   g.hairW * 0.9, 2, seed * 17 + hb + 500, sz, false);
+    }
+    // Fibrous fuzz along the cord: short hairs off its flanks.
+    const fz = Math.min(1, Math.max(0, (d - 2.5) / 1.5));
+    if (fz > 0) {
+      for (let k = 1; k < n - 1; k++) {
+        const hk = dd * 40 + k;
+        const on = Math.min(1, Math.max(0, (0.25 + t * 0.4 - ecoHash(seed, hk, 35)) / 0.08)) * fz * rv(k);
+        if (on <= 0) continue;
+        const p = P[k], pn = P[k + 1];
+        const ta = Math.atan2(pn.y - p.y, pn.x - p.x);
+        const side = ecoHash(seed, hk, 36) < 0.5 ? -1 : 1;
+        const na = ta + side * (Math.PI / 2) + (ecoHash(seed, hk, 37) - 0.5) * 1.2;
+        const hw = tr.ws[k] / 2, ll = sz * (0.02 + 0.045 * ecoHash(seed, hk, 38)) * on;
+        const sx = p.x + Math.cos(ta + side * Math.PI / 2) * hw, sy = p.y + Math.sin(ta + side * Math.PI / 2) * hw;
+        g.hair.moveTo(sx, sy); g.hair.lineTo(sx + Math.cos(na) * ll, sy + Math.sin(na) * ll);
+      }
+    }
+  }
+
+  // The crawling stretch of a cord: from its root (the knot, or the seam when
+  // it is coming in from the neighbour) to the head at arc length aTip,
+  // resampled finely enough to slither. The whole stretch writhes a little
+  // and the head swings hard, an S-wave rolling slowly back down the body;
+  // the head narrows to a probing point. Both settle as it docks, so the
+  // finished cord is the cached one exactly.
+  _crawl(g, tr, cl, aTip, inward, v, sz, seed, now) {
+    const P = tr.pts, n = P.length, L = cl[n - 1];
+    const a0 = inward ? L : 0;
+    const len = Math.abs(aTip - a0);
+    if (len < 0.5) return;
+    const m = Math.max(2, Math.ceil(len / (sz * 0.035)));
+    const raw = [];
+    for (let s = 0; s <= m; s++) {
+      const a = a0 + (aTip - a0) * s / m;
+      let k = 1;
+      while (k < n - 1 && cl[k] < a) k++;
+      const f = Math.min(1, Math.max(0, (a - cl[k - 1]) / Math.max(1e-6, cl[k] - cl[k - 1])));
+      raw.push({ x: P[k - 1].x + (P[k].x - P[k - 1].x) * f, y: P[k - 1].y + (P[k].y - P[k - 1].y) * f,
+                 w: tr.ws[k - 1] + (tr.ws[k] - tr.ws[k - 1]) * f, a });
+    }
+    const settle = Math.min(1, (1 - v) / 0.2);
+    const A = sz * 0.075 * settle, lam = sz * 0.55, wl = sz * 0.36;
+    const ph = ecoHash(seed, 9, 70) * ECO_TAU, wt = now * (ECO_TAU / 2600);
+    const pts = [], ws = [];
+    for (let s = 0; s <= m; s++) {
+      const p = raw[s];
+      const dist = Math.abs(aTip - p.a);
+      const env = Math.max(0.3, dist < lam ? (1 - dist / lam) * (1 - dist / lam) : 0) * Math.min(1, Math.abs(p.a - a0) / (sz * 0.12));
+      const pa = raw[Math.max(0, s - 1)], pb = raw[Math.min(m, s + 1)];
+      let tx = pb.x - pa.x, ty = pb.y - pa.y; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const off = A * env * Math.sin(ECO_TAU * dist / wl - wt + ph);
+      pts.push({ x: p.x - ty * off, y: p.y + tx * off });
+      const tp = Math.min(1, dist / (sz * 0.3));
+      ws.push(p.w * (1 - (0.78 - 0.78 * tp * tp * (3 - 2 * tp)) * settle));
+    }
+    ecoRibbon(g.flesh, pts, ws, true);
+    ecoRibbon(g.core, pts, ws.map((w) => w * 0.38), true);
+    // The head feels its way: a probing tip, like the growth fronts'.
+    const sc = Math.min(settle, v / 0.1);
+    if (sc > 0.01) {
+      const h = pts[pts.length - 1], hp = pts[Math.max(0, pts.length - 3)];
+      g.tips.push({ x: h.x, y: h.y, a: Math.atan2(h.y - hp.y, h.x - hp.x), L: sz * (0.07 + 0.05 * ecoHash(seed, 9, 71)) * sc,
+                    ph: ecoHash(seed, 9, 72) * ECO_TAU, sp: 0.6 + 0.5 * ecoHash(seed, 9, 73) });
+    }
+  }
+
+  // The growth front: toward each empty neighbour (fv[dd] of the way out) a
+  // thin runner reaches most of the way and breaks into probing tips. A hex
+  // with no crossings at all (a germinating spore, a stranded remnant)
+  // sprawls every way instead, iso of the way out.
+  _heads(g, d, sz, K, seed, fv, iso) {
+    const grow = 0.35 + 0.65 * Math.min(1, d / 5);
+    for (let dd = 0; dd < 6; dd++) {
+      if (fv[dd] > 0.01) this._head(g, K, ECO_DIR[dd].a + (ecoHash(seed, dd, 47) - 0.5) * 0.8,
+                                    sz * (0.45 + 0.2 * ecoHash(seed, dd, 48)) * grow, fv[dd], d, sz, seed, dd);
+    }
+    if (iso > 0.01) {
+      const heads = 5 + ((ecoHash(seed, 0, 45) * 3) | 0);
+      for (let k = 0; k < heads; k++) {
+        this._head(g, K, (k / heads) * ECO_TAU + ecoHash(seed, k + 6, 46) * 0.8,
+                   sz * (0.28 + 0.2 * ecoHash(seed, k + 6, 48)) * grow, iso, d, sz, seed, k + 6);
+      }
+    }
+  }
+  _head(g, K, a, reach, f, d, sz, seed, k) {
+    const R = reach * f;
+    if (R < 0.5) return;
+    const w0 = this._cordW(d, sz) * 0.7 * (0.4 + 0.6 * f);
+    const steps = 8, pts = [], ws = [];
+    let x = K.x, y = K.y, aa = a;
+    pts.push({ x, y }); ws.push(w0);
+    for (let s = 1; s <= steps; s++) {
+      aa += (ecoHash(seed, k * 20 + s, 49) - 0.5) * 0.5;
+      x += Math.cos(aa) * R / steps; y += Math.sin(aa) * R / steps;
+      pts.push({ x, y }); ws.push(w0 * (1 - 0.8 * s / steps));
+    }
+    ecoRibbon(g.flesh, pts, ws, true);
+    // A fan of 2-4 creeping tips off its end.
+    const fan = 2 + ((ecoHash(seed, k, 52) * 3) | 0), t0 = g.tips.length;
+    for (let i = 0; i < fan; i++) {
+      const fa = aa + (i - (fan - 1) / 2) * 0.55 + (ecoHash(seed, k * 9 + i, 53) - 0.5) * 0.3;
+      this._branch(g, x, y, fa, sz * (0.08 + 0.1 * ecoHash(seed, k * 9 + i, 54)) * f, ws[steps] * 0.9, 0, seed * 3 + k * 9 + i, sz, true);
+    }
+    for (let i = t0; i < g.tips.length; i++) g.tips[i].L *= f;
+  }
+
+  // The settled growth on a hex: cords on the `arms` sides, fronts on the
+  // `fronts` sides, the sprawl if `iso`, and the knot, stain and boils.
+  _build(ctx, q, r, sz, d, arms, seam, fronts, iso) {
+    const seed = r * 977 + q * 131 + 7;
+    const g = this._geoNew(sz, d), t = g.t;
+    const K = this._knot(q, r, sz);
     g.K = K;
     const wK = this._cordW(d, sz) * 1.25;
-    const grow = Math.min(1, d / Math.max(1, this.dens[r * this.cols + q]));
 
-    // Necrotic ground: a bruise under anything dense enough to have sat a while.
-    if (d >= 4) {
+    // Necrotic ground: a bruise under anything dense enough to have sat a
+    // while, darkening in as the density climbs.
+    const sa = Math.min(1, Math.max(0, (d - 3) / 2));
+    if (sa > 0) {
       g.stain = new Path2D();
-      const n = 2 + (d >= 10 ? 1 : 0);
-      for (let k = 0; k < n; k++) {
+      const third = Math.min(1, Math.max(0, (d - 9) / 2));
+      for (let k = 0; k < 3; k++) {
+        const kk = k < 2 ? 1 : third;
+        if (kk <= 0) continue;
         const aa = ecoHash(seed, k, 20) * ECO_TAU, rad = sz * 0.16 * ecoHash(seed, k, 21);
-        ecoBlob(g.stain, K.x + Math.cos(aa) * rad, K.y + Math.sin(aa) * rad, sz * (0.18 + 0.30 * t) * (0.7 + 0.4 * ecoHash(seed, k, 22)), seed + k, 0.35, 11);
+        ecoBlob(g.stain, K.x + Math.cos(aa) * rad, K.y + Math.sin(aa) * rad, sz * (0.18 + 0.30 * t) * (0.7 + 0.4 * ecoHash(seed, k, 22)) * kk, seed + k, 0.35, 11);
       }
       g.grad = ctx.createRadialGradient(K.x, K.y, 0, K.x, K.y, sz * (0.2 + 0.4 * t));
-      g.grad.addColorStop(0, ecoRgb(this.cStain, 0.35 + 0.35 * t));
-      g.grad.addColorStop(0.55, ecoRgb(this.cStain, 0.2 + 0.25 * t));
-      g.grad.addColorStop(0.85, ecoRgb(ecoMix(this.cStain, this.cBlood, 0.35), 0.08 + 0.12 * t));
+      g.grad.addColorStop(0, ecoRgb(this.cStain, (0.35 + 0.35 * t) * sa));
+      g.grad.addColorStop(0.55, ecoRgb(this.cStain, (0.2 + 0.25 * t) * sa));
+      g.grad.addColorStop(0.85, ecoRgb(ecoMix(this.cStain, this.cBlood, 0.35), (0.08 + 0.12 * t) * sa));
       g.grad.addColorStop(1, ecoRgb(this.cStain, 0));
     }
 
-    // Trunks to every crossed edge.
-    for (let dd = 0; dd < 6; dd++) {
-      if (!(mask & (1 << dd))) continue;
-      const X = this._cross(q, r, dd, sz);
-      const tr = this._trunk(K, X, wK, grow, seed * 11 + dd, sz);
-      ecoRibbon(g.flesh, tr.pts, tr.ws, false);
-      ecoRibbon(g.core, tr.pts, tr.ws.map((w) => w * 0.38), false);
-      g.trunks.push(tr);
-      // Side runners, appearing one by one as the density climbs, each
-      // creeping out to its length rather than popping in.
-      const nb = Math.min(4, Math.floor(d / 3.2));
-      for (let b = 0; b < nb; b++) {
-        const thr = 1.5 + b * 3.2 + ecoHash(seed, dd * 8 + b, 30) * 1.5;
-        const gb = Math.min(1, Math.max(0, (d - thr) / 3));
-        if (gb <= 0) continue;
-        const k = 2 + ((ecoHash(seed, dd * 8 + b, 31) * 9) | 0);
-        const p = tr.pts[k], pn = tr.pts[k + 1];
-        const side = ecoHash(seed, dd * 8 + b, 32) < 0.5 ? -1 : 1;
-        const a = Math.atan2(pn.y - p.y, pn.x - p.x) + side * (0.6 + 0.6 * ecoHash(seed, dd * 8 + b, 33));
-        this._branch(g, p.x, p.y, a, sz * (0.16 + 0.22 * ecoHash(seed, dd * 8 + b, 34)) * gb,
-                     tr.ws[k] * 0.55, d >= 8 ? 2 : 1, seed * 31 + dd * 8 + b, sz, false);
-      }
-      // Skin: creases across the cord, and necrotic patches on the old,
-      // thick ones.
-      for (let k = 1; k < tr.pts.length - 2; k++) {
-        const p = tr.pts[k], pn = tr.pts[k + 1];
-        const ta = Math.atan2(pn.y - p.y, pn.x - p.x), hw = tr.ws[k] * 0.5;
-        if (hw > sz * 0.012 && ecoHash(seed, dd * 40 + k, 39) < 0.75) {
-          const na = ta + Math.PI / 2 + (ecoHash(seed, dd * 40 + k, 41) - 0.5) * 0.6;
-          const cx = p.x + (pn.x - p.x) * 0.5, cy = p.y + (pn.y - p.y) * 0.5;
-          g.wrinkle.moveTo(cx + Math.cos(na) * hw * 0.9, cy + Math.sin(na) * hw * 0.9);
-          g.wrinkle.quadraticCurveTo(cx + Math.cos(ta) * hw * 0.4, cy + Math.sin(ta) * hw * 0.4,
-                                     cx - Math.cos(na) * hw * 0.9, cy - Math.sin(na) * hw * 0.9);
-        }
-        if (d >= 7 && ecoHash(seed, dd * 40 + k, 42) < 0.18 + 0.25 * t) {
-          ecoBlob(g.mottle, p.x + (ecoHash(seed, dd * 40 + k, 43) - 0.5) * hw, p.y + (ecoHash(seed, dd * 40 + k, 44) - 0.5) * hw,
-                  hw * (0.5 + 0.6 * ecoHash(seed, dd * 40 + k, 45)), seed + dd * 40 + k, 0.4, 7);
-        }
-      }
-      // A web of finer hyphae wandering off the cord, forking twice.
-      const nh = Math.min(6, Math.floor(d / 2.2));
-      for (let b = 0; b < nh; b++) {
-        const thr = 1 + b * 2.2 + ecoHash(seed, dd * 16 + b, 55) * 1.2;
-        const gb = Math.min(1, Math.max(0, (d - thr) / 2.5));
-        if (gb <= 0) continue;
-        const k = 1 + ((ecoHash(seed, dd * 16 + b, 56) * 11) | 0);
-        const p = tr.pts[k], pn = tr.pts[k + 1];
-        const side = ecoHash(seed, dd * 16 + b, 57) < 0.5 ? -1 : 1;
-        const a = Math.atan2(pn.y - p.y, pn.x - p.x) + side * (0.7 + 0.8 * ecoHash(seed, dd * 16 + b, 58));
-        this._branch(g, p.x, p.y, a, sz * (0.1 + 0.2 * ecoHash(seed, dd * 16 + b, 59)) * gb,
-                     g.hairW * 0.9, 2, seed * 17 + dd * 16 + b + 500, sz, false);
-      }
-      // Fibrous fuzz along the cord: short hairs off its flanks.
-      if (d >= 3) {
-        for (let k = 1; k < tr.pts.length - 1; k += 1) {
-          if (ecoHash(seed, dd * 40 + k, 35) > 0.25 + t * 0.4) continue;
-          const p = tr.pts[k], pn = tr.pts[k + 1];
-          const ta = Math.atan2(pn.y - p.y, pn.x - p.x);
-          const side = ecoHash(seed, dd * 40 + k, 36) < 0.5 ? -1 : 1;
-          const na = ta + side * (Math.PI / 2) + (ecoHash(seed, dd * 40 + k, 37) - 0.5) * 1.2;
-          const hw = tr.ws[k] / 2, ll = sz * (0.02 + 0.045 * ecoHash(seed, dd * 40 + k, 38));
-          const sx = p.x + Math.cos(ta + side * Math.PI / 2) * hw, sy = p.y + Math.sin(ta + side * Math.PI / 2) * hw;
-          g.hair.moveTo(sx, sy); g.hair.lineTo(sx + Math.cos(na) * ll, sy + Math.sin(na) * ll);
-        }
-      }
+    for (let dd = 0; dd < 6; dd++) if (arms & (1 << dd)) this._arm(g, q, r, dd, d, sz, K, wK, seed, seam[dd], null, 0);
+    const fv = this._fv || (this._fv = new Float32Array(6));
+    for (let dd = 0; dd < 6; dd++) fv[dd] = (fronts >> dd) & 1;
+    this._heads(g, d, sz, K, seed, fv, iso ? 1 : 0);
+
+    // The knot: a swollen, necrotic node where the cords meet, swelling up
+    // from nothing as the hex's growth comes in.
+    const kn = Math.min(1, d / 1.2);
+    if (kn > 0.02) {
+      ecoBlob(g.flesh, K.x, K.y, (wK * 1.15 + sz * 0.01) * kn, seed, 0.28);
+      ecoBlob(g.core, K.x, K.y, wK * 0.55 * kn, seed + 1, 0.3);
+    }
+    // Rot at the knot, flesh, a blood flush at the rim -- and not evenly
+    // opaque: it thins to translucent in hashed bands out from the knot,
+    // ending at ECO_SEAM_ALPHA so every hex matches where cords cross.
+    const c0 = ecoMix(this.cFlesh, this.cRot, Math.min(1, t * 1.3)), c2 = ecoMix(this.cFlesh, this.cBlood, 0.12);
+    const m1 = 0.25 + 0.2 * (1 - t);
+    // Radius 0.5: no seam crossing comes nearer a knot than ~0.52 sz.
+    g.fleshGrad = ctx.createRadialGradient(K.x, K.y, 0, K.x, K.y, sz * 0.5);
+    for (let k = 0; k <= 5; k++) {
+      const p = k / 5;
+      const col = p <= m1 ? ecoMix(c0, this.cFlesh, p / m1) : ecoMix(this.cFlesh, c2, (p - m1) / (1 - m1));
+      g.fleshGrad.addColorStop(p, ecoRgb(col, k === 5 ? ECO_SEAM_ALPHA : 0.84 + 0.16 * ecoHash(seed, k, 90)));
     }
 
-    // The growth front: toward every empty neighbour a thin runner reaches
-    // most of the way and breaks into probing tips. A hex with no crossings
-    // at all (a germinating spore, a stranded remnant) sprawls every way.
-    const fronts = [];
-    for (let dd = 0; dd < 6; dd++) if (open & (1 << dd)) fronts.push(dd);
-    const isolated = mask === 0;
-    const heads = isolated ? 5 + ((ecoHash(seed, 0, 45) * 3) | 0) : fronts.length;
-    for (let k = 0; k < heads; k++) {
-      const a = isolated ? (k / heads) * ECO_TAU + ecoHash(seed, k, 46) * 0.8
-                         : ECO_DIR[fronts[k]].a + (ecoHash(seed, fronts[k], 47) - 0.5) * 0.8;
-      const reach = sz * (isolated ? 0.28 + 0.2 * ecoHash(seed, k, 48) : 0.45 + 0.2 * ecoHash(seed, k, 48)) * (0.35 + 0.65 * Math.min(1, d / 5));
-      const w0 = this._cordW(d, sz) * 0.7;
-      // Main runner, then a fan of 2-4 creeping tips off its end.
-      const run = { pts: [], ws: [] };
-      let x = K.x, y = K.y, aa = a;
-      const steps = 8;
-      run.pts.push({ x, y }); run.ws.push(w0);
-      for (let s = 1; s <= steps; s++) {
-        aa += (ecoHash(seed, k * 20 + s, 49) - 0.5) * 0.5;
-        x += Math.cos(aa) * reach / steps; y += Math.sin(aa) * reach / steps;
-        run.pts.push({ x, y }); run.ws.push(w0 * (1 - 0.8 * s / steps));
-      }
-      ecoRibbon(g.flesh, run.pts, run.ws, true);
-      const fan = 2 + ((ecoHash(seed, k, 52) * 3) | 0);
-      for (let f = 0; f < fan; f++) {
-        const fa = aa + (f - (fan - 1) / 2) * 0.55 + (ecoHash(seed, k * 9 + f, 53) - 0.5) * 0.3;
-        this._branch(g, x, y, fa, sz * (0.08 + 0.1 * ecoHash(seed, k * 9 + f, 54)), run.ws[steps] * 0.9, 0, seed * 3 + k * 9 + f, sz, true);
-      }
-    }
-
-    // The knot: a swollen, necrotic node where the cords meet.
-    ecoBlob(g.flesh, K.x, K.y, wK * 1.15 + sz * 0.01, seed, 0.28);
-    ecoBlob(g.core, K.x, K.y, wK * 0.55, seed + 1, 0.3);
-    g.fleshGrad = ctx.createRadialGradient(K.x, K.y, 0, K.x, K.y, sz * 0.55);
-    g.fleshGrad.addColorStop(0, ecoRgb(ecoMix(this.cFlesh, this.cRot, Math.min(1, t * 1.3)), 1));
-    g.fleshGrad.addColorStop(0.25 + 0.2 * (1 - t), ecoRgb(this.cFlesh, 1));
-    g.fleshGrad.addColorStop(1, ecoRgb(ecoMix(this.cFlesh, this.cBlood, 0.12), 1));
-
-    // Boils: on the knot once it's thick, then along the fattest cords.
-    if (d >= 6 && g.trunks.length) {
-      const nboil = 1 + (d >= 10 ? 1 : 0) + (d >= 14 ? 1 : 0);
-      for (let b = 0; b < nboil; b++) {
+    // Boils: on the knot once it's thick, then along the fattest cords, each
+    // rising out of the skin as the density reaches it.
+    if (g.trunks.length) {
+      for (let b = 0; b < 3; b++) {
+        const gr = Math.min(1, Math.max(0, (d - (b === 0 ? 5.5 : b === 1 ? 9.5 : 13.5)) / 1.5));
+        if (gr <= 0) continue;
         let x = K.x, y = K.y;
         if (b > 0) {
           const tr = g.trunks[(b * 3 + seed) % g.trunks.length];
@@ -577,7 +913,7 @@ class EcoField {
         }
         g.boils.push({
           x: x + (ecoHash(seed, b, 81) - 0.5) * wK, y: y + (ecoHash(seed, b, 82) - 0.5) * wK,
-          R: sz * (0.05 + 0.04 * ecoHash(seed, b, 83)) * (0.65 + 0.45 * t),
+          R: sz * (0.05 + 0.04 * ecoHash(seed, b, 83)) * (0.65 + 0.45 * t) * gr,
           T: 9000 + 11000 * ecoHash(seed, b, 84), ph: ecoHash(seed, b, 85), seed: seed * 5 + b,
         });
       }
@@ -585,15 +921,32 @@ class EcoField {
     return g;
   }
 
-  _geoFor(ctx, q, r, sz, shown, mask) {
-    let open = 0;
+  // What is still on the move on a hex, built fresh every frame: crawling
+  // cords, fronts and sprawl reaching out or drawing back.
+  _buildLive(q, r, sz, d, crawls, seam, fv, iso, now) {
+    const seed = r * 977 + q * 131 + 7;
+    const g = this._geoNew(sz, d);
+    const K = this._knot(q, r, sz);
+    const wK = this._cordW(d, sz) * 1.25;
+    if (crawls) for (const c of crawls) this._arm(g, q, r, c.dd, d, sz, K, wK, seed, seam[c.dd], c, now);
+    if (fv || iso > 0.01) this._heads(g, d, sz, K, seed, fv || (this._fv0 || (this._fv0 = new Float32Array(6))), iso);
+    return g;
+  }
+
+  // Cached by quarter-step density, the settled sides, the seam widths, size
+  // and hue: a hex rebuilds a few times as its density eases, not per frame.
+  _geoFor(ctx, q, r, sz, shown, arms, seam, fronts, iso) {
     const i = r * this.cols + q;
-    for (let d = 0; d < 6; d++) if (!(mask & (1 << d)) && this.dens[this._nbr(q, r, d)] === 0) open |= 1 << d;
-    const step = Math.round(shown * 2) / 2;
-    const key = `${step}|${mask}|${open}|${sz}|${this.hue}`;
+    const step = Math.round(shown * 4) / 4;
+    const sides = `${arms}|${fronts}|${iso ? 1 : 0}|${sz}|${this.hue}`;
+    let key = `${sides}|${step}`;
+    for (let dd = 0; dd < 6; dd++) if (arms & (1 << dd)) key += `|${seam[dd]}`;
     let e = this._geo.get(i);
     if (e && e.key === key) return e.g;
-    e = { key, g: this._build(ctx, q, r, sz, step, mask, open) };
+    if (e && e.sides === sides && this._overBudget()) return e.g;
+    const t0 = performance.now();
+    e = { key, sides, g: this._build(ctx, q, r, sz, step, arms, seam, fronts, iso) };
+    this._spent += performance.now() - t0;
     this._geo.delete(i);
     this._geo.set(i, e);
     if (this._geo.size > 900) {
@@ -603,18 +956,83 @@ class EcoField {
     return e.g;
   }
 
+  _overBudget() { return this._spent > ECO_BUILD_BUDGET_MS; }
+
+  // The crawling growth on a hex, rebuilt every ECO_LIVE_MS (sooner when what
+  // is moving changes), and merged with the settled shape it joins.
+  _liveFor(i, q, r, sz, shown, g, crawls, seam, fv, isoLive, now) {
+    let key = `${sz}|${isoLive > 0.01 ? 1 : 0}`;
+    if (crawls) for (const c of crawls) key += `|a${c.dd}`;
+    if (fv) for (let dd = 0; dd < 6; dd++) if (fv[dd] > 0.001) key += `|f${dd}`;
+    let L = this._live.get(i);
+    if (!L || L.key !== key || (now - L.at >= ECO_LIVE_MS && !this._overBudget())) {
+      const t0 = performance.now();
+      L = { key, at: now, g: this._buildLive(q, r, sz, shown, crawls, seam, fv, isoLive, now), base: null, m: null };
+      this._spent += performance.now() - t0;
+      this._live.set(i, L);
+    }
+    if (L.base !== g) {
+      const lg = L.g, join = (a, b) => { const p = new Path2D(a); p.addPath(b); return p; };
+      L.base = g;
+      L.m = {
+        flesh: join(g.flesh, lg.flesh), core: join(g.core, lg.core), hair: join(g.hair, lg.hair),
+        wrinkle: join(g.wrinkle, lg.wrinkle), mottle: join(g.mottle, lg.mottle),
+        tips: lg.tips.length ? g.tips.concat(lg.tips) : g.tips,
+      };
+    }
+    return L.m;
+  }
+
   // ── Veins ────────────────────────────────────────────────────────────────
-  _drawVeins(ctx, cx, cy, q, r, sz, shown, mask, now) {
-    const g = this._geoFor(ctx, q, r, sz, shown, mask);
-    const target = this.dens[r * this.cols + q];
-    // Withdrawing (the colony spent itself fruiting): the cords rot black.
-    const rot = shown > target + 0.3 ? Math.min(1, (shown - target) / 4) : 0;
+  _drawVeins(ctx, cx, cy, q, r, sz, now) {
+    const i = r * this.cols + q;
+    // `now` is the same for every hex in a frame, so it marks the frame.
+    if (now !== this._frame) { this._frame = now; this._spent = 0; }
+    const shown = this.dTw.at(i, now);
+    // Settled cords and fronts come from the cache; anything still crawling
+    // is built this frame and merged in, so it all unions as one shape.
+    const seam = this._seam || (this._seam = new Float32Array(6));
+    let arms = 0, fronts = 0, armMax = 0, crawls = null, fv = null;
+    for (let dd = 0; dd < 6; dd++) {
+      const j = i * 6 + dd;
+      const v = this.arm.at(j, now);
+      if (v > armMax) armMax = v;
+      seam[dd] = v > 0.001 ? this._seamD(i, q, r, dd, now) : 0;
+      if (this.arm.busy(j, now)) { if (v > 0.001) (crawls || (crawls = [])).push({ dd, v, mode: this.armIn[j] }); }
+      else if (this.arm.b[j] > 0.5) arms |= 1 << dd;
+      const f = this.front.at(j, now);
+      if (this.front.busy(j, now)) { if (f > 0.001) (fv || (fv = new Float32Array(6)))[dd] = f; }
+      else if (this.front.b[j] > 0.5) fronts |= 1 << dd;
+    }
+    const isoBusy = this.iso.busy(i, now);
+    const iso = !isoBusy && this.iso.b[i] > 0.5;
+    const isoLive = isoBusy ? this.iso.at(i, now) : 0;
+    const moving = crawls || fv || isoLive > 0.01;
+    if (!moving) this._live.delete(i);
+    if (shown < 0.02 && !arms && !fronts && !iso && !moving) return;
+    const g = this._geoFor(ctx, q, r, sz, shown, arms, seam, fronts, iso);
+    const { flesh, core, hair, wrinkle, mottle, tips } = moving ? this._liveFor(i, q, r, sz, shown, g, crawls, seam, fv, isoLive, now) : g;
+
+    // Withdrawing (the colony spent itself fruiting): the cords rot black
+    // while the density drains, and come back to colour if any is left.
+    const from = this.dTw.a[i], target = this.dTw.b[i];
+    const rot = from > target + 1 ? Math.min(1, (from - target - 1) / 3) * Math.sin(Math.PI * this.dTw.u(i, now)) : 0;
     const ph = this._beatPh(q, r, now);
     const hb = ecoBeat(ph);
-    const fade = Math.min(1, shown / 1.5);
+    // A cord crawling in carries its hex's alpha up with it.
+    const fade = Math.max(Math.min(1, shown / 1.5), 0.8 * Math.min(1, armMax * 4))
+               * Math.min(1, (now - this._joinAt) / 1800);
+    if (fade <= 0.005) return;
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.globalAlpha = fade;
+    ctx.globalAlpha = fade * this._alphaAt(q, r, now);
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = k * Math.PI / 3, R = sz * ECO_CLIP;
+      if (k) ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R); else ctx.moveTo(R, 0);
+    }
+    ctx.closePath();
+    ctx.clip();
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
     if (g.stain) { ctx.fillStyle = g.grad; ctx.fill(g.stain); }
@@ -622,35 +1040,35 @@ class EcoField {
     // Rim, flesh, and the blood core that swells on every beat.
     ctx.strokeStyle = ecoRgb(this.cRim, 0.85);
     ctx.lineWidth = Math.max(1.2, sz * 0.028);
-    ctx.stroke(g.flesh);
+    ctx.stroke(flesh);
     ctx.fillStyle = g.fleshGrad;
-    ctx.fill(g.flesh);
+    ctx.fill(flesh);
     ctx.fillStyle = ecoRgb(this.cBlood, (0.65 + 0.12 * hb) * (1 - rot));
-    ctx.fill(g.core);
-    if (hb > 0.05 && !rot) {
-      ctx.strokeStyle = ecoRgb(this.cBlood, 0.25 * hb);
+    ctx.fill(core);
+    if (hb > 0.05 && rot < 1) {
+      ctx.strokeStyle = ecoRgb(this.cBlood, 0.25 * hb * (1 - rot));
       ctx.lineWidth = sz * 0.01 * hb * (0.4 + g.t);
-      ctx.stroke(g.core);
+      ctx.stroke(core);
     }
     ctx.fillStyle = ecoRgb(this.cRot, 0.7);
-    ctx.fill(g.mottle);
+    ctx.fill(mottle);
     ctx.strokeStyle = ecoRgb(this.cRim, 0.55);
     ctx.lineWidth = Math.max(0.6, sz * 0.008);
-    ctx.stroke(g.wrinkle);
-    if (rot) { ctx.fillStyle = ecoRgb(this.cRot, 0.75 * rot); ctx.fill(g.flesh); }
+    ctx.stroke(wrinkle);
+    if (rot > 0.005) { ctx.fillStyle = ecoRgb(this.cRot, 0.75 * rot); ctx.fill(flesh); }
 
     // Hyphae.
     ctx.strokeStyle = ecoRgb(ecoMix(this.cHair, this.cRot, rot), 0.75);
     ctx.lineWidth = g.hairW;
-    ctx.stroke(g.hair);
+    ctx.stroke(hair);
 
-    // The pulse: a swelling pushed out along every cord, knot to edge, just
-    // after the beat -- something being pumped.
-    if (!rot) {
+    // The pulse: a swelling pushed out along every settled cord, knot to
+    // edge, just after the beat -- something being pumped.
+    if (rot < 1) {
       const s = (ph - 0.02) / 0.55;
       if (s > 0 && s < 1) {
         const al = Math.sin(Math.PI * s);
-        ctx.fillStyle = ecoRgb(this.cHot, 0.18 * al);
+        ctx.fillStyle = ecoRgb(this.cHot, 0.18 * al * (1 - rot));
         for (const tr of g.trunks) {
           const f = s * (tr.pts.length - 1), k = Math.min(tr.pts.length - 2, f | 0), u = f - k;
           const a = tr.pts[k], b = tr.pts[k + 1];
@@ -664,10 +1082,10 @@ class EcoField {
     }
 
     // Creeping tips: each probes forward and sweeps side to side, slowly.
-    if (g.tips.length) {
+    if (tips.length) {
       const tp = new Path2D();
       const beads = [];
-      for (const tip of g.tips) {
+      for (const tip of tips) {
         const tt = now * 0.00035 * tip.sp + tip.ph;
         const ext = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(tt));
         const sw = 0.45 * Math.sin(tt * 1.7 + 1.3);
@@ -677,17 +1095,17 @@ class EcoField {
         tp.moveTo(tip.x, tip.y); tp.quadraticCurveTo(mx, my, ex, ey);
         for (let k = -1; k <= 1; k++) {
           const fa = a + k * 0.75 + 0.3 * Math.sin(tt * 2.3 + k);
-          const fl = sz * 0.03 * (0.6 + 0.4 * ext);
+          const fl = sz * 0.03 * (0.6 + 0.4 * ext) * Math.min(1, tip.L / (sz * 0.05));
           tp.moveTo(ex, ey); tp.lineTo(ex + Math.cos(fa) * fl, ey + Math.sin(fa) * fl);
         }
-        beads.push(ex, ey);
+        beads.push(ex, ey, Math.min(1, tip.L / (sz * 0.05)));
       }
       ctx.strokeStyle = ecoRgb(ecoMix(this.cHot, this.cHair, 0.5), 0.8 * (1 - rot));
       ctx.lineWidth = g.hairW;
       ctx.stroke(tp);
       ctx.fillStyle = ecoRgb(this.cHot, 0.8 * (1 - rot));
-      for (let k = 0; k < beads.length; k += 2) {
-        ctx.beginPath(); ctx.arc(beads[k], beads[k + 1], g.hairW * 0.8, 0, ECO_TAU); ctx.fill();
+      for (let k = 0; k < beads.length; k += 3) {
+        ctx.beginPath(); ctx.arc(beads[k], beads[k + 1], g.hairW * 0.8 * beads[k + 2], 0, ECO_TAU); ctx.fill();
       }
     }
 
@@ -846,7 +1264,8 @@ class EcoField {
     const clumps = this._clumps(seed, sz);
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.globalAlpha = fade;
+    const al = fade * this._alphaAt(body.q, body.r, now);
+    ctx.globalAlpha = al;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const items = [];
     for (let c = 0; c < clumps.length; c++) {
@@ -855,6 +1274,8 @@ class EcoField {
       const gc = Math.min(1, Math.max(0, grow * 1.25 - c * 0.12));
       if (gc <= 0.02) continue;
       const S = sz * 0.2 * cl.s * gc;
+      // Each clump is a little more or less see-through than its neighbours.
+      ctx.globalAlpha = al * (0.86 + 0.14 * ecoHash(seed, c, 30));
       // Mound: a squat dark lump the stalks crowd out of.
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.beginPath(); ctx.ellipse(cl.x, cl.y + S * 0.12, S * 0.75, S * 0.28, 0, 0, ECO_TAU); ctx.fill();
@@ -879,6 +1300,7 @@ class EcoField {
     for (const it of items) {
       const { bx, by, lean, h, S, k } = it;
       const tx = bx + lean, ty = by - h;
+      ctx.globalAlpha = al * (0.86 + 0.14 * ecoHash(seed, (k / 10) | 0, 30));
       const stem = new Path2D();
       const pts = [], ws = [];
       for (let s = 0; s <= 6; s++) {

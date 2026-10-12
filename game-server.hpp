@@ -1022,7 +1022,7 @@ static void setupWiFiAndServer() {
         j += ",\"food\":";        j += p.food;
         j += ",\"water\":";       j += p.water;
         j += ",\"rad\":";         j += p.radiation;
-        j += ",\"mp\":";          j += p.movesLeft;
+        j += ",\"ap\":";          j += p.apLeft;
         j += ",\"wounds\":[";     j += p.wounds[WOUND_MINOR]; j += ",";
                                    j += p.wounds[WOUND_MAJOR]; j += "]";
         j += ",\"resting\":";     j += p.resting       ? "true" : "false";

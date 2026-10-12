@@ -108,6 +108,14 @@ const destroyedShelters = new Set();
 // static baked string, so — same trick as the two Sets above — this overlay
 // is consulted everywhere terrain is read instead of mutating MAP_HEX itself.
 const terrainOverrides = new Map();
+// Art variant pinned on a hex ("q_r" -> 0-15), consulted wherever the wire
+// VV low nibble is built. A debris crater picks the glass tile that looks
+// like a crater, where the baked map's pseudo-variant would hand it any.
+const variantOverrides = new Map();
+function variantFor(c, r, baseIdx) {
+  const ov = variantOverrides.get(`${c}_${r}`);
+  return ov === undefined ? (baseIdx & 0x0F) : ov;
+}
 // Hexes a vehicle has driven through ("q_r") — the caravan (every step) or a
 // player riding items.cfg "tracks"-flagged gear (the Motorbike) — mirrors
 // HexCell.tireTrack in world-system.hpp. OR'd into TT bit 7 the same way a
@@ -121,6 +129,46 @@ const caravanTracks = new Set();
 // step (movePlayer); this mock never did, and the Understory feeds on
 // footprints (ecology.js transforms), so its mould would have starved here.
 const footprintMask = new Map();
+
+// Trail sides -- trails.hpp. Per surface hex, per seat (0-5) and the caravan
+// (6): the side the latest pass came in by and the side it left by, so a
+// track can be followed. One byte each: bits 0-2 in, 3-5 out (7 = started
+// here / not left), bit 6 ridden; 0xFF = no record. Sides are the firmware's
+// DQ/DR (TUN_DQ/TUN_DR below), NOT this mock's DIR_DELTA: its 0/3 steps jump
+// two hexes, and a step that lands on no neighbour simply starts a new pass.
+const TRAIL_SLOTS = 7, TRAIL_CARAVAN = 6, TRAIL_NO_SIDE = 7, TRAIL_RIDDEN = 0x40;
+const trailSides = new Map();   // "q_r" -> [TRAIL_SLOTS bytes]
+const trailPack = (i, o, ridden) => (i & 7) | ((o & 7) << 3) | (ridden ? TRAIL_RIDDEN : 0);
+function trailRec(q, r) {
+  let a = trailSides.get(`${q}_${r}`);
+  if (!a) { a = new Array(TRAIL_SLOTS).fill(0xFF); trailSides.set(`${q}_${r}`, a); }
+  return a;
+}
+// A walker turned up without walking there; an open record (arrived, never
+// left) is a reconnect standing where it stopped, and is kept.
+function trailStart(slot, q, r) {
+  const a = trailRec(q, r);
+  if (a[slot] !== 0xFF && ((a[slot] >> 3) & 7) === TRAIL_NO_SIDE) return;
+  a[slot] = trailPack(TRAIL_NO_SIDE, TRAIL_NO_SIDE, false);
+}
+function trailSideTo(fq, fr, tq, tr) {
+  for (let d = 0; d < 6; d++) {
+    if (((fq + TUN_DQ[d]) % MAP_COLS + MAP_COLS) % MAP_COLS === tq &&
+        ((fr + TUN_DR[d]) % MAP_ROWS + MAP_ROWS) % MAP_ROWS === tr) return d;
+  }
+  return -1;
+}
+// trailStep() in trails.hpp, from a from/to pair. Returns the side stepped
+// through, or -1 when the two are not neighbours.
+function trailMove(slot, fq, fr, tq, tr, ridden) {
+  const d = trailSideTo(fq, fr, tq, tr);
+  if (d < 0) { trailStart(slot, tq, tr); return -1; }
+  const from = trailRec(fq, fr), b = from[slot];
+  from[slot] = (b !== 0xFF && ((b >> 3) & 7) === TRAIL_NO_SIDE)
+    ? (b & ~0x38) | (d << 3) : trailPack(TRAIL_NO_SIDE, d, ridden);
+  trailRec(tq, tr)[slot] = trailPack((d + 3) % 6, TRAIL_NO_SIDE, ridden);
+  return d;
+}
 function ddFor(c, r, ddNum) {
   let out = ddNum | (footprintMask.get(`${c}_${r}`) || 0);
   if (consumedPoi.has(`${c}_${r}`))       out &= ~0x80;
@@ -158,7 +206,7 @@ function liveMapHex(pq, pr, vr, pid) {
       const dd = MAP_HEX.substr(baseIdx + 2, 2);
       const ddNum = ddFor(c, r, parseInt(dd, 16));
       const cell = resources[`${c}_${r}`];
-      const variant = baseIdx & 0x0F;
+      const variant = variantFor(c, r, baseIdx);
       const res     = cell ? cell.res : 0;
       const vv = hex2((res << 4) | (variant & 0x0F));
       s += hex2(ttNum) + hex2(ddNum) + vv;
@@ -180,7 +228,7 @@ function buildVisDisk(pq, pr, vr, pid) {
       const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) | trapBit(0, cq, cr, pid));
       const dd = hex2(ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)));
       const cell = resources[`${cq}_${cr}`];
-      const variant = baseIdx & 0x0F;
+      const variant = variantFor(cq, cr, baseIdx);
       const res     = cell ? cell.res : 0;
       const vv = hex2((res << 4) | (variant & 0x0F));
       cells += hex2(cq) + hex2(cr) + tt + dd + vv;
@@ -203,10 +251,40 @@ function buildSurveyRing(pq, pr, ring, pid) {
       const tt = hex2(ttFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) | trapBit(0, cq, cr, pid));
       const dd = hex2(ddFor(cq, cr, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)));
       const cell = resources[`${cq}_${cr}`];
-      cells += hex2(cq) + hex2(cr) + tt + dd + hex2(((cell ? cell.res : 0) << 4) | (baseIdx & 0x0F));
+      cells += hex2(cq) + hex2(cr) + tt + dd + hex2(((cell ? cell.res : 0) << 4) | variantFor(cq, cr, baseIdx));
     }
   }
   return cells;
+}
+
+// The "trl" string beside a surface disk's / ring's / sync's cells:
+// appendTrailRecs() in hex-map.hpp. 7 hex chars per record (QQ RR S BB), and
+// only while the mark it describes is on the cell.
+function trailRecsAt(q, r) {
+  const a = trailSides.get(`${q}_${r}`);
+  if (!a) return '';
+  const baseIdx = (r * MAP_COLS + q) * 6;
+  const fp   = ddFor(q, r, parseInt(MAP_HEX.substr(baseIdx + 2, 2), 16)) & 0x3F;
+  const tire = (ttFor(q, r, parseInt(MAP_HEX.substr(baseIdx, 2), 16)) & 0x80) !== 0;
+  let out = '';
+  for (let s = 0; s < TRAIL_SLOTS; s++) {
+    if (a[s] === 0xFF) continue;
+    if (s === TRAIL_CARAVAN ? !tire : !(fp & (1 << s))) continue;
+    out += hex2(q) + hex2(r) + s.toString(16).toUpperCase() + hex2(a[s]);
+  }
+  return out;
+}
+// ring: only cells exactly that far out (buildSurveyDisk); else the whole disk.
+function buildTrailDisk(pq, pr, vr, ring = false) {
+  let out = '';
+  for (let dr = -vr; dr <= vr; dr++) {
+    for (let dq = -vr; dq <= vr; dq++) {
+      const n = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+      if (ring ? n !== vr : n > vr) continue;
+      out += trailRecsAt(((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS, ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS);
+    }
+  }
+  return out;
 }
 
 // ── Bunker tunnel board ─────────────────────────────────────────────────────
@@ -217,7 +295,7 @@ function buildSurveyRing(pq, pr, ring, pid) {
 // Terrain: 12 Bunker Entrance, 13 Vent Shaft (both boards), 14 Tunnel Floor,
 // 15 Collapsed Tunnel (impassable).
 const TUN_COLS = 16, TUN_ROWS = 10, MAX_HATCHES = 8;
-const TUNNEL_MC = 2, VENT_ASCEND_MP = 2;
+const TUNNEL_MC = 2, VENT_ASCEND_AP = 2;
 // Bad air — mirrors TUNNEL_REST_LL_PCT in tunnels.hpp. Underground the dawn
 // exposure tick is off entirely (a corridor is cover), and this is what the
 // tunnels charge in its place, rolled only when the survivor actually slept
@@ -503,7 +581,7 @@ function buildTunnels() {
 // logic at all, but the tunnels need this or the client cannot grey out a
 // direction that walks into rock or off the edge of the board.
 function tunnelValidMoves(p) {
-  if (!p.dp || p.mp <= 0 || p.ll === 0) return 0;
+  if (!p.dp || p.ap <= 0 || p.ll === 0) return 0;
   let mask = 0;
   for (let d = 0; d < 6; d++) {
     const nq = p.tq + TUN_DQ[d], nr = p.tr + TUN_DR[d];
@@ -583,12 +661,12 @@ function tunnelMapOps(pq, pr, vr, pid) {
 function stepDownIfHatch(ws, id, p) {
   const h = hatchAtSurface(p.q, p.r);
   if (h < 0) return false;
-  p.mp = Math.max(0, p.mp - 1);
+  p.ap = Math.max(0, p.ap - 1);
   p.dp = 1; p.hatchIdx = h;
   p.tq = bunkerHatches[h].tq; p.tr = bunkerHatches[h].tr;
   tunnel[p.tr][p.tq].footprints |= (1 << id);
   tunnelTauntTicks[id] = 0;  // a moment's peace before the doubt starts
-  broadcast({ t: 'ev', k: 'tun_in', pid: id, q: p.q, r: p.r, hatch: h, mp: p.mp });
+  broadcast({ t: 'ev', k: 'tun_in', pid: id, q: p.q, r: p.r, hatch: h, ap: p.ap });
   sendTunnelSync(ws, p);      // the client has never seen the tunnel board
   const tvr = tunnelVis(p);
   send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
@@ -600,13 +678,16 @@ function stepDownIfHatch(ws, id, p) {
 function stepUpIfShaft(ws, id, p) {
   const h = hatchAtShaft(p.tq, p.tr);
   if (h < 0) return false;
-  p.mp = Math.max(0, p.mp - (tunnel[p.tr][p.tq].tt === 13 ? VENT_ASCEND_MP : 1));
+  p.ap = Math.max(0, p.ap - (tunnel[p.tr][p.tq].tt === 13 ? VENT_ASCEND_AP : 1));
   p.dp = 0; p.hatchIdx = h;
   p.q = bunkerHatches[h].sq; p.r = bunkerHatches[h].sr;
-  broadcast({ t: 'ev', k: 'tun_out', pid: id, q: p.q, r: p.r, hatch: h, mp: p.mp });
+  // tunnelStepUp() stamps the hatch and starts a surface trail there.
+  footprintMask.set(`${p.q}_${p.r}`, (footprintMask.get(`${p.q}_${p.r}`) || 0) | (1 << id));
+  trailStart(id, p.q, p.r);
+  broadcast({ t: 'ev', k: 'tun_out', pid: id, q: p.q, r: p.r, hatch: h, ap: p.ap });
   ecoBite(p);   // the hex you climb out onto may be in flower (tunnelStepUp -> ecoBiteCheck)
   const svr = surfaceVis(p);
-  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, id) });
+  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, id), trl: buildTrailDisk(p.q, p.r, svr) });
   return true;
 }
 
@@ -710,7 +791,7 @@ function makePlayer(id) {
     inv: (ARCHETYPE_KIT[id] ?? [0, 0, 0, 0, 0]).slice(),
     sp: 0,
     ll: 7, food: 6, water: 6, rad: 0,
-    mp: 6,
+    ap: 6,
     fth: 0, wth: 0,
     vm: 0x3F,
     rt: 0,
@@ -732,12 +813,12 @@ function makePlayer(id) {
 // ── Item registry — mirrors enough of boot-assets.hpp's loadItemRegistry() to
 // validate equip/unequip/use/drop/pickup and apply a consumable's stat deltas.
 // Equipment stat mods ARE modelled now: "slots" (effectiveInvSlots), "ll"
-// (effectiveMaxLL), "mp" and the dawn *_cost gate (effectiveMP /
+// (effectiveMaxLL), "ap" and the dawn *_cost gate (effectiveAP /
 // applyDawnItemCosts), "rad" at dawn, and reveal_fog param 1 (surfaceVis).
 // They used to be absent, which meant a whole class of equipment bug looked
 // fine offline and only showed up on the board — the same trap the weather
 // visibility penalty was added here to close.
-// Still simplified: no terrain movement costs at all (every step is 1 MP), so
+// Still simplified: no terrain movement costs at all (every step is 1 AP), so
 // the TERR_PASS_* perks cannot be exercised here.
 const EQUIP_SLOT_BY_NAME = { head: 0, body: 1, hand: 2, feet: 3, vehicle: 4 };
 function loadItemRegistry() {
@@ -763,7 +844,7 @@ function loadItemRegistry() {
     else if (key === 'food')     cur.food    = parseInt(val, 10) || 0;
     else if (key === 'water')    cur.water   = parseInt(val, 10) || 0;
     else if (key === 'rad')      cur.rad     = parseInt(val, 10) || 0;
-    else if (key === 'mp')       cur.mp      = parseInt(val, 10) || 0;
+    else if (key === 'ap')       cur.ap      = parseInt(val, 10) || 0;
     else if (key === 'slots')    cur.slots   = parseInt(val, 10) || 0;   // pack slot bonus while equipped
     else if (key === 'water_cap') cur.waterCap = parseInt(val, 10) || 0; // water carried outside the pack cap (Canteen)
     else if (key === 'effect')   cur.effect  = val;
@@ -784,7 +865,7 @@ function loadItemRegistry() {
 }
 
 // ── Equipment queries — mirror inventory_items.hpp ──────────────────────────
-// Does this equipped item have a daily cost? Its mp only applies on a dawn
+// Does this equipped item have a daily cost? Its ap only applies on a dawn
 // where that cost was actually paid (applyDawnItemCosts).
 function itemHasOpCost(def) {
   return !!(def?.opCost && def.opCost.some(c => c > 0));
@@ -792,7 +873,7 @@ function itemHasOpCost(def) {
 
 // Item ids each seat has paid today's cost for -- mirrors s_paidItem in
 // inventory_items.hpp. Kept off the player object, which playerView() puts
-// on the wire whole. A daily-cost item grants its mp once a day: at dawn if
+// on the wire whole. A daily-cost item grants its ap once a day: at dawn if
 // the pack can pay (applyDawnItemCosts), else the moment it can
 // (kickStartItems, polled by the day tick). Dawn and a fresh survivor clear it.
 const itemsPaid = [];
@@ -808,14 +889,14 @@ function unfuelledMask(p) {
   return m;
 }
 
-// Mirrors payItemCost(): today's cost out of the pack, the item's mp onto
+// Mirrors payItemCost(): today's cost out of the pack, the item's ap onto
 // today's budget. False, with nothing taken, when the pack can't cover it.
 function payItemCost(p, slot) {
   const eid = p.eq[slot];
   const def = ITEM_DEFS[eid];
   if (!def || !def.opCost.every((c, k) => c <= p.inv[k])) return false;
   def.opCost.forEach((c, k) => { p.inv[k] -= c; });
-  p.mp = Math.min(127, p.mp + (def.mp | 0));
+  p.ap = Math.min(127, p.ap + (def.ap | 0));
   (itemsPaid[p.id] ??= []).push(eid);
   return true;
 }
@@ -841,20 +922,20 @@ function effectiveMaxLL(p) {
   return Math.max(1, cap);
 }
 
-// Mirrors effectiveMP(): halved LL slope, minus major wounds, minus the
-// encumbrance penalty, plus every NON-cost-gated item's mp. Cost-gated mp is
+// Mirrors effectiveAP(): halved LL slope, minus major wounds, minus the
+// encumbrance penalty, plus every NON-cost-gated item's ap. Cost-gated ap is
 // added by applyDawnItemCosts() only when the cost was paid.
-function effectiveMP(p) {
-  let mp = 6 + ((p.ll + 1) >> 1) - (p.wnd[1] | 0);
-  if (tokenLoad(p) > effectiveInvSlots(p)) mp--;
+function effectiveAP(p) {
+  let ap = 6 + ((p.ll + 1) >> 1) - (p.wnd[1] | 0);
+  if (tokenLoad(p) > effectiveInvSlots(p)) ap--;
   for (const eid of p.eq) {
     const def = ITEM_DEFS[eid];
-    if (def && def.mp && !itemHasOpCost(def)) mp += def.mp;
+    if (def && def.ap && !itemHasOpCost(def)) ap += def.ap;
   }
-  return Math.max(2, mp);
+  return Math.max(2, ap);
 }
 
-// Charge each equipped item's daily cost and grant its mp if it was paid.
+// Charge each equipped item's daily cost and grant its ap if it was paid.
 // Returns the bitmask of slots that could NOT pay, which rides EVT_DAWN as
 // "unf" so the client can grey out a bonus that is dormant today.
 function applyDawnItemCosts(p) {
@@ -1478,7 +1559,7 @@ function healWound(p, tier) {
 
 // Runs dawn upkeep for every connected player — mirrors dawnUpkeep() end to end
 // (food/water consumption, exposure, shelter-protects-rest, rest recovery),
-// then resets each player's resting flag and refills MP, and emits a proper
+// then resets each player's resting flag and refills AP, and emits a proper
 // EVT_DAWN-shaped event so the client's day counter / toast / REST button reset.
 function dawnUpkeepAll() {
   dayCount++;
@@ -1578,12 +1659,12 @@ function dawnUpkeepAll() {
     }
     const actualDelta = p.ll - prevLL;
 
-    // Mirrors effectiveMP() in inventory_items.hpp. Slope halved from the
+    // Mirrors effectiveAP() in inventory_items.hpp. Slope halved from the
     // original `ll + 3`: full health is unchanged at 10, but a wounded
     // survivor keeps enough mobility to reach water instead of spiralling.
-    // effectiveMP() folds in equipment mp and encumbrance; applyDawnItemCosts()
-    // then charges the daily *_costs and adds the mp they unlock.
-    p.mp = (p.ll === 0) ? 0 : effectiveMP(p);
+    // effectiveAP() folds in equipment ap and encumbrance; applyDawnItemCosts()
+    // then charges the daily *_costs and adds the ap they unlock.
+    p.ap = (p.ll === 0) ? 0 : effectiveAP(p);
     p.rt = 0;
     const unfuelled = applyDawnItemCosts(p);
 
@@ -1594,7 +1675,7 @@ function dawnUpkeepAll() {
     if (downed) downPlayer(p);
     broadcast({
       t: 'ev', k: 'dawn', pid: id, day: dayCount,
-      f: p.food, w: p.water, ll: p.ll, mp: p.mp, dll: actualDelta,
+      f: p.food, w: p.water, ll: p.ll, ap: p.ap, dll: actualDelta,
       fth: p.fth, wth: p.wth, rad: p.rad, expd: expDelta, air: airDelta,
       wnd: p.wnd.slice(), unf: unfuelled,
     });
@@ -1721,9 +1802,148 @@ function maybeTriggerQuake(connected) {
   triggerQuake(ref.q, ref.r);
 }
 
+// ── Space debris ─────────────────────────────────────────────────────────
+// One object breaks up on reentry and 1-8 fragments come down downrange of
+// the breakup point, heavier pieces carrying furthest. Size classes: the
+// largest (always fragment 0) leaves a full crater -- a Glass Fields core on
+// a crater-looking variant, an Ash Dunes ring -- a medium piece a glass core
+// only, a small one nothing but the client's scorch and plume.
+// Whatever the size, every hex a piece lands on (and the large crater's
+// ring) loses its shelter, and a Settlement there is levelled to Ash Dunes
+// -- an ash field, not a crater, so the town's ground stays walkable.
+// Server-authoritative like the quake: the event carries every impact hex and
+// its landing time (ms after the event) so each client streaks the same
+// pieces onto the same hexes, and `conv` (each tagged with the fragment `i`
+// that makes it) so the crater turns over the instant its piece lands.
+// So far only dbg_debris fires it: no natural trigger, damage, fire or
+// salvage POI yet (step 2 of the debris work).
+const DEBRIS_BREAK_MS = 1400;
+// Hexes a crater never overwrites: water (Flooded District, River Channel),
+// Nuke Crater, the two hatch terrains. (A Settlement is overwritten -- to
+// Ash Dunes, see debrisStrike.)
+const DEBRIS_NO_CRATER = new Set([5, 10, 11, 12, 13]);
+const TERRAIN_GLASS = 6;
+const DEBRIS_GLASS_LARGE  = [7, 12, 13];   // hexGlassFields cells that read as a crater
+const DEBRIS_GLASS_MEDIUM = [6, 11];       // the cracked impact star, the sinkhole
+const DEBRIS_ASH_PLAIN    = [0, 1, 2, 4];  // dune cells with nothing built on them
+const pickOf = (a) => a[Math.floor(Math.random() * a.length)];
+
+// World units (hexToPixel at size 1) -> nearest axial hex, wrapped.
+function debrisHexAt(x, y) {
+  const fq = x / 1.5, fr = y / Math.sqrt(3) - fq / 2, fs = -fq - fr;
+  let q = Math.round(fq), r = Math.round(fr);
+  const s = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
+  if (dq > dr && dq > ds) q = -r - s; else if (dr > ds) r = -q - s;
+  return { q: ((q % MAP_COLS) + MAP_COLS) % MAP_COLS, r: ((r % MAP_ROWS) + MAP_ROWS) % MAP_ROWS };
+}
+
+function triggerDebris(refQ, refR, nReq, burnDays, hdReq, at) {
+  const n  = (nReq >= 1 && nReq <= 8) ? nReq : 1 + Math.floor(Math.random() * 8);
+  const hd = Number.isFinite(hdReq) ? ((hdReq % 360) + 360) % 360 : Math.floor(Math.random() * 360);
+  const a  = hd * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a);
+  // Break up ~8 world units upstream of the reference, so the field lands
+  // round it rather than on the far side of the map.
+  const refX = 1.5 * refQ, refY = Math.sqrt(3) * (refR + refQ / 2);
+  const side = (Math.random() - 0.5) * 3;
+  const b  = debrisHexAt(refX - ux * 8 - uy * side, refY - uy * 8 + ux * side);
+  const bx = 1.5 * b.q, by = Math.sqrt(3) * (b.r + b.q / 2);
+  const f = [], used = new Set();
+  for (let i = 0; i < n; i++) {
+    const s = i === 0 ? 2 : (Math.random() < 0.3 ? 1 : 0);
+    let hex = null, D = 0;
+    for (let tries = 0; tries < 8 && !hex; tries++) {
+      D = s === 2 ? 9 + Math.random() * 4 : s === 1 ? 6 + Math.random() * 5 : 3.5 + Math.random() * 6.5;
+      const L = (Math.random() - 0.5) * (s === 0 ? 5 : 3.5);
+      const h = debrisHexAt(bx + ux * D - uy * L, by + uy * D + ux * L);
+      if (!used.has(`${h.q}_${h.r}`)) hex = h;
+    }
+    if (i === 0 && at) hex = { q: at[0], r: at[1] };   // dbg_debris "at": aim the main mass
+    if (!hex) continue;
+    used.add(`${hex.q}_${hex.r}`);
+    f.push({ q: hex.q, r: hex.r, s, t: Math.round(DEBRIS_BREAK_MS + 700 + D * 120 + Math.random() * 250) });
+  }
+  // What each landing does to the ground: `conv` terrain flips, `dest`
+  // shelters flattened, each tagged with the fragment `i` that does it.
+  // Cores first, so a ring never lands on another piece's core.
+  const conv = [], dest = [];
+  const strike = (q, r, i, terr) => {
+    if (hasShelter(q, r)) dest.push({ q, r, i });
+    if (terrainAt(q, r) === TERRAIN_SETTLEMENT) conv.push({ q, r, tr: TERRAIN_ASH_DUNES, v: pickOf(DEBRIS_ASH_PLAIN), i });
+    else if (terr === TERRAIN_GLASS) conv.push({ q, r, tr: TERRAIN_GLASS, v: pickOf(f[i].s === 2 ? DEBRIS_GLASS_LARGE : DEBRIS_GLASS_MEDIUM), i });
+    else if (terr !== undefined && terrainAt(q, r) !== terr) conv.push({ q, r, tr: terr, v: pickOf(DEBRIS_ASH_PLAIN), i });
+  };
+  f.forEach((fr, i) => {
+    const crater = fr.s > 0 && !DEBRIS_NO_CRATER.has(terrainAt(fr.q, fr.r));
+    strike(fr.q, fr.r, i, crater ? TERRAIN_GLASS : undefined);
+  });
+  f.forEach((fr, i) => {
+    if (fr.s !== 2) return;
+    for (const d of QUAKE_DIRS) {
+      const q = ((fr.q + d.dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
+      const r = ((fr.r + d.dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+      if (used.has(`${q}_${r}`)) continue;
+      const t = terrainAt(q, r);
+      strike(q, r, i, DEBRIS_NO_CRATER.has(t) || t === TERRAIN_GLASS ? undefined : TERRAIN_ASH_DUNES);
+    }
+  });
+  broadcast({ t: 'ev', k: 'debris', tb: DEBRIS_BREAK_MS, bq: b.q, br: b.r, hd, f, conv, dest });
+  console.log(`[debris] n=${f.length} hd=${hd} break=(${b.q},${b.r}) f=${JSON.stringify(f)} conv=${conv.length}`);
+  // The ground changes when each piece lands, not at the boom: a sync in
+  // between must not show a crater with nothing in the sky yet above it.
+  f.forEach((fr, i) => setTimeout(() => {
+    for (const c of conv) {
+      if (c.i !== i) continue;
+      terrainOverrides.set(`${c.q}_${c.r}`, c.tr);
+      variantOverrides.set(`${c.q}_${c.r}`, c.v);
+    }
+    for (const d of dest) if (d.i === i) destroyedShelters.add(`${d.q}_${d.r}`);
+    // The hole burns -- glass crater or levelled town alike -- unless the
+    // piece came down in water or on ground a crater never takes.
+    const days = burnDays ?? DEBRIS_BURN_DAYS[fr.s];
+    if (days > 0 && conv.some(c => c.i === i && c.q === fr.q && c.r === fr.r)) igniteCrater(fr.q, fr.r, days);
+    broadcast(stateMsg());   // world.fire carries the crater fire out at once
+  }, fr.t));
+}
+
+// ── Crater fires ─────────────────────────────────────────────────────────
+// A large or medium piece leaves its crater burning: wreckage and fuel in a
+// glass pit, burning on for days. It rides the ordinary fire grid -- same
+// flames on the client, same fire damage, spreads to flammable neighbours
+// while hot -- with three differences: Glass Fields can't otherwise hold fire,
+// rain doesn't put it out, and when it dies the hex stays glass (an ordinary
+// fire leaves Ash Dunes). Hot for the first half, burning for the next third,
+// then a smoulder (intensity 1, which hurts nobody) until it goes out.
+const DEBRIS_BURN_DAYS = [0, 3, 4];        // by size class
+const craterBurns = new Map();             // "q_r" -> { start, end } in game ticks
+
+function igniteCrater(q, r, days) {
+  const key = `${q}_${r}`;
+  if (!fireGrid[key]) fireCount++;         // past FIRE_CAP if it must: a crater always burns
+  fireGrid[key] = 3;
+  craterBurns.set(key, { start: worldTickCounter, end: worldTickCounter + Math.max(1, Math.round(days * DAY_TICKS)) });
+}
+
+function craterFireLevel(b) {
+  const p = (worldTickCounter - b.start) / (b.end - b.start);
+  return p >= 1 ? 0 : p < 0.5 ? 3 : p < 0.85 ? 2 : 1;
+}
+
+// Sets each crater fire to its level for this world tick, and lets the
+// burnt-out ones go -- quietly: a fire_spread at intensity 0 tells clients
+// the hex burned to Ash Dunes, which a crater does not.
+function tickCraterFires() {
+  for (const [key, b] of craterBurns) {
+    const lvl = craterFireLevel(b);
+    if (lvl) { fireGrid[key] = lvl; continue; }
+    craterBurns.delete(key);
+    if (fireGrid[key]) { delete fireGrid[key]; fireCount--; }
+  }
+}
+
 // ── Strangle Fog per-tick hazard ────────────────────────────────────────
 // Mirrors actions_game_loop.hpp's WEATHER_FOG block closely enough to feel
-// out the rates here before flashing: MP bleeds away steadily while standing
+// out the rates here before flashing: AP bleeds away steadily while standing
 // in fog, LL loss is far rarer. Same terrain shape as the firmware's
 // WEATHER_INTENSITY[WEATHER_FOG] row (worst in dense/wet terrain, weakest on
 // high dry ground); Settlement/Broken Urban are immune. Unlike the firmware,
@@ -1731,7 +1951,7 @@ function maybeTriggerQuake(connected) {
 // shelter-or-not), so any shelter here only halves the rate rather than
 // granting the firmware's full immunity at the improved tier.
 const FOG_INTENSITY     = [0.45, 0.35, 0.7, 0.75, 0.25, 0.65, 0.5, 0.3, 0.2, 0.1, 0, 0];
-const FOG_MP_TICK_RATE  = 1 / 300;
+const FOG_AP_TICK_RATE  = 1 / 300;
 const FOG_LL_TICK_RATE  = 1 / 1800;
 function fogTick(connected) {
   if (weatherPhase !== 4) return;
@@ -1740,10 +1960,10 @@ function fogTick(connected) {
     if (p.ll === 0) continue;
     const t = terrainAt(p.q, p.r);
     if (t === 9 || t === 4) continue; // Settlement, Broken Urban — immune
-    let mpProb = (FOG_INTENSITY[t] ?? 0) * FOG_MP_TICK_RATE;
+    let apProb = (FOG_INTENSITY[t] ?? 0) * FOG_AP_TICK_RATE;
     let llProb = (FOG_INTENSITY[t] ?? 0) * FOG_LL_TICK_RATE;
-    if (hasShelter(p.q, p.r)) { mpProb *= 0.5; llProb *= 0.5; }
-    if (p.mp > 0 && Math.random() < mpProb) { p.mp--; changed = true; }
+    if (hasShelter(p.q, p.r)) { apProb *= 0.5; llProb *= 0.5; }
+    if (p.ap > 0 && Math.random() < apProb) { p.ap--; changed = true; }
     if (Math.random() < llProb) {
       p.ll = Math.max(0, p.ll - 1); changed = true;
       if (p.ll === 0) downPlayer(p);   // the firmware's fog tick enqueues EVT_DOWNED; this never said so
@@ -1762,7 +1982,7 @@ function surfaceDownedBelow(connected) {
     const h = (p.hatchIdx < bunkerHatches.length) ? p.hatchIdx : 0;
     if (bunkerHatches.length) { p.q = bunkerHatches[h].sq; p.r = bunkerHatches[h].sr; }
     p.dp = 0;
-    broadcast({ t: 'ev', k: 'tun_out', pid: p.id, q: p.q, r: p.r, hatch: h, mp: p.mp });
+    broadcast({ t: 'ev', k: 'tun_out', pid: p.id, q: p.q, r: p.r, hatch: h, ap: p.ap });
     console.log(`[tunnel] surfaced downed pid=${p.id} -> hatch ${h} (${p.q},${p.r})`);
   }
 }
@@ -1783,12 +2003,12 @@ setInterval(() => {
   // the kickStartItems() poll in tickGame(). Not mid-scene.
   for (const p of connected) {
     if (encounters[p.id]) continue;
-    const mp0 = p.mp;
+    const ap0 = p.ap;
     const started = kickStartItems(p);
     if (!started) continue;
     const slot = p.eq.findIndex((_, s) => started & (1 << s));
-    console.log(`[kick] pid=${p.id} item=${p.eq[slot]} mp ${mp0}->${p.mp}`);
-    broadcast({ t: 'ev', k: 'refuel', pid: p.id, it: p.eq[slot], mpd: p.mp - mp0, mp: p.mp,
+    console.log(`[kick] pid=${p.id} item=${p.eq[slot]} ap ${ap0}->${p.ap}`);
+    broadcast({ t: 'ev', k: 'refuel', pid: p.id, it: p.eq[slot], apd: p.ap - ap0, ap: p.ap,
                 unf: unfuelledMask(p) });
     broadcast(stateMsg());
   }
@@ -1969,7 +2189,7 @@ function encChoice(ws, id, m) {
       p.wnd[tier] = Math.min(WOUND_MAX_EACH, before + want);
       ev.penWnd[tier] = p.wnd[tier] - before;
     });
-    if (ev.penWnd[1]) p.mp = Math.max(0, p.mp - ev.penWnd[1]);
+    if (ev.penWnd[1]) p.ap = Math.max(0, p.ap - ev.penWnd[1]);
     ended = p.ll === 0 || ch.hazEnds;
   }
   console.log(`[enc] choice pid=${id} skill=${skill} dn=${dn} tot=${tot} ok=${ok} ends=${ended}`);
@@ -2118,7 +2338,7 @@ function stateViewCell(p, dq, dr) {
   // Which of /img/hex<Name><N>.png this hex wears. buildMap() packs it into
   // the low nibble of VV exactly like the wire map, so this reads it back
   // from the same place -- see liveMapHex().
-  const variant = baseIdx & 0x0F;
+  const variant = variantFor(cq, cr, baseIdx);
   return {
     q: cq, r: cr, dq, dr,
     terrain: tt, terrainName: TNAME_FULL[tt] || '',
@@ -2155,7 +2375,7 @@ function stateEmptyPlayer(i) {
     pid: i, conn: false, wsClientId: 0, connectMs: 0, lastMoveMs: 0,
     name: ARCHETYPE_NAMES[i] || '?', arch: i, archName: ARCHETYPE_NAMES[i] || '?',
     invSlots: 0, invSlotsEff: 0, equip: [0, 0, 0, 0, 0],
-    q: 0, r: 0, ll: 0, food: 0, water: 0, rad: 0, mp: 0,
+    q: 0, r: 0, ll: 0, food: 0, water: 0, rad: 0, ap: 0,
     wounds: [0, 0], resting: false, radClean: false,
     fThreshBelow: 0, wThreshBelow: 0,
     skills: [0, 0, 0, 0, 0], inv: [0, 0, 0, 0, 0],
@@ -2176,7 +2396,7 @@ function statePlayer(i) {
     invSlots: p.is, invSlotsEff: effectiveInvSlots(p),
     equip: p.eq.slice(),
     q: p.q, r: p.r,
-    ll: p.ll, food: p.food, water: p.water, rad: p.rad, mp: p.mp,
+    ll: p.ll, food: p.food, water: p.water, rad: p.rad, ap: p.ap,
     wounds: p.wnd.slice(),
     resting: !!p.rt, radClean: false,
     fThreshBelow: p.fth | 0, wThreshBelow: p.wth | 0,
@@ -2523,8 +2743,10 @@ function maybeIgniteLightning(connected) {
 // mechanism. Plain rain (not the lightning-bearing storm phase) douses
 // everything outright.
 function spreadFire() {
+  tickCraterFires();
   if (weatherPhase === 1) {  // 1 = RAIN
     for (const key of Object.keys(fireGrid)) {
+      if (craterBurns.has(key)) continue;   // a crater burns on through rain
       const [q, r] = key.split('_').map(Number);
       extinguishHex(q, r);
     }
@@ -2534,8 +2756,10 @@ function spreadFire() {
   for (const key of Object.keys(fireGrid)) {
     const [q, r] = key.split('_').map(Number);
     const intensity = fireGrid[key];
-    if (intensity - 1 <= 0) { extinguishHex(q, r); continue; }
-    fireGrid[key] = intensity - 1;
+    if (!craterBurns.has(key)) {             // a crater's level is tickCraterFires()'s
+      if (intensity - 1 <= 0) { extinguishHex(q, r); continue; }
+      fireGrid[key] = intensity - 1;
+    }
 
     if (intensity >= 2) {
       for (const dir of Object.keys(DIR_DELTA)) {
@@ -2682,7 +2906,7 @@ function spreadFlood(connected) {
           if (p.ll === 0) continue;   // already down, slot reset pending
           p.ll = Math.max(0, p.ll - FLOOD_LL_DAMAGE);
           eco.noteHurt(nq, nr);   // an injury: the daisies seed here (ecology.js)
-          p.mp = 0;
+          p.ap = 0;
           // 10 = swept-away sentinel, outside flood's 1-3 range; llLost is what it actually cost
           broadcast({ t: 'ev', k: 'flood_dmg', pid: p.id, q: nq, r: nr, intensity: 10, llLost: FLOOD_LL_DAMAGE });
           if (p.ll === 0) downPlayer(p);
@@ -2941,9 +3165,11 @@ function moveCaravanOneStep() {
     if (dist < bestDist) { bestDist = dist; bestDq = dq; bestDr = dr; moved = true; }
   }
   if (!moved) return false;
+  const fq = caravan.q, fr = caravan.r;
   caravan.q = ((caravan.q + bestDq) % MAP_COLS + MAP_COLS) % MAP_COLS;
   caravan.r = ((caravan.r + bestDr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
   caravanTracks.add(`${caravan.q}_${caravan.r}`);
+  trailMove(TRAIL_CARAVAN, fq, fr, caravan.q, caravan.r, true);
   return true;
 }
 
@@ -3004,6 +3230,7 @@ function syncMsg(id) {
     id,
     vr: surfaceVis(players[id]),
     map: liveMapHex(players[id].q, players[id].r, surfaceVis(players[id]), id),
+    trl: buildTrailDisk(players[id].q, players[id].r, surfaceVis(players[id])),
     p: Object.values(players).map(playerView),
     gs: { wp: weatherPhase, dc: dayCount, tc: threatClock },
     world: worldStateMsg(),
@@ -3232,7 +3459,7 @@ function useItem(p, slotIdx) {
   state.llDelta += (def.ll || 0);
   if (state.llDelta) p.ll = Math.max(0, Math.min(effectiveMaxLL(p), p.ll + state.llDelta));
   if (def.rad) p.rad = Math.max(0, Math.min(10, p.rad + def.rad));
-  if (def.mp)  p.mp  = Math.max(0, p.mp + def.mp);
+  if (def.ap)  p.ap  = Math.max(0, p.ap + def.ap);
 
   for (const [fx, param] of [[def.effect, def.param], [def.effect2, def.param2]]) {
     if (fx === 'cure_status') {
@@ -3321,7 +3548,7 @@ function scoopOnArrival(ws, p) {
 function pushVisDisk(ws, p) {
   if (p.dp) return;                       // underground vis is its own path
   const svr = surfaceVis(p);
-  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, p.id) });
+  send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells: buildVisDisk(p.q, p.r, svr, p.id), trl: buildTrailDisk(p.q, p.r, svr) });
 }
 
 function equipItem(ws, id, msg) {
@@ -3658,6 +3885,7 @@ wss.on('connection', (ws) => {
           break;
         }
         players[id] = makePlayer(id);
+        trailStart(id, players[id].q, players[id].r);
         // A seat whose survivor fell: a fresh survivor, but the lifetime score
         // and steps carry over (handleMsg_pick's isDowned path).
         if (downedCarry[id]) { Object.assign(players[id], downedCarry[id]); delete downedCarry[id]; }
@@ -3693,10 +3921,10 @@ wss.on('connection', (ws) => {
           if (tunnel[nr][nq].tt === 15) break;       // collapsed
           p.tq = nq; p.tr = nr;
           p.sp += 1;
-          p.mp = Math.max(0, p.mp - TUNNEL_MC);
+          p.ap = Math.max(0, p.ap - TUNNEL_MC);
           tunnel[nr][nq].footprints |= (1 << id);
-          broadcast({ t: 'ev', k: 'mv', pid: id, q: p.tq, r: p.tr, radd: 0,
-                      rad: p.rad, exploD: 0, mp: p.mp, trk: 0, dp: 1 });
+          broadcast({ t: 'ev', k: 'mv', pid: id, q: p.tq, r: p.tr, d, radd: 0,
+                      rad: p.rad, exploD: 0, ap: p.ap, trk: 0, dp: 1 });
           const cell = tunnel[nr][nq];
           if (cell.res && cell.amt) {
             const gain = cell.amt;
@@ -3717,12 +3945,13 @@ wss.on('connection', (ws) => {
           broadcast(stateMsg());
           break;
         }
+        const fromQ = p.q, fromR = p.r;
         p.q = ((p.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
         p.r = ((p.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
         footprintMask.set(`${p.q}_${p.r}`, (footprintMask.get(`${p.q}_${p.r}`) || 0) | (1 << id));
         delete lastCaravanHex[id];  // moved — re-arm the caravan trade prompt
         p.sp += 1;
-        if (p.mp > 0) p.mp -= 1;
+        if (p.ap > 0) p.ap -= 1;
         // Mirrors hasTireTracks() in inventory_items.hpp: any equipped item
         // flagged items.cfg "tracks" (the Motorbike) marks the hex like the
         // caravan does. Carried on the mv event (trk) so every client, not
@@ -3730,8 +3959,11 @@ wss.on('connection', (ws) => {
         // same reasoning as footprints (see data/network.js's _evMv).
         const laidTrack = p.eq.some((itemId) => ITEM_DEFS[itemId]?.tracks);
         if (laidTrack) caravanTracks.add(`${p.q}_${p.r}`);
+        // Which way (trails.hpp): "d" on the mv event, -1 for this mock's
+        // two-hex DIR_DELTA jumps, which start a fresh pass instead.
+        const side = trailMove(id, fromQ, fromR, p.q, p.r, laidTrack);
         // EVT_MOVE first so client position updates before col event arrives.
-        broadcast({ t: 'ev', k: 'mv', pid: id, q: p.q, r: p.r, radd: 0, rad: p.rad, exploD: 0, mp: p.mp, trk: laidTrack ? 1 : 0 });
+        broadcast({ t: 'ev', k: 'mv', pid: id, q: p.q, r: p.r, d: side, radd: 0, rad: p.rad, exploD: 0, ap: p.ap, trk: laidTrack ? 1 : 0 });
         ecoBite(p);   // bloomed Wasteland Daisies bite on entry, before the pickup, as movePlayer does
         tryCollect(p, ws);
         // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels.
@@ -3739,7 +3971,7 @@ wss.on('connection', (ws) => {
         // Visdisk reflects current resource state (post-collection).
         const svr = surfaceVis(p);
         const cells = buildVisDisk(p.q, p.r, svr, id);
-        send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells });
+        send(ws, { t: 'vis', q: p.q, r: p.r, vr: svr, cells, trl: buildTrailDisk(p.q, p.r, svr) });
         // A booby trap under this hex fires now (traps.hpp trapOnArrival):
         // after the pickup, as on the board, and after the vis disk.
         trapOnArrival(ws, id, p);
@@ -3762,11 +3994,11 @@ wss.on('connection', (ws) => {
         } else if (msg.a === 2) {
           // ACT_TREAT — mirrors doTreat() in actions_game_loop.hpp: the Medic
           // (archetype 2) may treat a Major Wound anywhere; everyone else
-          // needs to be standing in a Settlement. Costs 2 MP + 1 Medicine,
+          // needs to be standing in a Settlement. Costs 2 AP + 1 Medicine,
           // Endure vs TREAT_DN; a near miss downgrades the Major Wound to a
           // Minor one instead of clearing it outright.
           // With no Major Wound, TREAT in a Settlement is the heal: 1 Medicine
-          // + 1 MP restores 1 LL, no roll. A Medic in the field with nothing
+          // + 1 AP restores 1 LL, no roll. A Medic in the field with nothing
           // to stitch is refused, same as the firmware's ABW_TERRAIN.
           const isMedic      = p.arch === 2;
           const inSettlement = terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT;
@@ -3777,20 +4009,20 @@ wss.on('connection', (ws) => {
               send(ws, { t: 'err', msg: 'Heal needs a Settlement' });
             } else if (p.ll >= effectiveMaxLL(p)) {
               send(ws, { t: 'err', msg: 'Life Level is already full' });
-            } else if (p.inv[3] < 1 || p.mp < 1) {
-              send(ws, { t: 'err', msg: 'Needs 1 MP and 1 Medicine' });
+            } else if (p.inv[3] < 1 || p.ap < 1) {
+              send(ws, { t: 'err', msg: 'Needs 1 AP and 1 Medicine' });
             } else {
-              p.mp -= 1;
+              p.ap -= 1;
               p.inv[3]--;
               p.ll += 1;
               p.sc += 1;
-              broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out: 1, mp: p.mp, ll: p.ll,
+              broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out: 1, ap: p.ap, ll: p.ll,
                           lld: 1, md: -1, wnd: [p.wnd[0], p.wnd[1]], scoreD: 1 });
             }
-          } else if (p.inv[3] < 1 || p.mp < 2) {
-            send(ws, { t: 'err', msg: 'Needs 2 MP and 1 Medicine' });
+          } else if (p.inv[3] < 1 || p.ap < 2) {
+            send(ws, { t: 'err', msg: 'Needs 2 AP and 1 Medicine' });
           } else {
-            p.mp -= 2;
+            p.ap -= 2;
             p.inv[3]--;
             // Mirrors checkSkillMod(): major wounds hit every skill, minor
             // wounds hit Endure only, and the Endurer (archetype 5) reads
@@ -3810,30 +4042,31 @@ wss.on('connection', (ws) => {
           }
         } else if (msg.a === 6) {
           // ACT_SURVEY — mirrors doSurvey()/buildSurveyDisk(): the Scout (arch
-          // 4) surveys free, anyone else pays 1 MP; +2 pts the first time from
+          // 4) surveys free, anyone else pays 1 AP; +2 pts the first time from
           // a given hex only. The reply is the ring of cells ONE PAST the
           // survivor's live sight radius, unicast as a `surv` event -- the
           // client draws it dimmed until the next step. This branch used to be
-          // the generic one, which paid MP for a resource and never sent the
+          // the generic one, which paid AP for a resource and never sent the
           // ring at all, so a Scout's survey did nothing visible on the mock.
           const isScout = p.arch === 4;
           if (p.rt) {
-            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 4, mp: p.mp, ll: p.ll });
-          } else if (!isScout && p.mp < 1) {
-            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 1, mp: p.mp, ll: p.ll });
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 4, ap: p.ap, ll: p.ll });
+          } else if (!isScout && p.ap < 1) {
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 3, bw: 1, ap: p.ap, ll: p.ll });
           } else {
-            if (!isScout) p.mp -= 1;
+            if (!isScout) p.ap -= 1;
             p.surveyed = p.surveyed || new Set();
             const hexKey = `${p.q}_${p.r}`;
             let scoreD = 0;
             if (!p.surveyed.has(hexKey)) { p.surveyed.add(hexKey); scoreD = 2; p.sc += 2; }
-            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 1, mp: p.mp, ll: p.ll, scoreD });
-            send(ws, { t: 'ev', k: 'surv', pid: id, cells: buildSurveyRing(p.q, p.r, surfaceVis(p) + 1, id) });
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 6, out: 1, ap: p.ap, ll: p.ll, scoreD });
+            send(ws, { t: 'ev', k: 'surv', pid: id, cells: buildSurveyRing(p.q, p.r, surfaceVis(p) + 1, id),
+                       trl: buildTrailDisk(p.q, p.r, surfaceVis(p) + 1, true) });
           }
         } else if (msg.a === 5) {
           // ACT_CRAFT — mirrors doCraft()/applyRecipe() in
           // actions_game_loop.hpp/inventory_items.hpp: Settlement-only,
-          // 1 MP, deterministic (no skill roll). Recipes are secret — p.kr
+          // 1 AP, deterministic (no skill roll). Recipes are secret — p.kr
           // must already have this bit set (learned via an encounter's
           // "recipe" loot entry, see encChoice/encBank below).
           const recipeId      = msg.r | 0;
@@ -3843,13 +4076,13 @@ wss.on('connection', (ws) => {
           // byte-for-byte so the client's err toast reads the same either way.
           let blocked = null;
           if (!inSettlement)     blocked = 'CRAFT requires a Settlement';
-          else if (p.mp < 1)     blocked = 'Not enough MP';
+          else if (p.ap < 1)     blocked = 'Not enough AP';
           else if (!knownRecipe) blocked = "You don't know that recipe";
           else                   blocked = craftRecipe(p, recipeId);
           if (blocked) {
             send(ws, { t: 'err', msg: blocked });
           } else {
-            p.mp -= 1;
+            p.ap -= 1;
             p.sc += 2;
             // Targeted ack — mirrors the firmware's craftAck in
             // network-msg-player.hpp so the client's "Crafted X" log line
@@ -3877,24 +4110,24 @@ wss.on('connection', (ws) => {
           const slot = ACT_RESOURCE[msg.a | 0];
           // Only SCAVENGE is bound by the pack size (mirrors doScav): FORAGE
           // and WATER are survival and may overfill, paying the encumbrance
-          // penalty in effectiveMP() instead of being refused. Capping those
+          // penalty in effectiveAP() instead of being refused. Capping those
           // two let a pack full of scrap starve a survivor through a button
           // that did nothing and said nothing.
           if ((msg.a | 0) === 3 && tokenRoomFor(p) <= 0) {
             broadcast({ t: 'ev', k: 'act', pid: id, a: msg.a | 0, out: 0,
-                        bw: 1, mp: p.mp, ll: p.ll });
+                        bw: 1, ap: p.ap, ll: p.ll });
             break;
           }
           if ((msg.a | 0) === 1) {
-            // COLLECT WATER mirrors doWater(): 1-3 MP, one water per MP. It
-            // was the generic +1 for whatever MP was sent, which made water
+            // COLLECT WATER mirrors doWater(): 1-3 AP, one water per AP. It
+            // was the generic +1 for whatever AP was sent, which made water
             // twice as dear as on the board and every bot's day a pond run.
-            const spend = Math.max(1, Math.min(3, msg.mp || 1, p.mp));
-            p.mp = Math.max(0, p.mp - spend);
+            const spend = Math.max(1, Math.min(3, msg.ap || 1, p.ap));
+            p.ap = Math.max(0, p.ap - spend);
             p.inv[0] = Math.min(99, (p.inv[0] || 0) + spend);
             p.sc += spend;
           } else {
-            p.mp = Math.max(0, p.mp - (msg.mp || 1));
+            p.ap = Math.max(0, p.ap - (msg.ap || 1));
             if (slot !== undefined) p.inv[slot] = (p.inv[slot] || 0) + 1;
             p.sc += 1;
           }
@@ -4003,7 +4236,7 @@ wss.on('connection', (ws) => {
             // under map size so the payload stays reasonable.
             const vr = Math.min(revealParam === 99 ? 30 : revealParam, 30);
             const cells = buildVisDisk(p.q, p.r, vr, p.id);
-            send(ws, { t: 'vis', q: p.q, r: p.r, vr, cells });
+            send(ws, { t: 'vis', q: p.q, r: p.r, vr, cells, trl: buildTrailDisk(p.q, p.r, vr) });
           }
         }
         break;
@@ -4069,7 +4302,7 @@ wss.on('connection', (ws) => {
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p || p.ll === 0) break;
-        p.ll = 0; p.mp = 0;
+        p.ll = 0; p.ap = 0;
         downPlayer(p);
         break;
       }
@@ -4168,6 +4401,20 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'dbg_debris': {
+        // Test-only: bring space debris down round the sender now.
+        // {"t":"dbg_debris"} or {"t":"dbg_debris","n":8}  (n = fragment count, 1-8)
+        // "days" overrides how long the craters burn: {"t":"dbg_debris","days":0.05}
+        // "hd" pins the heading in degrees (0 = east, 90 = south) for captures;
+        // "at":[q,r] drops the main mass on that hex
+        const p = players[sockets.get(ws)];
+        if (!p) break;
+        triggerDebris(p.q, p.r, msg.n | 0, msg.days === undefined ? undefined : Number(msg.days),
+                      msg.hd === undefined ? undefined : Number(msg.hd),
+                      Array.isArray(msg.at) ? [msg.at[0] | 0, msg.at[1] | 0] : null);
+        break;
+      }
+
       case 'dbg_settle': {
         // Test-only: force a settlement to form on the sender's hex, for
         // exercising the client's 'settle' handler without real firmware.
@@ -4227,11 +4474,11 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      // Test-only: put the sender at bunker hatch #n (default 0) and refill MP,
+      // Test-only: put the sender at bunker hatch #n (default 0) and refill AP,
       // so the descend/ascend flow can be exercised without walking the map.
       //   {"t":"dbg_tunnel","h":3}              surface, standing on the hatch
       //   {"t":"dbg_tunnel","h":3,"below":1}    underground, on that shaft
-      //   {"t":"dbg_tunnel","h":3,"below":1,"mp":0}   ...with a pinned MP budget
+      //   {"t":"dbg_tunnel","h":3,"below":1,"ap":0}   ...with a pinned AP budget
       // The "below" form is what proves the shortcut: descend at one hatch,
       // jump to another shaft, ascend, and you surface somewhere else entirely.
       case 'dbg_tunnel': {
@@ -4239,8 +4486,8 @@ wss.on('connection', (ws) => {
         const p  = players[id];
         if (!p) break;
         const h = Math.max(0, Math.min(bunkerHatches.length - 1, msg.h | 0));
-        // "mp" lets a test pin the budget (0 proves ascend is never MP-gated).
-        p.mp = (msg.mp === undefined) ? 6 : Math.max(0, msg.mp | 0);
+        // "ap" lets a test pin the budget (0 proves ascend is never AP-gated).
+        p.ap = (msg.ap === undefined) ? 6 : Math.max(0, msg.ap | 0);
         p.hatchIdx = h;
         if (msg.below) {
           p.dp = 1;
@@ -4257,7 +4504,8 @@ wss.on('connection', (ws) => {
           p.dp = 0;
           p.q = bunkerHatches[h].sq;
           p.r = bunkerHatches[h].sr;
-          send(ws, { t: 'vis', q: p.q, r: p.r, vr: surfaceVis(p), cells: buildVisDisk(p.q, p.r, surfaceVis(p), p.id) });
+          send(ws, { t: 'vis', q: p.q, r: p.r, vr: surfaceVis(p), cells: buildVisDisk(p.q, p.r, surfaceVis(p), p.id),
+                     trl: buildTrailDisk(p.q, p.r, surfaceVis(p)) });
         }
         broadcast(stateMsg());
         console.log(`[dbg_tunnel] pid=${id} -> hatch #${h} ` +
@@ -4458,7 +4706,7 @@ wss.on('connection', (ws) => {
 // same inputs the firmware snapshots under G.mutex: terrain, footprints, tire
 // tracks, fire, flood, weather, day and the surface players. It is also the
 // tuning harness the spec asks for: --eco-speed=N (MOCK_ECO_SPEED) runs the
-// eco clock N times faster than the board's 5 s tick, so two hours of growth
+// eco clock N times faster than the board's 6.67 s tick, so two hours of growth
 // fit in a few minutes; --eco-seed=N (MOCK_ECO_SEED) pins the genome the way
 // NVS eco/seed does. dbg_eco (above) forces the stages; /state reports it.
 const ECO_SPEED = Math.max(1, Number((process.argv.find(a => a.startsWith('--eco-speed=')) || '').slice(12) || process.env.MOCK_ECO_SPEED || 1));

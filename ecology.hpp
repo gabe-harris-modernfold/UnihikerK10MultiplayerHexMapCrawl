@@ -50,7 +50,7 @@ static const char SAVE_SCAR_F[] = "/save/scar.bin";
 #if ECO_ENABLE
 
 // ── 0. Sizes and tuning ──────────────────────────────────────────────────────
-static constexpr uint32_t ECO_TICK_MS        = 5000;
+static constexpr uint32_t ECO_TICK_MS        = 6667;   // 25% slower growth than the original 5 s (2026-10-12)
 static constexpr int      ECO_SUB            = 4;                      // sub-cells per hex side
 static constexpr int      ECO_W              = MAP_COLS * ECO_SUB;     // 300
 static constexpr int      ECO_H              = MAP_ROWS * ECO_SUB;     // 228
@@ -78,7 +78,7 @@ static constexpr uint8_t  ECO_VISIBLE_DENS   = 4;      // density at or above wh
 // counted as veined and 4096 agents covered 3% of the land (mock harness,
 // 2026-09-27); 6 puts a single well-run vein at the visible threshold.
 static constexpr int      ECO_DENS_DIV       = 6;
-static constexpr uint8_t  ECO_AGE_SCAR_TICKS = 60;     // ticks (5 min) of visible vein in one day earns a vein scar
+static constexpr uint8_t  ECO_AGE_SCAR_TICKS = 45;     // ticks (5 min) of visible vein in one day earns a vein scar
 static constexpr uint16_t ECO_FIRST_CAP      = 256;    // wave 1 agent cap per colony
 static constexpr uint16_t ECO_COLONY_CAP_MAX = 1024;
 static constexpr uint8_t  ECO_EDGE_T         = 20;     // mean trail in a shared border strip that joins two hexes
@@ -388,8 +388,8 @@ static void ecoDecodeGenome(uint32_t seed) {
   s.dep = (uint8_t)constrain(dp, 2, 14);
   s.dk  = st.dk;
 
-  // Cycle timings in eco ticks (5 s): dormancy 1-5 min, forage 15-35 min,
-  // starvation patience 2-5 min, fruit forming ~1-2 min, mature hold 2-4 min.
+  // Cycle timings in eco ticks (6.67 s): dormancy 1.3-6.5 min, forage 20-47 min,
+  // starvation patience 2.7-9 min, fruit forming ~1.3-3 min, mature hold 2.7-6 min.
   int c = s.cycle;
   s.dormancy    = (uint16_t)(12 + c * 3);
   s.germTicks   = 12;
@@ -1032,7 +1032,7 @@ static bool ecoBiteCheck(int pid) {
     dmg.amt = 1; dmg.res = DC_DAISY; dmg.actNewLL = p.ll; dmg.q = p.q; dmg.r = p.r; enqEvt(dmg); }
   ecoNoteHurt(pid, DC_DAISY);   // a bite is an injury: the patch that bit you thickens
   if (p.ll == 0) {
-    p.movesLeft = 0;
+    p.apLeft = 0;
     GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
     dev.res = DC_DAISY; dev.evWsId = p.wsClientId; enqEvt(dev);
   }

@@ -1,19 +1,19 @@
-function getShelterDesc(shelterMaxed, shelterLevel, scrap, mp) {
+function getShelterDesc(shelterMaxed, shelterLevel, scrap, ap) {
   if (shelterMaxed) return 'Improved shelter already here — nothing to build';
-  // Mirrors doShelter(): a basic shelter can only be upgraded (2 scrap, 2 MP);
+  // Mirrors doShelter(): a basic shelter can only be upgraded (2 scrap, 2 AP);
   // an improved one is finished.  Never downgrade, never pay out twice.
-  if (shelterLevel === 1 && scrap >= 2 && mp >= 2) return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
-  if (shelterLevel === 1) return 'Basic shelter here — upgrading needs 2 scrap and 2 MP';
+  if (shelterLevel === 1 && scrap >= 2 && ap >= 2) return '2 scrap → improved shelter \u2302 (2 AP, +8 pts)';
+  if (shelterLevel === 1) return 'Basic shelter here — upgrading needs 2 scrap and 2 AP';
   if (scrap === 0) return 'Needs scrap — none in pack';
-  if (scrap === 1) return '1 scrap → shelter \u2302 (1 MP, +4 pts)';
-  if (mp < 2) return '1 scrap → shelter \u2302 (1 MP, +4 pts) — not enough MP for improved';
-  return '2 scrap → improved shelter \u2302 (2 MP, +8 pts)';
+  if (scrap === 1) return '1 scrap → shelter \u2302 (1 AP, +4 pts)';
+  if (ap < 2) return '1 scrap → shelter \u2302 (1 AP, +4 pts) — not enough AP for improved';
+  return '2 scrap → improved shelter \u2302 (2 AP, +8 pts)';
 }
 
 // Scrap needed for the shelter action on this hex (2 to upgrade a basic one).
 function shelterScrapNeeded(shelterLevel) { return shelterLevel === 1 ? 2 : 1; }
 
-function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds, ll, llCap, terr) {
+function getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, majorWounds, ll, llCap, terr) {
   const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
   const hasScrap = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
   if (shelterMaxed) return 'Max shelter built here';
@@ -32,7 +32,7 @@ function getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, maj
     if (def.id === ACT_CRAFT)  return 'Needs a Settlement hex';
     return 'Not available here';
   }
-  if (!hasMP)    return `Needs ${def.mpCost} MP (have ${mp})`;
+  if (!hasAP)    return `Needs ${def.apCost} AP (have ${ap})`;
   if (!hasScrap) return `Needs scrap (have ${scrap})`;
   if (def.id === ACT_TREAT && med < 1) return 'Needs 1 Medicine';
   return '';
@@ -45,37 +45,22 @@ function initActionPanel() {
   let terrName = '';  // name of the hex under your feet, refreshed by computeActionDefs()
 
   // The #action-panel dialog is now only the home of the multi-step
-  // sub-controls (WATER stepper, TRADE, CRAFT). The one-tap actions live on
-  // the deck under the map (renderActionDeck, below).
+  // sub-controls (TRADE, CRAFT). The one-tap actions live on the deck under
+  // the map (renderActionDeck, below).
   function openSubPanel(title, ctrlId, note) {
     const me = myId >= 0 ? players[myId] : null;
     if (actionTitle) actionTitle.textContent = title;
     const _terrSub = document.getElementById('act-panel-terrain-sub');
     if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
     actionStatusBar.innerHTML =
-      `<span class="act-mp-badge">MP: ${me?.mp ?? 0}</span>` +
+      `<span class="act-ap-badge">AP: ${me?.ap ?? 0}</span>` +
       `<span class="act-terrain-ctx">${escHtml(note ?? terrName)}</span>`;
-    ['action-water-ctrl', 'action-trade-ctrl', 'action-craft-ctrl'].forEach(id => {
+    ['action-trade-ctrl', 'action-craft-ctrl'].forEach(id => {
       document.getElementById(id).style.display = (id === ctrlId) ? '' : 'none';
     });
     actionPanel.classList.add('open');
     actionPanel.setAttribute('aria-hidden', 'false');
   }
-
-  // Water MP stepper
-  let waterMpVal = 1;
-  document.getElementById('action-water-m').addEventListener('click', () => {
-    if (waterMpVal > 1) { waterMpVal--; document.getElementById('action-water-v').textContent = waterMpVal; }
-  });
-  document.getElementById('action-water-p').addEventListener('click', () => {
-    const maxMp = Math.min(3, myId >= 0 ? (players[myId]?.mp ?? 0) : 3);
-    if (waterMpVal < maxMp) { waterMpVal++; document.getElementById('action-water-v').textContent = waterMpVal; }
-  });
-  document.getElementById('action-water-go').addEventListener('click', () => {
-    if (myId < 0) return;
-    send({ t: 'act', a: ACT_WATER, mp: waterMpVal });
-    closeActionPanel();
-  });
 
   // ── Trade sub-control ──────────────────────────────────────────
   let tradeTargetPid = -1;
@@ -296,7 +281,7 @@ function initActionPanel() {
 
   function openCaravanTrade() {
     if (!caravanOnMyHex()) return;
-    // Trade is free, so neither the MP-0 nor the resting gate applies.
+    // Trade is free, so neither the AP-0 nor the resting gate applies.
     const terr = myBoardCell()?.terrain ?? null;
     terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
     tradeTargetPid = CARAVAN_PID;
@@ -315,10 +300,10 @@ function initActionPanel() {
     // shelf appears as soon as the screen is free again (next state tick).
     if (me.ll === 0 || me.enc) return;
     const BLOCKING = '#enc-overlay.open, #char-overlay.open, #trade-overlay.open, ' +
-                     '#item-action-menu.open, #res-drop-menu.open, #help-overlay.open, ' +
+                     '#item-action-menu.open, #help-overlay.open, ' +
                      '#menu-overlay.open, #char-select-overlay.open';
     if (document.querySelector(BLOCKING)) return;
-    // Already in a sub-panel (water stepper, a player trade): don't yank them
+    // Already in a sub-panel (craft, a player trade): don't yank them
     // into the shelf, they can reach it from the deck's TRADE cell, which the
     // state tick has just relit.
     lastAutoTradeHex = key;
@@ -444,7 +429,6 @@ function initActionPanel() {
     if (actionTitle) actionTitle.textContent = '☞ ACTIONS';
     const _terrSub = document.getElementById('act-panel-terrain-sub');
     if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
-    document.getElementById('action-water-ctrl').style.display = 'none';
     document.getElementById('action-trade-ctrl').style.display = 'none';
     document.getElementById('action-craft-ctrl').style.display = 'none';
   }
@@ -463,7 +447,7 @@ function initActionPanel() {
   };
 
   // Everything the deck needs to light itself, from the current state.
-  // Returns [{id, key, icon, label, mpCost, desc, canAct, blockReason, cls}]
+  // Returns [{id, key, icon, label, apCost, desc, canAct, blockReason, cls}]
   // in deck order: the six core actions, then TREAT / SURVEY when they
   // apply, then REST. (SHEET is appended by renderActionDeck — it is a
   // utility, not an action.)
@@ -475,7 +459,7 @@ function initActionPanel() {
     // tunnels are for, and lit SHELTER/SURVEY that the server refuses below.
     const cell = me ? myBoardCell() : null;
     const terr         = cell?.terrain ?? null;
-    const mp           = me?.mp  ?? 0;
+    const ap           = me?.ap  ?? 0;
     const scrap        = me?.inv?.[4] ?? 0;
     const shelterLevel = cell?.shelter ?? 0;
     const isScout      = (me?.arch ?? -1) === 4;  // Scout: Survey is free
@@ -494,35 +478,35 @@ function initActionPanel() {
     else if (me.ll === 0)       gate = 'Downed — cannot act';
     else if (me.enc)            gate = 'In an encounter';
     else if (uiResting.val)     gate = 'Resting — waiting for dawn';
-    else if (mp === 0)          gate = 'Exhausted — REST to recover MP';
-    const gateExemptsTrade = !!me && me.ll > 0 && !me.enc && !uiResting.val && mp === 0;
+    else if (ap === 0)          gate = 'Exhausted — REST to recover AP';
+    const gateExemptsTrade = !!me && me.ll > 0 && !me.enc && !uiResting.val && ap === 0;
 
     // Shelter cost mirrors doShelter(): improved when affordable, basic otherwise;
-    // an existing basic shelter can only be upgraded (2 scrap, 2 MP).
-    const shelterMpCost = (shelterLevel === 1 || (scrap >= 2 && mp >= 2)) ? 2 : 1;
+    // an existing basic shelter can only be upgraded (2 scrap, 2 AP).
+    const shelterApCost = (shelterLevel === 1 || (scrap >= 2 && ap >= 2)) ? 2 : 1;
     const shelterLabel  = shelterLevel >= 1 ? 'UPGRADE SHELTER' : 'BUILD SHELTER';
 
     const defs = [
-      { id: ACT_FORAGE,  label: 'FORAGE',        mpCost: 2,             desc: 'Search for food (Skill check)' },
-      { id: ACT_WATER,   label: 'COLLECT WATER', mpCost: 1,             desc: 'Gather water tokens (1-3 MP)' },
-      { id: ACT_SCAV,    label: 'SCAVENGE',      mpCost: 2,             desc: 'Search for items (Skill check)' },
-      { id: ACT_SHELTER, label: shelterLabel,    mpCost: shelterMpCost, desc: 'Construct shelter — needs scrap (1–2 MP, no roll)' },
-      { id: ACT_CRAFT,   label: 'CRAFT',         mpCost: 1,             desc: 'Craft a known recipe — Settlement only' },
-      { id: ACT_TRADE,   label: 'TRADE',         mpCost: 0,             desc: 'Swap resources with a survivor, or buy from the caravan — free' },
+      { id: ACT_FORAGE,  label: 'FORAGE',        apCost: 2,             desc: 'Search for food (Skill check)' },
+      { id: ACT_WATER,   label: 'COLLECT WATER', apCost: 1,             desc: 'Gather 1 water token (1 AP)' },
+      { id: ACT_SCAV,    label: 'SCAVENGE',      apCost: 2,             desc: 'Search for items (Skill check)' },
+      { id: ACT_SHELTER, label: shelterLabel,    apCost: shelterApCost, desc: 'Construct shelter — needs scrap (1–2 AP, no roll)' },
+      { id: ACT_CRAFT,   label: 'CRAFT',         apCost: 1,             desc: 'Craft a known recipe — Settlement only' },
+      { id: ACT_TRADE,   label: 'TRADE',         apCost: 0,             desc: 'Swap resources with a survivor, or buy from the caravan — free' },
     ];
     // TREAT is offered when there is a Major Wound to treat, or in a
-    // Settlement where it becomes the heal: 1 Medicine + 1 MP → +1 LL, no roll.
+    // Settlement where it becomes the heal: 1 Medicine + 1 AP → +1 LL, no roll.
     // Mirrors doTreat(): a wound always takes precedence over the heal.
     if (majorWounds > 0) {
-      defs.push({ id: ACT_TREAT, label: 'TREAT WOUND', mpCost: 2,
+      defs.push({ id: ACT_TREAT, label: 'TREAT WOUND', apCost: 2,
                   desc: `Close a Major Wound — Endure DN${TREAT_DN}, costs 1 Medicine` });
     } else if (terr === null || terr === 9) {
-      defs.push({ id: ACT_TREAT, label: 'HEAL', mpCost: 1,
+      defs.push({ id: ACT_TREAT, label: 'HEAL', apCost: 1,
                   desc: 'Settlement care — 1 Medicine restores 1 Life Level, no roll' });
     }
     // Scout-exclusive: SURVEY is hidden for non-Scouts
     if (isScout) {
-      defs.push({ id: ACT_SURVEY, label: 'SURVEY', mpCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
+      defs.push({ id: ACT_SURVEY, label: 'SURVEY', apCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
     }
 
     // TRADE availability: requires another connected player, or the caravan, on the same hex
@@ -547,16 +531,16 @@ function initActionPanel() {
                        : def.id === ACT_TREAT ? treatAvail
                        : def.id === ACT_CRAFT ? craftAvail
                        :                        terrAvail;
-      const hasMP      = mp >= def.mpCost;
+      const hasAP      = ap >= def.apCost;
       const hasScrap   = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
       const hasMed     = def.id !== ACT_TREAT || med >= 1;
       const hasWound   = def.id !== ACT_TREAT || majorWounds > 0 || ll < llCap;
-      let canAct       = available && hasMP && hasScrap && hasMed && hasWound;
+      let canAct       = available && hasAP && hasScrap && hasMed && hasWound;
 
       // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
-      if (def.id === ACT_SHELTER) def.desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, mp);
+      if (def.id === ACT_SHELTER) def.desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, ap);
 
-      let blockReason = getBlockReason(def, shelterLevel, available, hasMP, mp, scrap, med, majorWounds, ll, llCap, terr);
+      let blockReason = getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, majorWounds, ll, llCap, terr);
       if (gate && !(def.id === ACT_TRADE && gateExemptsTrade)) { canAct = false; blockReason = gate; }
       def.canAct = canAct;
       def.blockReason = canAct ? '' : blockReason;
@@ -568,20 +552,15 @@ function initActionPanel() {
                       : me.enc ? 'In an encounter'
                       : (uiResting.val || restSent) ? 'Already resting — waiting for dawn'
                       : '';
-    defs.push({ id: ACT_REST, key: ACT_REST, icon: 'rest', label: 'REST', mpCost: 0, cls: 'rest', domId: 'fab-rest-btn',
-                desc: 'Sleep until dawn — recover MP, heal a little', canAct: !restBlocked, blockReason: restBlocked });
+    defs.push({ id: ACT_REST, key: ACT_REST, icon: 'rest', label: 'REST', apCost: 0, cls: 'rest', domId: 'fab-rest-btn',
+                desc: 'Sleep until dawn — recover AP, heal a little', canAct: !restBlocked, blockReason: restBlocked });
     return defs;
   }
 
   function fireAction(def) {
     if (myId < 0) return;
-    const mp = players[myId]?.mp ?? 0;
-    if (def.id === ACT_WATER) {
-      waterMpVal = Math.min(3, Math.max(1, mp));
-      document.getElementById('action-water-v').textContent = waterMpVal;
-      openSubPanel('≈ COLLECT WATER', 'action-water-ctrl');
-      return;
-    }
+    // WATER is one tap like FORAGE: 1 AP -> 1 water, tap again for more.
+    if (def.id === ACT_WATER) { send({ t: 'act', a: ACT_WATER, ap: 1 }); return; }
     if (def.id === ACT_TRADE) {
       buildTradeTargetList();
       openSubPanel('⇄ TRADE', 'action-trade-ctrl');
@@ -630,7 +609,7 @@ function initActionPanel() {
     if (!actionDeck) return;
     const defs = computeActionDefs();
     // SHEET rides the deck as a utility cell, set off from the actions by a rule.
-    defs.push({ key: 'sheet', icon: 'sheet', label: 'SHEET', mpCost: 0, cls: 'util', domId: 'fab-char-btn',
+    defs.push({ key: 'sheet', icon: 'sheet', label: 'SHEET', apCost: 0, cls: 'util', domId: 'fab-char-btn',
                 desc: 'Survivor record — vitals, gear, pack', canAct: true, blockReason: '', fire: openCharSheet });
     const wanted = new Set(defs.map(d => d.key));
     for (const [key, btn] of deckCells) {
@@ -653,12 +632,12 @@ function initActionPanel() {
       btn.classList.toggle('act-disabled', !def.canAct);
       const title = def.label + (def.blockReason ? ' — ' + def.blockReason : '');
       if (btn.title !== title) btn.title = title;
-      const aria = def.label + (def.mpCost > 0 ? ` (${def.mpCost} MP)` : '') + (def.blockReason ? ' — ' + def.blockReason : '');
+      const aria = def.label + (def.apCost > 0 ? ` (${def.apCost} AP)` : '') + (def.blockReason ? ' — ' + def.blockReason : '');
       if (btn.getAttribute('aria-label') !== aria) btn.setAttribute('aria-label', aria);
       const dis = def.canAct ? 'false' : 'true';
       if (btn.getAttribute('aria-disabled') !== dis) btn.setAttribute('aria-disabled', dis);
       const tag = btn.querySelector('.act-cost-tag');
-      const cost = def.mpCost > 0 ? String(def.mpCost) : '';
+      const cost = def.apCost > 0 ? String(def.apCost) : '';
       if (tag.textContent !== cost) tag.textContent = cost;
       if (def.key === 'sheet') order.push(sep);
       order.push(btn);
@@ -677,13 +656,13 @@ function initActionPanel() {
   renderActionDeck();
   van.derive(() => {
     // Read the states so the derive tracks them, then relight the deck.
-    const mp = uiMP.val, resting = uiResting.val;
+    const ap = uiAP.val, resting = uiResting.val;
     renderActionDeck();
     const btn = document.getElementById('fab-rest-btn');
     if (!btn) return;
     btn.classList.toggle('rest-btn-used', resting);
-    // Pulse when exhausted (out of MP) and not yet resting — nudge player to rest
-    btn.classList.toggle('rest-exhausted', mp <= 0 && !resting);
+    // Pulse when exhausted (out of AP) and not yet resting — nudge player to rest
+    btn.classList.toggle('rest-exhausted', ap <= 0 && !resting);
   });
   // Bunker tunnels have no control of their own: stepping onto a Bunker
   // Entrance / Vent Shaft crosses boards by itself (tunnelStepDown/Up in
@@ -886,9 +865,9 @@ function initMenuSystem() {
 
       sec('Movement',
         mp({ class: 'menu-text-body' },
-          'Your Move Points (MP) = max(2, Life Level + 3 − major wounds − encumbrance). ' +
-          'Even at worst condition, you retain minimum 2 MP to stay mobile. ' +
-          'Each hex costs MP equal to its terrain cost (1–2 MP). ' +
+          'Your Action Points (AP) = max(2, Life Level + 3 − major wounds − encumbrance). ' +
+          'Even at worst condition, you retain minimum 2 AP to stay mobile. ' +
+          'Each hex costs AP equal to its terrain cost (1–2 AP). ' +
           'First visit to any hex grants +1 exploration point automatically.'
         ),
         md({ class: 'ctrl-ref' },
@@ -964,32 +943,32 @@ function initMenuSystem() {
       sec('Actions',
         mp({ class: 'menu-text-body' },
           'Open the ☞ ACTION menu to choose an action. ' +
-          'Actions cost MP and most require a skill check. Every action awards points (see Scoring).'
+          'Actions cost AP and most require a skill check. Every action awards points (see Scoring).'
         ),
         md({ class: 'ht-act-list' },
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⚗ FORAGE'),
-            ms({ class: 'ht-act-cost' }, '2 MP'),
+            ms({ class: 'ht-act-cost' }, '2 AP'),
             ms({ class: 'ht-act-desc' }, 'Search for food on Forage terrain. Forage check — success +1–2 food (+3 pts), partial +1 food (+1 pt).')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '≈ COLLECT WATER'),
-            ms({ class: 'ht-act-cost' }, '1–3 MP'),
-            ms({ class: 'ht-act-desc' }, 'Gather water on Water terrain. Spend 1–3 MP; each token collected = +1 pt.')
+            ms({ class: 'ht-act-cost' }, '1 AP'),
+            ms({ class: 'ht-act-desc' }, 'Gather water on Water terrain. Each tap spends 1 AP for 1 water token (+1 pt).')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⚲ SCAVENGE'),
-            ms({ class: 'ht-act-cost' }, '2 MP'),
+            ms({ class: 'ht-act-cost' }, '2 AP'),
             ms({ class: 'ht-act-desc' }, 'Rifle through Salvage terrain. Scavenge check — success +5 pts, partial +2 pts.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
-            ms({ class: 'ht-act-cost' }, '1–2 MP'),
-            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 MP, +4 pts); 2+ scrap = improved shelter 🏠 (2 MP, +8 pts). Boosts rest quality for all campers.')
+            ms({ class: 'ht-act-cost' }, '1–2 AP'),
+            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 AP, +4 pts); 2+ scrap = improved shelter 🏠 (2 AP, +8 pts). Boosts rest quality for all campers.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '◎ SURVEY'),
-            ms({ class: 'ht-act-cost' }, '1 MP'),
+            ms({ class: 'ht-act-cost' }, '1 AP'),
             ms({ class: 'ht-act-desc' }, 'Reveal the ring of hexes one ring beyond your vision. Scout: free. Each hex can only be surveyed once per player (+2 pts first time, +0 repeats). Surveyed hexes dim when you move.')
           ),
         )
@@ -1048,12 +1027,12 @@ function initMenuSystem() {
       sec('Wounds',
         mp({ class: 'menu-text-body' },
           'Encounter hazards leave wounds. Each Minor Wound is −1 on Endure checks; each Major Wound ' +
-          'is −1 on every skill check and −1 MP per day. Three of each tier is the cap.'
+          'is −1 on every skill check and −1 AP per day. Three of each tier is the cap.'
         ),
         mp({ class: 'menu-text-body' },
           'Resting with Food 4+ and Water 3+ knits one Minor Wound closed per night — resting in a ' +
           'Settlement always qualifies. Major Wounds need ' +
-          'the TREAT action: 2 MP, 1 Medicine, and an Endure check at DN 9. The Medic can do this ' +
+          'the TREAT action: 2 AP, 1 Medicine, and an Endure check at DN 9. The Medic can do this ' +
           'anywhere; everyone else must be standing in a Settlement. A near miss downgrades the Major ' +
           'Wound to a Minor one instead of clearing it.'
         )
@@ -1118,7 +1097,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'One entry per archetype seat (at most 5 seated at once): name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (mp/resting/radClean), score/steps. conn:false = empty slot.')
+            mp({ class: 'ht-track-desc' }, 'One entry per archetype seat (at most 5 seated at once): name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (ap/resting/radClean), score/steps. conn:false = empty slot.')
           )
         ),
 
@@ -1146,7 +1125,7 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Fields'),
-            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/mp), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
+            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/ap), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, 'Advantage'),
@@ -1158,15 +1137,15 @@ function initMenuSystem() {
         md({ class: 'ht-track-list' },
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, '#game-narrator'),
-            mp({ class: 'ht-track-desc' }, 'aria-live region. textContent updates after every move ("Moved to Broken Urban at q:5,r:3. MP:3.") and every action ("Scavenge \u2014 Success. MP:1. +5pts.").')
+            mp({ class: 'ht-track-desc' }, 'aria-live region. textContent updates after every move ("Moved to Broken Urban at q:5,r:3. AP:3.") and every action ("Scavenge \u2014 Success. AP:1. +5pts.").')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, '#tc-name'),
             mp({ class: 'ht-track-desc' }, 'Current hex terrain name. Updated on every move.')
           ),
           md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#hud-mp'),
-            mp({ class: 'ht-track-desc' }, 'Movement points remaining. e.g. "3 MP"')
+            md({ class: 'ht-track-label' }, '#hud-ap'),
+            mp({ class: 'ht-track-desc' }, 'Action points remaining. e.g. "3 AP"')
           ),
           md({ class: 'ht-track-row' },
             md({ class: 'ht-track-label' }, '#inv0\u2013#inv4'),

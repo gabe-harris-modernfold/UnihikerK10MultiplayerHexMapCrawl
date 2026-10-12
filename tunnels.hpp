@@ -2,7 +2,7 @@
 // ── tunnels.hpp — the bunker tunnel system ──────────────────────────────────
 // A second, much smaller hex board (TUN_COLS x TUN_ROWS) shared by every
 // player, reached through hatch hexes scattered on the surface map.  Moving a
-// few hexes underground can replace twenty on the surface — but it costs 2 MP
+// few hexes underground can replace twenty on the surface — but it costs 2 AP
 // a step, the air is bad, and the light only reaches so far.
 //
 // Included from Esp32HexMapCrawl.ino after world-system.hpp.  The sizes,
@@ -19,7 +19,7 @@
 //
 // Terrain ids (see TERRAIN_MC / TERRAIN_IMG_NAME in the .ino):
 //   12 Bunker Entrance  — on BOTH boards: the surface hatch and its shaft cell
-//   13 Vent Shaft       — likewise, but costs VENT_ASCEND_MP to climb out of
+//   13 Vent Shaft       — likewise, but costs VENT_ASCEND_AP to climb out of
 //   14 Tunnel Floor     — the walkable underground; waters and salvages
 //                         (corridors and rooms -- which sides of a cell are
 //                         open is G.tunnelOp, see "Open sides" below)
@@ -38,7 +38,7 @@ static constexpr int HATCH_MIN_DIST = 14;
 // down there is dead still, and a whole night breathing it costs a point of LL
 // this often.  Sleeping underground is a trade, not a free hotel: a guaranteed
 // 2 LL of exposure out in the open against a 30% chance of 1 down here.
-// Only a *rest* rolls it; walking a corridor through costs nothing but MP.
+// Only a *rest* rolls it; walking a corridor through costs nothing but AP.
 static constexpr int TUNNEL_REST_LL_PCT = 30;
 
 // ── The voice in the corridor ───────────────────────────────────────────────
@@ -143,7 +143,7 @@ static int hatchAtShaft(int q, int r) {
 // ── Forced surfacing ─────────────────────────────────────────────
 // Put pid back on the surface at the hatch they descended through, and tell
 // every client. Used for the downed sweep in tickGame(): a survivor who goes
-// down in the tunnels has movesLeft zeroed and no legal action while the bad
+// down in the tunnels has apLeft zeroed and no legal action while the bad
 // air keeps ticking, so they would die with no agency and no way out.
 // Caller holds G.mutex.
 static void surfacePlayer(int pid) {
@@ -153,7 +153,7 @@ static void surfacePlayer(int pid) {
   if (hatchCount > 0) { p.q = bunkerHatches[h].sq; p.r = bunkerHatches[h].sr; }
   p.depth = 0;
   GameEvent ev = {}; ev.type = EVT_TUNNEL_EXIT; ev.pid = (uint8_t)pid;
-  ev.q = p.q; ev.r = p.r; ev.amt = h; ev.moveMP = p.movesLeft;
+  ev.q = p.q; ev.r = p.r; ev.amt = h; ev.moveAP = p.apLeft;
   enqEvt(ev);
   Log.notice("surfacePlayer pid=%d -> hatch=%u (%d,%d)", pid, (unsigned)h, (int)p.q, (int)p.r);
 }
@@ -211,8 +211,8 @@ static void tickTunnelTaunts() {
 // Climbing out of a Vent Shaft (13) costs double.  Shared with the reconnect
 // path, so it stays a named function rather than an inline max().
 static void tunnelAscendCost(Player& p, uint8_t shaftTerrain) {
-  int cost = (shaftTerrain == 13) ? (int)VENT_ASCEND_MP : 1;
-  p.movesLeft = (int8_t)max(0, (int)p.movesLeft - cost);
+  int cost = (shaftTerrain == 13) ? (int)VENT_ASCEND_AP : 1;
+  p.apLeft = (int8_t)max(0, (int)p.apLeft - cost);
 }
 
 // Just stepped onto a surface hex -- is it a hatch?  Caller holds G.mutex.
@@ -224,7 +224,7 @@ static bool tunnelStepDown(int pid) {
   if (!isHatchTerrain(G.map[p.r][p.q].terrain)) return false;
   int h = hatchAtSurface(p.q, p.r);
   if (h < 0) return false;                      // terrain says hatch, table disagrees
-  p.movesLeft = (int8_t)max(0, (int)p.movesLeft - 1);
+  p.apLeft = (int8_t)max(0, (int)p.apLeft - 1);
   p.depth     = 1;
   p.hatchIdx  = (uint8_t)h;
   p.tq        = (int16_t)bunkerHatches[h].tq;
@@ -235,10 +235,10 @@ static bool tunnelStepDown(int pid) {
   // refusal to descend rather than a mood.
   tunnelTauntTicks[pid] = 0;
   GameEvent ev = {}; ev.type = EVT_TUNNEL_ENTER; ev.pid = (uint8_t)pid;
-  ev.q = p.q; ev.r = p.r; ev.amt = (uint8_t)h; ev.moveMP = p.movesLeft;
+  ev.q = p.q; ev.r = p.r; ev.amt = (uint8_t)h; ev.moveAP = p.apLeft;
   enqEvt(ev);
-  Log.notice("tun step-down pid=%d hatch=%d (%d,%d)->(%d,%d) mp=%d",
-             pid, h, (int)p.q, (int)p.r, (int)p.tq, (int)p.tr, (int)p.movesLeft);
+  Log.notice("tun step-down pid=%d hatch=%d (%d,%d)->(%d,%d) ap=%d",
+             pid, h, (int)p.q, (int)p.r, (int)p.tq, (int)p.tr, (int)p.apLeft);
   return true;
 }
 
@@ -256,11 +256,12 @@ static bool tunnelStepUp(int pid) {
   p.q        = bunkerHatches[h].sq;
   p.r        = bunkerHatches[h].sr;
   G.map[p.r][p.q].footprints |= (1 << pid);
+  trailStart(pid, p.q, p.r);   // a surface trail starts again at the hatch (trails.hpp)
   GameEvent ev = {}; ev.type = EVT_TUNNEL_EXIT; ev.pid = (uint8_t)pid;
-  ev.q = p.q; ev.r = p.r; ev.amt = (uint8_t)h; ev.moveMP = p.movesLeft;
+  ev.q = p.q; ev.r = p.r; ev.amt = (uint8_t)h; ev.moveAP = p.apLeft;
   enqEvt(ev);
-  Log.notice("tun step-up pid=%d hatch=%d -> (%d,%d) mp=%d",
-             pid, h, (int)p.q, (int)p.r, (int)p.movesLeft);
+  Log.notice("tun step-up pid=%d hatch=%d -> (%d,%d) ap=%d",
+             pid, h, (int)p.q, (int)p.r, (int)p.apLeft);
   // Climbing out is entering a surface hex: a bloomed daisy patch on the
   // hatch bites (ecology.hpp). After the exit event, so the client is back
   // on the surface board before the damage arrives.

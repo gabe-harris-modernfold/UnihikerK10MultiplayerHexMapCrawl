@@ -147,7 +147,7 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     return "no_res";
   }
   // Deduct costs (a negative cost is a gain; LL gains respect the ceiling)
-  if (ch.costLL) { p.ll = (uint8_t)constrain((int)p.ll - ch.costLL, 0, (int)effectiveMaxLL(pid)); if (p.ll == 0) p.movesLeft = 0; }
+  if (ch.costLL) { p.ll = (uint8_t)constrain((int)p.ll - ch.costLL, 0, (int)effectiveMaxLL(pid)); if (p.ll == 0) p.apLeft = 0; }
   p.radiation = (uint8_t)constrain((int)p.radiation + ch.costRad, 0, 10);
   p.inv[1]    = (uint8_t)constrain((int)p.inv[1] - ch.costFood,  0, 99);
   p.inv[0]    = (uint8_t)constrain((int)p.inv[0] - ch.costWat,   0, 99);
@@ -216,7 +216,7 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     } else if (ch.hazLL < 0) {
       const int floorLL = enc.trap ? min(1, llBefore) : 0;
       p.ll = (uint8_t)max(floorLL, (int)p.ll + ch.hazLL);
-      if (p.ll == 0) { p.movesLeft = 0; ledFlash(255, 0, 0); }
+      if (p.ll == 0) { p.apLeft = 0; ledFlash(255, 0, 0); }
       ecoNoteHurt(pid, DC_ENC_HAZARD);   // an injury: the daisies seed on the encounter's hex (ecology.hpp)
     }
     // What the hazard actually cost, not what the file asked for: a range
@@ -232,8 +232,8 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     }
     ev.encPenWndMin = addWound(p, WOUND_MINOR, ch.hazWMin);
     ev.encPenWndMaj = addWound(p, WOUND_MAJOR, ch.hazWMaj);
-    // A major wound costs MP for the rest of the day, not just from dawn.
-    if (ev.encPenWndMaj) p.movesLeft = (int8_t)max(0, (int)p.movesLeft - (int)ev.encPenWndMaj);
+    // A major wound costs AP for the rest of the day, not just from dawn.
+    if (ev.encPenWndMaj) p.apLeft = (int8_t)max(0, (int)p.apLeft - (int)ev.encPenWndMaj);
     encounterEnded = (p.ll == 0) || ch.hazEnds;
     // Auto-drain co-located allies: major hazard (LL loss) costs 2, minor costs 1
     int drainAmt = (ch.hazLL < 0) ? 2 : 1;

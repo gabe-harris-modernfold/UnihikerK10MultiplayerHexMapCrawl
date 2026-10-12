@@ -31,7 +31,7 @@ check("map is 75x57", (config.MAP_COLS, config.MAP_ROWS) == (75, 57))
 check("torus wraps", config.wrap_q(-1) == 74 and config.wrap_r(57) == 0)
 check("neighbor dir0 is +q", config.neighbor(10, 10, 0) == (11, 10))
 check("river impassable", config.TERRAIN_MC[config.TERR_RIVER] == config.IMPASSABLE)
-check("mp floor", config.base_mp(0) == 3 and config.base_mp(-5) == config.MP_FLOOR)
+check("ap floor", config.base_ap(0) == 3 and config.base_ap(-5) == config.AP_FLOOR)
 
 print("mapdec")
 c = decode_cell(0x02 | 0x40 | 0x80, 0x09 | 0x40 | 0x80, 0x47)
@@ -60,7 +60,7 @@ print("state")
 o = Observation()
 sync = {"t": "sync", "id": 2, "tk": 5, "vr": 3, "map": full,
         "p": [{"id": i, "on": 1, "q": i, "r": 0, "sc": i * 10, "vm": 0b101010,
-               "ll": 7, "mp": 10, "inv": [1, 2, 3, 4, 5], "sk": [2, 1, 0, 1, 1],
+               "ll": 7, "ap": 10, "inv": [1, 2, 3, 4, 5], "sk": [2, 1, 0, 1, 1],
                "nm": config.ARCHETYPE_NAME[i], "arch": i} for i in range(6)],
         "gs": {"tc": 1, "dc": 11, "wp": 2},
         "world": {"caravan": {"q": 1, "r": 2, "active": 1, "inv": [1, 2, 3, 4, 5],
@@ -126,7 +126,7 @@ check("daisy bite is a known cause",
 
 print("policy")
 check("move msg", Action("move", d=3).to_msg() == {"t": "m", "d": 3})
-check("act msg", Action("act", a=7, mp=1).to_msg() == {"t": "act", "a": 7, "mp": 1})
+check("act msg", Action("act", a=7, ap=1).to_msg() == {"t": "act", "a": 7, "ap": 1})
 check("craft carries recipe", Action("act", a=5, recipe=9).to_msg()["r"] == 9)
 check("noop renders None", Action("noop").to_msg() is None)
 check("bank with keep", Action("enc_bank", keep=[1, 0, 0, 0, 0]).to_msg()["keep"][0] == 1)
@@ -325,9 +325,9 @@ o3.players[2].inv = [5, 3, 0, 0, 0]
 o3.players[2].ll = 0
 check("scoremax noops when downed", sm.decide(o3).kind == "noop")
 o3.players[2].ll = 7
-o3.players[2].mp = 0
-check("out of MP -> rest", sm.decide(o3).to_msg()["a"] == config.ACT_REST)
-o3.players[2].mp = 10
+o3.players[2].ap = 0
+check("out of AP -> rest", sm.decide(o3).to_msg()["a"] == config.ACT_REST)
+o3.players[2].ap = 10
 
 cm = pmod.make("contentmax", random.Random(3))
 w.grid[10][10] = mk(poi=True)
@@ -368,25 +368,25 @@ o4.map = w
 o4.day = 5
 me4 = o4.players[2]
 me4.q, me4.r, me4.inv, me4.inv_slots = 10, 10, [5, 3, 0, 0, 0], 8
-me4.valid_moves, me4.ll, me4.mp = 0b111111, 7, 0
+me4.valid_moves, me4.ll, me4.ap = 0b111111, 7, 0
 g = pmod.make("scoremax", random.Random(3))
 g.set_pid(2)
 first = g.decide(o4)
-check("mp 0 -> rest once", first.to_msg()["a"] == config.ACT_REST)
+check("ap 0 -> rest once", first.to_msg()["a"] == config.ACT_REST)
 check("second call does not re-rest",
       all(g.decide(o4).to_msg() != first.to_msg() for _ in range(20)))
 o4.day = 6
 check("new day re-arms rest", g.decide(o4).to_msg()["a"] == config.ACT_REST)
 # A REST decided just before a reconnect never reaches the board, but the bot
 # has already marked itself rested. With a hard per-day latch it then sits at
-# mp 0 and awake forever -- and one awake player stops tickGame() ending the
+# ap 0 and awake forever -- and one awake player stops tickGame() ending the
 # day early for the whole fleet. Froze five bots at day 16 in a live run.
 import policy.survivor as _surv
 g._last_rest_sent -= (_surv.REST_RETRY_S + 1.0)
 check("dropped REST retries after cooldown",
       g.decide(o4).to_msg()["a"] == config.ACT_REST)
 check("but not before the cooldown elapses",
-      all(g.decide(o4).to_msg() != {"t": "act", "a": config.ACT_REST, "mp": 1}
+      all(g.decide(o4).to_msg() != {"t": "act", "a": config.ACT_REST, "ap": 1}
           for _ in range(5)))
 # Server-confirmed resting (only ever seen via sync) suppresses it outright.
 me4.resting = True
@@ -421,7 +421,7 @@ check("dawn clears resting", o5.players[2].resting is False and o5.day == 9)
 g3 = pmod.make("contentmax", random.Random(3))
 g3.set_pid(2)
 w.grid[10][10] = mk(poi=True)
-o4.day, me4.mp = 7, 10
+o4.day, me4.ap = 7, 10
 opens = [g3.decide(o4).kind for _ in range(10)]
 check("stale POI does not loop forever", opens.count("enc_start") <= 2)
 check("falls through to movement", "move" in opens)
@@ -439,7 +439,7 @@ for rr in range(config.MAP_ROWS):
 w2.grid[10][16] = mk(resource=config.RES_WATER + 1)   # a pond 6 hexes east
 o6.map = w2
 me6 = o6.players[2]
-me6.q, me6.r, me6.ll, me6.mp = 10, 10, 5, 6
+me6.q, me6.r, me6.ll, me6.ap = 10, 10, 5, 6
 me6.valid_moves, me6.inv_slots = 0b111111, 8
 me6.inv = [0, 3, 0, 0, 0]                              # bone dry, food fine
 for pname in ("scoremax", "coward", "rival", "contentmax"):
@@ -453,11 +453,11 @@ me6.ll = 1
 p7 = pmod.make("coward", random.Random(3))
 p7.set_pid(2)
 check("thirst outranks resting", "EMERGENCY water" in p7.decide(o6).why)
-# With MP gone there is no choice but to rest.
-me6.mp = 0
-check("no MP -> rest anyway", p7.decide(o6).to_msg()["a"] == config.ACT_REST)
+# With AP gone there is no choice but to rest.
+me6.ap = 0
+check("no AP -> rest anyway", p7.decide(o6).to_msg()["a"] == config.ACT_REST)
 # Standing on water, drink instead of walking.
-me6.mp = 6
+me6.ap = 6
 w2.grid[10][10] = mk(terrain=3)                        # Marsh has water
 check("drinks on water terrain",
       pmod.make("scoremax", random.Random(3)).decide(o6).to_msg()["a"] == config.ACT_WATER)
@@ -494,18 +494,18 @@ me7 = o7.players[2]
 me7.q, me7.r, me7.ll = 10, 10, 5
 me7.valid_moves, me7.inv_slots, me7.archetype = 0b111111, 8, 2
 me7.inv = [4, 4, 0, 0, 2]                              # supplies fine, 2 scrap
-me7.mp = 1                                             # last move of the day
+me7.ap = 1                                             # last move of the day
 
 ps = pmod.make("scoremax", random.Random(3))
 ps.set_pid(2)
 check("shelter is off by default", ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
 ps.shelter_when_exposed = True
-check("shelters on the last MP when exposed",
+check("shelters on the last AP when exposed",
       ps.decide(o7).to_msg()["a"] == config.ACT_SHELTER)
-me7.mp = 5
+me7.ap = 5
 check("does not burn a mid-day move on it",
       ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
-me7.mp = 1
+me7.ap = 1
 me7.inv = [4, 4, 0, 0, 0]                              # no scrap
 check("no scrap, no shelter", ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
 me7.inv = [4, 4, 0, 0, 2]
@@ -517,18 +517,18 @@ me7.archetype = 5                                      # Endurer is exempt
 check("Endurer does not waste scrap on shelter",
       ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
 me7.archetype = 2
-# Dry on the last MP: one step cannot reach water, but the shelter zeroes the
+# Dry on the last AP: one step cannot reach water, but the shelter zeroes the
 # whole dawn loss, so it has to outrank the emergency hunt *here* only.
 me7.inv = [0, 4, 0, 0, 2]
 w3.grid[10][16] = mk(resource=config.RES_WATER + 1)
 ps._shelter_sent = None     # a separate scenario on the same hex and day
-check("shelter beats the water hunt on the last MP",
+check("shelter beats the water hunt on the last AP",
       ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
-me7.mp = 6
+me7.ap = 6
 check("but the water hunt still wins earlier in the day",
       ps.decide(o7).kind == "move")
 w3.grid[10][16] = mk()
-me7.mp = 1
+me7.ap = 1
 ps._shelter_sent = None
 check("shelters once", ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
 check("and a SHELTER that built nothing is not re-sent the same day",
@@ -679,7 +679,7 @@ blaze = [_ev(5.0, {"k": "fire_dmg", "pid": 1, "q": 1, "r": 1, "intensity": 3})]
 check("a blaze (intensity 3) costs 2 LL, a burn costs 1",
       DamageLedger(blaze).loss_ledger().get("fire") == 2)
 
-# A flash flood zeroes MP *and* takes LL; it used to cost nothing at all, so
+# A flash flood zeroes AP *and* takes LL; it used to cost nothing at all, so
 # a missing llLost must read as 0 rather than defaulting to 1.
 flood = [_ev(5.0, {"k": "flood_dmg", "pid": 1, "q": 1, "r": 1,
                    "intensity": 10, "llLost": 1}),
@@ -717,7 +717,7 @@ check("the tunnel board does not wrap",
       not config.tun_in(-1, 4) and not config.tun_in(16, 4) and config.tun_in(15, 9))
 check("tunnel distance does not search the wrap",
       config.tun_distance(0, 4, 15, 4) == 15)
-check("Tunnel Floor costs 2 MP", config.TERRAIN_MC[TERR_TUNNEL] == config.TUNNEL_MC)
+check("Tunnel Floor costs 2 AP", config.TERRAIN_MC[TERR_TUNNEL] == config.TUNNEL_MC)
 check("Collapsed Tunnel is impassable",
       config.TERRAIN_MC[TERR_COLLAPSED] == config.IMPASSABLE)
 check("a Vent Shaft costs double to climb",
@@ -885,7 +885,7 @@ check("frontier_bonus does not count the rock beyond the edge",
 print("tunnel policies")
 
 
-def underground_obs(policy_pid=2, food=4, water=5, mp=10, ll=6, at=(7, 4)):
+def underground_obs(policy_pid=2, food=4, water=5, ap=10, ll=6, at=(7, 4)):
     """A bot standing in the corridor of the little test network above."""
     o = Observation()
     o.apply(sync)
@@ -906,7 +906,7 @@ def underground_obs(policy_pid=2, food=4, water=5, mp=10, ll=6, at=(7, 4)):
     me.depth, me.tq, me.tr = 1, at[0], at[1]
     me.q, me.r = 2, 0
     me.inv = [water, food, 0, 0, 0]
-    me.mp, me.ll, me.inv_slots, me.valid_moves = mp, ll, 8, 0b111111
+    me.ap, me.ll, me.inv_slots, me.valid_moves = ap, ll, 8, 0b111111
     return o
 
 
@@ -919,14 +919,14 @@ a = sc.decide(ou)
 check("a surface policy climbs out of the tunnels",
       a.kind == "move" and "fell down a hatch" in a.why)
 check("and it aims at a shaft", "shaft" in a.why)
-# REST works at depth 1 now, so a survivor out of MP down a hole sleeps
+# REST works at depth 1 now, so a survivor out of AP down a hole sleeps
 # rather than stalling. That matters well beyond this bot: tickGame()
 # collapses the day only when EVERY connected player is resting, so the old
 # refusal held the whole fleet's day open whenever one of them was below.
-ou.players[2].mp = 0
+ou.players[2].ap = 0
 ou.players[2].valid_moves = 0
 a = sc.decide(ou)
-check("out of MP underground rests instead of stalling",
+check("out of AP underground rests instead of stalling",
       a.kind == "act" and a.to_msg().get("a") == config.ACT_REST)
 check("and the reason says where it slept", "underground" in a.why)
 
@@ -954,21 +954,21 @@ sub2.set_pid(2)
 a = sub2.decide(oe2)
 check("no food underground -> head for a shaft",
       a.kind == "move" and "food" in a.why and "shaft" in a.why)
-# MP reserve: keep back enough to walk to a way out -- but only the food
+# AP reserve: keep back enough to walk to a way out -- but only the food
 # clock actually ends a dive. Running dry underground means sleeping where
 # you stand, and that is cheaper than sleeping in the open (a 30% bad-air
 # roll against a guaranteed 2 LL of exposure), so a bot that scrambled for
 # the surface every dusk would be paying to make itself worse off.
-oe3 = underground_obs(mp=3, food=3)
+oe3 = underground_obs(ap=3, food=3)
 sub3 = pmod.make("subterranean", random.Random(3))
 sub3.set_pid(2)
-check("the reserve is measured, not guessed", sub3.mp_reserve(oe3) > 2)
-check("a thin MP budget alone does not end the dive",
+check("the reserve is measured, not guessed", sub3.ap_reserve(oe3) > 2)
+check("a thin AP budget alone does not end the dive",
       "leaving while we still can" not in sub3.decide(oe3).why)
-oe3b = underground_obs(mp=3, food=1)
+oe3b = underground_obs(ap=3, food=1)
 sub3b = pmod.make("subterranean", random.Random(3))
 sub3b.set_pid(2)
-check("thin MP with the food nearly gone does",
+check("thin AP with the food nearly gone does",
       "leaving while we still can" in sub3b.decide(oe3b).why)
 
 # enc_start must carry the TUNNEL coordinates -- handleMsg_enc_start
@@ -1005,7 +1005,7 @@ a = runner2.decide(orun2)
 check("but hunger takes the nearest exit", "food" in a.why and a.kind == "move")
 
 
-def surface_obs(food=4, water=5, mp=10, ll=6):
+def surface_obs(food=4, water=5, ap=10, ll=6):
     """On the surface at (10,10), with a Bunker Entrance and a Vent Shaft
     the same distance away in opposite directions."""
     o = Observation()
@@ -1021,7 +1021,7 @@ def surface_obs(food=4, water=5, mp=10, ll=6):
     me = o.players[2]
     me.q, me.r, me.depth = 10, 10, 0
     me.inv = [water, food, 0, 0, 0]
-    me.mp, me.ll, me.inv_slots, me.valid_moves = mp, ll, 8, 0b111111
+    me.ap, me.ll, me.inv_slots, me.valid_moves = ap, ll, 8, 0b111111
     return o
 
 
@@ -1042,10 +1042,10 @@ sub6.set_pid(2)
 a = sub6.decide(os2)
 check("underfed, it resupplies instead of diving",
       "diving" not in a.why and a.kind in ("move", "act"))
-os3 = surface_obs(mp=1)
+os3 = surface_obs(ap=1)
 sub7 = pmod.make("subterranean", random.Random(3))
 sub7.set_pid(2)
-check("and it will not set off with no MP to walk on",
+check("and it will not set off with no AP to walk on",
       "diving" not in sub7.decide(os3).why)
 
 # Dry with a pond 7 hexes off and a hatch 3: the survival floor runs before
@@ -1124,36 +1124,36 @@ for pname in ("subterranean", "tunnelrunner"):
                                   "use_item", "trade_offer"})
 
 # The tunnel metrics are what the runs are read off, so they have to add up.
-mp_pol = pmod.make("tunnelrunner", random.Random(5))
-mp_pol.set_pid(2)
+ap_pol = pmod.make("tunnelrunner", random.Random(5))
+ap_pol.set_pid(2)
 for e in ({"k": "tun_in", "pid": 2, "q": 10, "r": 10, "hatch": 0},
           {"k": "mv", "pid": 2, "q": 5, "r": 4, "dp": 1},
           {"k": "mv", "pid": 2, "q": 6, "r": 4, "dp": 1},
           {"k": "mv", "pid": 2, "q": 7, "r": 4, "dp": 1},
           {"k": "tun_out", "pid": 2, "q": 40, "r": 10, "hatch": 1}):
-    mp_pol.on_event(dict(e, t="ev"))
-cs = mp_pol.content_score()
+    ap_pol.on_event(dict(e, t="ev"))
+cs = ap_pol.content_score()
 check("descents and ascents are counted",
       cs["descents"] == 1 and cs["ascents"] == 1)
 check("underground steps are counted", cs["tunnel_steps"] == 3)
 check("the crossing is measured in surface hexes", cs["transit_hexes"] == 30)
-check("MP per surface hex is the saving, measured",
-      cs["mp_per_surface_hex"] == 0.2)
+check("AP per surface hex is the saving, measured",
+      cs["ap_per_surface_hex"] == 0.2)
 check("shafts used are distinct", cs["shafts_used"] == 1)
 # Other players' crossings must not land in our own totals.
-mp_pol.on_event({"t": "ev", "k": "tun_in", "pid": 4, "q": 1, "r": 1, "hatch": 2})
+ap_pol.on_event({"t": "ev", "k": "tun_in", "pid": 4, "q": 1, "r": 1, "hatch": 2})
 check("another survivor's dive is not ours",
-      mp_pol.content_score()["descents"] == 1)
+      ap_pol.content_score()["descents"] == 1)
 # A dawn spent below costs no exposure under either hatch now -- dawnUpkeep
 # treats depth as cover. The split is still counted because the two hatch
-# types differ on the climb out, 1 MP against 2.
-mp_pol._depth = 1
-mp_pol._dive_terrain = TERR_BUNKER
-mp_pol.on_event({"t": "ev", "k": "dawn", "pid": 2, "day": 4})
-mp_pol._dive_terrain = TERR_VENT
-mp_pol.on_event({"t": "ev", "k": "dawn", "pid": 2, "day": 5})
-mp_pol.on_event({"t": "ev", "k": "act", "pid": 2, "a": config.ACT_REST})
-cs = mp_pol.content_score()
+# types differ on the climb out, 1 AP against 2.
+ap_pol._depth = 1
+ap_pol._dive_terrain = TERR_BUNKER
+ap_pol.on_event({"t": "ev", "k": "dawn", "pid": 2, "day": 4})
+ap_pol._dive_terrain = TERR_VENT
+ap_pol.on_event({"t": "ev", "k": "dawn", "pid": 2, "day": 5})
+ap_pol.on_event({"t": "ev", "k": "act", "pid": 2, "a": config.ACT_REST})
+cs = ap_pol.content_score()
 check("dawns below are split by hatch type",
       cs["dawns_below"] == 2 and cs["bunker_dawns"] == 1 and cs["vent_dawns"] == 1)
 check("nights actually slept below are counted", cs["rests_below"] == 1)
@@ -1161,7 +1161,7 @@ check("what those dawns cost is recorded", cs["below_dawn_ll"] >= 0)
 
 print("carry cap (the livelock that killed the first hardware run)")
 # Four of five bots sat at room 0 asking for water they could not hold: 376
-# refused actions a minute, no MP spent, nothing in any log to say why.
+# refused actions a minute, no AP spent, nothing in any log to say why.
 # FORAGE and WATER are uncapped now (they overfill and pay encumbrance);
 # only SCAVENGE is still bound, and a policy must check before asking.
 from policy.survivor import token_room as _room
@@ -1189,7 +1189,7 @@ _sub = pmod.make("subterranean", random.Random(5)); _sub.set_pid(2)
 _su = underground_obs()
 _su.players[2].inv = [2, 2, 2, 1, 1]        # 8 of 8 — no room for scrap
 _su.players[2].inv_slots = 8
-_su.players[2].mp = 10
+_su.players[2].ap = 10
 check("no SCAVENGE request when the pack cannot hold the scrap",
       not (_sub.pursue_below(_su) or Action("noop")).kind == "act"
       or (_sub.pursue_below(_su).a != config.ACT_SCAV))
@@ -1432,11 +1432,11 @@ async def _reply_checks():
     bc, rec, pol, broker = _bot()
     rids = [bc.replies.stamp({"t": c})[0]["rid"] for c in ("m", "m", "act", "pick")]
     await bc._on_message({"t": "ack", "rid": rids[0], "cmd": "m"})
-    await bc._on_message({"t": "nack", "rid": rids[1], "cmd": "m", "why": "no_mp"})
+    await bc._on_message({"t": "nack", "rid": rids[1], "cmd": "m", "why": "no_ap"})
     await bc._on_message({"t": "nack", "rid": rids[2], "cmd": "act", "why": "resting"})
     ok1 = (bc.acks == 1
-           and bc.nacks == {"m": {"no_mp": 1}, "act": {"resting": 1}}
-           and pol.replies[1] == ("m", False, "no_mp")
+           and bc.nacks == {"m": {"no_ap": 1}, "act": {"resting": 1}}
+           and pol.replies[1] == ("m", False, "no_ap")
            and any(ch == "nack" for ch, _a, _d in rec.rows))
     # A refused pick gives the slot back at once instead of waiting out the
     # sync watchdog.
@@ -1556,7 +1556,7 @@ print("oracles")
 
 def _tick(p=None, tk=10, **kw):
     base = {"on": 1, "ll": 5, "llCap": 7, "food": 4, "water": 4, "rad": 0,
-            "mp": 3, "inv": [1, 1, 0, 0, 0], "vm": 7, "rt": 0, "sp": 10}
+            "ap": 3, "inv": [1, 1, 0, 0, 0], "vm": 7, "rt": 0, "sp": 10}
     base.update(kw)
     return {"t": "s", "tk": tk, "p": [base] + [{"on": 0}] * 5}
 
@@ -1583,8 +1583,8 @@ for label, kw, want in [
         ("food outside [1, 6]", {"food": 0}, "food_out_of_range"),
         ("water outside [1, 6]", {"water": 7}, "water_out_of_range"),
         ("radiation outside [0, 10]", {"rad": 11}, "rad_out_of_range"),
-        ("a downed survivor with MP", {"ll": 0, "mp": 2}, "downed_with_mp"),
-        ("a move mask while out of MP", {"mp": 0}, "vm_when_immobile"),
+        ("a downed survivor with AP", {"ll": 0, "ap": 2}, "downed_with_ap"),
+        ("a move mask while out of AP", {"ap": 0}, "vm_when_immobile"),
         ("a move mask while resting", {"rt": 1}, "vm_when_immobile"),
         ("a resource count over 99", {"inv": [100, 0, 0, 0, 0]}, "inv_out_of_range")]:
     _o, _f, _ob, _c = _wo()
@@ -1642,7 +1642,7 @@ check("an acked move with no mv is ack_without_effect",
       "ack_without_effect" in _checks(_f))
 
 _o, _f, _ob, _c = _wo()
-_o.on_reply(False, "act", "no_mp", seated=True)
+_o.on_reply(False, "act", "no_ap", seated=True)
 _o.on_rx({"t": "ev", "k": "act", "pid": 0, "out": 0, "bw": 3, "sq": 1}, _ob)
 _o.on_reply(False, "act", "pack_full", seated=True)
 _o.on_rx({"t": "ev", "k": "act", "pid": 0, "out": 0, "bw": 3, "sq": 2}, _ob)
@@ -1651,7 +1651,7 @@ _c[0] = 10.0
 _o.poll()
 _cs = _checks(_f)
 check("a nack and its blocked event must agree on the reason",
-      "nack_event_mismatch" in _cs and ("nack_event_mismatch", "no_mp") not in _f.counts)
+      "nack_event_mismatch" in _cs and ("nack_event_mismatch", "no_ap") not in _f.counts)
 check("a nack whose blocked event never comes is caught", "nack_without_event" in _cs)
 _o, _f, _ob, _c = _wo()
 _o.on_reply(False, "act", "in_enc", seated=True)
@@ -1886,14 +1886,14 @@ _os.apply(copy.deepcopy(sync))
 _os.pid = 2
 _os.map = w
 _me = _os.players[2]
-_me.q, _me.r, _me.connected, _me.ll, _me.mp = 10, 10, True, 7, 0
+_me.q, _me.r, _me.connected, _me.ll, _me.ap = 10, 10, True, 7, 0
 _me.inv = [5, 3, 0, 0, 0]
 _me.valid_moves = 0
 _sent_pol = pmod.make("sentinel", random.Random(3))
 _sm_pol = pmod.make("scoremax", random.Random(3))
 _sa = _sent_pol.decide(_os).to_msg()
 _ma = _sm_pol.decide(_os).to_msg()
-check("scoremax rests out of MP, the sentinel does not",
+check("scoremax rests out of AP, the sentinel does not",
       _ma and _ma.get("a") == config.ACT_REST
       and not (_sa and _sa.get("t") == "act" and _sa.get("a") == config.ACT_REST))
 _me.ll = 1
@@ -1912,18 +1912,18 @@ print("sentinel camp")
 from policy.sentinel import camp_value
 
 
-def _sobs(q=10, r=10, mp=5, inv=(5, 3, 0, 0, 2)):
+def _sobs(q=10, r=10, ap=5, inv=(5, 3, 0, 0, 2)):
     o = Observation()
     o.apply(copy.deepcopy(sync))
     o.pid = 2
     o.map = copy.deepcopy(w)
     me = o.players[2]
-    me.q, me.r, me.connected, me.ll, me.mp = q, r, True, 6, mp
+    me.q, me.r, me.connected, me.ll, me.ap = q, r, True, 6, ap
     me.food, me.water, me.depth = 4, 4, 0
     me.inv = list(inv)
     me.inv_type = [0] * config.INV_SLOTS_MAX
     me.equip = [0] * config.EQUIP_SLOTS
-    me.valid_moves = 0b111111 if mp else 0
+    me.valid_moves = 0b111111 if ap else 0
     return o
 
 
@@ -1961,9 +1961,9 @@ check("in camp and short of water it draws it from the Marsh",
 _so.players[2].inv = [5, 3, 0, 0, 0]
 _a = _sp.decide(_so)
 check("stocked and sheltered, it stays put", _a.kind == "noop" and "camp" in _a.why)
-_so.players[2].mp = 0
+_so.players[2].ap = 0
 _so.players[2].valid_moves = 0
-check("out of MP early in the day it stays awake", not _is(_sp.decide(_so), config.ACT_REST))
+check("out of AP early in the day it stays awake", not _is(_sp.decide(_so), config.ACT_REST))
 _sp._dawn_tick = _so.tick - _sp.rest_at_ticks   # late in a day it watched begin
 _a = _sp.decide(_so)
 check("late in the day it rests, in camp", _is(_a, config.ACT_REST)
@@ -1978,7 +1978,7 @@ _so.apply({"t": "ev", "k": "quake", "destroyed": [{"r": 3}], "converted": []})
 check("state.py: an event without coordinates touches nothing",
       _so.map[(74, 3)].shelter == 0 and _so.map[(74, 56)].terrain == 0)
 
-_sc = _sobs(q=30, r=30, mp=2, inv=(5, 3, 0, 0, 1))
+_sc = _sobs(q=30, r=30, ap=2, inv=(5, 3, 0, 0, 1))
 _sp2 = pmod.make("sentinel", random.Random(6))
 _sp2._day = _sc.day                             # a day it watched begin...
 _sp2.camp = (40, 40)                            # ...with camp far away
@@ -2005,7 +2005,7 @@ def _fw_value(name):
 
 _mirrored = ["MAP_COLS", "MAP_ROWS", "MAX_PLAYERS", "MAX_SEATED", "TICK_MS", "DAY_TICKS",
              "NUM_TERRAIN", "INV_SLOTS_MAX", "EQUIP_SLOTS", "TUN_COLS", "TUN_ROWS",
-             "MAX_HATCHES", "VENT_ASCEND_MP", "ITEM_BILE_FLARE", "TUNNEL_REST_LL_PCT",
+             "MAX_HATCHES", "VENT_ASCEND_AP", "ITEM_BILE_FLARE", "TUNNEL_REST_LL_PCT",
              "DQ", "DR", "TERRAIN_MC", "TERRAIN_SV", "TERRAIN_FORAGE_DN",
              "TERRAIN_SALVAGE_DN", "TERRAIN_HAS_WATER", "TERRAIN_IS_RUINS", "TERRAIN_IS_RAD",
              "ACT_FORAGE", "ACT_WATER", "ACT_TREAT", "ACT_SCAV", "ACT_SHELTER",
@@ -2227,7 +2227,7 @@ def canteen_obs(scrap=4, terrain=config.TERR_SETTLEMENT, kr=1 << 18,
     me = o.players[2]
     me.q, me.r, me.depth = 10, 10, 0
     me.inv = [water, food, 0, 0, scrap]
-    me.mp, me.ll, me.inv_slots, me.valid_moves = 8, 6, 8, 0b111111
+    me.ap, me.ll, me.inv_slots, me.valid_moves = 8, 6, 8, 0b111111
     me.known_recipes = kr
     me.inv_type = [0] * config.INV_SLOTS_MAX
     me.equip = list(equip or [0] * 5)
@@ -2270,7 +2270,7 @@ _o = canteen_obs(terrain=3, water=4, food=1, scrap=_cost)
 _o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
 _sub = pmod.make("subterranean", random.Random(1)); _sub.set_pid(2)
 a = _sub.decide(_o)
-check("a Settlement within today's MP beats topping up",
+check("a Settlement within today's AP beats topping up",
       a.kind == "move" and "canteen: to settlement (13,10)" in a.why)
 _o = canteen_obs(terrain=3, water=1, food=1, scrap=_cost)
 _o.map.grid[10][13] = mk(config.TERR_SETTLEMENT)
@@ -2436,7 +2436,7 @@ check("litter on a grave stays where it is", _lp3.remains_action(_o) is None)
 
 def recover_obs(at=(14, 10), pid=2, d=11, day=11, gi=None, res=(0, 0, 0, 0, 0),
                 water=3, food=2, scrap=0):
-    """canteen_obs(): the canteen recipe known, 8 MP, scrap short -- with a
+    """canteen_obs(): the canteen recipe known, 8 AP, scrap short -- with a
     scrap pile two hexes WEST to tempt the canteen errand, and a grave to the
     east holding the canteen."""
     base = canteen_obs(terrain=0, scrap=scrap, water=water, food=food)
@@ -2449,20 +2449,20 @@ def recover_obs(at=(14, 10), pid=2, d=11, day=11, gi=None, res=(0, 0, 0, 0, 0),
 _rp = pmod.make("contentmax", random.Random(1)); _rp.set_pid(2)
 _o = recover_obs()
 a = _rp.decide(_o)
-check("a grave of ours within today's MP: walk back for the canteen",
+check("a grave of ours within today's AP: walk back for the canteen",
       a.kind == "move" and a.d == 0 and "recover: our grave at (14,10)" in a.why)
 check("and the canteen errand stands down while it does",
       _rp.craft_action(_o) is None)
 check("the walk is counted", _rp.stats["recover_moves"] == 1)
 _rp2 = pmod.make("contentmax", random.Random(1)); _rp2.set_pid(2)
 a = _rp2.decide(recover_obs(at=(25, 10)))
-check("beyond today's MP it still goes, once the floor is quiet",
+check("beyond today's AP it still goes, once the floor is quiet",
       a.kind == "move" and "recover: our grave at (25,10)" in a.why)
 _rp3 = pmod.make("contentmax", random.Random(1)); _rp3.set_pid(2)
 a = _rp3.decide(recover_obs(at=(25, 10), day=40, d=12))     # 2 dawns left, 2 days away
 check("but not for a grave that ages out on the way", "recover" not in a.why)
 _rp4 = pmod.make("contentmax", random.Random(1)); _rp4.set_pid(2)
-a = _rp4.decide(recover_obs(day=40, d=11))                   # goes at the next dawn, 4 MP off
+a = _rp4.decide(recover_obs(day=40, d=11))                   # goes at the next dawn, 4 AP off
 check("a grave going at dawn is still worth a walk that ends today",
       "recover: our grave at (14,10)" in a.why)
 _rp5 = pmod.make("contentmax", random.Random(1)); _rp5.set_pid(2)
@@ -2748,12 +2748,12 @@ for _rr in range(config.MAP_ROWS):
     for _qq in range(config.MAP_COLS):
         if (_qq, _rr) != (10, 10):
             _o.map.grid[_rr][_qq] = mk(8)          # Mountain, MC 4
-_o.map.grid[10][22] = mk(config.TERR_SETTLEMENT)   # 48 MP: past the craft reach
+_o.map.grid[10][22] = mk(config.TERR_SETTLEMENT)   # 48 AP: past the craft reach
 a = pmod.make("biker", random.Random(1)).decide(_o)
 check("build carried, no Settlement in craft reach: it heads for a far one",
       a.kind == "move" and "parts: -> (22,10)" in a.why)
 _o = _parts_obs(scrap=10, water=2, food=1, terrain=0)
-_o.me.mp = 1
+_o.me.ap = 1
 a = pmod.make("biker", random.Random(1)).decide(_o)
 check("scrap beyond the build goes on a roof for the night",
       a.kind == "act" and a.to_msg()["a"] == config.ACT_SHELTER)

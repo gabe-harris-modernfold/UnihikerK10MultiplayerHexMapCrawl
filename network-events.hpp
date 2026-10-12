@@ -186,12 +186,15 @@ static void drainEvents() {
       }
 
       case EVT_MOVE:
-        LOG_VERBOSE("EVT mv pid=%d ->(%d,%d) rad=%d explo=%d mp=%d trk=%d",
+        LOG_VERBOSE("EVT mv pid=%d ->(%d,%d) rad=%d explo=%d ap=%d trk=%d",
                     (int)ev.pid, (int)ev.q, (int)ev.r,
-                    (int)ev.radR, (int)ev.exploD, (int)ev.moveMP, (int)ev.amt);
+                    (int)ev.radR, (int)ev.exploD, (int)ev.moveAP, (int)ev.amt);
+        // "d": the side stepped through (movePlayer() stores it +1 in res), so
+        // every client knows which way this step went -- the trail it draws
+        // points that way (trails.hpp, data/trail-field.js). -1 if unknown.
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"radd\":%d,\"rad\":%d,\"exploD\":%d,\"mp\":%d,\"trk\":%d,\"dp\":%d}",
-          ev.pid, ev.q, ev.r, (int)ev.radD, (int)ev.radR, (int)ev.exploD, (int)ev.moveMP, (int)ev.amt, (int)ev.depth);
+          "{\"t\":\"ev\",\"k\":\"mv\",\"pid\":%d,\"q\":%d,\"r\":%d,\"d\":%d,\"radd\":%d,\"rad\":%d,\"exploD\":%d,\"ap\":%d,\"trk\":%d,\"dp\":%d}",
+          ev.pid, ev.q, ev.r, (int)ev.res - 1, (int)ev.radD, (int)ev.radR, (int)ev.exploD, (int)ev.moveAP, (int)ev.amt, (int)ev.depth);
         evTextAll(buf, len);
         break;
 
@@ -202,12 +205,12 @@ static void drainEvents() {
       case EVT_TUNNEL_ENTER:
       case EVT_TUNNEL_EXIT: {
         bool down = (ev.type == EVT_TUNNEL_ENTER);
-        Log.notice("EVT tun_%s pid=%d hatch=%d at (%d,%d) mp=%d",
+        Log.notice("EVT tun_%s pid=%d hatch=%d at (%d,%d) ap=%d",
                    down ? "in" : "out", (int)ev.pid, (int)ev.amt,
-                   (int)ev.q, (int)ev.r, (int)ev.moveMP);
+                   (int)ev.q, (int)ev.r, (int)ev.moveAP);
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"hatch\":%d,\"mp\":%d}",
-          down ? "tun_in" : "tun_out", ev.pid, ev.q, ev.r, (int)ev.amt, (int)ev.moveMP);
+          "{\"t\":\"ev\",\"k\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"hatch\":%d,\"ap\":%d}",
+          down ? "tun_in" : "tun_out", ev.pid, ev.q, ev.r, (int)ev.amt, (int)ev.moveAP);
         evTextAll(buf, len);
         // Going down gets the nest on the LCD (ui-fx.hpp) -- the spiders -- at
         // most every three minutes. Captioned but not chronicled: survivors go
@@ -252,25 +255,25 @@ static void drainEvents() {
 
       case EVT_REFUEL: {
         // Everyone: each client fades a stalled bike back in for whoever it
-        // was (renderer.js); the rider also gets the log line and the MP.
+        // was (renderer.js); the rider also gets the log line and the AP.
         len = snprintf(buf, sizeof(buf),
-          "{\"t\":\"ev\",\"k\":\"refuel\",\"pid\":%d,\"it\":%d,\"mpd\":%d,\"mp\":%d,\"unf\":%d}",
-          ev.pid, (int)ev.res, (int)ev.amt, (int)ev.moveMP, (int)ev.dawnUnfuelled);
+          "{\"t\":\"ev\",\"k\":\"refuel\",\"pid\":%d,\"it\":%d,\"apd\":%d,\"ap\":%d,\"unf\":%d}",
+          ev.pid, (int)ev.res, (int)ev.amt, (int)ev.moveAP, (int)ev.dawnUnfuelled);
         evTextAll(buf, len);
         break;
       }
 
       case EVT_DAWN: {
-        Log.notice("EVT dawn day=%d pid=%d f=%d w=%d ll=%d mp=%d",
+        Log.notice("EVT dawn day=%d pid=%d f=%d w=%d ll=%d ap=%d",
                    (int)ev.dawnDay, (int)ev.pid, (int)ev.dawnF,
-                   (int)ev.dawnW, (int)ev.dawnLL, (int)ev.dawnMP);
+                   (int)ev.dawnW, (int)ev.dawnLL, (int)ev.dawnAP);
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"dawn\",\"pid\":%d,\"day\":%d,"
-          "\"f\":%d,\"w\":%d,\"ll\":%d,\"mp\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
+          "\"f\":%d,\"w\":%d,\"ll\":%d,\"ap\":%d,\"dll\":%d,\"fth\":%d,\"wth\":%d,"
           "\"rad\":%d,\"expd\":%d,\"air\":%d,\"wnd\":[%d,%d],\"unf\":%d}",
           ev.pid, (int)ev.dawnDay,
           (int)ev.dawnF, (int)ev.dawnW, (int)ev.dawnLL,
-          (int)ev.dawnMP, (int)ev.dawnLLDelta,
+          (int)ev.dawnAP, (int)ev.dawnLLDelta,
           (int)ev.dawnFth, (int)ev.dawnWth,
           (int)ev.radR, (int)ev.dawnExpD, (int)ev.dawnAirD,
           (int)ev.dawnWndMin, (int)ev.dawnWndMaj,
@@ -316,9 +319,9 @@ static void drainEvents() {
       case EVT_ACTION: {
         static const char* ACT_SHORT[8] = {"FORAGE","WATER","TREAT","SCAV","SHELTER","CRAFT","SURVEY","REST"};
         const char* aShort = (ev.actType < 8) ? ACT_SHORT[ev.actType] : "?";
-        Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d mp=%d fd=%d wd=%d scoreD=%d",
+        Log.notice("EVT act pid=%d type=%s(%d) out=%d ll=%d ap=%d fd=%d wd=%d scoreD=%d",
                    (int)ev.pid, aShort, (int)ev.actType, (int)ev.actOut,
-                   (int)ev.actNewLL, (int)ev.actNewMP,
+                   (int)ev.actNewLL, (int)ev.actNewAP,
                    (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actScoreD);
         // Chronicle — REST has no failure state, so it stays neutral ink.
         // The mark in the margin follows the work, not the outcome — a failed
@@ -340,11 +343,11 @@ static void drainEvents() {
       }
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
-          "\"mp\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
+          "\"ap\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
           "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,"
           "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d,\"ar\":%d,\"bw\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
-          (int)ev.actNewMP, (int)ev.actNewLL,
+          (int)ev.actNewAP, (int)ev.actNewLL,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
           (int)ev.actDn, (int)ev.actTot,
           (int)ev.radD, (int)ev.radR,

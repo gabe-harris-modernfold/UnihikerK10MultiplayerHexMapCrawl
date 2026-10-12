@@ -25,7 +25,7 @@ from Jack's Chopper just moves it to the right one:
          nearest Settlement and builds it, and gear_action() puts it on.
   ride   the bike is on: drive, and fill every slot the survival floor does
          not need with fuel.  Fuel piles first, fresh ground second.  The
-         dawn takes one fuel for the +5 MP, so a full tank keeps it moving.
+         dawn takes one fuel for the +5 AP, so a full tank keeps it moving.
 
 The canteen errand every other survivor runs is off: the canteen goes in the
 body slot, which is where the Backpack has to stay.
@@ -50,22 +50,22 @@ from .survivor import (CRAFT_SEARCH_COST, FOOD_FLOOR, WATER_FLOOR,
 BUILD_RESERVE = 3
 # The floors while that reserve is all the room there is.
 LEAN_WATER, LEAN_FOOD = 2, 1
-# Path values, per MP.
+# Path values, per AP.
 SETTLEMENT_VALUE = 200   # the build is carried: somewhere to craft it
 MAT_POI_VALUE = 120      # a scene that can pay the Sparky Bits, x its terrain's share
 MAT_GROUND_VALUE = 110   # a build material lying on the ground (usually a grave)
 PILE_VALUE = {RES_FUEL: 80, RES_SCRAP: 60, RES_FOOD: 60}   # a pile the build wants
-SALVAGE_VALUE = 30       # scrap by SCAV: 2 MP and a check
+SALVAGE_VALUE = 30       # scrap by SCAV: 2 AP and a check
 FORAGE_VALUE = 25        # food for the Backpack by FORAGE
 STAPLE_BONUS = 14
 NEW_HEX_VALUE = 1.5
 FRONTIER_WEIGHT = 1.0
 SEARCH_COST = 45
-RIDE_SEARCH_COST = 60    # +5 MP a day buys a longer look
+RIDE_SEARCH_COST = 60    # +5 AP a day buys a longer look
 # How far to look for a Settlement with the build carried.  craft_action()
 # only walks to one inside CRAFT_SEARCH_COST; past that, and with none seen,
 # drive() goes looking -- the first mock run's Mule sat on a finished build
-# for 150 game-days because none was inside 40 MP.
+# for 150 game-days because none was inside 40 AP.
 READY_SEARCH_COST = 120
 # Seconds before re-sending a TREAT the board has not answered by changing
 # anything.  Keyed on LL and medicine too, so one that lands (LL up, a
@@ -73,7 +73,7 @@ READY_SEARCH_COST = 120
 # did not predict repeats once a cycle forever: the mock's tire-track bit made
 # a Settlement read as no terrain at all, and it sent 700 TREATs in 3 minutes.
 TREAT_RETRY_S = 20.0
-# Extra MP a route pays to step on a pile of something the Biker cannot use.
+# Extra AP a route pays to step on a pile of something the Biker cannot use.
 # Stepping on a pile takes it -- there is no leaving it -- and a pack that
 # fills with scrap it has no use for has no room for fuel or water: the mock
 # Mule was riding round with 15 scrap and nothing to drink.  A detour, never
@@ -113,7 +113,7 @@ class BikerPolicy(SurvivorPolicy):
     # Carry space and mobility are the whole plan. Slots outrank everything so
     # the Backpack (or a Hoarder's Rig) is never swapped out of the body slot.
     gear_weights = {
-        "slots": 4.0, "mp": 3.0, "ll": 1.0, "vision": 1.0, "rad": 0.5,
+        "slots": 4.0, "ap": 3.0, "ll": 1.0, "vision": 1.0, "rad": 0.5,
         "threat": 0.25, "terrain": 0.5, "water_cap": 0.5,
         "nar": {NAR_COLD_IMMUNE: 1.0, NAR_SCAV_DOUBLE: 1.0},
     }
@@ -248,7 +248,7 @@ class BikerPolicy(SurvivorPolicy):
         craft it.  Replaces the canteen errand: gathering the inputs is
         pursue()'s job, after the survival floor."""
         me = obs.me
-        if obs.underground or me.mp < 1:
+        if obs.underground or me.ap < 1:
             return None
         ph = self.phase(obs)
         if ph == "pack" and PACK_RECIPE and not self.owns(me, PACK_ITEM):
@@ -318,7 +318,7 @@ class BikerPolicy(SurvivorPolicy):
     def shed_junk(self, obs, ph) -> Action | None:
         """Put down whatever is past keeps() when the pack needs the room --
         for the build's tokens and the survival floor's before the bike, for
-        one more fuel after it.  Free: no MP, no check, and it lands as a pile
+        one more fuel after it.  Free: no AP, no check, and it lands as a pile
         on this hex (routed round from here on, being junk)."""
         me = obs.me
         if me.depth or me.in_encounter:
@@ -371,15 +371,15 @@ class BikerPolicy(SurvivorPolicy):
     def wants_shelter(self, obs) -> bool:
         """Spare scrap goes on a roof: 1 scrap is a night with no LL loss at
         all (dawnUpkeep's shelter clause) and a pack slot back for water.
-        Only on the day's last MP, though -- shelter_here() also fires at any
-        MP once LL is low, and a Biker rides on off the roof it just built."""
+        Only on the day's last AP, though -- shelter_here() also fires at any
+        AP once LL is low, and a Biker rides on off the roof it just built."""
         return (self.shelter_when_exposed
-                or (obs.me.mp <= 1 and self.spare_scrap(obs, self.phase(obs)) > 0))
+                or (obs.me.ap <= 1 and self.spare_scrap(obs, self.phase(obs)) > 0))
 
     def treat_here(self, obs, ph) -> Action | None:
         """In a Settlement with medicine and LL to recover: TREAT, which there
-        is the heal (1 med + 1 MP = +1 LL, no roll) or, with a major wound,
-        the stitch-up (2 MP and an Endure check).  Before the bike is built
+        is the heal (1 med + 1 AP = +1 LL, no roll) or, with a major wound,
+        the stitch-up (2 AP and an Endure check).  Before the bike is built
         the token it frees matters as much as the LL -- a spawn kit's two
         medicine is two slots the build cannot use."""
         me = obs.me
@@ -390,18 +390,18 @@ class BikerPolicy(SurvivorPolicy):
         if not major and me.ll >= me.ll_cap:
             return None
         cost = 2 if major else 1
-        if me.mp < cost:
+        if me.ap < cost:
             return None
         key, now = (me.q, me.r, me.ll, me.inv[RES_MED]), time.monotonic()
         if now - self._treat_sent.get(key, -TREAT_RETRY_S) < TREAT_RETRY_S:
             return None
         self._treat_sent[key] = now
-        return Action("act", a=ACT_TREAT, mp=cost,
+        return Action("act", a=ACT_TREAT, ap=cost,
                       why=f"{ph}: treat at a Settlement (LL {me.ll}, med {me.inv[RES_MED]})")
 
     def harvest_here(self, obs, ph, toks) -> Action | None:
         """FORAGE for the Backpack's food, SCAV for the bike's scrap.  Both
-        cost 2 MP; stood on the right ground with less than that, rest and do
+        cost 2 AP; stood on the right ground with less than that, rest and do
         it at dawn -- walking off to the next-best spot and back is what a
         value search does otherwise, and it paced two hexes for 50 days."""
         me = obs.me
@@ -411,13 +411,13 @@ class BikerPolicy(SurvivorPolicy):
         forage = bool(toks.get(RES_FOOD)) and ph == "pack" and can_forage(cell.terrain)
         salvage = (bool(toks.get(RES_SCRAP)) and can_salvage(cell.terrain)
                    and token_room(me, RES_SCRAP) > 0)
-        if (forage or salvage) and me.mp < 2:
+        if (forage or salvage) and me.ap < 2:
             return self.rest_once(obs, f"{ph}: waiting for dawn to harvest here")
         if forage:
             return Action("act", a=ACT_FORAGE,
                           why=f"backpack: foraging (food {me.inv[RES_FOOD]})")
         if salvage:
-            return Action("act", a=ACT_SCAV, mp=2,
+            return Action("act", a=ACT_SCAV, ap=2,
                           why=f"bike: salvaging scrap ({me.inv[RES_SCRAP]} held)")
         return None
 

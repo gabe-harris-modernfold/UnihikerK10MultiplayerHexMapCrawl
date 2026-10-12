@@ -20,8 +20,8 @@ static constexpr uint8_t  CARAVAN_STOCK_MAX     = 3;    // max units of one cons
 static constexpr uint8_t  CARAVAN_STUCK_LIMIT   = 6;    // world ticks of no progress toward the waypoint before the caravan gives up and re-routes (river divide / mountain wedge)
 static constexpr uint8_t  CARAVAN_TRADE_HOLD    = 4;    // world ticks the caravan waits while a survivor shares its hex (~60s) before rolling on regardless
 
-static constexpr uint8_t  TRACK_AP_SCALE        = 2;    // heat added = mpSpent * TRACK_AP_SCALE
-static constexpr uint8_t  TRACK_DECAY_RATE      = 1;    // track intensity lost per world tick (a 2 MP action stays smellable ~4 ticks / 60 s)
+static constexpr uint8_t  TRACK_AP_SCALE        = 2;    // heat added = apSpent * TRACK_AP_SCALE
+static constexpr uint8_t  TRACK_DECAY_RATE      = 1;    // track intensity lost per world tick (a 2 AP action stays smellable ~4 ticks / 60 s)
 static constexpr uint8_t  FIRE_SPREAD_CHANCE    = 20;   // % chance a burning hex (intensity >=2) ignites each flammable neighbour per world tick
 static constexpr uint8_t  FIRE_CAP              = 20;   // max simultaneously burning hexes
 // Not in the original spec: lightning during a storm is an additional
@@ -36,8 +36,8 @@ static constexpr uint8_t  FLOOD_SPREAD_CHANCE = 20;  // % chance a flooded hex (
 static constexpr uint8_t  FLOOD_CAP           = 15;  // max simultaneously flooded hexes
 static constexpr uint8_t  FLOOD_MAX_INTENSITY = 3;
 // LL cost of being caught on a hex the instant it washes out. Deliberately
-// 1 rather than lightning's 2: the flood also zeroes movesLeft, and with
-// effectiveMP = ll + 3 the stranding is the harsher half of the hit — MP is
+// 1 rather than lightning's 2: the flood also zeroes apLeft, and with
+// effectiveAP = ll + 3 the stranding is the harsher half of the hit — AP is
 // how you reach water. 1 + a wiped turn lands near lightning's 2 for total
 // severity while being far less likely to kill outright, which is the shape
 // the tension measurements say this game is short of (see
@@ -45,7 +45,7 @@ static constexpr uint8_t  FLOOD_MAX_INTENSITY = 3;
 static constexpr uint8_t  FLOOD_LL_DAMAGE     = 1;
 static constexpr uint8_t  FLOOD_SEARCH_RADIUS = 4;   // jitter box (± radius) searched for a water hex near the reference player
 
-static constexpr uint8_t  SCENT_THRESHOLD = 4;   // min track intensity Doom will pursue (one 2 MP action, or one 2 MP move, clears it)
+static constexpr uint8_t  SCENT_THRESHOLD = 4;   // min track intensity Doom will pursue (one 2 AP action, or one 2 AP move, clears it)
 static constexpr uint8_t  DOOM_BASE_RADIUS = 6;  // scent radius at awareness 0 (see doomDetectionRadius)
 static constexpr uint8_t  AWARENESS_GAIN  = 12;  // per world tick when following scent
 static constexpr uint8_t  AWARENESS_DECAY = 5;   // per world tick when cold
@@ -242,16 +242,16 @@ static void decayTracks() {
         W_hex[r][q].track -= min((uint8_t)TRACK_DECAY_RATE, W_hex[r][q].track);
 }
 
-// Call sites: survival_skills.hpp's spendMP(), right after p.movesLeft is
+// Call sites: survival_skills.hpp's spendAP(), right after p.apLeft is
 // decremented (captures every action-driven track in one place), and
 // movePlayer() in survival_state.hpp, which deducts the terrain move cost
-// directly rather than going through spendMP. Travelling therefore lays a
+// directly rather than going through spendAP. Travelling therefore lays a
 // trail proportional to how hard the ground was to cross — open scrub
-// (1 MP -> 2 heat) stays under SCENT_THRESHOLD, rough terrain doesn't.
+// (1 AP -> 2 heat) stays under SCENT_THRESHOLD, rough terrain doesn't.
 // ACT_REST still calls neither, so resting stays silent — the spec's
 // intended counter to Doom's attention.
-static void wOnPlayerAction(int16_t q, int16_t r, uint8_t mpSpent) {
-  W_hex[r][q].track = (uint8_t)min(255, (int)W_hex[r][q].track + (int)mpSpent * TRACK_AP_SCALE);
+static void wOnPlayerAction(int16_t q, int16_t r, uint8_t apSpent) {
+  W_hex[r][q].track = (uint8_t)min(255, (int)W_hex[r][q].track + (int)apSpent * TRACK_AP_SCALE);
 }
 
 // Lightning during a storm is the only fire-ignition source until Creeping
@@ -318,7 +318,7 @@ static void maybeIgniteLightning() {
     ev.amt = 10;  // sentinel, clearly outside fire's 1-3 intensity range: direct lightning strike
     enqEvt(ev);
     if (p.ll == 0) {
-      p.movesLeft = 0;
+      p.apLeft = 0;
       GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
       dev.res = DC_LIGHTNING;
       dev.evWsId = p.wsClientId; enqEvt(dev);
@@ -483,7 +483,7 @@ static void spreadFlood() {
             if (!p.connected || encounters[i].active || p.depth || p.q != nq || p.r != nr) continue;
             if (p.ll == 0) continue;   // already down, slot reset pending — same guard as resolveFireDamage()
             p.ll = (uint8_t)max(0, (int)p.ll - (int)FLOOD_LL_DAMAGE);
-            p.movesLeft = 0;
+            p.apLeft = 0;
             ledFlash(80, 160, 255);
             k10Play(MOTIF_SEWER_ECHO);
             ecoNoteHurt(i, DC_FLOOD);   // an injury: the daisies seed here (ecology.hpp)
@@ -667,7 +667,7 @@ static void resolveDoomProximity() {
       llLost = 1;
       ecoNoteHurt(i, DC_DOOM);   // an injury: the daisies seed here (ecology.hpp)
       if (p.ll == 0) {
-        p.movesLeft = 0;
+        p.apLeft = 0;
         GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
         dev.res = DC_DOOM;
         dev.evWsId = p.wsClientId; enqEvt(dev);
@@ -933,12 +933,17 @@ static void tickCaravan() {
     // after CARAVAN_STUCK_LIMIT fruitless ticks the route is abandoned rather
     // than parking the trader against the bank for the rest of the world's life.
     int before = hexDistWrap(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr);
+    const int fromQ = W.caravan.q, fromR = W.caravan.r;
     if (moveOneStep(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr)) {
       clearCaravanDebounce();
       // Tire tracks — same "mark the hex I just entered" idiom as player
       // footprints (survival_state.hpp), but one shared bit instead of a
       // per-player mask since there's only one caravan.
       G.map[W.caravan.r][W.caravan.q].tireTrack = 1;
+      // Its own trail-sides slot (trails.hpp), so the ruts point its way.
+      int side = trailSideTo(fromQ, fromR, W.caravan.q, W.caravan.r);
+      if (side >= 0) trailStep(TRAIL_CARAVAN, fromQ, fromR, side, true);
+      else           trailStart(TRAIL_CARAVAN, W.caravan.q, W.caravan.r);
     }
     int after = hexDistWrap(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr);
     if (after < before) {
@@ -990,7 +995,7 @@ static void resolveFireDamage() {
     fev.q = p.q; fev.r = p.r; fev.amt = fireHere;
     enqEvt(fev);
     if (p.ll == 0) {
-      p.movesLeft = 0;
+      p.apLeft = 0;
       GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)i;
       dev.res = DC_FIRE;
       dev.evWsId = p.wsClientId; enqEvt(dev);

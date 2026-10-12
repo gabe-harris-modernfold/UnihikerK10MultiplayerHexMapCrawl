@@ -24,7 +24,7 @@ verdict:
 | `water_cap` | `wc` delta -- `appendPackArrays()` sends canteenCap() | hard |
 | `vision` | `vr` on the vis disk `pushVisDisk()` sends right after the equip | hard |
 | `rad` | direction of radiation change at the dawns it was worn | soft |
-| `mp` | dawn MP against `ll + 3` + declared, only on unwounded dawns | soft |
+| `ap` | dawn AP against `ll + 3` + declared, only on unwounded dawns | soft |
 | `terrain`, `threat`, narrative | not observable from the wire | untested |
 
 A mod with no evidence is reported UNTESTED with the reason, never as a pass.
@@ -46,7 +46,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from config import (EQUIPMENT, EQUIP_STATS, INV_SLOTS_MAX, ITEM_NAME,
-                    base_mp)
+                    base_ap)
 from record import read as read_run
 
 RUNS = Path(__file__).parent / "runs"
@@ -95,7 +95,7 @@ def declared(item):
     """The mods this item actually claims, as (stat, amount) pairs."""
     st = EQUIP_STATS.get(item, {})
     out = [(k, st.get(k, 0))
-           for k in ("ll", "slots", "water_cap", "vision", "rad", "mp")
+           for k in ("ll", "slots", "water_cap", "vision", "rad", "ap")
            if st.get(k)]
     if st.get("terrain"):
         out.append(("terrain", st["terrain"]))
@@ -141,8 +141,8 @@ class GearAudit:
                 if "vr" in d:
                     s["vr"] = d["vr"]
                 self._pack(arch, s, d, "digest")
-                if "mp" in d and "ll" in d:
-                    self._check_mp(s, d)
+                if "ap" in d and "ll" in d:
+                    self._check_ap(s, d)
                 continue
             if ch != "rx":
                 continue
@@ -248,27 +248,27 @@ class GearAudit:
             s["pending"] = None
         s["vr"] = int(vr)
 
-    def _check_mp(self, s, d) -> None:
-        """Soft: effectiveMP is ll+3 plus equipment, minus wounds and
+    def _check_ap(self, s, d) -> None:
+        """Soft: effectiveAP is ll+3 plus equipment, minus wounds and
         encumbrance, and a *_cost item only pays out on a dawn it was fed."""
-        worn_mp = _sum(s["eq"], "mp")
-        if not worn_mp or any(s["wnd"]):
+        worn_ap = _sum(s["eq"], "ap")
+        if not worn_ap or any(s["wnd"]):
             return
-        expected = base_mp(int(d["ll"])) + worn_mp
+        expected = base_ap(int(d["ll"])) + worn_ap
         for item in s["eq"]:
-            if not item or not EQUIP_STATS.get(item, {}).get("mp"):
+            if not item or not EQUIP_STATS.get(item, {}).get("ap"):
                 continue
-            rec = self.ev[(item, "mp")]
-            # Only a sample at full MP says anything -- mid-day the survivor
+            rec = self.ev[(item, "ap")]
+            # Only a sample at full AP says anything -- mid-day the survivor
             # has spent some.
-            if int(d["mp"]) == expected:
+            if int(d["ap"]) == expected:
                 rec["pass"] += 1
-            elif int(d["mp"]) > base_mp(int(d["ll"])):
+            elif int(d["ap"]) > base_ap(int(d["ll"])):
                 rec["pass"] += 1        # carrying a bonus, just partly spent
             else:
-                rec["cases"].append(f"mp {d['mp']} at ll {d['ll']} "
-                                    f"(bare would be {base_mp(int(d['ll']))}, "
-                                    f"+{worn_mp} declared)")
+                rec["cases"].append(f"ap {d['ap']} at ll {d['ll']} "
+                                    f"(bare would be {base_ap(int(d['ll']))}, "
+                                    f"+{worn_ap} declared)")
 
     def _check_act(self, s, ev) -> None:
         """SCAV and FORAGE yields carry the doubling perks on the wire."""

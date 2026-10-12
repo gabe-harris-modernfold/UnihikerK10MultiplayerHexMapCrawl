@@ -67,6 +67,7 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
     if (!memoryAgreesWith(samples)) {
       console.log(`%c[MAP] explored memory dropped — ${memoryCells.size} remembered cells disagree with a fresh sync (board regenerated?)`, 'color:#f60;font-weight:bold');
       memoryCells.clear();
+      trailField?.clear();   // the recorded trails were walked on that other board
     }
     // The sync carries every trap this survivor knows about, wherever it is,
     // so it is the whole truth about traps: forget the remembered ones first.
@@ -148,6 +149,25 @@ function applyVisDisk(cells, depth = 0, ops = null) {
     notable.forEach(n => console.log('  ', n));
   } else {
     console.log(`%c[${depth ? 'TUN' : 'MAP'}] applyVisDisk`, 'color:#09f', `${cellCount} cells decoded — all clear`);
+  }
+}
+
+// ── Trail sides ──────────────────────────────────────────────────
+// The "trl" string a surface vis disk, survey ring or sync carries beside its
+// cells (trails.hpp): 7 hex chars a record -- QQ col, RR row, S the walker's
+// slot (0-5 a seat, 6 the caravan), BB which way its latest pass went.
+// Hung on the cells the same message just wrote, as cell.trl[slot]; a cell
+// it does not name has no record. trail-field.js reads them.
+function applyTrailRecs(str) {
+  if (typeof str !== 'string') return;
+  for (let i = 0; i + 7 <= str.length; i += 7) {
+    const q = Number.parseInt(str.substr(i, 2), 16);
+    const r = Number.parseInt(str.substr(i + 2, 2), 16);
+    const s = Number.parseInt(str[i + 4], 16);
+    const b = Number.parseInt(str.substr(i + 5, 2), 16);
+    const cell = gameMap[r]?.[q];
+    if (!cell || !(s >= 0 && s < 7) || Number.isNaN(b)) continue;
+    (cell.trl ??= [])[s] = b;
   }
 }
 

@@ -22,7 +22,7 @@ from .base import Action
 from .survivor import SurvivorPolicy
 
 # A full pile is 1-3 tokens at 10 points each; a new hex is 1 point.  These
-# weights are relative value per MP, not absolute score.
+# weights are relative value per AP, not absolute score.
 PILE_VALUE = 20
 NEW_HEX_VALUE = 1
 FRONTIER_WEIGHT = 0.8
@@ -36,7 +36,7 @@ class ScoreMaxPolicy(SurvivorPolicy):
     # twice: collectResource() refuses at the cap, and tokenRoomFor() gates
     # FORAGE/WATER/SCAV as well. LL only matters as far as staying upright.
     gear_weights = {
-        "mp": 4.0, "slots": 3.5, "vision": 1.5, "ll": 1.0,
+        "ap": 4.0, "slots": 3.5, "vision": 1.5, "ll": 1.0,
         "rad": 0.5, "threat": 0.25, "terrain": 1.0, "water_cap": 2.0,
         "nar": {NAR_SCAV_DOUBLE: 2.0, NAR_LAND_FORAGE: 1.5,
                 NAR_RIVER_FORAGE: 0.5, NAR_COLD_IMMUNE: 2.0,

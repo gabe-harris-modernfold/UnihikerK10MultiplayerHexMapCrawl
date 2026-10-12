@@ -98,7 +98,7 @@ async def seated(ctx: Ctx, tag: str, prefer=None) -> ProbeClient:
 
 
 async def walk_to(c: ProbeClient, q: int, r: int, budget_s: float = 90.0) -> bool:
-    """Step toward (q, r) on the surface until there or out of time / MP."""
+    """Step toward (q, r) on the surface until there or out of time / AP."""
     deadline = time.monotonic() + budget_s
     while time.monotonic() < deadline:
         me = c.obs.me
@@ -118,7 +118,7 @@ async def walk_to(c: ProbeClient, q: int, r: int, budget_s: float = 90.0) -> boo
             if why == "cooldown":
                 await asyncio.sleep(0.6)
                 continue
-            return False            # no_mp, terrain, resting, in_enc: give up
+            return False            # no_ap, terrain, resting, in_enc: give up
         await c.wait_for(lambda m: m.get("t") == "ev" and m.get("k") == "mv"
                          and m.get("pid") == c.obs.pid, 2.0)
     return False
@@ -209,7 +209,7 @@ async def abort_encounter(ctx: Ctx) -> str:
             raise Skip("no known POI within reach")
         _cost, q, r = pois[0]
         if not await walk_to(c, q, r):
-            raise Skip("could not walk to the POI (MP, terrain or time)")
+            raise Skip("could not walk to the POI (AP, terrain or time)")
         reply = await c.request({"t": "enc_start", "q": q, "r": r}, 5.0)
         if reply is None or reply.get("t") != "ack":
             raise Skip(f"enc_start refused: {reply}")

@@ -22,8 +22,8 @@ const LERP_RATE              = 0.26;    // per-frame position interpolation (hig
 const MOVE_COOLDOWN_BASE_MS  = 220;    // base move cooldown in ms (multiplied by terrain MC)
 const NIGHT_FADE_INIT        = 0.72;   // initial alpha when REST action completes
 const NIGHT_FADE_DECAY_RATE  = 0.004;  // per-frame decay rate for post-dawn overlay
-const RESTING_LERP_RATE      = 0.003;  // MP display lerp while resting (slower)
-const MOVING_LERP_RATE       = 0.08;   // MP display lerp while moving (faster)
+const RESTING_LERP_RATE      = 0.003;  // AP display lerp while resting (slower)
+const MOVING_LERP_RATE       = 0.08;   // AP display lerp while moving (faster)
 const ARROW_BOUNCE_PERIOD_MS = 350;    // period of the ▼ bounce animation on the current player
 
 // Rendering dimensions
@@ -48,9 +48,6 @@ const RIVER_RIPPLE_SPEED     = 0.45;  // how fast rings advance per second (phas
 const RIVER_RIPPLE_SPACING   = 0.33;  // phase offset between successive rings (0–1)
 const RIVER_RIPPLE_W_SCALE   = 0.85;  // ellipse horizontal radius as fraction of hex size × wave scale
 const RIVER_RIPPLE_H_SCALE   = 0.38;  // ellipse vertical radius as fraction of hex size × wave scale
-
-// Footprint rendering
-const FOOTPRINT_RING_RADIUS  = 0.28;  // ring radius (hex-size multiples) for footprint icon layout
 
 // Fog of war & visibility
 // Outside your sight radius the map fades to black across FOG_FADE_RINGS rings
@@ -171,9 +168,9 @@ const WS_STALE_THRESHOLD_MS      = 3000;
 const WS_STALE_CHECK_INTERVAL_MS = 2000;
 
 // ── Shared animation state (written by network, read by renderer) ─
-let maxMP    = 6;   // plain copy used by non-reactive rendering (time-of-day clock)
+let maxAP    = 6;   // plain copy used by non-reactive rendering (time-of-day clock)
 let nightFade = 0;  // extra night overlay that fades out after dawn
-let displayMP = 6;  // smoothly lerped toward uiMP.val each frame
+let displayAP = 6;  // smoothly lerped toward uiAP.val each frame
 
 // ── Image Loading Utility ─────────────────────────────────────────
 function createImageWithLoadTracking(src) {
@@ -543,7 +540,7 @@ let players = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
   it: new Array(12).fill(0),
   iq: new Array(12).fill(0),
   // §4 Resource economy
-  fth: 0, wth: 0, mp: 6,
+  fth: 0, wth: 0, ap: 6,
   // §5 Action tracking
   rest: false,
   // §6 Encounter
@@ -585,12 +582,12 @@ function buildAgentState() {
       q: me.q, r: me.r,
       ll: me.ll, food: me.food, water: me.water,
       rad: me.rad,
-      mp: me.mp, resting: me.rest,
+      ap: me.ap, resting: me.rest,
       inv: { water: me.inv[0], food: me.inv[1], fuel: me.inv[2], med: me.inv[3], scrap: me.inv[4] },
       score: me.sc, name: me.nm,
     } : null,
     players: players.filter(p => p.on && p.id !== myId).map(p => ({
-      id: p.id, name: p.nm, q: p.q, r: p.r, ll: p.ll, mp: p.mp,
+      id: p.id, name: p.nm, q: p.q, r: p.r, ll: p.ll, ap: p.ap,
     })),
     visibleCells,
   };
