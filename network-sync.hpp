@@ -305,6 +305,7 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
+  pos += appendVacJson(buf + pos, sizeof(buf) - pos);    // VACANCY (vacancy.hpp), its own comma
   pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
@@ -424,6 +425,7 @@ static void broadcastState() {
     "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
+  pos += appendVacJson(buf + pos, sizeof(buf) - pos);    // VACANCY (vacancy.hpp), its own comma
   pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");

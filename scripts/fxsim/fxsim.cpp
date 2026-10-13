@@ -264,6 +264,58 @@ static void runFigs(const char* name, const std::string& out, int mode, uint32_t
   printf("%-10s %3d frames\n", name, n);
 }
 
+// The death takeover (ui-scenes.hpp section 12, ui-death.hpp): the Doom laughs.
+// Repainted every DEATH_FRAME_MS like the board's loop does it, under the
+// knock (FXK_DOWNED) and with the compositor in takeover mode.
+static void runDeath(const char* name, const std::string& out, uint8_t laugh, uint8_t seat, uint32_t endMs) {
+  std::vector<uint16_t> canvasBuf(FX_W * FX_H, 0), frame(FX_W * FX_H, 0), prev(FX_W * FX_H, 0);
+  fxInitTables();
+  fxAllocPools();
+  FX.level = 2;
+  g_now = 1000;
+  FX.lastMs = 0;
+  FX.nextGlitch = g_now + 2500;
+  FX.nextSub = g_now + 999999;
+  FX.nextEyes = g_now + 999999;
+  FxDread d = {};
+  d.connected = 4; d.attrition = 120;
+  fxSetDread(d);
+  FX.madness = FX.madTarget;
+  FX.takeover = true;
+  SceneDeath D = {};
+  static const char* const WHO[6] = { "Vera", "Quartermaster1", "Mox", "Ashenford", "Kell", "Rell" };
+  snprintf(D.who, sizeof(D.who), "%s", WHO[seat % 6]);
+  snprintf(D.line, sizeof(D.line), "does not come out standing.");
+  D.seat = seat; D.laugh = laugh;
+  FILE* fi = fopen((out + "/" + name + ".txt").c_str(), "w");
+  const uint32_t t0 = g_now, FRAME = 66;
+  uint32_t lastPaint = 0;
+  bool first = true;
+  int n = 0;
+  fxCue(FXK_DOWNED, (int8_t)seat, nullptr, nullptr, laugh);
+  while (g_now - t0 < endMs) {
+    if (first || g_now - lastPaint >= FRAME) {
+      scDeathDraw(D, g_now, g_now - t0, canvasBuf.data());
+      lastPaint = g_now;
+      first = false;
+    }
+    fxCompose(canvasBuf.data(), prev.data(), frame.data(), g_now);
+    char fn[1024];
+    snprintf(fn, sizeof(fn), "%s/%s_%04d.raw", out.c_str(), name, n);
+    FILE* f = fopen(fn, "wb");
+    fwrite(frame.data(), 2, frame.size(), f);
+    fclose(f);
+    uint32_t per = fxAnimating(g_now) ? fxFramePeriod(g_now) : FRAME;
+    uint32_t next = lastPaint + FRAME - g_now;
+    if (next < per) per = next < 20 ? 20 : next;
+    fprintf(fi, "%d %u %u\n", n, g_now - t0, per);
+    n++;
+    g_now += per;
+  }
+  fclose(fi);
+  printf("%-10s %3d frames\n", name, n);
+}
+
 static SceneSnap baseSnap() {
   SceneSnap S = {};
   S.day = 12; S.dayMil = 300; S.weather = 0; S.tcWeight = 60; S.threat = 3;
@@ -461,6 +513,9 @@ int main(int argc, char** argv) {
     SceneSnap C = S;
     if (want("road_cycle")) runScene("road_cycle", out, 1, C, 16000, {}, calm, 62);
   }
+  if (want("death0"))     runDeath("death0", out, 0, 2, 6000);
+  if (want("death1"))     runDeath("death1", out, 1, 0, 6000);
+  if (want("death2"))     runDeath("death2", out, 2, 4, 6000);
   if (want("figs"))       runFigs("figs", out, 0, 1400);
   if (want("figs_big"))   runFigs("figs_big", out, 1, 3000);
   if (want("figs_night")) runFigs("figs_night", out, 2, 1400);

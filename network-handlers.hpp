@@ -49,6 +49,7 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (CMD_IS("enc_choice")   ) handleMsg_enc_choice(client, data, len);
   else if (CMD_IS("enc_bank")     ) handleMsg_enc_bank(client, data, len);
   else if (CMD_IS("enc_abort")    ) handleMsg_enc_abort(client, data, len);
+  else if (CMD_IS("enc_assist")   ) handleMsg_enc_assist(client, data, len);
   else {
     Log.warning("WS unknown msg type=%.*s id=%u", (int)tl, tv, (unsigned)client->id());
     wsNack(client, "unknown_cmd");

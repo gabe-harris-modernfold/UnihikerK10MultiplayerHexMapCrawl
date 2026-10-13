@@ -143,6 +143,9 @@
       // /state change, in which case the disk falls back to flat colour.
       vc: raw.vc || null, sv: raw.sv || null,
       view: raw.view || null,
+      // VACANCY (vacancy.hpp): the sign, its town and its count, if the
+      // board is new enough to have it.
+      vac: raw.vac || null,
       players, byKey,
       live: players.filter((p) => p.conn),
     };
@@ -373,6 +376,29 @@
     }
     for (const step of TC_STEPS) {
       if (prev.tc < step && next.tc >= step) ev(out, 'ESCALATION', null, 'high', { tc: next.tc, step });
+    }
+    // VACANCY: the sign over one town. The board's, not anybody's, so these
+    // carry no key and reach the narrator whoever is on camera; whoever was
+    // in the scene that moved it -- now, or on the last poll, since a bank
+    // closes the scene -- is named in the line.
+    const va = prev.vac, vb = next.vac;
+    if (vb && vb.q >= 0) {
+      const reader = (part) => {
+        const hit = (s) => s.players.find((x) => x.encActive && x.encBiome === 'vacancy' && x.encId === part);
+        const p = hit(next) || hit(prev);
+        return p ? p.name : 'somebody';
+      };
+      if (!va || va.q !== vb.q || va.r !== vb.r) {
+        if (va && vb.st === 0) ev(out, 'VAC_SIGN', null, 'mid', {});
+      } else {
+        if (va.st === 0 && vb.st === 1) ev(out, 'VAC_HOOK', null, 'high', { n: vb.rm, name: reader(1) });
+        if (!(va.g & 1) && (vb.g & 1)) ev(out, 'VAC_DESK', null, 'mid', { name: reader(2) });
+        if (!(va.g & 2) && (vb.g & 2)) ev(out, 'VAC_KEYS', null, 'mid', { name: reader(3) });
+        if (va.st === 1 && vb.st === 1 && vb.rm < va.rm) ev(out, 'VAC_ROOM', null, vb.rm <= 2 ? 'high' : 'mid', { n: vb.rm });
+        if (va.st <= 1 && vb.st === 2) ev(out, 'VAC_SAVED', null, 'max', { name: reader(4) });
+        // The sign's own fall empties the count; a quake that got there first does not.
+        if (va.st <= 1 && vb.st === 3) ev(out, vb.rm === 0 ? 'VAC_FALLEN' : 'VAC_LOST', null, vb.rm === 0 ? 'max' : 'high', {});
+      }
     }
 
     // ── Disappearances ───────────────────────────────────────
@@ -896,6 +922,14 @@
           case 'WEATHER_TURN': ctx.terrain = e.data.name; this.say(this.pick('WEATHER_TURN', phase, '', ctx), 'mid'); break;
           case 'ESCALATION': ctx.n = e.data.tc; this.say(this.pick('ESCALATION', phase, '', ctx), 'high'); break;
           case 'GROUND_TURNED': ctx.terrain = terrainName(e.data.to); this.say(this.pick('GROUND_TURNED', phase, e.key, ctx), 'high'); break;
+          // VACANCY's two endings get the headline: they change the board for
+          // everybody, and one of them deletes a town.
+          case 'VAC_SAVED':
+          case 'VAC_FALLEN':
+            this.say(this.pick(e.kind, phase, '', ctx), 'max', {
+              headline: true, sub: e.kind === 'VAC_SAVED' ? 'the sign is dark' : 'the town is full',
+            });
+            break;
           default: {
             if (OBS.LINES[e.kind]) this.say(this.pick(e.kind, phase, e.key, ctx), e.sev);
           }
@@ -1057,6 +1091,7 @@
     }
     if (e && e.data) {
       if (e.data.n != null) ctx.n = e.data.n;
+      if (e.data.name) ctx.name = e.data.name;   // a world event that knows who (VAC_*)
       if (e.kind === 'PRICE') ctx.n = e.data.ll;
       if (e.kind === 'ESCALATION') ctx.n = e.data.tc;
     }
@@ -1483,7 +1518,8 @@
     const box = EL['disk-bg'].getBoundingClientRect();
     const sig = view.pid + ':' + view.q + ',' + view.r + ':' + view.visR + ':'
       + Math.round(box.width) + 'x' + Math.round(box.height) + ':'
-      + view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('');
+      + view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('')
+      + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm : '');
     if (sig === diskSig) return;
     diskSig = sig;
     Art.onload = () => { diskSig = ''; };   // a late decode redraws on the next poll
@@ -1547,9 +1583,59 @@
       if (c.poi) { ctx.fillStyle = '#E8A828'; dot(ctx, x, y, size * 0.17); }
       else if (c.resource) { ctx.fillStyle = RES_DOT[c.resource] || '#7FB8D8'; dot(ctx, x, y, size * 0.1); }
     }
+    // VACANCY's sign, when its town is in the disk.
+    const vac = snap.vac;
+    const town = vac && vac.q >= 0 ? view.cells.find((c) => c.q === vac.q && c.r === vac.r) : null;
+    if (town) drawVacSign(ctx, size * 1.5 * town.dq, size * (SQ3 / 2 * town.dq + SQ3 * town.dr), size, vac);
     // Where the camera subject is standing.
     ctx.strokeStyle = '#E8A828'; ctx.lineWidth = Math.max(2, size * 0.035);
     ctx.beginPath(); ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // A still of the game's neon (vacancy.js), since the disk only redraws on
+  // a change: a rusted box slumped on a pole off the town's upper right,
+  // VACANCY in pink with one tube dead while the town is counting, every
+  // tube steady red over NO VACANCY once it is full, and dead glass once it
+  // is saved. The dead tube is fixed per town, like the game's.
+  function drawVacSign(ctx, x, y, size, vac) {
+    // lost (st 3 with rooms still on the count): the sign went with the town
+    const full = vac.st === 3 && vac.rm === 0, dark = vac.st === 2 || (vac.st === 3 && vac.rm > 0);
+    const bx = x + size * 0.3, by = y + size * 0.24, poleH = size * 0.88;
+    const W = size * 1.36, H = size * 0.36;
+    ctx.save();
+    ctx.fillStyle = '#3a2618'; ctx.strokeStyle = '#080503'; ctx.lineWidth = 1;
+    ctx.fillRect(bx - size * 0.03, by - poleH, size * 0.06, poleH);
+    ctx.strokeRect(bx - size * 0.03, by - poleH, size * 0.06, poleH);
+    ctx.translate(bx, by - poleH);
+    ctx.rotate(0.08);
+    ctx.fillStyle = '#33200f'; ctx.strokeStyle = '#0d0704'; ctx.lineWidth = Math.max(1, size * 0.025);
+    ctx.fillRect(-W / 2, -H, W, H); ctx.strokeRect(-W / 2, -H, W, H);
+    const word = 'NO VACANCY';
+    const px = Math.round(H * 0.6);
+    ctx.font = 'bold ' + px + 'px "Trebuchet MS", Arial, sans-serif';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    const ws = word.split('').map((ch) => ctx.measureText(ch).width + px * 0.06);
+    let xx = -ws.reduce((a, b) => a + b, 0) / 2;
+    const deadAt = 3 + (((vac.q * 7 + vac.r * 13) % 7) + 7) % 7;   // one of the VACANCY letters
+    word.split('').forEach((ch, i) => {
+      const no = i < 2;
+      const lit = !dark && (full || (!no && i !== deadAt));
+      if (ch !== ' ') {
+        if (lit) {
+          const rgb = full ? '255,40,40' : '255,62,150';
+          ctx.shadowColor = 'rgba(' + rgb + ',0.95)'; ctx.shadowBlur = px * 0.8;
+          ctx.fillStyle = 'rgba(' + rgb + ',1)'; ctx.fillText(ch, xx, -H / 2);
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'rgba(255,236,244,0.85)'; ctx.fillText(ch, xx + px * 0.03, -H / 2);
+        } else {
+          ctx.strokeStyle = no ? 'rgba(176,112,104,0.8)' : 'rgba(184,138,150,0.8)';
+          ctx.lineWidth = Math.max(1, px * 0.06);
+          ctx.strokeText(ch, xx, -H / 2);
+        }
+      }
+      xx += ws[i];
+    });
+    ctx.restore();
   }
 
   const RES_DOT = [null, '#7FB8D8', '#8FC050', '#D08030', '#D06060', '#A0A0A0'];

@@ -419,7 +419,16 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       f"recipes={c['recipes']} downed={c['downed']} "
                       # Death drops: loots sent at graves, steps walked back
                       # to our own -- whether a fall still costs the canteen.
-                      f"loots={c.get('loots', 0)} recover={c.get('recover_moves', 0)}")
+                      f"loots={c.get('loots', 0)} recover={c.get('recover_moves', 0)} "
+                      f"pois/100d={c.get('pois_per_100d', '-')}")
+            if c and (c.get("death_causes") or c.get("doom_hits") or c.get("room_drops")):
+                # What killed it, and the two answers to the 2026-10-13 run:
+                # steps taken away from the Doom, tokens put down for water.
+                causes = ",".join(f"{k}:{n}" for k, n in sorted(
+                    c.get("death_causes", {}).items(), key=lambda kv: -kv[1]))
+                print(f"       deaths: [{causes}] doom: hits={c.get('doom_hits', 0)} "
+                      f"ll_lost={c.get('doom_ll_lost', 0)} fled={c.get('doom_flee_moves', 0)} "
+                      f"room_drops={c.get('room_drops', 0)}")
             if c and (c.get("items_used") or c.get("crafted_extra") or c.get("caravan_buys")
                       or c.get("trades_accepted") or c.get("trades_declined")):
                 # What it did with its pack: consumables by name, extras
@@ -451,6 +460,13 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       f"scenes={c['kane_scenes']} read={c['kane_chapters']} "
                       f"quest_moves={c['kane_quest_moves']} shadow={c['kane_shadow_moves']}"
                       + (f" ending={c['kane_ending']}" if c.get("kane_ending") else ""))
+            if c and (c.get("vac_scenes") or c.get("vac_quest_moves") or c.get("vac_hums")):
+                # VACANCY: its scenes this bot opened, the parts the board
+                # credited to it (1 town, 2 desk, 3 keys, 4 saved), the
+                # walking it did for them, the sign's hums, and how it ended.
+                print(f"       vac: scenes={c['vac_scenes']} parts={c['vac_parts']} "
+                      f"quest_moves={c['vac_quest_moves']} hums={c['vac_hums']}"
+                      + (f" outcome={c['vac_outcome']}" if c.get("vac_outcome") else ""))
             camp = (c or {}).get("camp")
             if camp:
                 # The Sentinel's camp: did it get one, cover it, and sleep in it?

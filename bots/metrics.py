@@ -305,6 +305,37 @@ class RunReport:
                 "stage": max((d.get("stage", 0) or 0 for d in arcs), default=0),
                 "ending": ending}
 
+    def vacancy(self):
+        """VACANCY (vacancy.hpp): who opened and finished which part, how
+        many rooms were left, and how the town ended.
+
+        `opened` counts the part scenes (`enc_start` with `vac`) by part,
+        and `by_bot` lists each survivor's in order; `done` is every part
+        the board credited, in order, with who -- hook (the town read), desk
+        and keys (an item banked), saved; `hums` the sign's unicast "not
+        without both". `rooms` is the count as the last event left it, and
+        `outcome` saved / fallen / lost, or None while the sign is up."""
+        # A staging probe's copies carry its `src`, which defeats the mock's
+        # sq-less dedupe (vac_check.py logs one into the same file).
+        evs = [(t, d) for t, d in _dedupe_exact(self.rows, {"vac", "enc_start"})
+               if "src" not in d]
+        opened = [d for _t, d in evs if d.get("k") == "enc_start" and d.get("vac")]
+        vac = [d for _t, d in evs if d.get("k") == "vac"]
+        by_bot = {}
+        for d in opened:
+            by_bot.setdefault(d.get("pid"), []).append(d.get("vac"))
+        outcome = next((d.get("w") for d in reversed(vac)
+                        if d.get("w") in ("saved", "fallen", "lost")), None)
+        rooms = next((d.get("rm") for d in reversed(vac) if isinstance(d.get("rm"), int)), None)
+        town = next(((d.get("q"), d.get("r")) for d in reversed(vac)), None)
+        return {"opened": dict(sorted(Counter(d.get("vac") for d in opened).items())),
+                "by_bot": dict(sorted(by_bot.items(), key=lambda kv: (kv[0] is None, kv[0]))),
+                "done": [(d.get("w"), d.get("pid")) for d in vac
+                         if d.get("w") in ("hook", "desk", "keys", "saved")],
+                "hums": sum(1 for d in vac if d.get("w") == "hum"),
+                "nights": sum(1 for d in vac if d.get("w") == "room"),
+                "rooms": rooms, "outcome": outcome, "town": town}
+
     def items(self):
         """What the survivors did with their packs (docs/bot-testing.md,
         "Items"): every item message sent, off the tx channel; consumables
@@ -681,7 +712,7 @@ class RunReport:
                 "check_margins": self.check_margins(), "action_mix": self.action_mix(),
                 "resource_slack": self.resource_slack(), "crises": self.crises(),
                 "poi_reach": self.poi_reach(), "traps": self.traps(), "deaths": self.deaths(),
-                "kane": self.kane(),
+                "kane": self.kane(), "vacancy": self.vacancy(),
                 "items": self.items(), "quests": self.quests(),
                 "tunnels": self.tunnels(),
                 "tension": self.tension(), "death_causes": self.death_causes(),
@@ -776,6 +807,16 @@ class RunReport:
                 L.append(f"   story: chapter {ka['stage']}/{KANE_CHAPTERS}"
                          + (f", ended with the {ka['ending']}" if ka["ending"] else "")
                          + " -- read (chapter, pid): " + str(ka["read"]))
+
+        va = m.get("vacancy") or {}
+        if va.get("opened") or va.get("done") or va.get("outcome") or va.get("hums"):
+            end = {"saved": "SAVED", "fallen": "FELL (NO VACANCY)",
+                   "lost": "lost to a quake or debris"}.get(va["outcome"], "still counting")
+            L.append(f"\n-- vacancy: town {va['town']} {end}"
+                     + (f", {va['rooms']} rooms left" if va["rooms"] is not None else "")
+                     + f" after {va['nights']} nights counted")
+            L.append(f"   parts done (w, pid): {va['done']}   hums: {va['hums']}")
+            L.append(f"   scenes opened (part: n): {va['opened']}   by bot: {va['by_bot']}")
 
         it = m.get("items") or {}
         if it.get("sent") or it.get("crafts"):

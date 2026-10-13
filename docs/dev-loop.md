@@ -304,6 +304,7 @@ look at is what gets flashed:
 python scripts/fxsim/fxsim.py                 # every scene
 python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
 python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
+python scripts/fxsim/fxsim.py death0 death1 death2  # the death takeover: the Doom laughing (doom-laugh.h)
 python scripts/fxsim/fxsim.py tripwire beartrap      # the traps' two
 python scripts/fxsim/fxsim.py road_day road_storm road_night admired   # the picture screens
 python scripts/fxsim/fxsim.py chronicle chron_g0 chron_g10   # the comic page; chron_g0-10 = every event picture

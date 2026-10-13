@@ -52,6 +52,9 @@ class ContentMaxPolicy(SurvivorPolicy):
     # his reach) so his fire is a short walk when it is lit at dusk.
     kane_quest_reach = 60
     kane_shadow = True
+    # VACANCY's four parts likewise: the town, the desk and the corridor
+    # 4-8 hexes out, and the town again -- worth the walk, not just on the way.
+    vac_quest_reach = 60
     # In a scene: a node it has never reached is worth a token or two on top
     # of its loot, and a failed roll a little less than to a survival bot.
     novelty_bonus = 3.0

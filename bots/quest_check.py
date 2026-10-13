@@ -331,10 +331,11 @@ async def main(argv=None):
         pol = policy_mod.make("quester", random.Random(args.seed))
         # Staged, not found: it plays only the scenes this script opens, and
         # stays where it is between them (pursuit would open the mock's own
-        # POIs, out of order, and Kane is kane_check.py's).
+        # POIs, out of order, Kane is kane_check.py's and VACANCY vac_check.py's).
         pol.pursue = lambda obs: Action("noop", why="quest_check: staged scenes only")
         pol.engage_encounters = False
         pol.kane_quest = False
+        pol.vac_quest = False
         pol.shop = False
         bot = BotClient(host=args.host, preferred_arch=0, policy=pol, recorder=rec,
                         rng=rng, limiter=RateLimiter(0.25, rng),

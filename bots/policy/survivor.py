@@ -25,15 +25,20 @@ from config import (ACT_CRAFT, ACT_FORAGE, ACT_REST, ACT_SCAV, ACT_SHELTER,
                     TERR_SETTLEMENT, recipe_known,
                     EQUIP_STATS, INV_SLOTS_MAX, NAR_COLD_IMMUNE,
                     NAR_FIRE_STARTER, NAR_LAND_FORAGE, NAR_RIVER_FORAGE,
-                    NAR_SCAV_DOUBLE, RES_FOOD, RES_SCRAP, RES_WATER,
+                    NAR_SCAV_DOUBLE, RES_FOOD, RES_FUEL, RES_MED, RES_SCRAP,
+                    RES_WATER, MAP_COLS, MAP_ROWS, DQ, DR,
+                    NUM_TERRAIN, TERRAIN_IS_RUINS, WEATHER_CHEM,
                     ascend_cost, can_forage, gear_score, ground_days_left,
                     has_water, is_exposed, is_hatch_terrain,
-                    KANE_CAMP, KANE_GONE, KANE_RANGE, neighbor)
+                    KANE_CAMP, KANE_GONE, KANE_RANGE, neighbor,
+                    VAC_ITEM_KEY, VAC_ITEM_REGISTER, VAC_PART_DESK, VAC_PART_KEYS,
+                    VAC_PART_OUT, VAC_PART_SIGN, VAC_ST_OPEN, VAC_ST_SIGN)
 from encounters import (EncounterLibrary, EncounterRun, can_pay,
                         has_for_choice, plan, success_chance)
 import items as IT
-from navigate import begin_cycle, best_target, dijkstra, end_cycle
-from quests import QuestJournal, LEDGER
+from navigate import (DOOM_DANGER_AWARENESS, begin_cycle, best_target, dijkstra,
+                      end_cycle, hex_distance, step_cost)
+from quests import QuestJournal, LEDGER, VAC_EV_PART
 from .base import Policy, Action, ONCE
 from .itemuse import ItemUseMixin
 
@@ -51,6 +56,30 @@ EMERGENCY_WATER = 1
 EMERGENCY_FOOD = 0
 # Hunting staples justifies a much longer walk than ordinary pursuit.
 STAPLE_SEARCH_COST = 60
+# The Creeping Doom: step away while it is awake (navigate.DOOM_DANGER_AWARENESS)
+# and this close.  It walks up to 3 hexes a world tick (15 s) toward the
+# hottest scent within 6-10, and a bot walks far faster than that, so
+# distance is the whole answer -- on the K10 run of 2026-10-13 a bot at
+# LL 1 walked back onto its hex for a water pile twenty ticks running.
+DOOM_FLEE_RADIUS = 4
+# Once fleeing, keep going until this far: the first rerun stopped at
+# the flee radius, the hunt walked straight back, and the next world
+# tick's 3 steps closed the gap.  It has to be past one tick's stride.
+DOOM_SAFE_RADIUS = 7
+# Bed: with this much AP or less left in the day, walk to cover for the
+# night if it is within what is left.  Exposure is 2 LL a night in the
+# open and the rest heal is +1 (+3 under LL 3), so a survivor who
+# never sleeps covered lives at LL 2-3 and rests half its days away --
+# the third K10 quester run of 2026-10-13: 2,226 of 2,637 dawns at LL
+# 2 or 3, 2,399 of them exposed, 70 shelters built for want of scrap.
+BED_AP = 3
+# Tokens kept back when the pack must make room for water or food (see
+# make_room): fuel is dead weight without a bike, one medicine is a
+# heal, one scrap is a roof.  The canteen's scrap is added while it is
+# still to be made.  A policy with its own plan for its tokens (the
+# Biker) overrides staple_keeps().
+STAPLE_KEEP = {RES_FUEL: 0, RES_MED: 1, RES_SCRAP: 1}
+DROP_RETRY_S = 10.0         # before re-sending a drop_res that changed nothing
 # Seconds between REST retries when we cannot tell whether the last one
 # landed. Short enough to unstick a dropped REST within one dawn, long
 # enough that it is nothing like the old per-cycle spam.
@@ -116,16 +145,24 @@ KANE_QUEST_RETRY_S = 20.0
 # for a place to stand that he cannot hit.
 KANE_SHADOW_FAR = 7
 KANE_SHADOW_COST = 40
+# VACANCY (vacancy.hpp): the same rule for its hexes -- the town, the desk,
+# the corridor.  One reader per part, and a scene only opens on arrival.
+VAC_QUEST_RETRY_S = 20.0
+VAC_PART_NAME = {VAC_PART_SIGN: "the town", VAC_PART_DESK: "the Front Desk",
+                 VAC_PART_KEYS: "Housekeeping", VAC_PART_OUT: "Check-Out"}
 
 
 # Layer name -> method, for the names that are not a method already.  A
 # subclass adds its own layers here (sentinel.py, biker.py) by name.
 LAYER_METHOD = {
     "remains": "remains_action", "trade_reply": "trade_reply_action",
-    "item": "item_action", "survival": "survival_action", "gear": "gear_action",
+    "item": "item_action", "doom": "doom_action", "weather": "weather_action",
+    "bed": "bed_action",
+    "survival": "survival_action", "gear": "gear_action",
     "reveal": "reveal_action", "recover": "recover_action", "craft": "craft_action",
     "craft_extra": "craft_extra_action", "caravan": "caravan_action",
-    "kane": "kane_story", "poi": "poi_action", "climb_out": "climb_out_action",
+    "kane": "kane_story", "vacancy": "vac_story", "vacancy_today": "vac_today",
+    "poi": "poi_action", "climb_out": "climb_out_action",
 }
 
 
@@ -241,6 +278,24 @@ class SurvivorPolicy(ItemUseMixin, Policy):
     kane_min_ll = 3
     kane_truth_nerve = 0.50
 
+    # VACANCY (vacancy.hpp, docs/vacancy.md): a sign over one Settlement,
+    # the world's like Kane's arc. Four parts, each opened by stepping onto
+    # its hex -- the town while nobody has read it (1), the Front Desk (2)
+    # and Housekeeping (3) while they are open, and the town again carrying
+    # both their items (4). `vac_quest` walks there when it is within
+    # `vac_quest_reach` AP (None = what is left today, an errand on the way);
+    # below `vac_min_ll` it waits, and in a part it walks away. A part's hex
+    # within today's AP goes ahead of bedtime and the routine top-ups
+    # (`vacancy_today`, beside craft_today): the bed layer otherwise walks a
+    # hurt survivor back to cover after every step toward it. A hex it stood
+    # on with no scene is left for `vac_retry_s`. The Guest Register and the
+    # Master Key are kept by the quest journal (never litter, never crafted
+    # away) while Check-Out is still to be done.
+    vac_quest = True
+    vac_quest_reach = None
+    vac_min_ll = 3
+    vac_retry_s = VAC_QUEST_RETRY_S
+
     # The decision chain, top priority first.  Each name is a layer: a
     # method of `obs` returning an Action or None (LAYER_METHOD maps the
     # names), and the first Action wins; its `why` is prefixed with the
@@ -251,13 +306,15 @@ class SurvivorPolicy(ItemUseMixin, Policy):
     #
     # Why this order: everything that costs no AP sits first (a grave
     # underfoot, a trade that only holds while we share the hex, a
-    # consumable that pays now), then the two errands bounded by today's
-    # AP (a grave of ours, the canteen -- see recover_today), then the
-    # survival floor, then Kane's fire (lit only at night), then the free
-    # gear and map items, then the walking errands, and pursuit last.
-    layers = ("remains", "trade_reply", "item", "recover_today", "craft_today",
+    # consumable that pays now), then the errands bounded by today's AP (a
+    # grave of ours, the canteen, a VACANCY part -- see recover_today), then
+    # the survival floor, then Kane's fire (lit only at night), then the
+    # free gear and map items, then the walking errands (Kane's story and
+    # VACANCY's longer walks among them), and pursuit last.
+    layers = ("remains", "trade_reply", "item", "doom", "weather",
+              "recover_today", "craft_today", "vacancy_today", "bed",
               "survival", "kane_urgent", "gear", "reveal", "recover", "craft",
-              "craft_extra", "caravan", "kane", "poi", "climb_out", "pursue")
+              "craft_extra", "caravan", "kane", "vacancy", "poi", "climb_out", "pursue")
 
     def __init__(self, rng, library: EncounterLibrary | None = None):
         super().__init__(rng)
@@ -292,7 +349,13 @@ class SurvivorPolicy(ItemUseMixin, Policy):
                       "kane_calls": 0, "kane_dodged": 0, "kane_bursts": 0,
                       "kane_hits": 0, "kane_ll_lost": 0, "kane_scenes": 0,
                       "kane_chapters": 0, "kane_quest_moves": 0,
-                      "kane_shadow_moves": 0, "kane_ending": None}
+                      "kane_shadow_moves": 0, "kane_ending": None,
+                      # VACANCY: its scenes opened by us, the parts the board
+                      # credited to us (ev vac hook/desk/keys/saved, in order),
+                      # steps walked toward them, the sign's hums at us, and
+                      # how the town ended (saved / fallen / lost, anyone's).
+                      "vac_scenes": 0, "vac_parts": [], "vac_quest_moves": 0,
+                      "vac_hums": 0, "vac_outcome": None}
         # Every send cooldown lives in self.throttle (base.Throttle): equip,
         # pickup, loot, craft, shelter, the lost-scene abort, Kane's chapter
         # hexes, and the item layer's.
@@ -301,6 +364,16 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         # (depth, q, r) hexes the board refused an act on for `terrain`: our
         # map is wrong about them (see on_reply).
         self._terrain_refused: set[tuple[int, int, int]] = set()
+        # The hex the emergency staple hunt is walking to, (depth, q, r):
+        # kept until reached or no longer worth it, so two sources at
+        # similar value cannot pull the bot back and forth between them.
+        self._hunt_lock = None
+        self._doom_fleeing = False  # past DOOM_FLEE_RADIUS, not yet DOOM_SAFE_RADIUS
+        # The Creeping Doom and what it cost us; room_drops are tokens put
+        # down so water or food would fit (make_room).
+        self.stats.update({"doom_flee_moves": 0, "doom_hits": 0,
+                           "doom_ll_lost": 0, "room_drops": 0,
+                           "death_causes": {}})
         self._items_init()
         # Quests (quests.py): every bot keeps a journal so any step any bot
         # stumbles through reaches the ledger; quest_drive lets it steer.
@@ -323,6 +396,12 @@ class SurvivorPolicy(ItemUseMixin, Policy):
 
     # --- event plumbing -------------------------------------------------
     def on_event(self, ev):
+        # VACANCY's events are the world's (a room, the fall: pid -1) or a
+        # part somebody finished, which closes it for us too -- so they are
+        # read before the filter below drops other players' events.
+        if ev.get("k") == "vac":
+            self.on_vac(ev)
+            return
         # ev goes to every client via ws.textAll(), so without this filter a
         # bot counts every seated survivor's rolls as its own.
         if self.pid >= 0 and ev.get("pid") not in (None, self.pid):
@@ -376,6 +455,13 @@ class SurvivorPolicy(ItemUseMixin, Policy):
             self.run = None
         elif k == "downed":
             self.stats["downed"] += 1
+            cause = ev.get("cause")
+            if cause:
+                dc = self.stats["death_causes"]
+                dc[cause] = dc.get(cause, 0) + 1
+        elif k == "doom_act":
+            self.stats["doom_hits"] += 1
+            self.stats["doom_ll_lost"] += ev.get("llLost", 0) or 0
         elif k == "kane_call" and not ev.get("camp"):
             self.stats["kane_calls"] += 1
         elif k == "kane_fire":
@@ -388,6 +474,29 @@ class SurvivorPolicy(ItemUseMixin, Policy):
                 self.stats["kane_ending"] = ev["ending"]
             if isinstance(ev.get("stage"), int):
                 self.journal.on_kane(ev["stage"], True, day)
+
+    def on_vac(self, ev) -> None:
+        """An `ev vac` (vacancy.hpp), anyone's: the hum is ours alone
+        (unicast), a part the board credits goes on our list when it is
+        ours and closes the step for us either way, and the town's end is
+        booked whoever brought it about."""
+        w = ev.get("w")
+        mine = self.pid >= 0 and ev.get("pid") == self.pid
+        obs = self._obs
+        day = obs.day if obs is not None else 0
+        if w == "hum":
+            if mine:
+                self.stats["vac_hums"] += 1
+            return
+        if w in ("saved", "fallen", "lost"):
+            self.stats["vac_outcome"] = w
+        part = VAC_EV_PART.get(w)
+        if part and mine:
+            self.stats["vac_parts"].append(part)
+        if part:
+            done = len(self.journal.done)
+            self.journal.on_vac(w, mine, day)
+            self.stats["quest_steps"] += len(self.journal.done) - done
 
     def on_reply(self, cmd, ok, why):
         # The board says this hex is not what our map says it is (a FORAGE
@@ -484,6 +593,133 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         return Action("noop", why="no layer had anything to do")
 
     # --- the layers that are not a plain method already -------------------
+    def doom_action(self, obs) -> Action | None:
+        """Step away from the Creeping Doom while it is awake and within
+        DOOM_FLEE_RADIUS.  The step that gains the most distance, cheapest
+        first; never onto fire or a hatch.  Surface only -- it cannot
+        reach anyone underground (resolveDoomProximity skips depth).
+        The danger map (state.py) keeps every other plan out of its
+        reach; this is for when we are already in it."""
+        me = obs.me
+        w = obs.world
+        if me.depth or w.doom_q < 0 or w.doom_awareness < DOOM_DANGER_AWARENESS:
+            self._doom_fleeing = False
+            return None
+        here = hex_distance(me.q, me.r, w.doom_q, w.doom_r)
+        if here > (DOOM_SAFE_RADIUS if self._doom_fleeing else DOOM_FLEE_RADIUS):
+            self._doom_fleeing = False
+            return None
+        self._doom_fleeing = True
+        if me.ap <= 0:
+            return None             # nothing to flee with until dawn
+        burning = {(fq, fr) for fq, fr, *_ in w.fire}
+        best = None
+        for d in me.legal_dirs():
+            q, r = (me.q + DQ[d]) % MAP_COLS, (me.r + DR[d]) % MAP_ROWS
+            cell = obs.map[(q, r)]
+            if (q, r) in burning:
+                continue
+            if cell is not None and is_hatch_terrain(cell.terrain):
+                continue            # stepping on a hatch is the descent
+            cost = step_cost(cell)
+            if cost is None:
+                continue
+            dist = hex_distance(q, r, w.doom_q, w.doom_r)
+            key = (dist, -cost)
+            if best is None or key > best[0]:
+                best = (key, d, q, r, dist)
+        if best is None or best[4] <= here:
+            return None             # no step gains ground: let the chain act
+        _, d, q, r, dist = best
+        self.stats["doom_flee_moves"] += 1
+        return Action("move", d=d,
+                      why=f"the Doom is {here} away at awareness {w.doom_awareness},"
+                          f" stepping to ({q},{r}) at {dist}")
+
+    @staticmethod
+    def covered_from_weather(cell) -> bool:
+        """Where the chem storm cannot reach (tickGame): any shelter, a
+        Settlement, a ruin.  Underground is the caller's to know."""
+        t = cell.terrain
+        return (cell.shelter > 0 or t == TERR_SETTLEMENT
+                or (0 <= t < NUM_TERRAIN and bool(TERRAIN_IS_RUINS[t])))
+
+    def weather_action(self, obs) -> Action | None:
+        """Chem storm: get under cover now.  tickGame charges an
+        uncovered survivor on the surface about 1 LL a real minute on
+        the worst terrain, and any shelter is full cover, so a scrap and
+        an AP spent at once is the answer; failing that, the nearest
+        Settlement, ruin or roof within today's AP.  On the first K10
+        rerun 20 of 69 deaths were the storm, every one in the open."""
+        me = obs.me
+        if obs.weather != WEATHER_CHEM or me.depth or me.ap < 1:
+            return None
+        cell = obs.here()
+        if cell is None or self.covered_from_weather(cell):
+            return None
+        if (me.inv[RES_SCRAP] >= 1
+                and self.throttle.ok(("shelter", obs.day, me.q, me.r), ONCE)):
+            return Action("act", a=ACT_SHELTER,
+                          why=f"chem storm: roofing this hex ({me.inv[RES_SCRAP]} scrap)")
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+        ap = me.ap
+
+        def value(c, q, r, cost):
+            if cost <= 0 or cost > ap or c is None or not self.covered_from_weather(c):
+                return None
+            return 10.0 / cost
+
+        target = best_target(obs.map, me.q, me.r, value, max_cost=ap,
+                             stop_at=ends_journey)
+        if target is None or target[2] not in legal:
+            return None
+        q, r, d, cost, _ = target
+        return Action("move", d=d, why=f"chem storm: cover at ({q},{r}) c={cost}")
+
+    @staticmethod
+    def covered_at_night(cell) -> bool:
+        """Where dawnUpkeep charges no exposure: a shelter or SV >= 2
+        terrain (Settlement, Broken Urban, Flooded District...)."""
+        return cell.shelter > 0 or not is_exposed(cell.terrain)
+
+    def bed_action(self, obs) -> Action | None:
+        """Hurt, or near the end of the day: sleep under cover if cover is
+        within today's AP.  Resting covered turns the night from -2 into
+        the heal; resting in the open at LL 3 loses a point and at LL 2
+        gains one, which is the 2-3 band the questers lived in.  Never
+        ahead of a staple emergency, never underground (already cover),
+        never for the Endurer, never onto a hatch."""
+        me = obs.me
+        if me.depth or me.ap < 1 or me.archetype == 5:
+            return None
+        if me.inv[RES_WATER] <= EMERGENCY_WATER or me.inv[RES_FOOD] <= EMERGENCY_FOOD:
+            return None
+        if not (me.ll <= self.rest_below_ll + 1 or me.ap <= BED_AP):
+            return None
+        here = obs.here()
+        if here is None or self.covered_at_night(here):
+            return None
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+        ap = me.ap
+
+        def value(c, q, r, cost):
+            if (cost <= 0 or cost > ap or c is None or not self.covered_at_night(c)
+                    or is_hatch_terrain(c.terrain)):
+                return None
+            return 10.0 / cost
+
+        target = best_target(obs.map, me.q, me.r, value, max_cost=ap,
+                             stop_at=ends_journey)
+        if target is None or target[2] not in legal:
+            return None
+        q, r, d, cost, _ = target
+        return Action("move", d=d,
+                      why=f"cover for the night at ({q},{r}) c={cost} (LL {me.ll}, ap {ap})")
+
     def recover_today(self, obs) -> Action | None:
         """A grave of our own within today's AP, ahead of the survival
         floor: the canteen is usually lying on it.  Not in an emergency."""
@@ -510,6 +746,20 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         """The camp he left, the house in the glass, or (kane_shadow)
         staying near him until his fire is lit."""
         return self.kane_quest_action(obs)
+
+    def vac_story(self, obs) -> Action | None:
+        """The town under the sign, the Front Desk or Housekeeping, or the
+        town again to check it out (vacancy.hpp)."""
+        return self.vac_quest_action(obs)
+
+    def vac_today(self, obs) -> Action | None:
+        """A VACANCY part within today's AP, ahead of bedtime: the scene
+        opens on arrival and costs no AP, while the bed layer -- which a
+        quester at LL 4 or less meets every cycle -- would walk it back to
+        cover after each step toward it.  Emergencies still win."""
+        if self.in_emergency(obs):
+            return None
+        return self.vac_quest_action(obs, reach=obs.me.ap)
 
     def poi_action(self, obs) -> Action | None:
         """Standing on an unopened POI: take it, whatever the policy is.
@@ -946,11 +1196,19 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         me = obs.me
         if me.depth or me.ap < 1 or not obs.remains:
             return None
+        w = obs.world
+        doom = ((w.doom_q, w.doom_r)
+                if w.doom_awareness >= DOOM_DANGER_AWARENESS and w.doom_q >= 0
+                else None)
         graves = {}
         for rm in obs.remains:
             at = (rm.get("q"), rm.get("r"))
             if None in at or at == (me.q, me.r):
                 continue                # malformed, or remains_action's job
+            # A grave the Doom is sitting on keeps: it moves on, the
+            # pile does not, and the walk back is how it got us last time.
+            if doom is not None and hex_distance(at[0], at[1], *doom) <= DOOM_FLEE_RADIUS:
+                continue
             if not self.is_my_grave(obs, rm) or not self.worth_recovering(obs, rm):
                 continue
             if item is not None and not any(
@@ -1043,6 +1301,9 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         # with.  This deliberately outranks resting -- dawn consumes 1 food
         # and 2 water whether you moved or not, so resting through a shortage
         # makes it strictly worse.
+        room = self.make_room(obs)
+        if room is not None:
+            return room
         hunt = self.staple_hunt(obs)
         if hunt is not None:
             return hunt
@@ -1134,22 +1395,30 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         dry = me.inv[RES_WATER] <= EMERGENCY_WATER
         starving = me.inv[RES_FOOD] <= EMERGENCY_FOOD
         if not (dry or starving) or me.ap <= 0:
+            self._hunt_lock = None
             return None
         legal = me.legal_dirs()
         if not legal:
             return None
+        # A pile only counts while it would fit: stepping onto one with a
+        # full pack is a col_fail, and the hunt kept walking a bot onto
+        # the same pile and off again, every AP of every day, until it
+        # died of the thirst the pile would have answered.  Harvesting
+        # (WATER, FORAGE) may overfill, so terrain still counts.
+        room_w = token_room(me, RES_WATER) > 0
+        room_f = token_room(me, RES_FOOD) > 0
 
         def value(cell, q, r, cost):
             if cost <= 0 or cell is None or self.terrain_doubtful(obs, q, r):
                 return None
             v = 0.0
             if dry:
-                if cell.resource == RES_WATER + 1:
+                if cell.resource == RES_WATER + 1 and room_w:
                     v += 100.0
                 if has_water(cell.terrain):
                     v += 70.0
             if starving:
-                if cell.resource == RES_FOOD + 1:
+                if cell.resource == RES_FOOD + 1 and room_f:
                     v += 80.0
                 if can_forage(cell.terrain):
                     v += 40.0
@@ -1161,15 +1430,84 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         # 0, so there is no food down there at all, which is exactly why the
         # tunnel policies have to surface for it.
         my_q, my_r = obs.pos()
-        # stop_at: a route *through* a hatch does not exist (it ends on the
-        # other board), so an emergency walk must never be planned across one.
-        target = best_target(obs.board, my_q, my_r, value,
-                             max_cost=STAPLE_SEARCH_COST, stop_at=ends_journey)
+        # Keep walking to the hex picked last cycle while it is reachable
+        # and still worth something: the pick is value / cost, so two
+        # sources at similar worth swap places with every step and the
+        # bot shuttles between them.
+        target = None
+        lock = self._hunt_lock
+        if lock is not None and lock[0] == me.depth and (lock[1], lock[2]) != (my_q, my_r):
+            at = (lock[1], lock[2])
+            dist, first = dijkstra(obs.board, my_q, my_r, STAPLE_SEARCH_COST,
+                                   stop_at=ends_journey)
+            cost = dist.get(at, 0)
+            if cost > 0 and first.get(at, -1) >= 0:
+                v = value(obs.board[at], at[0], at[1], cost)
+                if v is not None:
+                    target = (at[0], at[1], first[at], cost, v)
+        if target is None:
+            # stop_at: a route *through* a hatch does not exist (it ends on
+            # the other board), so an emergency walk is never planned across one.
+            target = best_target(obs.board, my_q, my_r, value,
+                                 max_cost=STAPLE_SEARCH_COST, stop_at=ends_journey)
         if target is None or target[2] not in legal:
+            self._hunt_lock = None
             return None
         q, r, d, cost, val = target
+        self._hunt_lock = (me.depth, q, r)
         need = "water" if dry else "food"
         return Action("move", d=d, why=f"EMERGENCY {need} -> ({q},{r}) c={cost}")
+
+    def staple_keeps(self, obs) -> dict:
+        """{res idx: tokens kept} when make_room() has to put something
+        down.  Scrap holds the canteen's cost while that is still to be
+        made -- the canteen is the lasting answer to the thirst this is
+        the short one to.  A kind missing from the dict is never dropped."""
+        keeps = dict(STAPLE_KEEP)
+        rec = RECIPES.get(CANTEEN_RECIPE) if CANTEEN_RECIPE is not None else None
+        if self.craft_canteen and rec and not self.owns(obs.me, CANTEEN_ITEM):
+            keeps[RES_SCRAP] = max(keeps[RES_SCRAP], rec["cost"][RES_SCRAP])
+        return keeps
+
+    def make_room(self, obs) -> Action | None:
+        """Dry or starving with no room for the staple: put down the
+        token kind we hold most of beyond staple_keeps().
+
+        A full pack cannot take a pile (col_fail reason 2) and the hunt
+        no longer walks to one it cannot hold, so without this a
+        survivor carrying 2 fuel, 2 medicine and 2 scrap sits at water 0
+        beside pile after pile.  That was the K10 run of 2026-10-13: 21
+        of 28 deaths were thirst, and the water piles it walked over
+        were refused 700 times for want of a slot.  Dawn drinks 2, so
+        two slots are made at once for water."""
+        me = obs.me
+        dry = me.inv[RES_WATER] <= EMERGENCY_WATER
+        starving = me.inv[RES_FOOD] <= EMERGENCY_FOOD
+        if not (dry or starving):
+            return None
+        need = RES_WATER if dry else RES_FOOD
+        if token_room(me, need) > 0:
+            return None
+        keeps = self.staple_keeps(obs)
+        best = None
+        for k in (RES_FUEL, RES_SCRAP, RES_MED):
+            cap = keeps.get(k)
+            if cap is None:
+                continue
+            spare = me.inv[k] - cap
+            if spare > 0 and (best is None or spare > best[1]):
+                best = (k, spare)
+        if best is None:
+            return None
+        k, spare = best
+        if not self.throttle.ok(("drop_res", k, me.inv[k]), DROP_RETRY_S):
+            return None
+        n = min(spare, 2 if need == RES_WATER else 1)
+        self.stats["room_drops"] += n
+        return Action("drop_res", res=k + 1, qty=n,
+                      why=f"making room for {'water' if dry else 'food'}: dropping {n} "
+                          f"{('water', 'food', 'fuel', 'med', 'scrap')[k]} "
+                          f"(inv {'/'.join(str(x) for x in me.inv)})")
 
     def staple_value(self, obs, cell, dry: bool, starving: bool) -> float:
         """Subclass hook: extra worth of `cell` to an emergency staple hunt.
@@ -1252,8 +1590,11 @@ class SurvivorPolicy(ItemUseMixin, Policy):
             # A Machine Gun Kane chapter (enc_path "kane": n, kane.hpp): opened
             # by arriving, like a trap, and not a POI -- counted on its own.
             self.run.kane = int(enc.get("kane") or 0)
+            # A VACANCY part (enc_path "vac": n, vacancy.hpp): the same.
+            self.run.vac = int(enc.get("vac") or 0)
             self.stats["traps" if self.run.trap else
-                       "kane_scenes" if self.run.kane else "encounters_opened"] += 1
+                       "kane_scenes" if self.run.kane else
+                       "vac_scenes" if self.run.vac else "encounters_opened"] += 1
             if self.run.node_key:
                 self.stats["nodes_seen"].add(f"{biome}/{eid}/{self.run.node_key}")
             self.journal.on_open(self.run, obs.day)
@@ -1292,6 +1633,8 @@ class SurvivorPolicy(ItemUseMixin, Policy):
             return self.decide_trap(obs, run)
         if run.kane:
             return self.decide_kane_chapter(obs, run)
+        if run.vac:
+            return self.decide_vac_part(obs, run)
 
         act = self.probe_gate(obs, run)
         if act is not None:
@@ -1640,6 +1983,135 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         p = success_chance(run.choices[ci], obs)
         return Action("enc_choice", ci=ci,
                       why=f"KANE chapter {run.kane} at {run.node_key} (p={p:.2f})")
+
+    # --- VACANCY (vacancy.hpp) --------------------------------------------
+    @staticmethod
+    def vac_carries(me, item) -> bool:
+        """`item` in the PACK -- what Check-Out asks (playerHasForChoice
+        reads a key item off the pack; the two halves cannot be worn)."""
+        return any(t == item and q > 0 for t, q in zip(me.inv_type, me.inv_qty))
+
+    @classmethod
+    def vac_quest_targets(cls, obs) -> list:
+        """[(q, r, part)] where VACANCY goes on for US.  Mirrors
+        vacOnArrival(): the town while nobody has read it (1); while it
+        counts, the Front Desk (2) and Housekeeping (3) while each is open
+        and we do not hold what it pays, and the town again once we carry
+        both halves (4) -- under the sign without both it only hums."""
+        w = obs.world
+        if not w.vac_live:
+            return []
+        if w.vac_stage == VAC_ST_SIGN:
+            return [(w.vac_q, w.vac_r, VAC_PART_SIGN)]
+        if w.vac_stage != VAC_ST_OPEN:
+            return []
+        me = obs.me
+        reg = cls.vac_carries(me, VAC_ITEM_REGISTER)
+        key = cls.vac_carries(me, VAC_ITEM_KEY)
+        if reg and key:
+            return [(w.vac_q, w.vac_r, VAC_PART_OUT)]
+        out = []
+        if w.vac_desk_q >= 0 and not reg:
+            out.append((w.vac_desk_q, w.vac_desk_r, VAC_PART_DESK))
+        if w.vac_keys_q >= 0 and not key:
+            out.append((w.vac_keys_q, w.vac_keys_r, VAC_PART_KEYS))
+        return out
+
+    def vac_quest_action(self, obs, reach=None) -> Action | None:
+        """Walk to the nearest hex where VACANCY goes on for us (the desk
+        and the corridor: whichever is closer), within `reach` AP (default
+        `vac_quest_reach`, and None there is today's AP).  The route prices
+        Kane's reach and the Doom like any other.  A hex we stand on with no
+        scene -- somebody else is reading that part (one reader each), a
+        failed check put us out, or a booby trap on the hex went first -- is
+        left for `vac_retry_s`: a scene only opens on arrival."""
+        if not self.vac_quest or obs.underground:
+            return None
+        me = obs.me
+        if me.ll <= self.vac_min_ll or me.ap <= 0:
+            return None
+        live = []
+        for q, r, part in self.vac_quest_targets(obs):
+            key = ("vac", part, q, r)
+            if (me.q, me.r) == (q, r):
+                self.throttle.hold(key, self.vac_retry_s)
+            elif not self.throttle.held(key):
+                live.append((q, r, part))
+        legal = me.legal_dirs()
+        if not live or not legal:
+            return None
+        if reach is None:
+            reach = self.vac_quest_reach if self.vac_quest_reach is not None else me.ap
+        dist, first = dijkstra(obs.map, me.q, me.r, max_cost=reach + 1,
+                               stop_at=ends_journey)
+        best = None
+        for q, r, part in live:
+            cost, d = dist.get((q, r)), first.get((q, r), -1)
+            if cost is None or cost > reach or d not in legal:
+                continue
+            if best is None or cost < best[0]:
+                best = (cost, d, q, r, part)
+        if best is None:
+            return None
+        cost, d, q, r, part = best
+        self.stats["vac_quest_moves"] += 1
+        return Action("move", d=d, why=f"VACANCY part {part} ({VAC_PART_NAME[part]}) "
+                                       f"at ({q},{r}) c={cost}")
+
+    def vac_choice(self, obs, run):
+        """The choice to send in a VACANCY part, or None: the best odds
+        among the ones we may take (a requires_item we hold, a cost we can
+        pay, not refused), and never one that leads to an escape node --
+        walking out of the pink light reads nothing, and every Check-Out
+        node has that door first -- nor one whose failure would take the
+        last LL (Check-Out's last door costs 2): the part keeps, a fall
+        drops both halves on the town's hex."""
+        me = obs.me
+        nodes = run.enc.get("nodes") or {}
+        hazards = run.enc.get("hazards") or {}
+        best, best_p = None, -1.0
+        for i, ch in enumerate(run.choices):
+            if run.is_refused(i) or not has_for_choice(ch, me) or not can_pay(ch, me):
+                continue
+            if nodes.get(ch.get("success_node", ""), {}).get("escape"):
+                continue
+            pen = (hazards.get(ch.get("hazard_id", ""), {}).get("penalty") or {}).get("ll", 0)
+            if -int(pen or 0) >= me.ll:
+                continue
+            p = success_chance(ch, obs)
+            if p > best_p:
+                best, best_p = i, p
+        return best
+
+    def decide_vac_part(self, obs, run) -> Action:
+        """One of VACANCY's parts (vacancy.hpp).  The town (1) and Check-Out
+        (4) count once their LAST node is reached (vacPartRead); the Front
+        Desk (2) and Housekeeping (3) only once that node's item is BANKED
+        (vacOnBank) -- walk off at the last node and the desk stays open.
+        So it is never banked early: play to the last node and bank there
+        (the default "bank at the first bankable node" would pocket a token
+        and leave the part unread).  Out of an escape node, bank what was
+        won.  Too hurt to risk a check: walk away, the part keeps."""
+        me = obs.me
+        if run.at_escape or not run.choices:
+            if run.can_bank():
+                run.banked = True
+            what = "walked away" if run.at_escape else "done"
+            return Action("enc_bank", why=f"VACANCY part {run.vac} {what} at {run.node_key}")
+        if me.ll <= self.vac_min_ll:
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_bank" if run.can_bank() else "enc_abort",
+                          why=f"VACANCY part {run.vac}: LL {me.ll}, leaving it for later")
+        ci = self.vac_choice(obs, run)
+        if ci is None:
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort",
+                          why=f"VACANCY part {run.vac}: no way on at {run.node_key}")
+        run.choose(ci)
+        self.journal.on_choice(run, ci, me)     # Check-Out's gates, for the oracle
+        p = success_chance(run.choices[ci], obs)
+        return Action("enc_choice", ci=ci,
+                      why=f"VACANCY part {run.vac} at {run.node_key} (p={p:.2f})")
 
     # --- crossing back to the surface -----------------------------------
     def climb_out(self, obs, prefer=None, why: str = "climbing out",

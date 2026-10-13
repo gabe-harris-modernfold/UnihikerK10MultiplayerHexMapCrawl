@@ -31,7 +31,7 @@ SCENES = ["quake", "strike", "dawn", "eye", "hunt", "switch", "madness", "fire",
           "tripwire", "beartrap",
           "road_day", "road_storm", "road_night", "road_fog", "road_empty", "road_cycle",
           "admired", "admired_empty",
-          "chronicle", "chronicle1", "chronicle2", "chronicle3", "chronicle_empty"] +          ["chron_g%d" % i for i in range(11)] +          ["stash", "stash_bare", "odds_win", "odds_lose", "odds_none", "waste", "figs", "figs_big", "figs_night", "stash_cast", "odds_cast"]
+          "chronicle", "chronicle1", "chronicle2", "chronicle3", "chronicle_empty"] +          ["chron_g%d" % i for i in range(11)] +          ["stash", "stash_bare", "odds_win", "odds_lose", "odds_none", "waste", "figs", "figs_big", "figs_night", "stash_cast", "odds_cast", "death0", "death1", "death2"]
 
 
 def find_vcvars():
@@ -56,7 +56,7 @@ def find_fonts(explicit):
 
 def build(fonts):
     src = os.path.join(HERE, "fxsim.cpp")
-    deps = [src, os.path.join(ROOT, "ui-fx.hpp"), os.path.join(ROOT, "ui-scenes.hpp")]
+    deps = [src, os.path.join(ROOT, "ui-fx.hpp"), os.path.join(ROOT, "ui-scenes.hpp"), os.path.join(ROOT, "doom-laugh.h")]
     if os.path.isfile(EXE) and all(os.path.getmtime(EXE) > os.path.getmtime(d) for d in deps):
         return
     bat = os.path.join(tempfile.gettempdir(), "fxsim_build.bat")

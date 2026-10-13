@@ -316,6 +316,11 @@ class BikerPolicy(SurvivorPolicy):
                 RES_MED: KEEP_MED,
                 RES_FUEL: cost[RES_FUEL] + KEEP_FUEL}
 
+    def staple_keeps(self, obs) -> dict:
+        """The survivor's make_room() never drops below the build's own
+        keeps; a kind keeps() leaves out (fuel, riding) is never dropped."""
+        return self.keeps(self._ph or self.phase(obs))
+
     def junk(self, obs, ph, toks) -> set:
         """Token kinds a pile of which would only push us past keeps()."""
         me = obs.me

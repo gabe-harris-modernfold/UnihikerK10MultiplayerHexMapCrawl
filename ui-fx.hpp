@@ -4982,8 +4982,8 @@ static bool fxAllocPools() {
 // ui-screens.hpp, because it needs the audio helpers included after this.
 // Button A now steps the speaker volume and only borrows this file's toast.
 //
-// The level -- MADNESS, RESTRAINED, OFF -- is persisted with the other K10
-// prefs ("fx" in the "k10" namespace). RESTRAINED keeps every panel and the shake
+// The level -- MADNESS, RESTRAINED, OFF -- is fixed at MADNESS by setup(); OFF
+// is what an ALLOC FAIL falls back to. RESTRAINED keeps every panel and the shake
 // but caps the ambient layer at a mild flicker, with no whispers and no eyes;
 // OFF is the plain screens and the old tube-dropout switch, exactly as before
 // this file existed.

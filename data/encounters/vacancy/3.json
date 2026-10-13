@@ -1,0 +1,107 @@
+{
+  "id": "vacancy_3_housekeeping",
+  "title": "Housekeeping",
+  "vacancy": {
+    "part": 3
+  },
+  "start_node": "the_corridor",
+  "nodes": {
+    "the_corridor": {
+      "text": "In the ruin there is one doorway in better repair than the building round it: two glass doors, a rubber mat that says WELCOME, and beyond them a corridor. The building is twenty paces deep. The corridor runs back much further than that: a low ceiling, strip lights that buzz and stutter, carpet the colour of old wine, an ice machine, a fire hose behind glass, and doors down both sides, turquoise, numbered, every one with a DO NOT DISTURB card on its handle. A long way down it, a wheel is squeaking.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Follow the squeak.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_cart",
+          "hazard_id": "the_ice_machine"
+        },
+        {
+          "label": "Read the room numbers as you go.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_cart",
+          "hazard_id": "the_numbers"
+        }
+      ]
+    },
+    "the_cart": {
+      "text": "A housekeeping cart, piled with folded towels, little wrapped soaps, toilet rolls in paper bands, a bucket, and a ring of keys hung off the handle on a chain. The maid is in the room with the door propped on its latch, turning down the beds. Both beds have somebody in them already: an old couple from the town, asleep on their backs, eyes open, smiling at the ceiling. She folds the sheet down neatly under their chins and puts a mint on each pillow beside their heads and moves on to the next room, humming. She has no face. There is only the shape a face makes under a pillowcase.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Lift the keys off the cart while she works.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_key",
+          "hazard_id": "she_turns"
+        },
+        {
+          "label": "Wait in the corridor and ask her for the master.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 3,
+          "success_node": "the_key",
+          "hazard_id": "do_not_disturb"
+        }
+      ]
+    },
+    "the_key": {
+      "text": "You have the master key: a long brass thing on a plastic fob stamped MANAGEMENT. It is warm, and it is heavier than brass has any right to be. As your hand closes on it every door in the corridor clicks, all together, the sound of a whole building coming unlocked at once, and down the whole length of it nobody comes out. Behind you the maid has started on the next room. The tune she is humming is one you know, off a radio, from a long time ago, from before you were born. You walk back toward the glass doors and it takes far less time than it took to walk in.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 71,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_ice_machine": {
+      "text": "The ice machine drops a load as you pass it. You look down into the bin. It is full to the lid, and it is not ice, it is teeth, small ones, children's, and the scoop is standing up in them. You don't remember running. You remember the squeak, ahead of you the whole time, never any nearer.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "the_numbers": {
+      "text": "The numbers go 114, 115, 116, 117, 117, 117, 1147, and you stop reading them, because the next one is your age and the one after it is the year you were born, and your nose has started to bleed and won't stop.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "she_turns": {
+      "text": "She turns round with your hand on the keys. She says nothing. She puts a mint in your palm and closes your fingers over it with hers, and then you are sitting in the corridor against the wall with no idea how long you have been sitting there, and the water in your bottle has gone warm, and there is less of it.",
+      "penalty": {
+        "water": -2
+      },
+      "ends_encounter": true
+    },
+    "do_not_disturb": {
+      "text": "DO NOT DISTURB, says the card on the next door, and the next, and the next, and you realise you have been reading them out loud, door after door, for a long time, in a voice that is not quite yours.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    }
+  }
+}

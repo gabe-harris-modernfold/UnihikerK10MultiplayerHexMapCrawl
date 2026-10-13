@@ -1128,7 +1128,9 @@
     DOOM_HUNT: { sfx: 'RUN',       fill: F.EYES,    prio: 3, trauma: 210, flash: FL.NEG, ex: E.VROLL | E.TEAR | E.DRIPS | E.BLOOD | E.BGLINES, hold: 2000, cool: 30000, size: 150 },
     DOOM_ACT:  { sfx: 'SKRITCH',   fill: F.FOCUS,   prio: 3, trauma: 170, flash: FL.NEG, ex: E.SPLAT | E.DRIPS | E.BLOOD, hold: 1500, cool: 30000, size: 100 },
     DOOM_LOST: { sfx: null,        fill: F.SPEED,   prio: 1, trauma: 20,  flash: FL.NONE, ex: 0, hold: 1600, cool: 20000, size: 100 },
-    DOWNED:    { sfx: null,        fill: F.DARK,    prio: 3, trauma: 255, flash: FL.BOTH, ex: E.NOBAND | E.VROLL | E.TEAR | E.SPLAT, hold: 600, cool: 0, size: 100 },
+    // A death: the knock, then the laugh owns the screen (section 14b). No
+    // splatter -- blood over the face would hide what it is doing.
+    DOWNED:    { sfx: null,        fill: F.DARK,    prio: 3, trauma: 255, flash: FL.BOTH, ex: E.NOBAND | E.VROLL | E.TEAR, hold: 600, cool: 0, size: 100 },
     DAWN:      { sfx: 'DAY',       fill: F.SUN,     prio: 2, trauma: 60,  flash: FL.NONE, ex: 0, hold: 1800, cool: 20000, size: 105 },
     JOIN:      { sfx: 'NEW BLOOD', fill: F.SPEED,   prio: 1, trauma: 90,  flash: FL.WHITE, ex: E.CRESC, hold: 1500, cool: 3000, size: 100 },
     THREAT:    { sfx: 'THREAT',    fill: F.HAZARD,  prio: 2, trauma: 130, flash: FL.NONE, ex: E.TEAR, hold: 1700, cool: 5000, size: 100 },
@@ -1228,6 +1230,7 @@
     if (st.fill === F.WIRE) wireBegin(C);
     if (st.fill === F.JAWS) jawsBegin(C);
     if (q.kind === 'CRAWL') crawlBegin(seed, now);
+    if (q.kind === 'DOWNED') laughBegin(q, now, seed);
     FX.lastKind[q.kind] = now;
     Cut = (st.ex & E.NOBAND) ? null : C;
   }
@@ -2768,6 +2771,177 @@
     gasSkull(cx, cy, 19 * k, 0.25 + 0.65 * open, look * 0.5, 0, open, 0, -1, t * 0.001, FX.eyesT0 >>> 0);
   }
 
+  // ── 14b. The laugh: a death (ui-scenes.hpp section 12) ──────────
+  // When someone goes down the LCD is the Creeping Doom laughing at it for six
+  // seconds, and so is this: the gas pulls into the skull while the knock
+  // lands, then its jaw drops on every syllable of the laugh the K10's speaker
+  // is making (the DOWNED cue's arg says which -- the board picks it), the noise
+  // lettered round it in its green, and at the end it lets go of the face and
+  // the overlay thins away onto the takeover underneath (observer.js's GONE).
+  // Laid out for a landscape screen; there is no body on the dirt here (the
+  // LCD's figures are not ported), only its gas pooling where one would be.
+  //
+  // The scores are doom-laugh.h's. MIRRORED-IN doom-laugh.h: [at, len, amp,
+  // cons, vowel] per syllable, ms from the laugh's first breath, which comes
+  // LAUGH_DELAY after the death.
+  const LAUGH_DELAY = 600, LAUGH_LETGO = 4900, LAUGH_HOLD = 6000;
+  const LAUGHS = [
+    [[0, 420, 150, 'm', 'a'], [560, 150, 170, 'h', 'a'], [735, 150, 185, 'h', 'a'], [910, 150, 200, 'h', 'a'],
+     [1085, 150, 215, 'h', 'a'], [1260, 160, 230, 'h', 'a'], [1470, 720, 255, 'h', 'a'], [2290, 140, 160, 'h', 'a'],
+     [2480, 140, 130, 'h', 'a'], [2700, 420, 105, 'h', 'o']],
+    [[30, 390, 230, 'h', 'a'], [1620, 190, 200, 'h', 'u'], [1810, 410, 255, 'h', 'e']],
+    [[0, 380, 220, 'h', 'o'], [620, 380, 230, 'h', 'o'], [1240, 400, 245, 'h', 'o'], [1820, 150, 170, 'h', 'o'],
+     [2000, 150, 175, 'h', 'o'], [2180, 150, 180, 'h', 'o'], [2360, 150, 185, 'h', 'o'], [2560, 650, 255, 'h', 'o']],
+  ];
+  const LAUGH_SAYS = [null, ['HA!', 'YOU', 'DEAD.'], null];
+  const LAUGH_QUIP = ['SOMETHING OUT THERE|FINDS THIS HILARIOUS.', 'NEVER ONE FOR|A EULOGY.',
+                      'IT HAS BEEN WAITING|ALL DAY FOR THAT.'];
+  let Laugh = null;
+  const laughEnd = (L) => L.s[L.s.length - 1][0] + L.s[L.s.length - 1][1];
+
+  // doomLaughOpen(): the jaw, 0-1, `ms` into laugh `s`, and which syllable.
+  function laughOpen(s, ms) {
+    for (let i = 0; i < s.length; i++) {
+      const [at, len, amp, cons] = s[i], t = ms - at;
+      if (t < 0 || t >= len) continue;
+      const a = amp / 255, lead = cons === 'm' ? 0.38 * len : 45;
+      if (t < lead) return { open: a * (cons === 'm' ? 0.04 : 0.55 * t / lead), syl: i };
+      const u = (t - lead) / (len - lead);
+      const rise = u < 0.18 ? 0.55 + 0.45 * (u / 0.18) : 1;
+      const fall = len > 300 ? (u > 0.7 ? 1 - (u - 0.7) / 0.3 : 1) : (u > 0.35 ? 1 - 0.85 * (u - 0.35) / 0.65 : 1);
+      return { open: a * rise * fall, syl: i };
+    }
+    return { open: 0, syl: -1 };
+  }
+  // scLaughWord(): what syllable i is lettered as.
+  function laughWord(v, i) {
+    if (LAUGH_SAYS[v]) return LAUGH_SAYS[v][i];
+    const [, len, amp, cons, vowel] = LAUGHS[v][i];
+    const hum = cons === 'm', top = amp >= 250, lng = len > 300;
+    const vw = vowel === 'o' ? 'O' : (vowel === 'e' ? 'E' : 'A');
+    let b = hum ? 'MW' : 'H';
+    b += vw.repeat(top || (lng && amp < 140) ? 3 : 1);
+    if (vw === 'E' && !lng) b += 'H';
+    if (top || (lng && !hum && amp >= 200)) b += '!';
+    if (amp < 140) { b = b.toLowerCase(); if (lng) b += '...'; }
+    return b;
+  }
+  // scLaughBang(): the noise in the Doom's own green starburst.
+  function laughBang(w, cx, cy, sc, pop, seed) {
+    const N = 12, px = [], py = [], R = new Rng(seed);
+    const rx = w.length * 6 * sc * 0.5 + 5 * sc, ry = 9 * sc;
+    for (let i = 0; i < N; i++) {
+      const a = i * (Math.PI * 2 / N) + R.sgn() * 0.14, rr = (i & 1) ? 0.62 + 0.1 * R.u() : 1 + 0.28 * R.u();
+      px.push(cx + Math.cos(a) * rx * rr * pop); py.push(cy + Math.sin(a) * ry * rr * pop);
+    }
+    for (let pass = 0; pass < 2; pass++) {
+      const g = pass ? 1 : 1.14, c = PAL[pass ? P.GAS_L : P.INK];
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N;
+        tri(cx, cy, cx + (px[i] - cx) * g, cy + (py[i] - cy) * g, cx + (px[j] - cx) * g, cy + (py[j] - cy) * g, c);
+      }
+    }
+    const ws = pop > 1.12 ? sc + 1 : sc, tw = w.length * 6 * ws;
+    const x = Math.round(cx - tw * 0.5), y = Math.round(cy - 3.5 * ws);
+    glcd(w, x + 1 + (ws >> 1), y + 1 + (ws >> 1), ws, PAL[P.GAS]);
+    glcd(w, x, y, ws, PAL[P.INK]);
+  }
+  // scNarration(): the comic's caption box, typed in.
+  function laughCaption(s, x, y, since) {
+    const lines = s.split('|'), wMax = Math.max(...lines.map((l) => l.length));
+    const w = wMax * 6 + 9, h = lines.length * 10 + 5;
+    rect(x + 2, y + 2, x + w + 2, y + h + 2, PAL[P.INK]);
+    rect(x - 1, y - 1, x + w + 1, y + h + 1, PAL[P.INK]);
+    rect(x, y, x + w, y + h, PAL[P.CRIT]);
+    let shown = (since / 28) | 0;
+    lines.forEach((l, i) => { glcd(l.slice(0, Math.max(0, shown)), x + 5, y + 4 + i * 10, 1, PAL[P.INK]); shown -= l.length; });
+  }
+  function laughBegin(q, now, seed) {
+    const v = ((q.arg | 0) % LAUGHS.length + LAUGHS.length) % LAUGHS.length;
+    Laugh = { t0: now, v, s: LAUGHS[v], name: (q.name || 'Someone').toUpperCase().slice(0, 15), seed: (666 + v) >>> 0, last: -1 };
+  }
+  function laughFrame(now, shx, shy) {
+    const L = Laugh, since = now - L.t0;
+    if (since >= LAUGH_HOLD) { Laugh = null; return; }
+    const v = L.v, t = now * 0.001, ls = since - LAUGH_DELAY;
+    const form = smooth(clamp((since - 120) / 600, 0, 1)), let_ = smooth(clamp((since - LAUGH_LETGO) / 1000, 0, 1));
+    const coh = (0.2 + 0.8 * form) * (1 - 0.8 * let_);
+    const { open, syl } = ls >= 0 ? laughOpen(L.s, ls) : { open: 0, syl: -1 };
+    let jaw = 0.04, turn = 0, lift = 0, jolt = 0, ember = 0.6 * form;
+    const R = H * 0.23;
+    if (syl >= 0) {
+      const [at, len, amp] = L.s[syl], u = clamp((ls - at) / len, 0, 1), side = (syl & 1) ? 1 : -1;
+      jaw = 0.04 + 0.82 * open;
+      turn = side * 0.22 * Math.sin(Math.PI * u) * (amp / 255);
+      jolt = side * 3 * open;
+      lift = R * open * (amp >= 250 ? 0.2 : 0.1);
+      ember = 0.55 + 0.45 * open;
+      if (syl !== L.last) { L.last = syl; impact(0.08 + 0.3 * cubicIn(amp / 255)); }
+    } else if (ls >= 0) {
+      jaw = 0.12; ember = ls > laughEnd(L) ? 0.7 : 0.55;
+    }
+    jaw = lerp(jaw, 0.3, let_); ember *= 1 - let_;
+
+    // The backdrop: opaque while it laughs, thinning onto the takeover after.
+    const fade = clamp((since - (LAUGH_HOLD - 900)) / 900, 0, 1);
+    buf.fill(PAL[P.INK]);
+    const G = Math.round(H * 0.78), cx = W * 0.5 + jolt + shx, cy = H * 0.43 - lift + Math.sin(t * 2.1) * 2.5 + shy;
+    gasPlume(cx, cy, R, 0.12 * Math.sin(t * 0.7), -1, 2.3, coh, t, L.seed, 1 + 0.3 * let_);
+    // the dirt, and its gas pooled on it where somebody fell
+    for (let y = G - 4; y < G + 9; y++) span(y, 0, W, PAL[y < G - 2 ? P.BAND : P.SOOT]);
+    for (let y = G - 12; y < G + 7; y++)
+      for (let x = Math.round(W * 0.5 - 120); x < W * 0.5 + 120; x++) {
+        const dx = Math.abs(x - W * 0.5) / 120, dy = Math.abs(y - (G - 2)) / 10;
+        let d = (1 - dx) * (1 - dx) * (1 - Math.min(1, dy)) * 0.75 * form * (1 - 0.5 * let_);
+        d *= 0.7 + 0.6 * noise2(x * 0.09 + t * 0.4, y * 0.2, 47);
+        if (d > 0.02 && DOT[(y & 7) * 8 + (x & 7)] < d * 256)
+          put(x, y, PAL[DOT[((y + 5) & 7) * 8 + ((x + 3) & 7)] < d * 0.6 * 256 ? P.GAS : P.GAS_D]);
+      }
+    gasPlume(cx - 2, cy + R * 0.95, R * 0.4, -0.08, 1, 2.4, 0.8 * coh, t, (L.seed + 7) >>> 0, 0.75 * form);
+    gasSkull(cx, cy, R, coh, turn, jaw, ember, 0, -1, t, L.seed);
+
+    // The noise, a balloon a syllable: the loudest dead centre over its head,
+    // the rest out to either side of it.
+    let shown = 0;
+    for (let i = 0; i < L.s.length && ls >= 0; i++) {
+      const [at, len, amp] = L.s[i];
+      if (amp < 100) continue;
+      const k = shown++, age = ls - at, life = len + (amp >= 250 ? 800 : 520);
+      if (age < 0 || age >= life || since >= LAUGH_LETGO + 400) continue;
+      const w = laughWord(v, i), top = amp >= 250, sc = top ? 4 : (amp >= 180 ? 3 : 2);
+      const h = hash2(i, L.seed);
+      let bx, by;
+      if (top) { bx = W * 0.5; by = H * 0.15; }
+      else {
+        const side = (k & 1) ? 1 : -1;
+        bx = W * 0.5 + side * (W * 0.29 + U(h) * 14);
+        by = H * 0.3 + ((k >> 1) * 31) % 72 + U(h >>> 8) * 8;
+      }
+      const half = w.length * 3 * sc + 7 * sc;
+      bx = clamp(bx, half, W - half);
+      const pop = age < 110 ? 1 + 0.5 * (1 - backOut(age / 110)) + 0.12 : 1;
+      stip = (255 * clamp((age - (life - 200)) / 200, 0, 1) * 0.9) | 0; stipSeed = h;
+      laughBang(w, bx + shx + (((now / 80 | 0) + i) & 1 ? 0.6 : -0.6), by + shy, sc, pop, h);
+      stip = 0;
+    }
+    if (since > 1400) laughCaption(LAUGH_QUIP[v], 8, 8, since - 1400);
+
+    // Who it was, under the dirt.
+    const nw = L.name.length * 18;
+    glcd(L.name, Math.round((W - nw) / 2) + 1, G + 15, 3, PAL[P.INK]);
+    glcd(L.name, Math.round((W - nw) / 2), G + 14, 3, PAL[P.GLOW]);
+    const ln = 'does not come out standing.';
+    glcd(ln, Math.round((W - ln.length * 6) / 2), G + 44, 1, PAL[P.HDR]);
+    // and all of it thins away together onto the takeover under it
+    if (fade > 0) {
+      const k = 1 - fade;
+      for (let i = 0; i < buf.length; i++) {
+        const p = buf[i];
+        if (p >>> 24) buf[i] = ((p & 0xFFFFFF) | ((((p >>> 24) * k) | 0) << 24)) >>> 0;
+      }
+    }
+  }
+
   // ── 15. The DOM side: shake, filters, scanlines ─────────────────
   let stage = null, scan = null, tearImg = null, tearDisp = null, tearCv = null, tearMapDirty = false;
   let lastFilter = '', lastXform = '', tearOK = true;
@@ -2851,7 +3025,7 @@
   function animating(now) {
     if (FX.level === 0) return false;
     if (Cut || FX.trauma > 0.01 || FX.flashQ.length || FX.subFrames || FX.cutT0 && now - FX.cutT0 < 320) return true;
-    if (Crk.on || Bolt.on || Fire.on || Splat.on || FX.eyesOn || Crawl) return true;
+    if (Crk.on || Bolt.on || Fire.on || Splat.on || FX.eyesOn || Crawl || Laugh) return true;
     if ((FX.vroll.dur && now - FX.vroll.t0 < FX.vroll.dur) || now < FX.glitchUntil || now < FX.tearUntil) return true;
     if (FX.madness >= 64 || FX.queue.length) return true;
     // Still drifting toward what the board's dread says: keep stepping.
@@ -2861,7 +3035,7 @@
   }
   function period(now) {
     if (Cut || FX.trauma > 0.05 || FX.flashQ.length || Bolt.on) return 33;
-    if (Crk.on || Fire.on || Splat.on || FX.eyesOn || FX.subFrames || Crawl) return 40;
+    if (Crk.on || Fire.on || Splat.on || FX.eyesOn || FX.subFrames || Crawl || Laugh) return 40;
     return 80;
   }
   // Paced by timers, not requestAnimationFrame: the periods are the LCD's
@@ -2904,7 +3078,7 @@
       FX.queue.forEach((q, i) => {
         const st = STYLE[q.kind];
         if (FX.lastKind[q.kind] && st.cool && now - FX.lastKind[q.kind] < st.cool) return;
-        if (FX.takeover && q.kind !== 'DOWNED') return;
+        if ((FX.takeover || Laugh) && q.kind !== 'DOWNED') return;     // nothing cuts in on the laugh
         if (pick < 0 || st.prio > STYLE[FX.queue[pick].kind].prio || q.kind === 'DOWNED') pick = i;
       });
       if (pick >= 0) { const q = FX.queue[pick]; FX.queue = []; cutBegin(q, now); }
@@ -2976,6 +3150,7 @@
     halfN = 0; colT = colB = null; stip = 0;
     const shx = dx, shy = dy;
     if (Cut && (STYLE[Cut.kind].ex & E.RAIN)) rain(now, 120, Cut.seed, shx, shy);
+    if (Laugh) laughFrame(now, shx, shy);         // a death: the whole screen, under the blood
     if (Splat.on) splatDraw(now, shx, shy);
     if (Fire.on) { if (now - Fire.last >= 50) { Fire.last = now; fireStep(now); } fireDraw(shx, shy); }
     if (Bolt.on) {
@@ -3189,7 +3364,8 @@
     ['FIRE', 'Juno', 'walks into fire and wears it out.'], ['LONGODDS', 'Vera', 'gets the panel open and the dark gives.'],
     ['DOOM_ACT', 'Cid', 'pays the Doom what it came for.'], ['FLOOD', 'Mox', 'loses their footing as the ground gives way.'],
     ['CLEARED', 'Ash', 'clears the place out entire. +21.'], ['FOG', '', 'Strangle fog settles in the low ground.'],
-    ['THREAT', '', 'The clock has run out of patience with us.', '', 4], ['DOWNED', 'Kell', ''],
+    ['THREAT', '', 'The clock has run out of patience with us.', '', 4], ['DOWNED', 'Kell', '', '', 0],
+    ['DOWNED', 'Vera', '', '', 1], ['DOWNED', 'Mox', '', '', 2],
     ['BELOW', 'Mox', 'goes down into the dark.'], ['CRAWL', 'Vera', ''],
     ['CRAFTED', 'Quartermaster1', 'Sock Puppet Bandage', '', 2],
     ['TRIPWIRE', 'Mox', 'puts a foot down and hears it click.'], ['BEARTRAP', 'Vera', 'is caught and held while it bites.'],
@@ -3199,7 +3375,7 @@
     const r = REEL[i % REEL.length];
     FX.lastKind = {};
     cue(r[0], r[1], r[2], r[3], r[4]);
-    setTimeout(() => reel(i + 1), isScene(r[0]) ? STYLE[r[0]].hold + 330 + 1200 : 3400);
+    setTimeout(() => reel(i + 1), r[0] === 'DOWNED' ? LAUGH_HOLD + 1200 : (isScene(r[0]) ? STYLE[r[0]].hold + 330 + 1200 : 3400));
   }
 
   function boot() {

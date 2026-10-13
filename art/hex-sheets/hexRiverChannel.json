@@ -1,0 +1,59 @@
+{
+ "_source": "User's image-gen sheets river-hexes01-08.png (OneDrive Desktop, 2026-10-13), magenta matte; picks from art/hex-sheets/river-candidates/contact-sheet.png; vertex-fan fit + water-only grade; see docs/hex-tile-art.md \"River Channel\"",
+ "cells": [
+  "#1 river-hexes01.png cell 1, open current",
+  "#26 river-hexes03.png cell 2, river rocks",
+  "#2 river-hexes01.png cell 2, boulders",
+  "#4 river-hexes01.png cell 4, rapids",
+  "#3 river-hexes01.png cell 3, tree snag",
+  "#5 river-hexes01.png cell 5, oil drum",
+  "#27 river-hexes03.png cell 3, ruined boat",
+  "#36 river-hexes04.png cell 6, creature",
+  "#7 river-hexes02.png cell 1, open current",
+  "#13 river-hexes07.png cell 1, open current",
+  "#19 river-hexes08.png cell 1, open current",
+  "#38 river-hexes05.png cell 2, river rocks",
+  "#8 river-hexes02.png cell 2, boulders",
+  "#14 river-hexes07.png cell 2, boulders",
+  "#20 river-hexes08.png cell 2, boulders",
+  "#10 river-hexes02.png cell 4, rapids",
+  "#16 river-hexes07.png cell 4, rapids",
+  "#22 river-hexes08.png cell 4, rapids",
+  "#15 river-hexes07.png cell 3, tree snag",
+  "#11 river-hexes02.png cell 5, oil drum",
+  "#17 river-hexes07.png cell 5, oil drum",
+  "#23 river-hexes08.png cell 5, oil drum",
+  "#39 river-hexes05.png cell 3, ruined boat"
+ ],
+ "alts": {
+  "0": [
+   8,
+   9,
+   10
+  ],
+  "1": [
+   11
+  ],
+  "2": [
+   12,
+   13,
+   14
+  ],
+  "3": [
+   15,
+   16,
+   17
+  ],
+  "4": [
+   18
+  ],
+  "5": [
+   19,
+   20,
+   21
+  ],
+  "6": [
+   22
+  ]
+ }
+}

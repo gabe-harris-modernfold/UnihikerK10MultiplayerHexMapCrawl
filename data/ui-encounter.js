@@ -54,7 +54,9 @@ function encPct2d6(need) {
 
 // Mirror of the server's computeEncounterDN() (boot-assets.hpp) so the odds
 // shown on a card match what the server will actually roll against.
-function encComputeDN(me, baseRisk) {
+// `assists` = teammates behind the next roll (enc_assist): encRunChoice()
+// takes ENC_ASSIST_DN off for each, after the clamp, floor 2.
+function encComputeDN(me, baseRisk, assists = 0) {
   const tc = gameState?.tc ?? 0;
   let risk = Math.min(baseRisk, 100);
   if (tc >= 5)  risk += 5;
@@ -68,7 +70,8 @@ function encComputeDN(me, baseRisk) {
   const rad = me?.rad ?? 0;
   if (ll > 4)  bonus += Math.floor((ll - 4) / 2);
   if (rad > 3) dn    += Math.floor((rad - 3) / 2);
-  return Math.max(2, Math.min(12, dn - bonus));
+  dn = Math.max(2, Math.min(12, dn - bonus));
+  return assists > 0 ? Math.max(2, dn - assists * ENC_ASSIST_DN) : dn;
 }
 
 // Encounter JSON skill ids match the firmware's 5-skill enum:
@@ -129,9 +132,13 @@ function initEncounterOverlay() {
                                // leaves it armed -- on your map
   let panelMode    = false;   // a tunnel control panel (a node carries "lights": true,
                                // tunnels.hpp): it stays put until its section is lit
+  let assistN      = 0;       // teammates behind the next roll (ev enc_ast "n"); every roll
+                               // spends them, so it resets on each enc_res
   let kaneCh       = 0;       // 1-5: one of Machine Gun Kane's chapters (the file's top-level
                                // "kane": {"chapter": n}, kane.hpp) -- walking away leaves it
                                // where it was, for later
+  let vacPart      = 0;       // 1-4: one of VACANCY's parts (the file's top-level
+                               // "vacancy": {"part": n}, vacancy.hpp) -- likewise
 
   const me = () => (myId >= 0 ? players[myId] : null);
 
@@ -234,7 +241,7 @@ function initEncounterOverlay() {
 
   function oddsFor(choice) {
     const p = me();
-    const dn = encComputeDN(p, choice.base_risk ?? 50);
+    const dn = encComputeDN(p, choice.base_risk ?? 50, assistN);
     const sv = p?.sk?.[encSkillSlot(choice.skill ?? 0)] ?? 0;
     return { pct: encPct2d6(dn - sv), dn };
   }
@@ -350,6 +357,7 @@ function initEncounterOverlay() {
       leaveHint.textContent = trapMode  ? 'It went off. It will not go off again.'
                             : panelMode ? 'The panel is still back there, in the dark. Try it again.'
                             : kaneCh    ? 'His story is still there. Come back to it.'
+                            : vacPart   ? 'The sign is still on. Come back to it.'
                             : 'The encounter is over.';
       return;
     }
@@ -398,6 +406,7 @@ function initEncounterOverlay() {
       leaveHint.textContent = panelMode
         ? 'Leave it dark for now. The panel will still be here.'
         : kaneCh ? 'Leave it for now. It will still be here.'
+        : vacPart ? 'Leave it for now. The sign is very patient.'
         : 'Leave empty-handed. The place stays closed to you.';
       return;
     }
@@ -455,6 +464,11 @@ function initEncounterOverlay() {
         : 'You’ve seen all there is to see here.'));
       return;
     }
+    // Teammates on the hex who have backed this roll (enc_assist). The odds
+    // on every card below already count them.
+    if (assistN > 0)
+      choiceEl.appendChild(el('div', 'enc-assist-note',
+        `${assistN} ${assistN === 1 ? 'ally has' : 'allies have'} your back — next roll DN −${assistN * ENC_ASSIST_DN}`));
     // Numbered by what is on screen; the ci sent is still the choice's index
     // in the file (sendChoice looks it up), so hidden choices shift nothing.
     node.choices.filter(hasForChoice).forEach((ch, idx) => {
@@ -537,6 +551,7 @@ function initEncounterOverlay() {
 
   // ── Server callbacks ───────────────────────────────────────────
   globalThis._onEncResult = function(ev) {
+    assistN = 0;   // the roll spent whatever help was behind it
     if (!enc || phase !== 'rolling') return;
     clearTimeout(rollTimer);
 
@@ -639,6 +654,12 @@ function initEncounterOverlay() {
 
   globalThis._onEncBank = function() { closeEncounter(); };
 
+  // A teammate spent a token on our next roll (network.js _evEncAssist).
+  globalThis._onEncAssist = function(ev) {
+    assistN = Math.max(0, Math.min(ENC_ASSIST_CAP, ev.n | 0));
+    if (enc && phase === 'reading' && !terminal) renderChoices();
+  };
+
   globalThis._onEncEnd = function(ev) {
     // A hazard that ends the encounter already rendered its own "DRIVEN OUT"
     // screen — leave it up so the player can read what happened.
@@ -652,6 +673,7 @@ function initEncounterOverlay() {
     trapMode     = !!trap;
     panelMode    = !trapMode && Object.values(json.nodes ?? {}).some(n => n?.lights);
     kaneCh       = trapMode ? 0 : (json.kane?.chapter | 0);
+    vacPart      = trapMode ? 0 : (json.vacancy?.part | 0);
     overlay.classList.toggle('trap', trapMode);
     picked       = pickPlaceholders(json.placeholders);
     pendingLoot  = [0, 0, 0, 0, 0];
@@ -670,6 +692,7 @@ function initEncounterOverlay() {
     const tname = cell ? (TERRAIN[cell.terrain]?.name ?? '') : '';
     const kind  = trapMode ? 'TRAP' : panelMode ? 'CONTROL PANEL' : 'ENCOUNTER';
     kickerEl.textContent = kaneCh ? `MACHINE GUN KANE · CHAPTER ${kaneCh} OF 5`
+                         : vacPart ? `VACANCY · ${['', 'THE SIGN', 'THE REGISTER', 'THE KEY', 'CHECK-OUT'][vacPart] || 'THE SIGN'}`
                          : tname ? `${kind} · ${tname.toUpperCase()}` : kind;
 
     overlay.classList.add('open');
@@ -691,6 +714,8 @@ function initEncounterOverlay() {
     trapMode = false;
     panelMode = false;
     kaneCh = 0;
+    vacPart = 0;
+    assistN = 0;
     overlay.classList.remove('trap');
     pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
     terminal = false; pendingNext = ''; pendingHaz = '';

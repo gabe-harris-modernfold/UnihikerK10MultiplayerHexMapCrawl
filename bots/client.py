@@ -681,5 +681,11 @@ class BotClient:
         # the summary even when the policy is wrapped for sprint mode.
         getter = getattr(self.policy, "content_score", None)
         if callable(getter):
-            out["content"] = getter()
+            c = getter()
+            # Content per game-day, so runs of different length compare: a
+            # bot that dies or rests its days away opens fewer POIs per
+            # hundred days however long the run.
+            days = max(1, self.obs.day)
+            c["pois_per_100d"] = round(100.0 * c.get("encounters_opened", 0) / days, 1)
+            out["content"] = c
         return out

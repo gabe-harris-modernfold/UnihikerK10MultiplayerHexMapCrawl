@@ -13,15 +13,20 @@ Event kinds (ev.k):
   enc_end enc_res enc_start fire_dmg fire_spread flood_dmg flood_washout
   join left mv regen rsp trd_off trd_res weather dmg
   kane_call kane_fire kane_arc
+  vac (w: hook desk keys room saved fallen lost hum)
 """
 import time
 from dataclasses import dataclass, field
 from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
                     TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain,
                     KANE_DRIVE, KANE_GONE, KANE_RANGE, MAP_COLS,
-                    MAP_ROWS, TICK_MS, WORLD_TICK_INTERVAL, kane_open_ground)
+                    MAP_ROWS, TICK_MS, WORLD_TICK_INTERVAL, kane_open_ground,
+                    VAC_FALLEN_TERRAIN, VAC_GOT_KEY, VAC_GOT_REGISTER,
+                    VAC_ROOMS, VAC_ST_FALLEN, VAC_ST_OPEN, VAC_ST_SAVED,
+                    VAC_ST_SIGN)
 from mapdec import WorldMap
-from navigate import (DAISY_BLOOM_COST, DAISY_BUD_COST, KANE_CALLED_COST,
+from navigate import (DAISY_BLOOM_COST, DAISY_BUD_COST, DOOM_DANGER_AWARENESS,
+                      DOOM_DANGER_COST, DOOM_DANGER_RADIUS, KANE_CALLED_COST,
                       KANE_DANGER_COST, hex_dist_wrap)
 
 # Machine Gun Kane asks, and the burst comes one world tick later
@@ -168,11 +173,29 @@ class WorldState:
     kane_camp_r: int = -1
     kane_site_q: int = -1           # the house in the glass (chapter 4), only while it is next
     kane_site_r: int = -1
+    # VACANCY (vacancy.hpp appendVacJson): the sign over one Settlement and
+    # its count, shared by the whole party. `vac_seen` is False on a board
+    # that does not send it (older firmware).
+    vac_seen: bool = False
+    vac_q: int = -1                 # the town; -1 = no Settlement on this board
+    vac_r: int = -1
+    vac_stage: int = VAC_ST_SIGN    # VAC_ST_SIGN / _OPEN (counting) / _SAVED / _FALLEN
+    vac_rooms: int = VAC_ROOMS      # nights left while counting
+    vac_got: int = 0                # banked: VAC_GOT_REGISTER | VAC_GOT_KEY
+    vac_desk_q: int = -1            # The Front Desk (part 2), only while it is open
+    vac_desk_r: int = -1
+    vac_keys_q: int = -1            # Housekeeping (part 3), likewise
+    vac_keys_r: int = -1
 
     @property
     def kane_driving(self) -> bool:
         """On the road, and so able to ask -- and then shoot."""
         return self.kane_seen and self.kane_mode == KANE_DRIVE and not self.kane_ending
+
+    @property
+    def vac_live(self) -> bool:
+        """A sign over a town that is still waiting or counting."""
+        return self.vac_seen and self.vac_q >= 0 and self.vac_stage <= VAC_ST_OPEN
 
     def update(self, w):
         car = w.get("caravan") or {}
@@ -199,6 +222,35 @@ class WorldState:
             self.kane_camp_r = k.get("cr", self.kane_camp_r)
             self.kane_site_q = k.get("gq", self.kane_site_q)
             self.kane_site_r = k.get("gr", self.kane_site_r)
+        v = w.get("vac")
+        if isinstance(v, dict):
+            self.vac_seen   = True
+            self.vac_q      = v.get("q", self.vac_q)
+            self.vac_r      = v.get("r", self.vac_r)
+            self.vac_stage  = v.get("st", self.vac_stage)
+            self.vac_rooms  = v.get("rm", self.vac_rooms)
+            self.vac_got    = v.get("g", self.vac_got)
+            self.vac_desk_q = v.get("dq", self.vac_desk_q)
+            self.vac_desk_r = v.get("dr", self.vac_desk_r)
+            self.vac_keys_q = v.get("kq", self.vac_keys_q)
+            self.vac_keys_r = v.get("kr", self.vac_keys_r)
+
+    def vac_event(self, w: str, rm=None) -> None:
+        """Fold in an `ev vac` ahead of the next tick's world object, which
+        says the same thing a moment later."""
+        if isinstance(rm, int):
+            self.vac_rooms = rm
+        if w == "hook":
+            self.vac_stage = VAC_ST_OPEN
+        elif w == "desk":
+            self.vac_got |= VAC_GOT_REGISTER
+            self.vac_desk_q = self.vac_desk_r = -1
+        elif w == "keys":
+            self.vac_got |= VAC_GOT_KEY
+            self.vac_keys_q = self.vac_keys_r = -1
+        elif w in ("saved", "fallen", "lost"):
+            self.vac_stage = VAC_ST_SAVED if w == "saved" else VAC_ST_FALLEN
+            self.vac_desk_q = self.vac_desk_r = self.vac_keys_q = self.vac_keys_r = -1
 
 
 class Observation:
@@ -261,6 +313,10 @@ class Observation:
         # with t on time.monotonic(), or None.  The burst follows one world
         # tick later if we are still in the open -- see kane_call_pending.
         self.kane_call = None
+        # VACANCY's sign hummed at US (unicast, once a day): {t, has} -- we
+        # stood under it while it counted without both halves; `has` is the
+        # VAC_GOT_* bits of what we DO carry.
+        self.vac_hum = None
         self._kane_sig = None           # what danger_cost was last built from
         self._surface_rev = 0           # bumps when surface cells are revealed
         # Trades offered TO us that are still open: offerer pid -> {give,
@@ -325,7 +381,14 @@ class Observation:
         his mode, our call or the revealed map changed."""
         w = self.world
         called = self.kane_call_pending
-        sig = (w.kane_driving, w.kane_q, w.kane_r, called, self._surface_rev, id(self.map))
+        # The Doom's position rides every `s` broadcast, so this is as
+        # fresh as the board's own view; it moves at most 3 hexes a
+        # world tick (15 s), so the rebuild is rare.
+        doom = ((w.doom_q, w.doom_r)
+                if w.doom_awareness >= DOOM_DANGER_AWARENESS and w.doom_q >= 0
+                else None)
+        sig = (w.kane_driving, w.kane_q, w.kane_r, called, doom,
+               self._surface_rev, id(self.map))
         if sig == self._kane_sig:
             return
         self._kane_sig = sig
@@ -341,6 +404,12 @@ class Observation:
                         dc[(q, r)] = cost // 2
                     elif kane_open_ground(cell.terrain):
                         dc[(q, r)] = cost
+        if doom is not None:
+            R = DOOM_DANGER_RADIUS
+            for dq in range(-R, R + 1):
+                for dr in range(max(-R, -dq - R), min(R, -dq + R) + 1):
+                    q, r = (doom[0] + dq) % MAP_COLS, (doom[1] + dr) % MAP_ROWS
+                    dc[(q, r)] = dc.get((q, r), 0) + DOOM_DANGER_COST
         self.map.danger_cost = dc
 
     @property
@@ -705,6 +774,22 @@ class Observation:
             if ev.get("ending") in ("truth", "lie"):
                 self.world.kane_ending = 1 if ev["ending"] == "truth" else 2
                 self.world.kane_mode = KANE_GONE
+        elif k == "vac":
+            # VACANCY (vacancy.hpp).  Everything but the hum is the world's
+            # and rides the next tick's `vac` object too; this does not wait
+            # for it.  The fall turns the town's hex into a dead motel
+            # (Broken Urban), as the browser's _evVac does -- no vis disk
+            # follows, so nothing else would correct a hex nobody steps on.
+            w = ev.get("w")
+            if w == "hum":
+                if mine:
+                    self.vac_hum = {"t": time.monotonic(), "has": ev.get("has", 0)}
+            else:
+                self.world.vac_event(w, ev.get("rm"))
+                if w == "fallen":
+                    cell = self._surface_cell(ev)
+                    if cell is not None:
+                        cell.terrain, cell.poi = VAC_FALLEN_TERRAIN, False
         elif k == "regen":
             # New world: both cached boards are meaningless now, and so is
             # every hatch pairing -- generateTunnels() re-rolls the lot.
@@ -727,6 +812,9 @@ class Observation:
             self.world.kane_seen = False
             self.kane_call = None
             self._kane_sig = None
+            # ...and a fresh sign over a new town (vacInit).
+            self.world.vac_seen = False
+            self.vac_hum = None
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:

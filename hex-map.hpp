@@ -911,6 +911,57 @@ static void generateMap() {
     }
   }
 
+  // ── Phase 2.95: Settlement ruins ────────────────────────────────
+  // Survivors settle where the salvage is: most settlements sit up against a
+  // scrap of old town rather than out in clean scrub. Before this pass only
+  // ~7% of settlements touched a ruin (simulated worlds); with it ~70% do,
+  // and the urban hexes within 3 of a settlement go from ~0.7 to ~2.7 on
+  // average, for ~+40 Broken Urban per world.
+  //
+  // Each settlement rolls once: an arc of 1-3 CONSECUTIVE ring neighbours --
+  // DQ/DR run round the ring in order, so d0..d0+arc-1 is contiguous and the
+  // settlement reads as built against one side of a ruin, not haloed by it --
+  // then a 0-2 step spill wandering outward from the arc's middle so the ruin
+  // trails off into the country instead of stopping at a hard edge.
+  //
+  // Last of the terrain passes, so the settlement list is final (Phase 2.9
+  // adds most of them). Also AFTER Phase 2.6 on purpose: these are not a
+  // city, and a fused-glass ring should stay the mark of one. Open ground
+  // only, like the lone ruins -- forest, marsh and the rest keep their
+  // identity. A settlement already touching urban (Living Ruins, or one that
+  // landed against a city edge) is left as it is.
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int c = 0; c < MAP_COLS; c++) {
+      if (G.map[r][c].terrain != 9) continue;
+      bool touches = false;
+      for (int d = 0; d < 6 && !touches; d++)
+        if (G.map[wrapR(r + DR[d])][wrapQ(c + DQ[d])].terrain == 4) touches = true;
+      if (touches) continue;
+      if ((esp_random() % 100) >= 75) continue;             // a quarter stay out in the open
+
+      auto ruin = [](int rr, int cc) {
+        uint8_t& t = G.map[rr][cc].terrain;
+        if (t == 0 || t == 1 || t == 7) t = 4;              // scrub / dunes / hills
+      };
+      int d0  = (int)(esp_random() % 6);
+      int arc = 1 + (int)(esp_random() % 3);                // 1..3
+      for (int k = 0; k < arc; k++) {
+        int d = (d0 + k) % 6;
+        ruin(wrapR(r + DR[d]), wrapQ(c + DQ[d]));
+      }
+      int dm    = (d0 + (arc - 1) / 2) % 6;
+      int sr    = wrapR(r + DR[dm]);
+      int sc    = wrapQ(c + DQ[dm]);
+      int spill = (int)(esp_random() % 3);                  // 0..2
+      for (int s = 0; s < spill; s++) {
+        int d = (dm + 5 + (int)(esp_random() % 3)) % 6;     // dm-1, dm or dm+1: never back toward town
+        sr = wrapR(sr + DR[d]);
+        sc = wrapQ(sc + DQ[d]);
+        ruin(sr, sc);
+      }
+    }
+  }
+
   // ── Phase 3: resource placement ───────────────────────────────
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int c = 0; c < MAP_COLS; c++) {
@@ -1000,7 +1051,14 @@ static void generateMap() {
       // outskirts rubble that Phase 2.55 scatters across open country. The
       // shuffle above already randomised order, so this keeps the choice of
       // WHICH downtown hex random while fixing which KIND of hex wins.
-      // Rotation-based and O(n^2), which is nothing at ~90 urban hexes.
+      // Rotation-based and O(n^2), which is nothing at ~130 urban hexes.
+      //
+      // Within 2 of a Settlement is not downtown either: Phase 2.95's
+      // settlement ruins clump tightly enough to pass the neighbour test, and
+      // without this they took ~25% of the deck away from the cities. The arc
+      // sits at distance 1 and the first spill step at 2; a second step can
+      // reach 3, but out there it is a dead end with one urban neighbour, so
+      // radius 2 catches all but ~1 hex a world (sim).
       if (t == 4 && hexCount > 1) {
         int w = 0;
         for (int i = 0; i < hexCount; i++) {
@@ -1010,6 +1068,12 @@ static void generateMap() {
           for (int d = 0; d < 6; d++)
             if (G.map[wrapR(hr + DR[d])][wrapQ(hq + DQ[d])].terrain == 4) un++;
           if (un < 2) continue;                    // lone ruin / outskirts
+          bool byTown = false;
+          for (int dq = -2; dq <= 2 && !byTown; dq++)
+            for (int dr = -2; dr <= 2 && !byTown; dr++)
+              if (abs(dq + dr) <= 2 &&
+                  G.map[wrapR(hr + dr)][wrapQ(hq + dq)].terrain == 9) byTown = true;
+          if (byTown) continue;                    // settlement ruins
           uint16_t v = hexBuf[i];
           for (int k = i; k > w; k--) hexBuf[k] = hexBuf[k - 1];
           hexBuf[w++] = v;

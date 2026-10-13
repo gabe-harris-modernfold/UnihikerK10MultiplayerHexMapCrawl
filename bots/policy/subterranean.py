@@ -143,6 +143,8 @@ class TunnelPolicy(SurvivorPolicy):
     # dive/surface numbers these two exist to measure. A corridor is cover,
     # and on the surface they still dodge him.
     kane_quest = False
+    # VACANCY's sign is a surface errand too.
+    vac_quest = False
     # Underground sight is TUNNEL_VIS_BASE 1 -- your own hex and one ring --
     # so a single +1 is proportionally worth far more down there than the
     # same point is on the surface. A corridor step costs TUNNEL_MC 2, which

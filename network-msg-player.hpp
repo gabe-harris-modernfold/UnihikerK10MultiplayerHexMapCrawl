@@ -147,6 +147,9 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
       // that -- so the nack is the only way to tell the two apart.
       refused   = movePlayer(slot, dir);   // may cross boards -- see tunnelStepDown/Up
       depAfter  = G.players[slot].depth;
+      // Landing beside another survivor -- a step, or climbing out of a
+      // hatch -- is felt by the Doom wherever it is (world-system.hpp).
+      if (!refused && depAfter == 0) doomNoteArrival(slot);
       // The step landed on a booby trap and opened a scene the client never
       // asked for (traps.hpp). Same enc_path an enc_start would get, plus
       // "trap" so the panel knows there is no walking away from this one.
@@ -160,6 +163,11 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
         trapPathLen = snprintf(trapPath, sizeof(trapPath),
           "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"kane\":%d}",
           encPools[ENC_POOL_KANE].path, (int)encounters[slot].encIdx, (int)encounters[slot].kane);
+      // Or one of VACANCY's parts (vacancy.hpp): "vac" = the part.
+      else if (!refused && encounters[slot].active && encounters[slot].vac)
+        trapPathLen = snprintf(trapPath, sizeof(trapPath),
+          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"vac\":%d}",
+          encPools[ENC_POOL_VAC].path, (int)encounters[slot].encIdx, (int)encounters[slot].vac);
       // Anything lying on the hex comes with you -- the remains' supplies and
       // every pile.  Surface only: a step that went down a hatch took nothing
       // off it, and piles never lie underground.  Climbing back up onto a
@@ -526,6 +534,10 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
   if (rp) { const char* rv = strchr(rp + 3, ':'); if (rv) recipeId = atoi(rv + 1); }
   if (recipeId < 0 || recipeId > 255) recipeId = 0;
 
+  int treatTo = -1;  // ACT_TREAT only — a teammate on this hex; absent = yourself
+  const char* tp = strstr(data, "\"to\"");
+  if (tp) { const char* tv = strchr(tp + 4, ':'); if (tv) treatTo = atoi(tv + 1); }
+
   PSRAM_STATIC(char, survBuf, [1600]);   // the ring's cells, then its "trl" trail records
   int  survLen = 0;
   int  slot    = -1;
@@ -551,7 +563,7 @@ static void handleMsg_act(AsyncWebSocketClient* client, char* data, size_t len) 
         client->text("{\"t\":\"err\",\"msg\":\"Cannot act during encounter\"}");
         return;
       }
-      actOk = handleAction(slot, (uint8_t)actType, apParam, (uint8_t)recipeId,
+      actOk = handleAction(slot, (uint8_t)actType, apParam, (uint8_t)recipeId, treatTo,
                             survBuf, sizeof(survBuf), &survLen, settleResult, &craftWhy,
                             &refused);
       if (actType == ACT_CRAFT && actOk) {

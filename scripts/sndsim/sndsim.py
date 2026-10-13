@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 OUT = os.path.join(HERE, "out")
 EXE = os.path.join(OUT, "sndsim.exe")
 SR = 16000
-DEPS = ["snd-engine.hpp", "snd-core.hpp", "snd-lpc.hpp", "snd-music.hpp", "snd-sfx.hpp", "snd-vocab.h"]
+DEPS = ["snd-engine.hpp", "snd-core.hpp", "snd-lpc.hpp", "snd-music.hpp", "snd-sfx.hpp", "snd-vocab.h", "doom-laugh.h"]
 
 
 def find_vcvars():

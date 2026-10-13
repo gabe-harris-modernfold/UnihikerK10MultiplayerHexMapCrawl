@@ -3,7 +3,8 @@ of how far a bot (and the whole fleet) got through each one.
 
 The firmware has no quest system.  There are no quest ids, no per-player
 flags and no stage counters -- only Machine Gun Kane's world-shared `stage`
-(kane.hpp).  Everything else that reads as a quest is held together by the
+(kane.hpp) and VACANCY's world-shared sign (vacancy.hpp: `st`, `rm`, `g`).
+Everything else that reads as a quest is held together by the
 pack: a scene pays an item, and a later scene has a `requires_item` choice
 that only opens for whoever holds it -- or, for the two oldest chains, only
 *says* it needs it.  So "do the sequential quests work" is a question about
@@ -22,9 +23,12 @@ three things, and this module checks all three:
 
 The catalog is derived from the content where the content says enough --
 gates from `requires_item`, item payers from `loot`, Kane's chapters from
-the `kane` pool, recipe lessons from `"recipe"` loot -- and declared by hand
-only for the two chains the content never encodes (Jack's Chopper, the
-Sticky Note).  smoke.py checks every declared node and choice still exists.
+the `kane` pool, VACANCY's four parts from the `vacancy` pool, recipe
+lessons from `"recipe"` loot -- and declared by hand only for the two chains
+the content never encodes (Jack's Chopper, the Sticky Note), and for what
+VACANCY's parts must pay and need (_VAC_PAYS, _VAC_NEEDS), so the lint
+notices if the content stops asking.  smoke.py checks every declared node
+and choice still exists.
 
     python quests.py            # the catalog, and what is wrong with it
 """
@@ -33,7 +37,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from config import ITEM_CATEGORY, ITEM_NAME, KANE_CHAPTERS, RECIPES
+from config import (ITEM_CATEGORY, ITEM_NAME, KANE_CHAPTERS, RECIPES,
+                    VAC_GOT_KEY, VAC_GOT_REGISTER, VAC_ITEM_KEY, VAC_ITEM_REGISTER,
+                    VAC_PART_DESK, VAC_PART_KEYS, VAC_PART_OUT, VAC_PART_SIGN,
+                    VAC_PARTS, VAC_ST_OPEN, VAC_ST_SAVED)
 
 REPO_ENCOUNTERS = Path(__file__).resolve().parent.parent / "data" / "encounters"
 
@@ -60,6 +67,12 @@ class Step:
     worn: bool = False              # `needs` counts only while worn
     recipe: int = 0                 # workshop steps
     chapter: int = 0                # Machine Gun Kane's chapters
+    vac_part: int = 0               # VACANCY's parts (1-4)
+    also: tuple = ()                # further items it needs besides `needs` (Check-Out: both)
+
+    def needed(self) -> tuple:
+        """Every item this step needs: `needs`, then `also`."""
+        return ((self.needs,) if self.needs else ()) + tuple(self.also)
 
 
 @dataclass
@@ -70,6 +83,7 @@ class Quest:
     steps: list = field(default_factory=list)
     reachable: bool = True
     note: str = ""
+    problems: list = field(default_factory=list)    # found while building it (lint)
 
 
 def _load(root, biome, eid):
@@ -123,6 +137,20 @@ _COLLECT = (
     ("null_camp", "The Null Camp (Null Meridian, 3 stages)",
      (("meridian/null_camp", 1), ("meridian/null_camp", 2), ("meridian/null_camp", 3))),
 )
+
+# VACANCY (vacancy.hpp): what each part should pay on its last node, and
+# what Check-Out should ask for.  The board holds the order (the sites open
+# only once the town is read, Check-Out only for a pack holding both), so
+# this only declares what the content has to keep doing for that to work.
+_VAC_TITLES = {VAC_PART_SIGN: "read the town under the sign",
+               VAC_PART_DESK: "bank the Guest Register at the Front Desk",
+               VAC_PART_KEYS: "bank the Master Key in Housekeeping",
+               VAC_PART_OUT: "check the town out"}
+_VAC_PAYS = {VAC_PART_DESK: VAC_ITEM_REGISTER, VAC_PART_KEYS: VAC_ITEM_KEY}
+_VAC_NEEDS = {VAC_PART_OUT: (VAC_ITEM_REGISTER, VAC_ITEM_KEY)}
+# `ev vac` w -> the part it reports done (the hum, a room, the fall: none).
+VAC_EV_PART = {"hook": VAC_PART_SIGN, "desk": VAC_PART_DESK,
+               "keys": VAC_PART_KEYS, "saved": VAC_PART_OUT}
 
 
 def build_catalog(root: Path | None = None) -> list[Quest]:
@@ -197,6 +225,43 @@ def build_catalog(root: Path | None = None) -> list[Quest]:
                                files=(("kane", n),), goal=_terminals(enc), chapter=n))
     quests.append(kane)
 
+    # VACANCY: four parts in a pool no terrain deals -- like Kane's, each
+    # opens server-side on arrival -- so it is reachable when the pool is in
+    # index.json at all.  The goal of each part is its last (non-escape)
+    # node; Check-Out's gates are every requires_item choice in it.
+    vac = Quest("vacancy", "VACANCY (the sign over the town)", "story")
+    vac.reachable = "vacancy" in pools
+    if not vac.reachable:
+        vac.note = 'no "vacancy" pool in index.json'
+    for n in range(1, VAC_PARTS + 1):
+        enc = _load(root, "vacancy", n) or {}
+        needs = _VAC_NEEDS.get(n, ())
+        gates = tuple(sorted(
+            (nk, ci) for nk, node in (enc.get("nodes") or {}).items()
+            for ci, ch in enumerate(node.get("choices") or [])
+            if int(ch.get("requires_item", 0) or 0) in needs))
+        asked = {int(((enc.get("nodes") or {})[nk].get("choices") or [])[ci].get("requires_item"))
+                 for nk, ci in gates}
+        goal = _terminals(enc)
+        pays = _VAC_PAYS.get(n, 0)
+        paid = {nk for nk, node in (enc.get("nodes") or {}).items()
+                for row in node.get("loot") or []
+                if isinstance(row, dict) and int(row.get("item", 0) or 0) == pays}
+        if pays and not paid & goal:
+            vac.problems.append(f"vacancy.{n}: its last node never pays the "
+                                f"{ITEM_NAME.get(pays, pays)} (vacOnBank needs it in the haul)")
+        if pays and paid - goal:
+            vac.problems.append(f"vacancy.{n}: the {ITEM_NAME.get(pays, pays)} is paid before the "
+                                f"last node ({', '.join(sorted(paid - goal))}) -- banked there, "
+                                f"the part counts without the scene being read")
+        vac.steps.append(Step(key=f"vacancy.{n}", title=f"part {n}: {_VAC_TITLES[n]} "
+                                                         f"({enc.get('title', '?')})",
+                              files=(("vacancy", n),), goal=goal,
+                              needs=needs[0] if needs else 0, also=tuple(needs[1:]),
+                              gate=gates, gated=bool(needs) and asked == set(needs),
+                              pays=pays, vac_part=n))
+    quests.append(vac)
+
     shop = Quest("workshop", "Recipes (learn every one, craft every one)", "workshop")
     shop.reachable = "settlement" in pools
     learn = []
@@ -227,11 +292,15 @@ def lint(catalog) -> list[str]:
     for q in catalog:
         if not q.reachable:
             out.append(f"{q.key}: unreachable -- {q.note or 'a step file is in no pool'}")
+        out.extend(q.problems)
         for s in q.steps:
-            if s.needs and s.gate and not s.gated:
-                out.append(f"{s.key}: '{s.title}' needs the {ITEM_NAME.get(s.needs, s.needs)} "
+            # A VACANCY gate list is derived from the content, so an empty one
+            # is itself the problem: nothing asks for the items any more.
+            if s.needs and (s.gate or s.vac_part) and not s.gated:
+                names = " and the ".join(ITEM_NAME.get(i, str(i)) for i in s.needed())
+                out.append(f"{s.key}: '{s.title}' needs the {names} "
                            f"but no choice asks for it (requires_item missing at "
-                           f"{', '.join(f'{n}[{c}]' for n, c in s.gate)})")
+                           f"{', '.join(f'{n}[{c}]' for n, c in s.gate) or 'every node'})")
     return out
 
 
@@ -335,26 +404,53 @@ class QuestJournal:
             for f in s.files:
                 self._by_file.setdefault(tuple(f), []).append(s)
         self._open_key, self._open = None, []
+        # VACANCY's sign as last seen, (town q, stage, got) or None: every
+        # caller without the world to hand (the item layer) still needs to
+        # know the town fell, or the register is litter worth keeping.
+        self._vac = None
 
     # -- what is still open ---------------------------------------------------
     def is_done(self, step) -> bool:
         return step.key in self.done
 
+    @staticmethod
+    def vac_closed(step, vac) -> bool:
+        """A VACANCY part the world has closed for everybody: the town read,
+        a site banked, or the sign out (saved, fallen, or no town at all)."""
+        if not step.vac_part or vac is None:
+            return False
+        town, stage, got = vac
+        if town < 0 or stage >= VAC_ST_SAVED:
+            return True
+        if step.vac_part == VAC_PART_SIGN:
+            return stage >= VAC_ST_OPEN
+        if step.vac_part == VAC_PART_DESK:
+            return bool(got & VAC_GOT_REGISTER)
+        if step.vac_part == VAC_PART_KEYS:
+            return bool(got & VAC_GOT_KEY)
+        return False
+
     def open_steps(self, world=None):
         """Every step not yet done (and, given the world, not a Kane chapter
-        the board has already read).  Asked a dozen times a decide cycle --
-        the item layer, the gear layer and pursuit all want it -- so the
-        answer is kept until a step completes or the arc moves; `done` only
-        ever grows, which makes its size a version.  Callers read the list,
-        they do not keep or change it."""
+        the board has already read; nor a VACANCY part it has closed, from
+        the last world seen).  Asked a dozen times a decide cycle -- the item
+        layer, the gear layer and pursuit all want it -- so the answer is
+        kept until a step completes or the arc or the sign moves; `done`
+        only ever grows, which makes its size a version.  Callers read the
+        list, they do not keep or change it."""
         stage = world.kane_stage if world is not None else None
-        key = (len(self.done), stage)
+        if world is not None and getattr(world, "vac_seen", False):
+            self._vac = (world.vac_q, world.vac_stage, world.vac_got)
+        vac = self._vac
+        key = (len(self.done), stage, vac)
         if key != self._open_key:
             out = []
             for s in self._steps:
                 if self.is_done(s):
                     continue
                 if s.chapter and stage is not None and stage >= s.chapter:
+                    continue
+                if self.vac_closed(s, vac):
                     continue
                 out.append(s)
             self._open_key, self._open = key, out
@@ -368,23 +464,24 @@ class QuestJournal:
         do not hold, or one an open step needs that we do not hold."""
         bonus = {}
         for s in self.open_steps():
-            for iid in (s.pays, s.needs):
+            for iid in (s.pays, *s.needed()):
                 if iid and not _has(me, iid):
                     bonus[iid] = QUEST_ITEM_BONUS
         return bonus
 
     def protected_items(self) -> set:
         """Items an open step still needs: never dropped, sold or used up."""
-        return {s.needs for s in self.open_steps() if s.needs} | \
+        return {i for s in self.open_steps() for i in s.needed()} | \
                {s.pays for s in self.open_steps() if s.pays and any(
-                   t.needs == s.pays for t in self.open_steps())}
+                   s.pays in t.needed() for t in self.open_steps())}
 
     def node_bonus(self, me):
         """node_bonus(biome, eid, key) for items.Worth: a goal of an open step
         in this very file, when we can take it now."""
         def bonus(biome, eid, key):
             for s in self.steps_in(biome, eid):
-                if key in s.goal and not self.is_done(s) and (s.gated is False or _has(me, s.needs, s.worn)):
+                if key in s.goal and not self.is_done(s) and (
+                        s.gated is False or all(_has(me, i, s.worn) for i in s.needed())):
                     return GOAL_BONUS
             return 0.0
         return bonus
@@ -501,6 +598,23 @@ class QuestJournal:
             elif s.key not in self.ledger.steps:
                 self.ledger.mark(s.key, "reached", "another survivor", day)
 
+    def on_vac(self, w, mine, day):
+        """An `ev vac`: the board says a part is done -- the town read
+        (hook), a site banked (desk, keys) or the town saved.  Like Kane's
+        arc it is the world's, so a part somebody else finished is closed for
+        us too and goes on the ledger as theirs."""
+        part = VAC_EV_PART.get(w)
+        if part is None:
+            return
+        for s in self._steps:
+            if s.vac_part != part:
+                continue
+            if mine:
+                self._complete(s, day, "read" if part in (VAC_PART_SIGN, VAC_PART_OUT)
+                               else "banked")
+            elif s.key not in self.ledger.steps:
+                self.ledger.mark(s.key, "reached", "another survivor", day)
+
     def check_arrivals(self, obs):
         """banked_item_missing: an item enc_res said we won, banked, and
         neither in the pack, worn, nor lying on the hex we banked on."""
@@ -531,7 +645,8 @@ if __name__ == "__main__":
         for s in q.steps:
             extra = []
             if s.needs:
-                extra.append(f"needs {ITEM_NAME.get(s.needs, s.needs)}{' (worn)' if s.worn else ''}"
+                names = " + ".join(ITEM_NAME.get(i, str(i)) for i in s.needed())
+                extra.append(f"needs {names}{' (worn)' if s.worn else ''}"
                              f"{'' if s.gated else ' -- NOT GATED'}")
             if s.pays:
                 extra.append(f"pays {ITEM_NAME.get(s.pays, s.pays)}")

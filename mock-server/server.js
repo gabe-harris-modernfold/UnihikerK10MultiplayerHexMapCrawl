@@ -1603,20 +1603,25 @@ function resolveChoice(json, nodeKey, ci) {
 function openEncounter(ws, id, p, q, r, biome, encId, consumePoi, opts) {
   const trap = !!(opts && opts.trap), dp = opts && opts.dp ? 1 : 0;
   const kaneCh = (opts && opts.kane) | 0;   // a Machine Gun Kane chapter, opened on arrival (kaneOpen)
+  const vacPart = (opts && opts.vac) | 0;   // a VACANCY part, opened on arrival (vacOpen)
   const json = loadEncounterJson(biome, encId);
   if (!json) { if (!trap) send(ws, { t: 'err', msg: 'The way in is blocked' }); return false; }
   if (consumePoi) consumedPoi.add(`${q}_${r}`);
-  if (!trap && !kaneCh && threatClock < 20) threatClock++;
+  if (!trap && !kaneCh && !vacPart && threatClock < 20) threatClock++;
   const startKey = json.nodes?.[json.start_node] ? json.start_node : Object.keys(json.nodes ?? {})[0];
   const start = json.nodes?.[startKey];
-  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws, kane: kaneCh,
+  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws, kane: kaneCh, vac: vacPart,
                      canBank: !!start?.can_bank, escape: !!start?.escape,
                      pendingLoot: [0, 0, 0, 0, 0], pendingItems: [], pendingRecipes: 0,
-                     fullClear: !(Array.isArray(start?.choices) && start.choices.length) };
+                     fullClear: !(Array.isArray(start?.choices) && start.choices.length),
+                     assist: 0 };   // bit per seat: allies backing the next roll (encAssist)
   p.enc = true;
   if (kaneCh) {
     send(ws, { t: 'enc_path', biome, id: encId, kane: kaneCh });
     broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, kane: kaneCh });
+  } else if (vacPart) {
+    send(ws, { t: 'enc_path', biome, id: encId, vac: vacPart });
+    broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, vac: vacPart });
   } else {
     send(ws, trap ? { t: 'enc_path', biome, id: encId, trap: 1 } : { t: 'enc_path', biome, id: encId });
     broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 } : { t: 'ev', k: 'enc_start', pid: id, q, r });
@@ -1724,6 +1729,9 @@ function dawnUpkeepAll() {
   dayCount++;
   if (threatClock > 0) threatClock--;
   advanceWeather();
+  // VACANCY: another house checks in. The mock only runs days with somebody
+  // connected, so every dawn here is a watched one (vacDawn(connCount > 0)).
+  vacDawn();
 
   for (const idStr of Object.keys(players)) {
     const id = Number(idStr);
@@ -2188,6 +2196,7 @@ setInterval(() => {
     // tick's fresh intensity before spreadFire() decays it, and the caravan
     // prompt runs after the caravan has actually moved.
     tickCreepingDoom(surface);
+    tickDoomGathering(surface);  // after the move: a crowd raises it wherever it is
     maybeIgniteLightning(surface);
     resolveFireDamage(surface);
     resolveDoomProximity(surface);
@@ -2199,6 +2208,7 @@ setInterval(() => {
     tickCaravan(surface);
     resolveCaravanProximity(surface);
     tickKane(surface);   // asks, fires, drives on, camps at dusk -- after the caravan, as tickGame() does
+    tickVacancy();       // a quake got to the town first (tickVacancy())
     // Firmware's broadcastState() runs unconditionally every game tick (see
     // game-server.hpp), so caravan movement is never stale there. This mock
     // only broadcasts opportunistically (from message handlers) otherwise,
@@ -2267,7 +2277,7 @@ function encEnd(id, reason) {
     // A tunnel control panel is a fixture: it stays until its section is lit,
     // however the scene ended (endEncounter()).
     if (reason !== 'regen' && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
-  } else if (!e.kane && (reason === 'dawn' || reason === 'disconnect')) consumedPoi.delete(`${e.q}_${e.r}`);
+  } else if (!e.kane && !e.vac && (reason === 'dawn' || reason === 'disconnect')) consumedPoi.delete(`${e.q}_${e.r}`);
   delete encounters[id];
   const p = players[id];
   if (p) p.enc = false;
@@ -2306,7 +2316,13 @@ function encChoice(ws, id, m) {
   p.inv[3] = Math.max(0, p.inv[3] - c.med);
 
   const skill = ch.skill;
-  const dn    = computeDN(p, ch.baseRisk);
+  // Allies who steadied this roll (encAssist below) -- spent here, hit or
+  // miss. Mirrors encRunChoice() in network-msg-encounter.hpp.
+  const helpers = e.assist | 0;
+  let nHelp = 0;
+  for (let a = 0; a < 6; a++) if (helpers & (1 << a)) nHelp++;
+  e.assist = 0;
+  const dn    = Math.max(2, computeDN(p, ch.baseRisk) - nHelp * ENC_ASSIST_DN);
   // Mirrors checkSkillMod(): major wounds hit every skill, minor wounds hit
   // Endure only, and the Endurer (archetype 5) reads Endure 1 higher.
   let mod = -(p.wnd?.[1] ?? 0);
@@ -2317,8 +2333,11 @@ function encChoice(ws, id, m) {
   const ev    = { t: 'ev', k: 'enc_res', pid: id, out: ok ? 1 : 0, skill, dn, tot,
                   loot: [0, 0, 0, 0, 0], it: 0, iq: 0, it2: 0, iq2: 0, penLL: 0, penRad: 0,
                   penRes: [0, 0, 0, 0, 0], penWnd: [0, 0], ends: 0,
-                  drains: [0, 0, 0, 0, 0, 0], rec: 0, trap: e.trap ? 1 : 0 };
+                  as: nHelp, rec: 0, trap: e.trap ? 1 : 0 };
   let ended = false;
+  // A roll that came off shares its credit with whoever backed it.
+  if (ok) for (let a = 0; a < 6; a++)
+    if ((helpers & (1 << a)) && players[a]?.on) players[a].sc += ENC_ASSIST_SCORE;
   if (ok) {
     for (let i = 0; i < 5; i++) {
       e.pendingLoot[i] = Math.min(99, e.pendingLoot[i] + ch.loot[i]);
@@ -2350,6 +2369,9 @@ function encChoice(ws, id, m) {
     if (ch.nextTerminal) e.fullClear = true;
     // The last node of a Kane chapter: it is read, whatever gets banked.
     if (e.kane && ch.nextTerminal && !ch.nextEscape) kaneChapterRead(id, e, ch.nextKey);
+    // Likewise the town's and Check-Out's last node (vacPartRead); the desk
+    // and the corridor count on the bank (vacOnBank).
+    if (e.vac && ch.nextTerminal && !ch.nextEscape) vacPartRead(id, e, ch.nextKey);
     if (p.ll === 0) ended = true;
   } else {
     // A sprung trap is a spent trap: every trap hazard ends it, and it never
@@ -2382,6 +2404,41 @@ function encChoice(ws, id, m) {
     encEnd(id, p.ll === 0 ? 'downed' : 'hazard');
   }
   broadcast(stateMsg());
+}
+
+// ── enc_assist: steady a teammate's next roll ─────────────────────────────
+// Mirrors handleMsg_enc_assist() in network-msg-encounter.hpp: one token of
+// the helper's own, ENC_ASSIST_DN off the scene's next roll, at most
+// ENC_ASSIST_CAP helpers per roll and one token each. No AP. Replaces the
+// old involuntary ally drain (the enc_res "drains" array is gone, PROTO 9).
+const ENC_ASSIST_CAP   = 2;
+const ENC_ASSIST_DN    = 1;
+const ENC_ASSIST_SCORE = 1;
+const SETTLEMENT_FOUND_BONUS = 20;   // mirrors actions_game_loop.hpp
+function encAssist(ws, id, m) {
+  const p = players[id];
+  const to = m?.to | 0, res = m?.res | 0;
+  const t = players[to], e = encounters[to];
+  let n = 0;
+  if (e) for (let a = 0; a < 6; a++) if (e.assist & (1 << a)) n++;
+  const why = !p                        ? 'not_seated'
+            : to === id                 ? 'self'
+            : res < 0 || res > 4        ? 'bad_arg'
+            : p.ll === 0                ? 'downed'
+            : encounters[id]            ? 'in_enc'
+            : !t || !t.on || !e         ? 'no_target'
+            : e.fullClear               ? 'no_roll'
+            : !sameHex(p, t)            ? 'not_same_hex'
+            : (e.assist & (1 << id))    ? 'dup_assist'
+            : n >= ENC_ASSIST_CAP       ? 'assist_full'
+            : !(p.inv[res] > 0)         ? 'no_res'
+            : null;
+  if (why) { console.log(`[enc] assist refused pid=${id} to=${to}: ${why}`); return; }
+  p.inv[res]--;
+  e.assist |= (1 << id);
+  broadcast({ t: 'ev', k: 'enc_ast', pid: id, to, res, n: n + 1 });
+  broadcast(stateMsg());
+  console.log(`[enc] assist pid=${id} -> ${to} res=${res} n=${n + 1}`);
 }
 
 function encBank(ws, id, m) {
@@ -2428,6 +2485,8 @@ function encBank(ws, id, m) {
   if (e.trap) trapSettle(ws, id, 'spent');   // taking the bait is what disarms it
   // A panel banked short of its switch is still a panel (handleMsg_enc_bank).
   if (e.dp && !e.trap && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
+  // The front desk or the corridor: done once its item is out in the world (vacOnBank).
+  if (e.vac) vacOnBank(id, e);
   delete encounters[id];
   p.enc = false;
   broadcast(stateMsg());
@@ -2449,7 +2508,7 @@ function encAbort(id, ws) {
     broadcast(stateMsg());
     return;
   }
-  if (!e.kane && threatClock < 20) threatClock++;   // nobody chose to walk into Kane's story
+  if (!e.kane && !e.vac && threatClock < 20) threatClock++;   // nobody chose to walk into Kane's story, or under the sign
   encEnd(id, 'abort');
   broadcast(stateMsg());
 }
@@ -2634,6 +2693,7 @@ function handleState(req, res) {
     rtc: { synced: false },
     // Machine Gun Kane: the same object sync and the tick broadcast carry (game-server.hpp).
     kane: kaneWire(),
+    vac: vacWire(),     // VACANCY, likewise
     map: {
       cells: MAP_ROWS * MAP_COLS,
       shelters, impShelters, pois: poiCount,
@@ -3136,6 +3196,23 @@ function doomDetectionRadius() {
   return DOOM_BASE_RADIUS + Math.floor(doom.awareness / 25);
 }
 
+// Gathering draws it -- mirrors tickDoomGathering()/doomNoteArrival() in
+// world-system.hpp: survivors sharing a surface hex are felt wherever the
+// Doom is, scent or no scent.
+const DOOM_GATHER_TICK   = 3;   // per world tick, per survivor sharing a hex with another
+const DOOM_GATHER_ARRIVE = 5;   // at once, when a step lands on a hex another survivor holds
+function sharesSurfaceHex(p) {
+  return Object.values(players).some(o => o && o !== p && o.on && !o.dp && o.ll > 0 && o.q === p.q && o.r === p.r);
+}
+function tickDoomGathering(surface) {
+  const n = surface.filter(p => p.ll > 0 && sharesSurfaceHex(p)).length;
+  if (n) doom.awareness = Math.min(100, doom.awareness + n * DOOM_GATHER_TICK);
+}
+function doomNoteArrival(p) {
+  if (!p || p.dp || p.ll === 0 || !sharesSurfaceHex(p)) return;
+  doom.awareness = Math.min(100, doom.awareness + DOOM_GATHER_ARRIVE);
+}
+
 function nearestConnectedPlayer(connected) {
   let best = null, bestDist = Infinity;
   for (const p of connected) {
@@ -3634,6 +3711,170 @@ function kaneWire() {
 }
 kaneInit();
 
+// ── VACANCY (vacancy.hpp, docs/vacancy.md) ───────────────────────────────────
+// Ported rule for rule:
+//   * a sign over one random Settlement (on the striped map, the terrain-9
+//     stripes), re-rolled by vacInit();
+//   * part 1 at the town, read to its last node, starts VAC_ROOMS nights and
+//     places the desk (open ground) and the corridor (a ruin) in the band
+//     VAC_SITE_MIN..MAX round the town, widening if nothing fits;
+//   * the desk and the corridor count once their item is BANKED;
+//   * Check-Out opens only for a survivor carrying both, spends both on its
+//     "vac_ending" node, and the sign goes out;
+//   * under the sign without both: one hum a day, unicast, saying what you DO carry;
+//   * every dawn one more house checks in; at none left the town's hex
+//     becomes Broken Urban (NO VACANCY). A town a quake levelled first: 'lost'.
+// No persistence. dbg_vac stages it.
+const VAC_ROOMS = 8, VAC_SITE_MIN = 4, VAC_SITE_MAX = 8, VAC_SITE_WIDE = 12, VAC_SAVE_SCORE = 40;
+const VAC_ITEM_REGISTER = 70, VAC_ITEM_KEY = 71;
+const VAC_PART_SIGN = 1, VAC_PART_DESK = 2, VAC_PART_KEYS = 3, VAC_PART_OUT = 4;
+const VAC_ST_SIGN = 0, VAC_ST_OPEN = 1, VAC_ST_SAVED = 2, VAC_ST_FALLEN = 3;
+const VAC_GOT_REGISTER = 1, VAC_GOT_KEY = 2;
+const VAC_POOL = ENC_INDEX.vacancy || null;
+const VAC_NO_STAND = new Set([10, 11, 12, 13, 15, TERRAIN_SETTLEMENT]);   // crater, river, hatches, collapse, towns
+const vac = { townQ: -1, townR: -1, deskQ: -1, deskR: -1, keysQ: -1, keysR: -1,
+              stage: VAC_ST_SIGN, rooms: VAC_ROOMS, got: 0, hummed: {} };
+const vacLive = () => vac.townQ >= 0 && vac.stage <= VAC_ST_OPEN;
+function vacPickTown() {
+  let n = 0;
+  vac.townQ = vac.townR = -1;
+  for (let r = 0; r < MAP_ROWS; r++)
+    for (let q = 0; q < MAP_COLS; q++)
+      if (terrainAt(q, r) === TERRAIN_SETTLEMENT && Math.floor(Math.random() * (++n)) === 0) { vac.townQ = q; vac.townR = r; }
+  console.log(n ? `[vac] sign over (${vac.townQ},${vac.townR}), one of ${n} towns` : '[vac] no Settlement -- no sign');
+}
+function vacInit() {
+  Object.assign(vac, { deskQ: -1, deskR: -1, keysQ: -1, keysR: -1, stage: VAC_ST_SIGN, rooms: VAC_ROOMS, got: 0, hummed: {} });
+  vacPickTown();
+}
+function vacPlaceSite(want, what) {
+  let n = 0, pick = null;
+  for (let pass = 0; pass < 3 && !n; pass++) {
+    const lo = pass ? 3 : VAC_SITE_MIN, hi = pass ? VAC_SITE_WIDE : VAC_SITE_MAX;
+    for (let r = 0; r < MAP_ROWS; r++) {
+      for (let q = 0; q < MAP_COLS; q++) {
+        const t = terrainAt(q, r);
+        if (VAC_NO_STAND.has(t) || (q === vac.deskQ && r === vac.deskR)) continue;
+        const tr = traps.get(trapKey(0, q, r));   // trapOnArrival would open first
+        if (tr && tr.armed) continue;
+        if (pass < 2 && !want.includes(t)) continue;
+        const d = hexDistWrap(vac.townQ, vac.townR, q, r);
+        if (d < lo || d > hi) continue;
+        if (Math.floor(Math.random() * (++n)) === 0) pick = [q, r];
+      }
+    }
+    if (n) console.log(`[vac] ${what} at (${pick[0]},${pick[1]})${pass ? ' (wide)' : ''}`);
+  }
+  return pick || kanePickDrivable();
+}
+function vacPlaceSites() {
+  vac.deskQ = vac.deskR = vac.keysQ = vac.keysR = -1;
+  [vac.deskQ, vac.deskR] = vacPlaceSite([0, 1], 'front desk');      // the open ground
+  [vac.keysQ, vac.keysR] = vacPlaceSite([4, 5], 'housekeeping');    // a ruin
+}
+function vacEmit(w, pid) {
+  broadcast({ t: 'ev', k: 'vac', w, pid: pid ?? -1, q: vac.townQ, r: vac.townR, rm: vac.rooms });
+}
+// The sign's own fall (bySign) turns the town's hex to Broken Urban; a quake
+// got there first otherwise. A scene still open on it ends (the firmware's
+// dawn has already ended them; the mock's dawn does not).
+function vacFall(bySign) {
+  vac.stage = VAC_ST_FALLEN;
+  vac.deskQ = vac.deskR = vac.keysQ = vac.keysR = -1;
+  if (bySign) {
+    terrainOverrides.set(`${vac.townQ}_${vac.townR}`, KT_URBAN);   // a dead motel
+    consumedPoi.add(`${vac.townQ}_${vac.townR}`);                   // nobody left to tell it
+    vac.rooms = 0;
+  }
+  for (const [id, e] of Object.entries(encounters)) if (e.vac) encEnd(Number(id), 'dawn');
+  vacEmit(bySign ? 'fallen' : 'lost');
+  console.log(`[vac] town (${vac.townQ},${vac.townR}) ${bySign ? 'fell: NO VACANCY' : 'lost to something else'}`);
+}
+function tickVacancy() {
+  if (vacLive() && terrainAt(vac.townQ, vac.townR) !== TERRAIN_SETTLEMENT) vacFall(false);
+}
+function vacDawn() {
+  vac.hummed = {};
+  if (!vacLive() || vac.stage !== VAC_ST_OPEN) return;
+  if (vac.rooms) vac.rooms--;
+  if (!vac.rooms) { vacFall(true); return; }
+  vacEmit('room');
+  console.log(`[vac] a house checked in: ${vac.rooms} rooms left`);
+}
+function vacPartBusy(part) { return Object.values(encounters).some((e) => e.vac === part); }
+function vacOpen(ws, id, p, part) {
+  if (!VAC_POOL || vacPartBusy(part)) return false;
+  return openEncounter(ws, id, p, p.q, p.r, VAC_POOL.path, part, false, { vac: part });
+}
+// The surface step, after Kane's (vacOnArrival()).
+function vacOnArrival(ws, id, p) {
+  if (!vacLive() || !p || p.ll === 0 || p.dp || encounters[id]) return false;
+  const town = p.q === vac.townQ && p.r === vac.townR;
+  if (vac.stage === VAC_ST_SIGN) return town && vacOpen(ws, id, p, VAC_PART_SIGN);
+  if (!(vac.got & VAC_GOT_REGISTER) && p.q === vac.deskQ && p.r === vac.deskR) return vacOpen(ws, id, p, VAC_PART_DESK);
+  if (!(vac.got & VAC_GOT_KEY) && p.q === vac.keysQ && p.r === vac.keysR) return vacOpen(ws, id, p, VAC_PART_KEYS);
+  if (!town) return false;
+  const reg = hasForChoice(p, VAC_ITEM_REGISTER), key = hasForChoice(p, VAC_ITEM_KEY);
+  if (reg && key) return vacOpen(ws, id, p, VAC_PART_OUT);
+  if (!vac.hummed[id]) {
+    vac.hummed[id] = 1;
+    sendToPid(id, { t: 'ev', k: 'vac', w: 'hum', pid: id, q: vac.townQ, r: vac.townR,
+                    has: (reg ? VAC_GOT_REGISTER : 0) | (key ? VAC_GOT_KEY : 0) });
+  }
+  return false;
+}
+function vacSpendItem(p, itemId) {
+  const slots = effectiveInvSlots(p);
+  for (let s = 0; s < slots; s++) {
+    if (p.it[s] !== itemId || !p.iq[s]) continue;
+    if (--p.iq[s] === 0) p.it[s] = 0;
+    return true;
+  }
+  return false;
+}
+// encChoice reached a terminal, non-escape node of a VACANCY scene (vacPartRead()).
+function vacPartRead(id, e, nodeKey) {
+  if (e.vac === VAC_PART_SIGN) {
+    if (vac.stage !== VAC_ST_SIGN) return;
+    vac.stage = VAC_ST_OPEN;
+    vac.rooms = VAC_ROOMS;
+    vacPlaceSites();
+    vacEmit('hook', id);
+    console.log(`[vac] town read by pid=${id}: ${vac.rooms} nights`);
+  } else if (e.vac === VAC_PART_OUT) {
+    if (vac.stage !== VAC_ST_OPEN) return;
+    if (e.json.nodes?.[nodeKey]?.vac_ending !== 'saved') { console.warn(`[vac] Check-Out node ${nodeKey} has no vac_ending -- not an ending`); return; }
+    const p = players[id];
+    vacSpendItem(p, VAC_ITEM_REGISTER);   // left on the meeting-hall table
+    vacSpendItem(p, VAC_ITEM_KEY);        // a mint
+    send(e.ws, { t: 'item_result', ok: true, act: 'vac_out', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+    p.sc += VAC_SAVE_SCORE;
+    vac.stage = VAC_ST_SAVED;
+    vac.deskQ = vac.deskR = vac.keysQ = vac.keysR = -1;
+    vacEmit('saved', id);
+    console.log(`[vac] town (${vac.townQ},${vac.townR}) saved by pid=${id} with ${vac.rooms} rooms left`);
+  }
+}
+// encBank, before the slot is dropped (vacOnBank()).
+function vacOnBank(id, e) {
+  if (vac.stage !== VAC_ST_OPEN) return;
+  const bit = e.vac === VAC_PART_DESK ? VAC_GOT_REGISTER : e.vac === VAC_PART_KEYS ? VAC_GOT_KEY : 0;
+  if (!bit || (vac.got & bit)) return;
+  const want = bit === VAC_GOT_REGISTER ? VAC_ITEM_REGISTER : VAC_ITEM_KEY;
+  if (!e.pendingItems.some((x) => x.it === want)) return;
+  vac.got |= bit;
+  vacEmit(bit === VAC_GOT_REGISTER ? 'desk' : 'keys', id);
+  console.log(`[vac] ${bit === VAC_GOT_REGISTER ? 'register' : 'master key'} taken by pid=${id}`);
+}
+// The "vac" object: sync, the tick broadcast's world, and /state (appendVacJson()).
+function vacWire() {
+  const open = vac.stage === VAC_ST_OPEN;
+  const desk = open && !(vac.got & VAC_GOT_REGISTER), keys = open && !(vac.got & VAC_GOT_KEY);
+  return { q: vac.townQ, r: vac.townR, st: vac.stage, rm: vac.rooms, g: vac.got,
+           dq: desk ? vac.deskQ : -1, dr: desk ? vac.deskR : -1, kq: keys ? vac.keysQ : -1, kr: keys ? vac.keysR : -1 };
+}
+vacInit();
+
 function worldStateMsg() {
   return {
     caravan: {
@@ -3643,6 +3884,7 @@ function worldStateMsg() {
     },
     doom: { q: doom.q, r: doom.r, awareness: doom.awareness },
     kane: kaneWire(),   // Machine Gun Kane (kane.hpp)
+    vac: vacWire(),     // VACANCY (vacancy.hpp)
     fire: fireArray(),
     flood: floodArray(),
   };
@@ -4385,6 +4627,7 @@ wss.on('connection', (ws) => {
         const side = trailMove(id, fromQ, fromR, p.q, p.r, laidTrack);
         // EVT_MOVE first so client position updates before col event arrives.
         broadcast({ t: 'ev', k: 'mv', pid: id, q: p.q, r: p.r, d: side, radd: 0, rad: p.rad, exploD: 0, ap: p.ap, trk: laidTrack ? 1 : 0 });
+        doomNoteArrival(p);   // landing beside another survivor is felt by the Doom
         ecoBite(p);   // bloomed Wasteland Daisies bite on entry, before the pickup, as movePlayer does
         tryCollect(p, ws);
         // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels.
@@ -4398,6 +4641,8 @@ wss.on('connection', (ws) => {
         trapOnArrival(ws, id, p);
         // Machine Gun Kane: his camp, the house in the glass, or his fire at night.
         kaneOnArrival(ws, id, p);
+        // VACANCY: the town under the sign, the front desk, the corridor.
+        vacOnArrival(ws, id, p);
         // Whatever lies here comes with you. After the trap, as on the board:
         // handleMsg_move scoops once movePlayer() (trap included) returns.
         scoopOnArrival(ws, p);
@@ -4423,24 +4668,32 @@ wss.on('connection', (ws) => {
           // With no Major Wound, TREAT in a Settlement is the heal: 1 Medicine
           // + 1 AP restores 1 LL, no roll. A Medic in the field with nothing
           // to stitch is refused, same as the firmware's ABW_TERRAIN.
+          // "to" names a teammate on this hex (docs/team-play.md): their
+          // wounds/LL decide the job; the AP, Medicine, roll and score are
+          // the treater's. "tg" on the act event says whose numbers they are.
+          const toId = (msg.to === undefined || msg.to === null) ? id : (msg.to | 0);
+          const pt   = players[toId];
           const isMedic      = p.arch === 2;
           const inSettlement = terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT;
-          if (!isMedic && !inSettlement) {
+          if (toId !== id && (!pt || !sameHex(p, pt) || pt.ll === 0 || pt.enc)) {
+            // ABW_NO_TARGET (10): that survivor is not here, or is down / in a scene.
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out: 0, bw: 10, ap: p.ap, ll: p.ll, tg: toId });
+          } else if (!isMedic && !inSettlement) {
             send(ws, { t: 'err', msg: 'Only the Medic can treat outside a Settlement' });
-          } else if (!p.wnd[1]) {
+          } else if (!pt.wnd[1]) {
             if (!inSettlement) {
               send(ws, { t: 'err', msg: 'Heal needs a Settlement' });
-            } else if (p.ll >= effectiveMaxLL(p)) {
+            } else if (pt.ll >= effectiveMaxLL(pt)) {
               send(ws, { t: 'err', msg: 'Life Level is already full' });
             } else if (p.inv[3] < 1 || p.ap < 1) {
               send(ws, { t: 'err', msg: 'Needs 1 AP and 1 Medicine' });
             } else {
               p.ap -= 1;
               p.inv[3]--;
-              p.ll += 1;
+              pt.ll += 1;
               p.sc += 1;
               broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out: 1, ap: p.ap, ll: p.ll,
-                          lld: 1, md: -1, wnd: [p.wnd[0], p.wnd[1]], scoreD: 1 });
+                          lld: 1, md: -1, wnd: [pt.wnd[0], pt.wnd[1]], scoreD: 1, tg: toId });
             }
           } else if (p.inv[3] < 1 || p.ap < 2) {
             send(ws, { t: 'err', msg: 'Needs 2 AP and 1 Medicine' });
@@ -4449,19 +4702,22 @@ wss.on('connection', (ws) => {
             p.inv[3]--;
             // Mirrors checkSkillMod(): major wounds hit every skill, minor
             // wounds hit Endure only, and the Endurer (archetype 5) reads
-            // Endure 1 higher.
+            // Endure 1 higher. The treater's hands, the treater's wounds.
             let mod = -p.wnd[1] - p.wnd[0];
             if (p.arch === 5) mod += 1;
             let tot = d6() + d6() + (p.sk[4] || 0) + mod;
             if (forcedOutcome !== null) { tot = forcedOutcome ? TREAT_DN : TREAT_DN - 1; forcedOutcome = null; }
+            let out = 3, scoreD = 0;
             if (tot >= TREAT_DN) {
-              healWound(p, 1);
-              p.sc += 6;
+              healWound(pt, 1);
+              p.sc += 6; out = 1; scoreD = 6;
             } else if (tot >= TREAT_DN - 1) {
-              healWound(p, 1);
-              p.wnd[0] = Math.min(WOUND_MAX_EACH, p.wnd[0] + 1);
-              p.sc += 2;
+              healWound(pt, 1);
+              pt.wnd[0] = Math.min(WOUND_MAX_EACH, pt.wnd[0] + 1);
+              p.sc += 2; out = 2; scoreD = 2;
             }
+            broadcast({ t: 'ev', k: 'act', pid: id, a: 2, out, ap: p.ap, ll: p.ll, md: -1,
+                        dn: TREAT_DN, tot, wnd: [pt.wnd[0], pt.wnd[1]], scoreD, tg: toId });
           }
         } else if (msg.a === 6) {
           // ACT_SURVEY — mirrors doSurvey()/buildSurveyDisk(): the Scout (arch
@@ -4634,6 +4890,7 @@ wss.on('connection', (ws) => {
       case 'enc_choice': encChoice(ws, sockets.get(ws), msg); break;
       case 'enc_bank':   encBank(ws, sockets.get(ws), msg);   break;
       case 'enc_abort':  encAbort(sockets.get(ws), ws);       break;
+      case 'enc_assist': encAssist(ws, sockets.get(ws), msg); break;
 
       case 'equip_item':   equipItem(ws, sockets.get(ws), msg);   break;
       case 'unequip_item': unequipItem(ws, sockets.get(ws), msg); break;
@@ -4855,7 +5112,13 @@ wss.on('connection', (ws) => {
         if (!p) break;
         destroyedShelters.add(`${p.q}_${p.r}`);
         terrainOverrides.set(`${p.q}_${p.r}`, TERRAIN_SETTLEMENT);
-        broadcast({ t: 'ev', k: 'settle', removed: [{ q: p.q, r: p.r }], q: p.q, r: p.r });
+        // Founders: everyone standing here shares the bonus (creditFounders()
+        // in actions_game_loop.hpp); the sender plays the builder.
+        const fd = Object.values(players).filter(o => o && o.on && !o.dp && o.ll > 0 && o.q === p.q && o.r === p.r)
+                          .map(o => o.id);
+        fd.forEach(fid => { players[fid].sc += SETTLEMENT_FOUND_BONUS; });
+        broadcast({ t: 'ev', k: 'settle', removed: [{ q: p.q, r: p.r }], q: p.q, r: p.r,
+                    fd, bonus: SETTLEMENT_FOUND_BONUS });
         broadcast(stateMsg());
         console.log(`[settle] test-forced at (${p.q},${p.r})`);
         break;
@@ -4877,6 +5140,50 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'dbg_vac': {
+        // Test-only: VACANCY (vacancy.hpp). Fields combine, applied in this order:
+        //   {"t":"dbg_vac","reset":1}         a fresh sign over a random town, nothing read
+        //   {"t":"dbg_vac","town":1}          the sign over YOUR hex (made a Settlement if it
+        //                                     is not one -- mock staging only); "town":[q,r] likewise
+        //   {"t":"dbg_vac","stage":1}         the town read: the count runs, the sites are placed
+        //   {"t":"dbg_vac","desk":1}          the front desk under you ("desk":[q,r] likewise)
+        //   {"t":"dbg_vac","keys":1}          the corridor under you ("keys":[q,r] likewise)
+        //   {"t":"dbg_vac","rooms":2}         nights left
+        //   {"t":"dbg_vac","got":3}           what has been banked (1 register, 2 key)
+        //   {"t":"dbg_vac","give":3}          the register (1) and/or the key (2) into your pack
+        //   {"t":"dbg_vac","dawn":1}          run the dawn's check-in now
+        //   {"t":"dbg_vac","fall":1}          NO VACANCY now
+        //   {"t":"dbg_vac","lost":1}          a quake levels the town to scrub first (-> 'lost')
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        const hexOr = (v) => (Array.isArray(v) ? kaneWrap(v[0] | 0, v[1] | 0) : [p.q, p.r]);
+        if (msg.reset) vacInit();
+        if (msg.town) {
+          [vac.townQ, vac.townR] = hexOr(msg.town);
+          if (terrainAt(vac.townQ, vac.townR) !== TERRAIN_SETTLEMENT) terrainOverrides.set(`${vac.townQ}_${vac.townR}`, TERRAIN_SETTLEMENT);
+          if (vac.stage > VAC_ST_OPEN) { vac.stage = VAC_ST_SIGN; vac.rooms = VAC_ROOMS; vac.got = 0; }
+        }
+        if (msg.stage !== undefined) {
+          vac.stage = Math.max(0, Math.min(VAC_ST_FALLEN, msg.stage | 0));
+          if (vac.stage === VAC_ST_OPEN && vac.deskQ < 0) vacPlaceSites();
+        }
+        if (msg.desk) [vac.deskQ, vac.deskR] = hexOr(msg.desk);
+        if (msg.keys) [vac.keysQ, vac.keysR] = hexOr(msg.keys);
+        if (msg.rooms !== undefined) vac.rooms = Math.max(0, Math.min(VAC_ROOMS, msg.rooms | 0));
+        if (msg.got !== undefined) vac.got = (msg.got | 0) & 3;
+        if (msg.give) {
+          if (msg.give & 1) addItemToInv(p, VAC_ITEM_REGISTER, 1);
+          if (msg.give & 2) addItemToInv(p, VAC_ITEM_KEY, 1);
+          send(ws, { t: 'item_result', ok: true, act: 'dbg', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+        }
+        if (msg.dawn) vacDawn();
+        if (msg.fall && vacLive()) vacFall(true);
+        if (msg.lost && vacLive()) { terrainOverrides.set(`${vac.townQ}_${vac.townR}`, TERRAIN_SCRUB); tickVacancy(); }
+        broadcast(stateMsg());
+        console.log(`[vac] dbg by pid=${id}: ${JSON.stringify(vacWire())}`);
+        break;
+      }
       case 'dbg_kane': {
         // Test-only: Machine Gun Kane (kane.hpp). Fields combine:
         //   {"t":"dbg_kane"}                      the jeep 2 hexes from you, driving

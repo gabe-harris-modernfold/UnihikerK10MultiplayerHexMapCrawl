@@ -1,9 +1,11 @@
 """Quester -- plays every quest in the content to the end, in order, and
 checks the order holds.
 
-A ContentMax (it opens every POI it can reach and goes after Machine Gun
-Kane's chapters, shadowing the jeep before the last) with the quest journal
-in charge (quests.py):
+A ContentMax (it opens every POI it can reach, goes after Machine Gun
+Kane's chapters, shadowing the jeep before the last, and after VACANCY's
+four parts -- the sign's position and its two sites ride the world object,
+so those are walked to, not hunted) with the quest journal in charge
+(quests.py):
 
 * **Finds the steps.**  The map shows only a POI bit, never which file is
   on a hex, so a quest step is found by opening POIs -- and every file of a
@@ -56,6 +58,15 @@ class QuesterPolicy(ContentMaxPolicy):
     probe_gates = True
     novelty_bonus = 1.0
     encounter_risk = 0.8
+    # Sleep under a roof when the scrap is spare.  Exposure is 2 LL a
+    # night on most of the map and the rest heal needs water the pack
+    # rarely has, so on the K10 run of 2026-10-13 the questers spent most
+    # of their days at LL 1-3 -- resting instead of walking, and too
+    # hurt to take a scene they found.  A basic shelter is 1 scrap and
+    # the last AP of the day and zeroes the night's whole loss, thirst
+    # included.  Down to the last scrap: the first rerun held three back
+    # for a canteen no quester ever crafted and slept in the open.
+    shelter_when_exposed = True
 
     def __init__(self, rng, library=None):
         super().__init__(rng, library)
@@ -73,8 +84,8 @@ class QuesterPolicy(ContentMaxPolicy):
         """Terrains whose POI pools hold a step still open for us."""
         out = set()
         for s in self.journal.open_steps(obs.world):
-            if s.chapter:
-                continue                    # Kane's chapters are not POIs
+            if s.chapter or s.vac_part:
+                continue                    # Kane's chapters and VACANCY's parts are not POIs
             for biome, _eid in s.files:
                 t = self._pool_terrain.get(biome)
                 if t is not None:

@@ -282,6 +282,7 @@ static constexpr uint8_t ABW_RESTING    = 6;  // already resting
 static constexpr uint8_t ABW_ARCHETYPE  = 7;  // this archetype cannot (TREAT outside a Settlement)
 static constexpr uint8_t ABW_CRAFT      = 8;  // CRAFT refused; the err reply carries the reason
 static constexpr uint8_t ABW_BAD_ACT    = 9;  // unknown action type
+static constexpr uint8_t ABW_NO_TARGET  = 10; // TREAT "to": that survivor is not on your hex, or is down / in a scene
 // ABW_* as a nack code (network-reply.hpp).
 static const char* abwName(uint8_t w) {
   switch (w) {
@@ -294,6 +295,7 @@ static const char* abwName(uint8_t w) {
     case ABW_ARCHETYPE:  return "archetype";
     case ABW_CRAFT:      return "craft";
     case ABW_BAD_ACT:    return "bad_act";
+    case ABW_NO_TARGET:  return "no_target";
     default:             return "blocked";
   }
 }
@@ -711,7 +713,17 @@ enum EvtType : uint8_t {
   // q/r = the panel (tunnel board), amt = section index, res = how many banks
   // the lights come on in, actOut = sections lit now, actType = sections in
   // all. Broadcast -- the whole party hears the bunker wake up.
-  EVT_TUNNEL_LIGHTS = 37
+  EVT_TUNNEL_LIGHTS = 37,
+  // ── Encounter assist (network-msg-encounter.hpp handleMsg_enc_assist) ──
+  // A survivor on the same hex spent a token to steady someone's next roll:
+  // pid = the helper, amt = whose scene, res = resource spent (0-4),
+  // encAssist = allies now behind that roll. Broadcast.
+  EVT_ENC_ASSIST    = 38,
+  // ── VACANCY (vacancy.hpp) ──
+  // The settlement mini-quest moved: amt = what (VAC_EV_*), res = rooms left
+  // (VAC_EV_HUM: which half the survivor carries), q/r = the town, pid = who
+  // (255 = a dawn's doing). Broadcast, except the hum, which is unicast.
+  EVT_VAC           = 39
 };
 static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
 static constexpr uint8_t TRAP_OUT_SPRUNG = 1;   // a check failed: it went off, and it is gone
@@ -758,7 +770,15 @@ static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] :
 //      Also tunnel section lights (tunnels.hpp): tsync and every
 //      underground vis carry "lt" (a light byte per cell, beside "op"), an
 //      underground vis also lists every lit cell on the board; ev tun_lit.
-static constexpr int PROTO_VERSION = 8;
+//   9: Team play (docs/team-play.md): the enc_assist request and ev enc_ast;
+//      enc_res drops "drains" (the involuntary ally drain is gone) and
+//      carries "as" (allies who steadied the roll); the act request takes
+//      "to" (TREAT a survivor on your hex) and ev act carries "tg" (whose
+//      wounds/LL it reports); ev settle carries "fd" (every founder's seat).
+//  10: VACANCY (vacancy.hpp, docs/vacancy.md): sync, the tick broadcast and
+//      /state carry world "vac"; ev vac; enc_start and enc_path carry "vac"
+//      (the part); item_result act "vac_out".
+static constexpr int PROTO_VERSION = 10;
 
 // ── The Understory (ecology.hpp) ──────────────────────────────────────────
 // Hooks the earlier includes call into. ecology.hpp itself comes after
@@ -838,7 +858,9 @@ struct GameEvent {
   uint8_t  encItemQty2;
   uint8_t  encRecipe;     // recipe id granted THIS choice (node "recipe" loot entry), for the in-scene toast
   uint32_t bankedRecipes; // enc_bank only: full bitmask of every recipe committed to knownRecipes just now
-  uint8_t  encDrains[MAX_PLAYERS]; // per-ally resource drain on failure (auto-assist)
+  uint8_t  encAssist;     // enc_res: allies who steadied this roll (its DN is already lowered by it);
+                          // enc_ast: allies now behind the next roll
+  uint8_t  actTgt;        // ACT_TREAT: whose wounds/LL the event reports (== pid when treating yourself)
   // Which board q/r refer to: 0 = G.map, 1 = G.tunnel. Every event that names
   // a hex needs this now that there are two boards -- without it the client
   // would patch a surface cell with a tunnel coordinate. Serialised as "dp"
@@ -881,8 +903,19 @@ struct ActiveEncounter {
                             // and scores no full clear (a trap stays armed)
   uint8_t  kane;            // 1-5 = a Machine Gun Kane chapter (kane.hpp), opened by arrival;
                             // its state is the world's, so there is no POI to put back
+  uint8_t  vac;             // 1-4 = a VACANCY part (vacancy.hpp), opened by arrival; likewise
+  uint8_t  assistMask;      // bit per seat: allies who steadied the NEXT roll (enc_assist).
+                            // Spent by that roll, so every node is helped afresh
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
+// Team play (docs/team-play.md). A survivor on the same hex spends one token
+// of their own to take ENC_ASSIST_DN off someone's next encounter roll; at
+// most ENC_ASSIST_CAP allies (one token each) per roll. In DN, not risk:
+// under the 5 + risk*7/100 curve the old spec's "-4 risk" was 0.28 of a DN,
+// which integer division rounded to nothing.
+static constexpr uint8_t ENC_ASSIST_CAP   = 2;
+static constexpr uint8_t ENC_ASSIST_DN    = 1;
+static constexpr uint8_t ENC_ASSIST_SCORE = 1;   // to each helper, when the roll they backed succeeds
 
 // EVT_ENC_END reason codes (carried in GameEvent.encOut; serialised as text
 // by drainEvents(), mirrored by ENC_REASON_LABELS in data/network.js).
@@ -917,6 +950,17 @@ static void tickKane();
 static bool kaneOnArrival(int pid);
 static bool kaneTakeSaveWanted();
 static void kaneSnapshot(int16_t& q, int16_t& r, uint8_t& mode);
+// VACANCY (vacancy.hpp, included after kane.hpp). vacInit: from wInit().
+// tickVacancy: the world tick. vacDawn: the dawn block, after the scenes are
+// cut short. vacOnArrival: the surface step, after Kane's. vacTakeSaveWanted:
+// read-and-clear, the quest moved. vacSnapshot: the LCD map's marker. Caller
+// holds G.mutex for all of them.
+static void vacInit();
+static void tickVacancy();
+static void vacDawn(bool watched);
+static bool vacOnArrival(int pid);
+static bool vacTakeSaveWanted();
+static void vacSnapshot(int16_t& q, int16_t& r, uint8_t& stage);
 
 struct EncPoolInfo {
   uint8_t count;
@@ -929,7 +973,9 @@ struct EncPoolInfo {
 static constexpr uint8_t ENC_POOL_TRAP  = NUM_TERRAIN;
 // Machine Gun Kane's five chapters (kane.hpp): index.json "kane", file = chapter.
 static constexpr uint8_t ENC_POOL_KANE  = NUM_TERRAIN + 1;
-static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 2;
+// VACANCY's four parts (vacancy.hpp): index.json "vacancy", file = part.
+static constexpr uint8_t ENC_POOL_VAC   = NUM_TERRAIN + 2;
+static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 3;
 static EncPoolInfo encPools[ENC_POOL_COUNT];
 // Trap tiers: contiguous file-id ranges inside the traps pool, from
 // index.json "traps"."tiers" (counts per tier, cheap first). Tier t is ids
@@ -1037,6 +1083,10 @@ static constexpr uint32_t LIGHT_SAVE_MAGIC = 0x54494C54ul;    // "TLIT"
 // save without it loads with a fresh jeep and the story unread.
 static const char         SAVE_KANE_F[] = "/save/kane.bin";
 static constexpr uint32_t KANE_SAVE_MAGIC = 0x454E414Bul;     // "KANE"
+// VACANCY (vacancy.hpp): the sign, its count and its two sites. Same reason
+// again -- a save without it loads with a freshly rolled sign.
+static const char         SAVE_VAC_F[] = "/save/vac.bin";
+static constexpr uint32_t VAC_SAVE_MAGIC = 0x59434156ul;      // "VACY"
 
 struct __attribute__((packed)) SaveHeader {
   uint32_t magic;
@@ -1242,7 +1292,6 @@ static uint8_t  k10PrevTCLevel = 0;
 static uint8_t  s_audioVol   = 5;
 static uint8_t  s_ledBright  = 4;
 static bool     s_screenFlip = false;
-static uint8_t  s_fxLevel    = 2;   // LCD FX (ui-fx.hpp): 0 off, 1 restrained, 2 madness (Button A is volume now)
 static uint8_t  s_musicVol   = 6;   // K10 music + ambience (snd-music.hpp): 0 off .. 9; web settings slider
 
 static void loadK10Prefs() {
@@ -1250,7 +1299,6 @@ static void loadK10Prefs() {
   s_audioVol   = p.getUChar("vol",    5);
   s_ledBright  = p.getUChar("bright", 4);
   s_screenFlip = p.getBool("flip",    false);
-  s_fxLevel    = p.getUChar("fx",     2);
   s_musicVol   = p.getUChar("mus",    6);
   p.end();
 }
@@ -1259,7 +1307,6 @@ static void saveK10Prefs() {
   p.putUChar("vol",    s_audioVol);
   p.putUChar("bright", s_ledBright);
   p.putBool("flip",    s_screenFlip);
-  p.putUChar("fx",     s_fxLevel);
   p.putUChar("mus",    s_musicVol);
   p.end();
 }
@@ -1384,6 +1431,7 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 #include "encounter_engine.hpp"    // server-side encounter JSON resolution
 #include "traps.hpp"               // booby traps: placement, forced entry, knowledge
 #include "kane.hpp"                // Machine Gun Kane: the roaming jeep and its five-chapter arc
+#include "vacancy.hpp"             // VACANCY: the sign over a town, its two errands, its nights
 
 // Network layer
 #include "network-persistence.hpp"
@@ -1534,7 +1582,10 @@ void setup() {
   canvas.fillScreen(0x0000);
   canvas.pushSprite(0, 0);
   Log.notice("Sprite 240x320 16bpp in PSRAM");
-  fxBegin(s_fxLevel);   // the LCD compositor's own sprites (ui-fx.hpp)
+  // The LCD compositor's own sprites (ui-fx.hpp), always at MADNESS. The level
+  // used to live in NVS ("fx", cycled by Button A); a board left at RESTRAINED
+  // had no way back once Button A became volume, so the stored key is ignored.
+  fxBegin(2);
   splashAdd("Display OK", 0x406030);
   splashAdd("Hold [A] now = USB drive", 0x203060);
   splashUsbHint(true);
@@ -1669,6 +1720,7 @@ void setup() {
   xTaskCreatePinnedToCore(gameLoopTask, "GameLoop", 18432, NULL, 2, NULL, 1);
   Log.notice("gameLoopTask spawned core=1 prio=2 stack=18KB");
   ecoStartTask();   // core 1, prio 1: it runs in the gaps between game ticks
+  startSaveTask();  // core 0, prio 1: SD saves, off the display's core (network-persistence.hpp)
   Log.notice("==== BOOT COMPLETE elapsed=%ums ====", (unsigned)(millis() - _bootT0));
 }
 
@@ -1742,12 +1794,12 @@ void loop() {
   k10ScreenLast = k10Screen;
   bool uploadActive = UploadUI::isActive();
   // A death outranks everything, including an upload in flight: the screen is
-  // given over to the skull for DEATH_HOLD_MS and nothing else paints.
+  // given over to the laughing Doom for DEATH_HOLD_MS and nothing else paints.
   bool deathActive = DeathUI::isActive();
-  // Repaint faster while an upload streams or a death burns, so the byte
-  // counter and the flames both animate.
-  unsigned long screenInterval = (uploadActive || deathActive) ? 100UL
-                                                               : (unsigned long)SCREEN_MS;
+  // Repaint faster while an upload streams or the Doom laughs: the byte
+  // counter has to move, and the jaw has to be open when the HA is heard.
+  unsigned long screenInterval = deathActive ? (unsigned long)DeathUI::FRAME_MS
+                               : uploadActive ? 100UL : (unsigned long)SCREEN_MS;
   // Rendering a screen and putting it on the glass are separate steps now:
   // the screens render into `canvas` exactly as often as they always did, and
   // fxPresent() composes canvas onto the glass -- every repaint, plus every
@@ -1803,8 +1855,8 @@ void loop() {
   // 100 ms as ever when the screen is still; a frame's worth while it moves --
   // and no longer than the next scene frame is due.
   uint32_t loopDelay = fxLoopDelay(now, now);
-  if (sceneOwns(k10Screen) && !uploadActive && !deathActive) {
-    uint32_t el = millis() - lastScreenMs, per = scenePeriod(k10Screen);
+  if (deathActive || (sceneOwns(k10Screen) && !uploadActive)) {
+    uint32_t el = millis() - lastScreenMs, per = deathActive ? DeathUI::FRAME_MS : scenePeriod(k10Screen);
     uint32_t left = el + 5 >= per ? 5 : per - el;
     if (left < loopDelay) loopDelay = left;
   }

@@ -380,6 +380,8 @@ static void tickGame() {
       if (!encounters[i].active) continue;
       endEncounter(i, ENC_END_DAWN, /*restorePoi=*/true);
     }
+    // VACANCY: another house checks in -- only with somebody here to see it.
+    vacDawn(connCount > 0);
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
     updateWeatherPhase();  // advance weather once per game-day
     // Threat decays 1/day.  Without this the clock only ever climbs and every
@@ -577,6 +579,7 @@ static void tickGame() {
   //    to its new hex.
   if (G.tickId % WORLD_TICK_INTERVAL == 0) {
     tickCreepingDoom();
+    tickDoomGathering();    // after the move: a crowd raises it wherever it is, scent or not
     decayTracks();
     maybeIgniteLightning();
     resolveFireDamage();
@@ -590,9 +593,11 @@ static void tickGame() {
     tickCaravan();
     resolveCaravanProximity();
     tickKane();             // Machine Gun Kane: asks, fires, drives on, camps at dusk (kane.hpp)
+    tickVacancy();          // VACANCY: a quake or a falling sky got to the town first (vacancy.hpp)
   }
   // His camp or his arc moved on: catch it in a save, like dawn does.
   const bool kaneSave = kaneTakeSaveWanted();
+  const bool vacSave  = vacTakeSaveWanted();   // a house checked in, or the town fell
 
   // ── Quakes ───────────────────────────────────────────────────────────────
   // Checked every tick (like the mock), not gated behind dawnOccurred — an
@@ -604,7 +609,7 @@ static void tickGame() {
 
   xSemaphoreGive(G.mutex);
   if (groundAged) broadcastGroundUpdate(-1, -1, "aged");  // takes the mutex itself
-  if (dawnOccurred || kaneSave) saveGame();  // save outside mutex — SD writes are slow
+  if (dawnOccurred || kaneSave || vacSave) requestSave();  // the Saver task writes it -- SD writes are slow
   if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
 }
 
@@ -704,25 +709,32 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
 //      restore 1 Life Level, no roll.  This is medicine's everyday sink; the
 //      Medic's field privilege stays wound-only, so a Medic outside a
 //      Settlement with nothing to stitch is refused on terrain.
-static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
-  Player& p = G.players[pid];
+// Either job can be done for someone else on your hex ({"a":2,"to":PID},
+// docs/team-play.md). The patient's wounds and LL decide which job it is;
+// everything else is the treater's: the AP, the Medicine, the Medic
+// privilege, the Endure roll and the score. A teammate who needs patching is
+// a reason to keep the Medic close, and medicine is worth carrying for others.
+static void doTreat(int pid, int tgt, uint8_t terr, GameEvent& ev) {
+  Player& p  = G.players[pid];   // the one doing the work, and paying for it
+  Player& pt = G.players[tgt];   // the patient -- p itself unless "to" named a teammate
+  ev.actTgt  = (uint8_t)tgt;
   bool isMedic      = (p.archetype == 2);
   bool inSettlement = (terr == 9);
   if (!isMedic && !inSettlement)  { ev.actWhy = ABW_ARCHETYPE;  return; }
-  if (p.wounds[WOUND_MAJOR] == 0) {
+  if (pt.wounds[WOUND_MAJOR] == 0) {
     if (!inSettlement)                 { ev.actWhy = ABW_TERRAIN;    return; }
-    if (p.ll >= effectiveMaxLL(pid))   { ev.actWhy = ABW_NOT_NEEDED; return; }
+    if (pt.ll >= effectiveMaxLL(tgt))  { ev.actWhy = ABW_NOT_NEEDED; return; }
     if (p.inv[3] == 0)                 { ev.actWhy = ABW_NO_RES;     return; }
     if (p.apLeft < 1)               { ev.actWhy = ABW_NO_AP;      return; }
     spendAP(p, 1);
     p.inv[3]--;
-    p.ll++;
+    pt.ll++;
     ev.actMedD   = -1;
     ev.actLLD    = 1;
     addScore(p, ev, 1);
     ev.actOut    = AO_SUCCESS;
-    ev.actWndMin = p.wounds[WOUND_MINOR];
-    ev.actWndMaj = p.wounds[WOUND_MAJOR];
+    ev.actWndMin = pt.wounds[WOUND_MINOR];
+    ev.actWndMaj = pt.wounds[WOUND_MAJOR];
     return;
   }
   if (p.inv[3] == 0)               { ev.actWhy = ABW_NO_RES;     return; }
@@ -734,20 +746,20 @@ static void doTreat(int pid, uint8_t terr, GameEvent& ev) {
   ev.actDn = TREAT_DN; ev.actTot = (int8_t)cr.total;
   broadcastCheck(pid, SK_ENDURE, cr);
   if (cr.success) {
-    healWound(p, WOUND_MAJOR);
+    healWound(pt, WOUND_MAJOR);
     addScore(p, ev, 6);
     ev.actOut = AO_SUCCESS;
   } else if (cr.total >= (int)TREAT_DN - 1) {
     // Partial: the major wound becomes a minor one.
-    healWound(p, WOUND_MAJOR);
-    addWound(p, WOUND_MINOR, 1);
+    healWound(pt, WOUND_MAJOR);
+    addWound(pt, WOUND_MINOR, 1);
     addScore(p, ev, 2);
     ev.actOut = AO_PARTIAL;
   } else {
     ev.actOut = AO_FAIL;
   }
-  ev.actWndMin = p.wounds[WOUND_MINOR];
-  ev.actWndMaj = p.wounds[WOUND_MAJOR];
+  ev.actWndMin = pt.wounds[WOUND_MINOR];
+  ev.actWndMaj = pt.wounds[WOUND_MAJOR];
 }
 
 // A settlement can bloom out of collaborative shelter-building — the reverse
@@ -769,6 +781,7 @@ struct SettleResult {
   uint8_t removedCount;
   int16_t remQ[3], remR[3];   // hexes whose shelter was cleared
   int16_t settleQ, settleR;   // the hex that became Settlement
+  uint8_t founders;           // bit per seat: everyone credited with founding it
 };
 
 // Surface only: founding a settlement needs three survivors actually stood
@@ -780,6 +793,26 @@ static int countConnectedPlayersOn(int16_t q, int16_t r) {
     if (G.players[i].connected && !G.players[i].depth &&
         G.players[i].q == q && G.players[i].r == r) n++;
   return n;
+}
+
+// Founding is a party's work, so the credit is the party's (docs/team-play.md).
+// Every survivor standing on one of the hexes the Settlement was raised from
+// -- the hex itself for trigger (a), any of the three corners for (b) -- is a
+// founder. The builder is added by the caller and scores through `ev` like
+// any other action; everyone else gets the same bonus straight onto their
+// score, which rides the state tick.
+static uint8_t creditFounders(int builder, const int16_t* qs, const int16_t* rs, uint8_t n) {
+  uint8_t mask = (uint8_t)(1u << builder);
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (i == builder || !G.players[i].connected || G.players[i].depth || G.players[i].ll == 0) continue;
+    for (uint8_t k = 0; k < n; k++) {
+      if (G.players[i].q != qs[k] || G.players[i].r != rs[k]) continue;
+      G.players[i].score = (uint16_t)min((int)G.players[i].score + (int)SETTLEMENT_FOUND_BONUS, 65535);
+      mask |= (uint8_t)(1u << i);
+      break;
+    }
+  }
+  return mask;
 }
 
 // Tests the two triangles hex (q,r) takes part in against each of its six
@@ -846,6 +879,7 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
       settle.removedCount  = 1;
       settle.remQ[0] = q; settle.remR[0] = r;
       settle.settleQ = q; settle.settleR = r;
+      settle.founders = creditFounders(pid, settle.remQ, settle.remR, 1);
       scoreD += SETTLEMENT_FOUND_BONUS;
     } else {
       int16_t triQ[3], triR[3];
@@ -865,6 +899,7 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
         settle.removedCount = 3;
         for (uint8_t i = 0; i < 3; i++) { settle.remQ[i] = triQ[i]; settle.remR[i] = triR[i]; }
         settle.settleQ = triQ[pick]; settle.settleR = triR[pick];
+        settle.founders = creditFounders(pid, triQ, triR, 3);
         scoreD += SETTLEMENT_FOUND_BONUS;
       }
     }
@@ -886,11 +921,19 @@ static void broadcastSettle(const SettleResult& s) {
   for (uint8_t i = 0; i < s.removedCount; i++)
     len += snprintf(buf + len, sizeof(buf) - len, "%s{\"q\":%d,\"r\":%d}",
                      i ? "," : "", (int)s.remQ[i], (int)s.remR[i]);
-  len += snprintf(buf + len, sizeof(buf) - len, "],\"q\":%d,\"r\":%d}",
+  len += snprintf(buf + len, sizeof(buf) - len, "],\"q\":%d,\"r\":%d,\"fd\":[",
                    (int)s.settleQ, (int)s.settleR);
+  // Every founder's seat (creditFounders) -- each of them scored the bonus.
+  bool firstF = true;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (!(s.founders & (1u << i))) continue;
+    len += snprintf(buf + len, sizeof(buf) - len, firstF ? "%d" : ",%d", i);
+    firstF = false;
+  }
+  len += snprintf(buf + len, sizeof(buf) - len, "],\"bonus\":%d}", (int)SETTLEMENT_FOUND_BONUS);
   ws.textAll(buf, len);
-  Log.notice("EVT settle removed=%d settlement=(%d,%d)",
-             (int)s.removedCount, (int)s.settleQ, (int)s.settleR);
+  Log.notice("EVT settle removed=%d settlement=(%d,%d) founders=%d",
+             (int)s.removedCount, (int)s.settleQ, (int)s.settleR, (int)s.founders);
   k10LogAdd("A settlement takes root. Someone will stay.", -1, TONE_GOOD,
             GLY_SETTLE);
 }
@@ -977,7 +1020,9 @@ static void doCraft(int pid, uint8_t terr, uint8_t recipeId, GameEvent& ev, cons
 // refuse: out-param set to a nack code (network-reply.hpp) when the action was
 // refused outright, and left nullptr when it was carried out -- including a
 // failed skill check, which spent AP and is not a refusal.
+// treatTo: ACT_TREAT's patient -- a seat, or -1 for yourself (the "to" key).
 static bool handleAction(int pid, uint8_t actType, int apParam, uint8_t recipeId,
+                         int treatTo,
                          char* survBuf, int survCap, int* survLen,
                          SettleResult& settleOut, const char** blockWhy,
                          const char** refuse) {
@@ -1014,12 +1059,28 @@ static bool handleAction(int pid, uint8_t actType, int apParam, uint8_t recipeId
   ev.pid     = (uint8_t)pid;
   ev.actType = actType;
   ev.actOut  = AO_BLOCKED;
+  ev.actTgt  = (uint8_t)pid;
   if (survLen) *survLen = 0;
 
+  // TREAT on a teammate: they have to be standing where you are (samehex():
+  // same board, same cell), up, and free -- not mid-scene, where every other
+  // action already refuses to touch them.
+  int patient = pid;
+  if (actType == ACT_TREAT && treatTo >= 0 && treatTo != pid) {
+    if (treatTo >= MAX_PLAYERS || !samehex(pid, treatTo) ||
+        G.players[treatTo].ll == 0 || encounters[treatTo].active) {
+      ev.actWhy = ABW_NO_TARGET;
+      actType   = 0xFF;   // falls to the switch's no-op below, still blocked
+    } else {
+      patient = treatTo;
+    }
+  }
+
   switch (actType) {
+    case 0xFF:                                                       break;
     case ACT_FORAGE:  doForage (pid, terr, ev);                      break;
     case ACT_WATER:   doWater  (pid, terr, apParam, ev);             break;
-    case ACT_TREAT:   doTreat  (pid, terr, ev);                      break;
+    case ACT_TREAT:   doTreat  (pid, patient, terr, ev);             break;
     case ACT_SCAV:    doScav   (pid, terr, ev);                      break;
     case ACT_SHELTER: doShelter(pid, ev, settleOut);                 break;
     case ACT_CRAFT:   doCraft  (pid, terr, recipeId, ev, blockWhy);  break;

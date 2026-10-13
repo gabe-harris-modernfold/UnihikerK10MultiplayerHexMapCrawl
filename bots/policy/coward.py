@@ -32,6 +32,8 @@ class CowardPolicy(SurvivorPolicy):
     # Never goes looking for Machine Gun Kane's story -- every chapter is a
     # string of checks -- but takes cover the moment he asks, like everyone.
     kane_quest = False
+    # Nor VACANCY's: the same string of checks, and a sign that hums.
+    vac_quest = False
 
     name = "coward"
     # Gear the way it plays: nothing but not dying. Exposure is the largest

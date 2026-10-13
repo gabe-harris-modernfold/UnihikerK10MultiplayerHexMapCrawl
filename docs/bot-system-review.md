@@ -262,9 +262,51 @@ The content findings stand: `jack.deliver` ungated (the hand-over never asks
 for the mask) and out of order, the Perambulator's gates refuse without the
 item (8 probes, all refused), the Null Camp unreachable.
 
+## After the first K10 run (2026-10-13): the quester's two killers — done
+
+The 25-minute quester run (`bots/runs/questers-k10-20261013.txt`) was the
+"before" measurement: 28 deaths, 21 thirst and 6 Creeping Doom, and POIs
+opened at 20 in 317 days. Both killers were bot defects, not balance:
+
+- **A full pack starved the hunt.** With 2 fuel / 2 med / 2 scrap / 2 food
+  the pack had no slot for water; a pile is refused when full, and
+  `staple_hunt` still valued it at 100, so the bot shuttled on and off the
+  same pile every AP (700 refused pickups). Fixed: piles count only with
+  room, `make_room()` drops the spare kind beyond `staple_keeps()`, and the
+  hunt locks its target (`_hunt_lock`).
+- **Nobody read the Doom.** Its position rides every `s` broadcast; no
+  policy used it, and one bot at LL 1 walked back onto its hex for twenty
+  world ticks running, then walked back to its own grave beside it. Fixed:
+  `state.py` prices the ground around it into `danger_cost` from awareness
+  76, a `doom` layer steps away within `DOOM_FLEE_RADIUS`, and
+  `recovery_target` skips a grave beside it.
+- The quester now shelters down to its last scrap (exposure pinned it at
+  LL 1–3), and the summary prints `pois/100d` and a `deaths:` line.
+- **Second rerun** (`questers-k10-20261013b.txt`): POIs 20 → 47 and score
+  up 2×, but deaths 28 → 69. Two new shapes in the log: the flee stopped at
+  its radius and the hunt walked back into the Doom (fixed: hysteresis to
+  `DOOM_SAFE_RADIUS`, danger radius 3 at cost 60), and the chem storm
+  killed 20 in the open (fixed: a `weather` layer roofs the hex or walks to
+  cover). Third run: `questers-k10-20261013c.txt`.
+- **Third run**: deaths 69 → 10, water solved (canteens crafted, 2,414 of
+  2,637 dawns at water 6), no Doom contact, no chem storm that run. But
+  2,226 dawns at LL 2–3 and 2,399 exposed: the rest heal (+1, +3 under LL
+  3) against exposure (−2) is a band the bot never leaves, and it rests
+  half its days in it, so POIs fell to 25 in 531 days. Fixed: a `bed`
+  layer walks a hurt or late survivor to cover within today's AP. Fourth
+  run: `questers-k10-20261013d.txt`.
+- **Fourth run** (the "after"): 332 days, 19 deaths (5.7/100 days vs 8.8
+  before; 13 thirst, 3 chem, 0 Doom), 34 POIs (10.2/100 days vs 6.3),
+  13.4 steps a day vs 8.2, dawns at LL ≤ 3 down from 80% to 24%, exposed
+  dawns from 64% to 46%, critical-LL rests 665 → 129. Thirst is what is
+  left, and it is the game's intended pressure. Caveat: another session's
+  5-bot `drunk` arena contended for seats 1 and 4 for about 80 s of this
+  run (t ≈ 100–180 s); no regen happened, the day count is continuous.
+
 ## Validation
 
-- `python smoke.py`: 712 checks passed, before and after.
+- `python smoke.py`: 712 checks passed, before and after; 801 after the
+  K10 follow-up above.
 - `quest_check.py` on the mock: re-run after the fixes (result in the session
   report).
 - Profile: `scratchpad/prof_bots.py` (fully revealed map, one hex, 30 cycles

@@ -31,6 +31,15 @@ firmware source rather than from observation:
         ASK FIRST, and the question is wiped by the burst it earns
       llLost <= min(hits, KANE_BURST_CAP), hits <= KANE_ROUNDS
       the arc's stage never goes backwards (short of a regen)
+    VACANCY (vacancy.hpp, protocol 10), from the `vac` world object and events:
+      over one town, `st` never goes backwards (a regen or a new town resets)
+      while `st` is 1 (counting), `rm` never goes up
+      Check-Out (enc_start vac 4) opens for us only with both halves -- the
+        Guest Register and the Master Key -- in the pack (vacOnArrival)
+      `saved` for us only after a Check-Out that opened with both, and the
+        pair then leaves the pack (vacSpendItem)
+      our bank of the Front Desk / Housekeeping with its item in the haul
+        sets the sign's bit (`g`) -- vacOnBank
 
   on replies (protocol 2)
     an acked `m` is followed by our own `mv`
@@ -49,12 +58,23 @@ Checks never fire on protocol 1 boards where the firmware makes no promise.
 import time
 from collections import deque
 
-from config import KANE_BURST_CAP, KANE_ROUNDS
+from config import (KANE_BURST_CAP, KANE_ROUNDS, VAC_GOT_KEY, VAC_GOT_REGISTER,
+                    VAC_ITEM_KEY, VAC_ITEM_REGISTER, VAC_PART_DESK, VAC_PART_KEYS,
+                    VAC_PART_OUT, VAC_ST_OPEN)
 from findings import Finding, FindingLog, ReproBuffer
 
 # How long an acked request has to show its effect.  The event is drained on
 # the next 100 ms game tick; this is generous so a busy board is not a bug.
 EFFECT_WINDOW_S = 3.0
+# VACANCY: a bank or a Check-Out has this long to show on the sign or in the
+# pack (the world object rides the next tick broadcast; a busy K10 has taken
+# seconds to drain an event).
+VAC_EFFECT_WINDOW_S = 8.0
+
+
+def _held(me, iid) -> int:
+    """How many of `iid` the pack holds."""
+    return sum(q for t, q in zip(me.inv_type or [], me.inv_qty or []) if t == iid and q > 0)
 # minHeap fell 47 -> 27 -> 21 KB before one measured crash (docs/bot-testing.md).
 HEAP_FLOOR = 24 * 1024
 # Measured 149-405 ms with 5 bots; a full second is a stall worth recording.
@@ -99,6 +119,17 @@ class WireOracle:
         # both start over -- resetting can only miss a defect, not invent one.
         self.kane_asked = None          # None = unknown on this socket
         self.kane_stage = -1
+        # VACANCY: the sign as this socket last saw it (town, stage, rooms,
+        # bits), our own Check-Out as it opened -- (had both, n register,
+        # n key) -- the part scene we are in, and what a bank or a save
+        # still owes ([deadline, kind, detail]).
+        self.vac_town = None
+        self.vac_st = -1
+        self.vac_rm = -1
+        self.vac_g = 0
+        self.vac_out = None
+        self.vac_scene = None
+        self.vac_expect = []
         self._expect.clear()
         self.dead.clear()
         self.steps.clear()
@@ -123,6 +154,101 @@ class WireOracle:
             self._check_players(msg.get("p", []), obs, full=True)
         elif t == "ev":
             self._on_event(msg, obs)
+        elif t == "enc_path" and msg.get("vac"):
+            # One of VACANCY's parts is open for us (unicast).
+            self.vac_scene = {"part": int(msg["vac"]), "items": set()}
+        if t in ("sync", "s"):
+            v = (msg.get("world") or {}).get("vac")
+            if isinstance(v, dict):
+                self._check_vac(v)
+        if self.vac_expect:
+            self._vac_settle(obs)
+
+    # -- VACANCY -------------------------------------------------------------
+    def _check_vac(self, v) -> None:
+        """The `vac` world object, every tick: over one town the stage only
+        goes forward, and while it counts the rooms only go down."""
+        st, rm, g = v.get("st"), v.get("rm"), v.get("g")
+        if not all(isinstance(x, int) for x in (st, rm, g)):
+            return
+        town = (v.get("q"), v.get("r"))
+        if town != self.vac_town:
+            # A new sign (a regen, or staging): nothing to compare it with.
+            self.vac_town, self.vac_st, self.vac_rm = town, -1, -1
+        if st < self.vac_st:
+            self.flag("vac_stage_backwards", "major",
+                      "VACANCY's sign went back a stage over the same town",
+                      st=st, prev=self.vac_st, town=list(town))
+        if st == VAC_ST_OPEN and self.vac_st == VAC_ST_OPEN and rm > self.vac_rm:
+            self.flag("vac_rooms_rose", "major",
+                      "VACANCY's count went up while it was counting",
+                      rm=rm, prev=self.vac_rm, town=list(town))
+        self.vac_st, self.vac_rm, self.vac_g = st, rm, g
+
+    def _vac_settle(self, obs) -> None:
+        """Strike off what a bank or a save owed once it shows: the sign's
+        bit (or the sign moving on), or the pair gone from the pack."""
+        me = obs.me
+        keep = []
+        for exp in self.vac_expect:
+            _dl, kind, d = exp
+            if kind == "bit" and (self.vac_g & d["bit"] or self.vac_st != VAC_ST_OPEN):
+                continue
+            if (kind == "spent" and _held(me, VAC_ITEM_REGISTER) <= d["register"]
+                    and _held(me, VAC_ITEM_KEY) <= d["master_key"]):
+                continue
+            keep.append(exp)
+        self.vac_expect = keep
+
+    def _vac_event(self, k, msg, obs, mine) -> None:
+        """Our own VACANCY scenes, from their open to their bank, and the
+        sign's events."""
+        if k == "enc_start" and mine and msg.get("vac") == VAC_PART_OUT:
+            me = obs.me
+            n_reg, n_key = _held(me, VAC_ITEM_REGISTER), _held(me, VAC_ITEM_KEY)
+            self.vac_out = (n_reg > 0 and n_key > 0, n_reg, n_key)
+            if not self.vac_out[0]:
+                self.flag("vac_checkout_ungated", "critical",
+                          "Check-Out opened for us without both the Guest Register "
+                          "and the Master Key in the pack", key=(msg.get("pid"),),
+                          register=n_reg, master_key=n_key)
+        elif k == "enc_res" and mine and self.vac_scene is not None:
+            if msg.get("out"):
+                for tk in ("it", "it2"):
+                    if msg.get(tk):
+                        self.vac_scene["items"].add(int(msg[tk]))
+            if msg.get("ends"):
+                self.vac_scene = None
+        elif k == "enc_end" and mine:
+            self.vac_scene = None
+        elif k == "enc_bank" and mine:
+            sc, self.vac_scene = self.vac_scene, None
+            if sc is None or sc["part"] not in (VAC_PART_DESK, VAC_PART_KEYS):
+                return
+            desk = sc["part"] == VAC_PART_DESK
+            want = VAC_ITEM_REGISTER if desk else VAC_ITEM_KEY
+            bit = VAC_GOT_REGISTER if desk else VAC_GOT_KEY
+            if want in sc["items"] and self.vac_st == VAC_ST_OPEN and not self.vac_g & bit:
+                self.vac_expect.append([self.clock() + VAC_EFFECT_WINDOW_S, "bit",
+                                        {"part": sc["part"], "bit": bit}])
+        elif k == "vac":
+            w = msg.get("w")
+            if w == "desk":
+                self.vac_g |= VAC_GOT_REGISTER
+            elif w == "keys":
+                self.vac_g |= VAC_GOT_KEY
+            elif w == "saved" and mine:
+                out, self.vac_out = self.vac_out, None
+                if out is None:
+                    return                  # its open was before this socket
+                if not out[0]:
+                    self.flag("vac_saved_without_items", "critical",
+                              "the town was saved by us, from a Check-Out that opened "
+                              "without both halves", key=(msg.get("pid"),),
+                              register=out[1], master_key=out[2])
+                else:
+                    self.vac_expect.append([self.clock() + VAC_EFFECT_WINDOW_S, "spent",
+                                            {"register": out[1] - 1, "master_key": out[2] - 1}])
 
     def _check_tk(self, msg) -> None:
         tk = msg.get("tk")
@@ -229,6 +355,9 @@ class WireOracle:
             self.dead.clear()
             self.steps.clear()
             self.kane_stage = -1
+            self.vac_town, self.vac_st, self.vac_rm, self.vac_g = None, -1, -1, 0
+            self.vac_out = self.vac_scene = None
+            self.vac_expect = []
         elif k == "kane_call" and mine and not msg.get("camp"):
             self.kane_asked = True
         elif k == "kane_fire":
@@ -256,6 +385,8 @@ class WireOracle:
                 self.flag("blocked_without_reason", "minor",
                           "a blocked action named no ABW_* reason",
                           key=(msg.get("a"),), a=msg.get("a"))
+        if k in ("enc_start", "enc_res", "enc_end", "enc_bank", "vac"):
+            self._vac_event(k, msg, obs, mine)
         if mine:
             self._match_effect(k, msg)
 
@@ -298,6 +429,17 @@ class WireOracle:
     def poll(self) -> None:
         """Expire expectations whose effect never arrived."""
         now = self.clock()
+        for exp in [e for e in self.vac_expect if e[0] < now]:
+            self.vac_expect.remove(exp)
+            if exp[1] == "bit":
+                self.flag("vac_bank_not_counted", "major",
+                          "a Front Desk / Housekeeping bank with its item in the haul "
+                          "never set the sign's bit (vacOnBank)", key=(exp[2]["part"],),
+                          **exp[2])
+            else:
+                self.flag("vac_items_not_spent", "major",
+                          "the town was saved but the Guest Register and the Master Key "
+                          "did not leave the pack (vacSpendItem)", **exp[2])
         while self._expect and self._expect[0][0] < now:
             _dl, kind, d = self._expect.popleft()
             if kind == "act_blocked":

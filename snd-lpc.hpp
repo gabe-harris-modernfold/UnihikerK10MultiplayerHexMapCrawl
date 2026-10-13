@@ -238,6 +238,7 @@ static inline float sndLpcSample(SndLpc& d) {
 
 // ── The speaking voice: a queue of phrases, styles, and the 16 kHz bus ──────
 #include "snd-vocab.h"
+#include "doom-laugh.h"
 
 enum SndSayStyle : uint8_t {
   SAY_NARRATOR = 0,   // the terminal's chronicler: natural prosody, radio band
@@ -383,6 +384,19 @@ static void sndSpeechNextWord() {
   uint8_t w = SP.cur.words[SP.wi];
   if (w >= VOC_COUNT) { SP.busy = false; return; }
   const SndVocabEntry& e = SND_VOCAB[w];
+  // The Doom laughing (doom-laugh.h): its voice, but not the monotone -- a
+  // laugh IS its pitch, so the decoders follow the contour that was encoded,
+  // the second (if that laugh has one) `under` times lower and rasping. At
+  // speed 1 and with no madness stutter, so every syllable lands when the LCD
+  // and the TV open the skull's jaw for it. A `talk` one is just said, in the
+  // voice the style already set up.
+  if (SP.style == SAY_DOOM && w >= VOC_LAUGH0 && w < VOC_LAUGH0 + DOOM_LAUGH_N &&
+      !DOOM_LAUGH_VOICE[w - VOC_LAUGH0].talk) {
+    const DoomLaughVoice& V = DOOM_LAUGH_VOICE[w - VOC_LAUGH0];
+    SP.a.lockPeriod = 0; SP.a.pitchMul = 1.0f; SP.a.speed = 1.0f; SP.a.stutter = 0; SP.a.whisper = 0.12f;
+    SP.b.lockPeriod = 0; SP.b.pitchMul = V.under; SP.b.speed = 1.0f; SP.b.stutter = 0; SP.b.whisper = 0.45f;
+    SP.useB = V.under > 0.0f; SP.rev = V.rev; SP.echo = V.echo;
+  }
   sndLpcStart(SP.a, e.bits, e.bytes, &LPC_TMS5220);
   if (SP.useB) sndLpcStart(SP.b, e.bits, e.bytes, &LPC_TMS5220);
   if (SP.chirpSel >= 0) SP.a.chirp = SP.b.chirp = SP.chirpSel ? LPC_CHIRP_5100 : LPC_CHIRP_5220;

@@ -342,7 +342,8 @@ static void endEncounter(int pid, uint8_t reason, bool restorePoi) {
   }
   // A Kane chapter (kane.hpp) never took a POI: its camp is world state and
   // stays put until somebody reads to the end.
-  if (enc.kane) restorePoi = false;
+  // Nor a VACANCY part (vacancy.hpp): the sign and its sites are world state.
+  if (enc.kane || enc.vac) restorePoi = false;
   // A tunnel control panel is a fixture, not a cache (tunnels.hpp, "Section
   // lights"): the scene only closes for good once its section is lit. Driven
   // out, downed or walked away short of the switch, the panel stays.

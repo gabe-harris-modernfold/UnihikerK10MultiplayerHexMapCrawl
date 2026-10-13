@@ -130,11 +130,23 @@ def tts_key(voice: str, rate: int, text: str) -> str:
 
 
 def synthesize(phrases: list, voice: str, rate: int) -> dict:
-    """{ID: path of the 16 kHz SAPI WAV}, synthesising only what is not cached."""
+    """{ID: path of the 16 kHz SAPI WAV}, synthesising only what is not cached.
+
+    A phrase whose text starts "@laugh N" is not speech: SAPI cannot laugh, so
+    laugh.py builds laugh N of doom-laugh.h instead (keyed on the score and the
+    synthesiser, so editing either re-renders it)."""
     tts_dir = os.path.join(OUT, 'tts')
     os.makedirs(tts_dir, exist_ok=True)
     paths, jobs = {}, []
     for pid, text in phrases:
+        m = re.match(r'@laugh\s+(\d+)', text)
+        if m:
+            import laugh
+            p = os.path.join(tts_dir, tts_key('laugh.py', 0, laugh.laugh_text_hash() + m.group(1)) + '.wav')
+            paths[pid] = p
+            if not os.path.exists(p):
+                laugh.render(int(m.group(1)), p)
+            continue
         p = os.path.join(tts_dir, tts_key(voice, rate, text) + '.wav')
         paths[pid] = p
         if not os.path.exists(p) and (p, text) not in jobs:
@@ -258,7 +270,12 @@ def process(pid: str, text: str, wav16: str, cfg: lpc.EncoderConfig | None = Non
     """Condition, encode and validate one phrase. Returns frames, bits and metrics."""
     src = condition(wav16)
     info = {}
-    frames = lpc.encode(src, 1.0, cfg, info)
+    hint = None
+    m = re.match(r'@laugh\s+(\d+)', text)
+    if m:                                        # a synthetic laugh: its pitch is known, not tracked
+        import laugh
+        hint = laugh.frame_hint(int(m.group(1)), -(-len(src) // lpc.FRAME_LEN), lpc.FRAME_LEN, lpc.FS)
+    frames = lpc.encode(src, 1.0, cfg, info, lag_hint=hint)
     bits = lpc.pack(frames)
     stats = {}
     out = lpc.decode(bits, stats=stats)

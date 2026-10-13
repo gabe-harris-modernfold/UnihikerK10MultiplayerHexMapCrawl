@@ -35,6 +35,9 @@ This is how the hex terrain tiles are being redrawn:
 - **Vent Shaft (2026-10-12):** six vent shafts cut from the user's second
   image-gen sheet the same way, set on Open Scrub ground. See
   [Vent Shaft](#vent-shaft-2026-10-12).
+- **River Channel (2026-10-13):** 23 tiles from the user's image-gen
+  sheets, as 8 slots with alternates. Until now River had no art and drew
+  animated ripples. See [River Channel](#river-channel-2026-10-13).
 - **Tunnels (2026-09-27):** the bunker board is drawn from the user's
   underground sheets now: 17 overhead corridor pieces turned onto each cell's
   open sides, 18 angled rooms, and shaft and cave-in interiors. See
@@ -545,6 +548,59 @@ sheet differs from the bunker sheet in two ways that change the cut.
   drawn by the real renderer. Not synced.
 - Scripts `shaftcut.py` (face, outlines, matte) and `compose.py` are in
   scratchpad `8564a390-76e9-4d95-94f4-75ac3bf1312a\scratchpad\shaft`.
+
+## River Channel (2026-10-13)
+
+River had no tiles; `renderHexContent()` drew `drawRiverRipples()` instead,
+and still does whenever the page isn't loaded. The user generated 8 sheets
+from two prompts (both in `data/img/HEX_TILE_PROMPTS.md` "River Channel
+prompts"): `river-hexes01..08.png` on their OneDrive Desktop, 1408x768, six
+flat-top hexes each on flat magenta. 06 is byte-identical to 05.
+
+- **Candidates:** all 42 hexes cut to `art/hex-sheets/river-candidates/`
+  (`NN_sSS_cC.png` = candidate, sheet, cell) with a numbered
+  `contact-sheet.png`; columns are subjects, rows are sheets. The user picked
+  23 by number.
+- **Matte:** magenta-ness `min(R,B) - G`, alpha ramped over 40..215, then
+  de-contaminated (`fg = (p - (1-a) M) / a`). No visible magenta survives.
+- **Fit:** 6 vertices from `approxPolyDP` on the matte, bucketed to the
+  nearest 60 deg; the black hex stroke (3-4 px on sheets 01/03/07, under
+  1 px on 02/04/05/08) is measured inward from the matte at 30 points
+  and the vertices pulled in by stroke + 1.5 px; a centre-fan piecewise affine
+  maps that onto the flat-top hex of R = 128 * 1.035 centred in the 256 cell
+  (the Marsh/Glass geometry, rows 13-242), at 3x then INTER_AREA down.
+  Source hexes are 1.21-1.27 : 1, so they squash slightly to 1.155.
+- **Grade:** the picks came in two waters, slate blue-grey (b* about -3) and
+  tan silt (b* +7 to +11), which patchworked along a 2-wide channel. Only the
+  water moves: weight `w = clip((78-L)/12) * clip((L-10)/8)` (0 on foam and
+  ink), each tile's full-weight water mean shifted toward the pooled water
+  mean (Lab 41.9, -5.7, 1.7) by 0.5 in L* and 0.75 in a*/b*. Foam, rocks,
+  the drum's rust and ink keep their colour.
+- **Slots** (`hexRiverChannel.json` lists the alternates and each cell's
+  source); shares are pickVariant's rank-quadratic weights for 8:
+
+  | Slot | Share | Subject | Candidates (own cell first) |
+  |---|---|---|---|
+  | 0 | 31.4% | open current | 1, 7, 13, 19 |
+  | 1 | 24.0% | river rocks | 26, 38 |
+  | 2 | 17.6% | boulders | 2, 8, 14, 20 |
+  | 3 | 12.3% | rapids | 4, 10, 16, 22 |
+  | 4 | 7.8% | tree snag | 3, 15 |
+  | 5 | 4.4% | oil drum | 5, 11, 17, 23 |
+  | 6 | 2.0% | ruined boat | 27, 39 |
+  | 7 | 0.5% | creature | 36 |
+
+- **Page:** q92, 428 KB, worst visible RMSE 3.25 (tiles.json 64783636acd4).
+  No firmware, client or mock change: counts[11] = 8 reaches
+  `setupVariantCounts()`, and the alternates go through the existing
+  `altPick()`. A world generated while River's count was 0 has every river
+  hex at variant 0, so it shows slot 0 and its three alternates until a new
+  world is made.
+- **The mock never generates River** (`buildMap()` is `idx % 11`), so it was
+  checked by flipping hexes to terrain 11 client-side.
+- Scripts `contact.py`, `fit.py`, `grade.py` (also writes `preview-slots.png`
+  and `preview-map.png`) and `master.py` are in scratchpad
+  `8f1fa5c3-5666-44ad-9ed6-171bac40583c\scratchpad\river`.
 
 ## Integration
 

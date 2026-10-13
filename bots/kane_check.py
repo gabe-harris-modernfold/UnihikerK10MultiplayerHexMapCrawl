@@ -269,6 +269,9 @@ async def main(argv=None):
             # kane_min_ll is a judgement about the board's real hazards, so it
             # is relaxed here rather than leaving the story unread.
             pol.kane_min_ll = 1
+            # The mock's VACANCY sign is vac_check.py's, and its errand sits
+            # ahead of Kane's in the chain.
+            pol.vac_quest = False
             bots.append(BotClient(host=args.host, preferred_arch=i,
                                   policy=pol,
                                   recorder=rec, rng=brng,

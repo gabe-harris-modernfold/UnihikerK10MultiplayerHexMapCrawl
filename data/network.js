@@ -287,6 +287,7 @@ function _applyWorldState(world) {
     _lastCaravanHex = { q: c.q, r: c.r };
   }
   if (world.kane) kaneApplyWorld();   // his ruts, the same way (kane-jeep.js)
+  if (world.vac) vacApplyWorld();     // a new sign over a new town gets a line (vacancy.js)
 }
 
 function _msgAsgn(msg) {
@@ -885,8 +886,24 @@ function _evMv(ev) {
   // Exploration bonus: log first-visit score
   if (ev.exploD && ev.exploD > 0 && ev.pid === myId)
     addLog(`<span class="log-mv">\u2605 New hex \u2014 +${ev.exploD} exploration pt</span>`);
+  if (!ev.dp) _noteGathering(ev);
   // Narrate position for accessibility / AI agents
   if (ev.pid === myId) _narrateMove(ev);
+}
+
+// Gathering draws the Doom (doomNoteArrival() in world-system.hpp): a step
+// onto a hex another survivor holds raises its awareness wherever it is, and
+// so does every world tick a crowd stays together. The awareness itself is
+// on the HUD; this says why it moved, once a minute at most.
+let _gatherNotedAt = 0;
+function _noteGathering(ev) {
+  const me = myId >= 0 ? players[myId] : null;
+  if (!me || me.dp || !(me.ll > 0)) return;
+  if (ev.pid !== myId && !(ev.q === me.q && ev.r === me.r)) return;   // not my hex
+  const crowd = players.filter(p => p.on && !p.dp && p.ll > 0 && p.q === me.q && p.r === me.r).length;
+  if (crowd < 2 || Date.now() - _gatherNotedAt < 60000) return;
+  _gatherNotedAt = Date.now();
+  addLog('<span class="log-check-fail">\u2620 Survivors gather \u2014 the Doom feels it, wherever it is.</span>');
 }
 
 function _evDowned(ev) {
@@ -1031,6 +1048,8 @@ function _buildActDetail(ev) {
   // and an unexplained dead button is the worst version of that.
   if (ev.out === AO_BLOCKED && ev.bw === ABW_PACK_FULL)
     return ' — pack full, drop something first';
+  if (ev.out === AO_BLOCKED && ev.bw === ABW_NO_TARGET)
+    return ' — they are not here to treat';
   if (ev.dn)     d += ` DN${ev.dn}=${ev.tot}`;
   if (ev.fd)     d += ` +${ev.fd}Food`;
   if (ev.wd)     d += ` +${ev.wd}Water`;
@@ -1064,19 +1083,29 @@ function _narrateActResult(ev, actNm) {
 function _evAct(ev) {
   const p = ev.pid >= 0 && ev.pid < MAX_PLAYERS ? players[ev.pid] : null;
   _applyActState(ev, p);
+  // TREAT on a teammate (PROTO 9): "tg" is the patient, and the event's
+  // wounds and LL gain are theirs, not the treater's.
+  const tg      = (ev.tg >= 0 && ev.tg < MAX_PLAYERS) ? ev.tg : ev.pid;
+  const patient = players[tg];
+  const onOther = ev.a === ACT_TREAT && tg !== ev.pid;
+  if (onOther && patient && ev.lld) patient.ll = Math.max(0, (patient.ll ?? 0) + ev.lld);
   const who   = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   const actNm = ACT_NAMES[ev.a] ?? `Act${ev.a}`;
   const { outTx, outCl } = _buildActOutcome(ev.out);
   const detail = _buildActDetail(ev);
-  addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${detail}</span>`);
+  const whom   = onOther ? ` → ${escHtml(tg === myId ? 'you' : (patient?.nm || `P${tg}`))}` : '';
+  addLog(`<span class="${outCl}">${outTx} ${escHtml(who)} ${actNm}${whom}${detail}</span>`);
+  if (onOther && tg === myId && (ev.out === AO_SUCCESS || ev.out === AO_PARTIAL))
+    showToast(`✚ ${escHtml(players[ev.pid]?.nm || `P${ev.pid}`)} patches you up.`);
   if (ev.a === ACT_REST && ev.out === AO_SUCCESS)         _handleRestSuccess(ev, who);
   else if (ev.a === ACT_SHELTER && ev.out === AO_SUCCESS) _handleShelterSuccess(ev);
   // Apply scrap delta for ALL actions (SCAV gives +1, SHELTER spends -1/-2)
   if (ev.sd !== undefined && ev.sd !== 0)
     players[ev.pid].inv[4] = Math.max(0, (players[ev.pid].inv[4] ?? 0) + ev.sd);
   if (ev.pid === myId) _narrateActResult(ev, actNm);
-  // TREAT reports the post-roll wound counts; keep the char sheet in step.
-  if (ev.wnd) players[ev.pid].wnd = ev.wnd;
+  // TREAT reports the post-roll wound counts -- the patient's; keep the
+  // char sheet in step.
+  if (ev.wnd && patient) patient.wnd = ev.wnd;
   if (ev.md) players[ev.pid].inv[3] = Math.max(0, (players[ev.pid].inv[3] ?? 0) + ev.md);
   if (ev.a === ACT_REST && ev.pid === myId) restSent = false;
   updateSidebar();
@@ -1398,7 +1427,9 @@ function _evItemResult(ev) {
 function _evEncRes(ev) {
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
   const outClass = ev.out ? 'log-col' : 'log-check-fail';
-  addLog(`<span class="${outClass}">\u2299 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}</span>`);
+  const backed = ev.as ? ` (${ev.as} ${ev.as === 1 ? 'ally' : 'allies'} behind them)` : '';
+  _clearEncAssist(ev.pid);   // the roll spent whatever help was behind it
+  addLog(`<span class="${outClass}">\u2299 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}${backed}</span>`);
   if (ev.pid === myId) {
     const p = players[myId];
     if (p) {
@@ -1414,22 +1445,29 @@ function _evEncRes(ev) {
     updateSidebar();
     globalThis._onEncResult?.(ev);
   }
-  // Apply auto-drain to co-located allies on failure
-  if (!ev.out && Array.isArray(ev.drains)) {
-    const ldrName = players[ev.pid]?.nm || `P${ev.pid}`;
-    ev.drains.forEach((d, apid) => {
-      if (d <= 0 || !players[apid]) return;
-      let toDeduct = d;
-      for (let ri = 0; ri < 5 && toDeduct > 0; ri++) {
-        const cur = players[apid].inv?.[ri] ?? 0;
-        if (cur > 0) { const take = Math.min(cur, toDeduct); players[apid].inv[ri] = cur - take; toDeduct -= take; }
-      }
-      if (apid === myId) {
-        showToast(`◉ You press supplies into ${escHtml(ldrName)}'s hand. The debt is shared.`);
-        updateSidebar();
-      }
-    });
+  // (Survivors nearby are no longer drained on a hazard -- PROTO 9 dropped
+  // "drains". Backing a roll is opt-in now: enc_assist / _evEncAssist.)
+}
+
+// Someone on the same hex spent a token to steady a teammate's next roll
+// (handleMsg_enc_assist). pid = the helper, to = whose scene, res = the
+// token, n = allies now behind that roll. The helper's inv also rides the
+// next state tick; this keeps the deck from offering a token already spent.
+function _evEncAssist(ev) {
+  const helper = players[ev.pid], target = players[ev.to];
+  if (helper?.inv && ev.res >= 0 && ev.res < 5)
+    helper.inv[ev.res] = Math.max(0, (helper.inv[ev.res] ?? 0) - 1);
+  // Who is behind that roll, for the ASSIST picker (ui-panels.js): the
+  // count caps the offer, the mask stops a second token from the same hand.
+  if (target) { target.encAs = ev.n | 0; target.encAsBy = (target.encAsBy | 0) | (1 << ev.pid); }
+  const hName = ev.pid === myId ? 'You' : (helper?.nm || `P${ev.pid}`);
+  const tName = ev.to  === myId ? 'you' : (target?.nm || `P${ev.to}`);
+  addLog(`<span class="log-col">◉ ${escHtml(hName)} steadied ${escHtml(tName)} (${RES_SHORT[ev.res] ?? '?'}) — ${ev.n}/${ENC_ASSIST_CAP} behind the next roll</span>`);
+  if (ev.to === myId) {
+    showToast(`◉ ${escHtml(helper?.nm || `P${ev.pid}`)} has your back — next roll DN −${ev.n * ENC_ASSIST_DN}.`);
+    globalThis._onEncAssist?.(ev);
   }
+  if (ev.pid === myId) updateSidebar();
 }
 
 function _evEncBank(ev) {
@@ -1459,7 +1497,13 @@ function _evEncBank(ev) {
   }
 }
 
+function _clearEncAssist(pid) {
+  const p = players[pid];
+  if (p) { p.encAs = 0; p.encAsBy = 0; }
+}
+
 function _evEncEnd(ev) {
+  _clearEncAssist(ev.pid);
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
   const ENC_REASON_LABELS = { hazard: 'hazard', abort: 'aborted', dawn: 'dawn', downed: 'downed', disconnect: 'disconnected', regen: 'world remade', escaped: 'backed out' };
   const reasonTxt = ENC_REASON_LABELS[ev.reason] ?? ev.reason;
@@ -1589,6 +1633,7 @@ function handleEvent(ev) {
     case 'kane_call':   _evKaneCall(ev);   break;   // Machine Gun Kane (kane-jeep.js)
     case 'kane_fire':   _evKaneFire(ev);   break;
     case 'kane_arc':    _evKaneArc(ev);    break;
+    case 'vac':         _evVac(ev);        break;   // VACANCY (vacancy.js)
     case 'tun_lit':     _evTunLit(ev);     break;
     case 'trap':        _evTrap(ev);       break;
     case 'fire_spread':   _evFireSpread(ev);   break;
@@ -1599,6 +1644,14 @@ function handleEvent(ev) {
     case 'item_result': _evItemResult(ev); break;
     case 'enc_start': {
       const encWho = players[ev.pid]?.nm || `P${ev.pid}`;
+      if (ev.vac) {
+        // One of VACANCY's parts opened on arrival (vacancy.hpp) -- the town,
+        // the desk, the corridor, Check-Out. No POI was taken: leave the hex be.
+        const VAC_WHERE = ['', 'walked in under the sign', 'found the front desk', 'found the corridor', 'opened the register under the sign'];
+        addLog(`<span class="log-col">⌂ ${escHtml(ev.pid === myId ? 'You' : encWho)} ${VAC_WHERE[ev.vac] || 'walked in under the sign'}</span>`);
+        updateSidebar();
+        break;
+      }
       if (ev.kane) {
         // One of Machine Gun Kane's chapters opened on arrival (kane.hpp) --
         // his camp, the house, his fire. No POI was taken, so leave the hex be.
@@ -1622,6 +1675,7 @@ function handleEvent(ev) {
       break;
     }
     case 'enc_res':     _evEncRes(ev);     break;
+    case 'enc_ast':     _evEncAssist(ev);  break;
     case 'enc_bank':    _evEncBank(ev);    break;
     case 'enc_end':     _evEncEnd(ev);     break;
     case 'weather':
@@ -1706,8 +1760,14 @@ function handleEvent(ev) {
         if (gameMap[c.r]?.[c.q]) gameMap[c.r][c.q] = { ...gameMap[c.r][c.q], shelter: 0 };
       }
       if (gameMap[ev.r]?.[ev.q]) gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], terrain: 9 };
-      addLog(`<span class="log-check-ok">⌂ A settlement rises at (${ev.q},${ev.r})!</span>`);
-      showToast('⌂ Survivors raise a settlement from the wasteland.');
+      // "fd" (PROTO 9): every founder's seat -- each of them scored the bonus.
+      const founders = Array.isArray(ev.fd) ? ev.fd : [];
+      const fNames = founders.map(f => f === myId ? 'you' : (players[f]?.nm || `P${f}`));
+      const fTxt = fNames.length ? ` Founded by ${escHtml(fNames.join(', '))}${ev.bonus ? ` (+${ev.bonus} each)` : ''}.` : '';
+      addLog(`<span class="log-check-ok">⌂ A settlement rises at (${ev.q},${ev.r})!${fTxt}</span>`);
+      showToast(founders.includes(myId) && ev.bonus
+        ? `⌂ You helped raise a settlement. +${ev.bonus} pts.`
+        : '⌂ Survivors raise a settlement from the wasteland.');
       break;
     }
   }

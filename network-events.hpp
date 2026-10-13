@@ -334,9 +334,21 @@ static void drainEvents() {
           GLY_FORAGE, GLY_WATER, GLY_MEDIC, GLY_SALVAGE,
           GLY_SHELTER, GLY_CRAFT, GLY_SCOUT, GLY_REST,
         };
-        k10LogAdd(actProse(ev.actType, ev.actOut), (int8_t)ev.pid,
-                  (ev.actType == 7) ? TONE_PLAIN : (ev.actOut ? TONE_GOOD : TONE_ILL),
-                  (ev.actType < 8) ? ACT_GLYPH[ev.actType] : GLY_NONE);
+        if (ev.actType == 2 && ev.actTgt != ev.pid && ev.actOut != AO_BLOCKED) {
+          // TREAT on someone else: the chronicle names the patient too.
+          k10LogAdd(ev.actOut == AO_FAIL
+                      ? K10_SAY("works over \x01 and cannot close it.",
+                                "runs out of cloth before \x01 stops bleeding.")
+                      : K10_SAY("patches \x01 up and it holds.",
+                                "kneels by \x01 and does the stitching.",
+                                "spends their own medicine on \x01."),
+                    (int8_t)ev.pid, ev.actOut == AO_FAIL ? TONE_ILL : TONE_GOOD,
+                    GLY_MEDIC, (int8_t)ev.actTgt);
+        } else {
+          k10LogAdd(actProse(ev.actType, ev.actOut), (int8_t)ev.pid,
+                    (ev.actType == 7) ? TONE_PLAIN : (ev.actOut ? TONE_GOOD : TONE_ILL),
+                    (ev.actType < 8) ? ACT_GLYPH[ev.actType] : GLY_NONE);
+        }
         // A craft is decorated on the LCD (ui-fx.hpp, the commendation). The
         // one cue whose caption is not the chronicle's line: it is what was
         // made, because that is what the certificate cites.
@@ -349,7 +361,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"act\",\"pid\":%d,\"a\":%d,\"out\":%d,"
           "\"ap\":%d,\"ll\":%d,\"fd\":%d,\"wd\":%d,\"lld\":%d,"
           "\"dn\":%d,\"tot\":%d,\"radd\":%d,\"rad\":%d,\"cnd\":%d,\"sd\":%d,"
-          "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d,\"ar\":%d,\"bw\":%d}",
+          "\"md\":%d,\"wnd\":[%d,%d],\"scoreD\":%d,\"ar\":%d,\"bw\":%d,\"tg\":%d}",
           ev.pid, (int)ev.actType, (int)ev.actOut,
           (int)ev.actNewAP, (int)ev.actNewLL,
           (int)ev.actFoodD, (int)ev.actWatD, (int)ev.actLLD,
@@ -357,7 +369,7 @@ static void drainEvents() {
           (int)ev.radD, (int)ev.radR,
           (int)ev.actCnd, (int)ev.actScrapD,
           (int)ev.actMedD, (int)ev.actWndMin, (int)ev.actWndMaj,
-          (int)ev.actScoreD, (int)ev.actRecipe, (int)ev.actWhy);
+          (int)ev.actScoreD, (int)ev.actRecipe, (int)ev.actWhy, (int)ev.actTgt);
         evTextAll(buf, len);
         break;
 
@@ -407,12 +419,14 @@ static void drainEvents() {
         if (!downedName[0])
           snprintf(downedName, sizeof(downedName), "Walker %d", (int)ev.pid + 1);
         // The chronicle gets its line, and the panel gets given over to the
-        // skull for six seconds -- see ui-death.hpp.
+        // Doom, laughing, for six seconds -- see ui-death.hpp. Which laugh is
+        // the takeover's to pick; the speaker (SS_DOWNED) and the TV (the fx
+        // ring's arg) are handed the same one, so all three keep time.
         k10LogAdd(K10_SAY("goes down, and does not get up.",
                           "is finished. The waste keeps them."),
                   (int8_t)ev.pid, TONE_ILL, GLY_DEATH);
-        DeathUI::begin(downedName, "does not come out standing.");
-        fxCue(FXK_DOWNED, (int8_t)ev.pid);   // the knock the skull arrives on
+        const uint8_t laugh = DeathUI::begin(downedName, "does not come out standing.", (uint8_t)ev.pid);
+        fxCue(FXK_DOWNED, (int8_t)ev.pid, nullptr, nullptr, laugh);   // the knock the laugh comes on
         taskENTER_CRITICAL(&evtMux);
         for (int i = 0; i < MAX_PLAYERS; i++) {
           if (!lobbyIds[i]) { lobbyIds[i] = ev.evWsId; break; }
@@ -420,7 +434,7 @@ static void drainEvents() {
         taskEXIT_CRITICAL(&evtMux);
         // 4. Tell all lobby clients (including the downed player) archetypes now available
         broadcastLobbyUpdate();
-        sndStory(SS_DOWNED, ev.pid);   // the flatline, then the elegy on their signature
+        sndStory(SS_DOWNED, ev.pid, laugh);   // the flatline, the laugh, the elegy on their signature
         ledPerish();  // red heartbeat across all 3 lamps — see ui-leds.hpp
         break;
       }
@@ -532,7 +546,11 @@ static void drainEvents() {
         // way; "dp" as everywhere else, omitted on the surface. Broadcasting
         // a trap's q/r gives nothing away: it is not armed while a scene runs
         // (and nobody can see it who was not already standing there).
-        if (ev.res)   // res = 1-5: one of Machine Gun Kane's chapters opened on arrival (kane.hpp)
+        if (ev.encOut)   // encOut = 1-4: one of VACANCY's parts opened on arrival (vacancy.hpp)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"vac\":%d}",
+            ev.pid, (int)ev.q, (int)ev.r, (int)ev.encOut);
+        else if (ev.res)   // res = 1-5: one of Machine Gun Kane's chapters opened on arrival (kane.hpp)
           len = snprintf(buf, sizeof(buf),
             "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"kane\":%d}",
             ev.pid, (int)ev.q, (int)ev.r, (int)ev.res);
@@ -551,7 +569,16 @@ static void drainEvents() {
 
         evTextAll(buf, len);
 
-        if (ev.res) {
+        if (ev.encOut) {
+          // A VACANCY part: under the sign, the desk, the corridor, Check-Out.
+          static const char* const VAC_IN[4] = {
+            "walks into a town under a pink sign.",
+            "finds a front desk standing in the open.",
+            "walks down a corridor too long for it.",
+            "opens the register under the sign.",
+          };
+          k10LogAdd(VAC_IN[(ev.encOut - 1) % 4], (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        } else if (ev.res) {
           // A Kane chapter: the book says where they walked into his story.
           static const char* const KANE_IN[5] = {
             "finds where Kane sat the night.",
@@ -593,7 +620,7 @@ static void drainEvents() {
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"it2\":%d,\"iq2\":%d,\"penLL\":%d,\"penRad\":%d,"
           "\"penRes\":[%d,%d,%d,%d,%d],\"penWnd\":[%d,%d],"
-          "\"ends\":%d,\"drains\":[%d,%d,%d,%d,%d,%d],\"rec\":%d,\"trap\":%d}",
+          "\"ends\":%d,\"as\":%d,\"rec\":%d,\"trap\":%d}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
@@ -602,9 +629,7 @@ static void drainEvents() {
           (int)ev.encPenLL, (int)ev.encPenRad,
           ev.encPenRes[0], ev.encPenRes[1], ev.encPenRes[2], ev.encPenRes[3], ev.encPenRes[4],
           (int)ev.encPenWndMin, (int)ev.encPenWndMaj,
-          (int)ev.encEnds,
-          (int)ev.encDrains[0], (int)ev.encDrains[1], (int)ev.encDrains[2],
-          (int)ev.encDrains[3], (int)ev.encDrains[4], (int)ev.encDrains[5],
+          (int)ev.encEnds, (int)ev.encAssist,
           (int)ev.encRecipe, (int)ev.amt);
         evTextAll(buf, len);
         // Success reads through the skill that carried it.
@@ -663,6 +688,22 @@ static void drainEvents() {
             k10LogPlate(PLATE_AWARD, cb, (int8_t)ev.pid, TONE_GOOD, pv, 1);
           }
         }
+        break;
+      }
+
+      case EVT_ENC_ASSIST: {
+        // pid = the helper, amt = whose scene, res = the token, encAssist =
+        // allies now behind that roll (handleMsg_enc_assist).
+        Log.notice("EVT enc_ast helper=%d to=%d res=%d n=%d",
+                   (int)ev.pid, (int)ev.amt, (int)ev.res, (int)ev.encAssist);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"enc_ast\",\"pid\":%d,\"to\":%d,\"res\":%d,\"n\":%d}",
+          (int)ev.pid, (int)ev.amt, (int)ev.res, (int)ev.encAssist);
+        evTextAll(buf, len);
+        k10LogAdd(K10_SAY("steadies \x01 from the doorway.",
+                          "presses supplies into \x01's hand.",
+                          "keeps watch while \x01 works."),
+                  (int8_t)ev.pid, TONE_GOOD, GLY_TRADE, (int8_t)ev.amt);
         break;
       }
 
@@ -994,6 +1035,51 @@ static void drainEvents() {
         break;
       }
 
+      case EVT_VAC: {
+        // VACANCY (vacancy.hpp). amt = what happened (VAC_EV_*), res = rooms
+        // left, q/r = the town. The hum is the sign talking to one survivor
+        // under it -- unicast, res = which half they DO carry (bit 1 the
+        // register, bit 2 the key); everything else is the world's.
+        static const char* const VAC_WHAT[9] = { "?", "hook", "desk", "keys", "room", "saved", "fallen", "lost", "hum" };
+        const char* what = VAC_WHAT[ev.amt < 9 ? ev.amt : 0];
+        const int who = (ev.pid == 255) ? -1 : (int)ev.pid;
+        Log.notice("EVT vac %s pid=%d town=(%d,%d) rooms=%d", what, who, (int)ev.q, (int)ev.r, (int)ev.res);
+        if (ev.amt == VAC_EV_HUM) {
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"vac\",\"w\":\"hum\",\"pid\":%d,\"q\":%d,\"r\":%d,\"has\":%d}",
+            who, (int)ev.q, (int)ev.r, (int)ev.res);
+          if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
+          break;
+        }
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"vac\",\"w\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"rm\":%d}",
+          what, who, (int)ev.q, (int)ev.r, (int)ev.res);
+        evTextAll(buf, len);
+        switch (ev.amt) {
+          case VAC_EV_HOOK:  k10LogAdd("hears the town counting its chairs.", (int8_t)who, TONE_OMEN, GLY_THRESHOLD); break;
+          case VAC_EV_DESK:  k10LogAdd("takes the register off the desk.", (int8_t)who, TONE_OMEN, GLY_HAUL); break;
+          case VAC_EV_KEYS:  k10LogAdd("comes back out with the master key.", (int8_t)who, TONE_OMEN, GLY_HAUL); break;
+          case VAC_EV_ROOM: {
+            char lb[48];
+            snprintf(lb, sizeof(lb), "Another house checks in. %d room%s left.", (int)ev.res, ev.res == 1 ? "" : "s");
+            k10LogAdd(lb, -1, TONE_ILL, GLY_SETTLE);
+            break;
+          }
+          case VAC_EV_SAVED:
+            k10LogAdd("checks the whole town out. The sign dies.", (int8_t)who, TONE_GOOD, GLY_SETTLE);
+            k10Play(MOTIF_POWER_DOWN);   // the tubes pop and the hum stops
+            break;
+          case VAC_EV_FALLEN:
+            k10LogAdd("NO VACANCY. The town is full.", -1, TONE_ILL, GLY_DEATH);
+            k10Play(MOTIF_ROTTEN_CHORD);
+            break;
+          case VAC_EV_LOST:
+            k10LogAdd("The sign went out with the town.", -1, TONE_ILL, GLY_QUAKE);
+            break;
+        }
+        break;
+      }
+
       case EVT_TUNNEL_LIGHTS: {
         // A control-panel scene threw its switch (tunnels.hpp, "Section
         // lights"). Broadcast: everyone hears the bunker wake up, below or
@@ -1117,5 +1203,5 @@ static void drainEvents() {
   }
   if (snapCount > 0) LOG_VERBOSE("drainEvents: dispatched=%d", snapCount);
   // pendingCount was already reset to 0 inside the spinlock snapshot above.
-  if (saveAfterDrain) saveGame();   // outside the mutex; saveGame() takes it itself
+  if (saveAfterDrain) requestSave();   // the Saver task writes it, outside this mutex hold
 }

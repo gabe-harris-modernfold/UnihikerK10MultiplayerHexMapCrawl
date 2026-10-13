@@ -902,6 +902,12 @@ static void setupWiFiAndServer() {
         int kn = appendKaneJson(kb, sizeof(kb));
         if (kn) { j += ","; j += kb; }
       }
+      // VACANCY (vacancy.hpp): the town, st 0 sign / 1 counting / 2 saved /
+      // 3 fallen, rm nights left, g what has been banked, the two open sites.
+      {
+        char vb[160];
+        if (appendVacJson(vb, sizeof(vb))) j += vb;   // carries its own leading comma
+      }
 
       int shelters = 0, impShelters = 0, poiCount = 0, trapCount = 0, trapKnown = 0;
       int resCnt[6] = {0,0,0,0,0,0};

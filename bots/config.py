@@ -519,6 +519,21 @@ def kane_open_ground(terrain: int) -> bool:
     forest, ruins, a Settlement, the glass, a hatch -- is cover."""
     return terrain in KANE_OPEN_GROUND
 
+# ── VACANCY (vacancy.hpp, docs/vacancy.md) ───────────────────────────────────
+# A neon motel sign over one Settlement, world-shared like Kane's arc. Four
+# scenes in the "vacancy" pool, each opened on arrival: the town (1) starts a
+# VAC_ROOMS-night count and places the Front Desk (2) and Housekeeping (3);
+# each of those counts only when its item is BANKED; Check-Out (4) opens on
+# the town for a survivor carrying both items and saves it. A dawn with
+# someone connected takes a room; at none the town's hex becomes Broken Urban.
+VAC_ROOMS = 8
+VAC_ITEM_REGISTER, VAC_ITEM_KEY = 70, 71
+VAC_PART_SIGN, VAC_PART_DESK, VAC_PART_KEYS, VAC_PART_OUT = 1, 2, 3, 4
+VAC_ST_SIGN, VAC_ST_OPEN, VAC_ST_SAVED, VAC_ST_FALLEN = 0, 1, 2, 3
+VAC_GOT_REGISTER, VAC_GOT_KEY = 1, 2
+VAC_PARTS = 4
+VAC_FALLEN_TERRAIN = 4      # VT_URBAN: the town's hex once the count runs out
+
 # Oldest firmware PROTO_VERSION these bots can read.  7 renamed every "mp"
 # key to "ap": on an older board me.ap reads 0 forever and every bot just
 # rests, with nothing on the wire to say why.

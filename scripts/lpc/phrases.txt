@@ -114,3 +114,8 @@ COME_HERE | come here.
 # ── the terminal ─────────────────────────────────────────────────────────
 WASTELAND | welcome to the wasteland.
 SURVIVORS | survivors remain.
+
+# ── the doom laughing, when someone goes down (doom-laugh.h; built by laugh.py, not SAPI) ────
+LAUGH0 | @laugh 0 the villain: mwa ha ha ha haaa
+LAUGH1 | ha! you dead.
+LAUGH2 | @laugh 2 the gloat: ho. ho. ho. ho ho ho HOOO

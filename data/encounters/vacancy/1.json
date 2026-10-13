@@ -1,0 +1,114 @@
+{
+  "id": "vacancy_1_the_sign",
+  "title": "Vacancy",
+  "vacancy": {
+    "part": 1
+  },
+  "start_node": "the_sign",
+  "nodes": {
+    "the_sign": {
+      "text": "Over the square stands a sign that was not here the last time anyone came through, that cannot have been here, because nothing out here has had current in it for sixty years: a tall roadside motel sign on a steel pole, pink neon tubing bent into the word VACANCY, and under it a smaller box that says NO, unlit. There is no motel. The pole goes straight into the bare dirt of the square. The townsfolk walk round it without looking up, the way you walk round a hole in the road you have all agreed not to mention. Its hum gets into your back teeth and sits there.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ask somebody about the sign.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 3,
+          "success_node": "the_door",
+          "hazard_id": "nobody_says"
+        },
+        {
+          "label": "Stand under it and listen to the hum.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "the_door",
+          "hazard_id": "the_hum"
+        }
+      ]
+    },
+    "the_door": {
+      "text": "An old woman who still remembers things takes you by the sleeve to a house on the east row. Its front door is gone. In its place, fitted to the old frame as if it had always been there, is a motel door: turquoise paint, a peephole, a brass number on it, a DO NOT DISTURB card hung on the handle. Through the peephole there are two single beds made up tight, a painting of a blue sea nobody here has ever seen, a television showing snow with the sound turned down. Two pairs of boots stand by the beds, toes together. 'It started with the sign,' she says. 'Every night, another house. In the morning there is a door on it that won't open, and nobody can say who lived there. Only that somebody did. We count the chairs at supper. There is always one more chair than us.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Try the door.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "the_count",
+          "hazard_id": "the_peephole"
+        },
+        {
+          "label": "Walk the street and count the doors.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "the_count",
+          "hazard_id": "count_again"
+        }
+      ]
+    },
+    "the_count": {
+      "text": "Two travellers have come in off the waste this week telling the same nonsense, she says, and both of them now sleep with the lamp on. One saw a front desk standing on its own out on the open ground, nobody behind it, a lamp lit with nothing to light it, and lying open on the counter a guest book with this town's names in it. The other got turned round in a ruin and walked down a motel corridor longer than the building it was in, past a housekeeping cart, and heard somebody humming behind every door. 'Anybody who has ever stayed anywhere knows you can check out,' she says. 'You need the book, to sign us out. And you need the key, to let us out.' Over the square the sign buzzes louder, once, as if it heard, and down the east row another window you had not noticed is lit, warm and yellow, with somebody sitting on the end of a bed inside it, facing out.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "nobody_says": {
+      "text": "Nobody will say. A man you ask smiles and tells you the town has always had a sign, and then he stops in the middle of the sentence and stands there with his mouth a little open, trying to remember the word for the thing he was saying. You leave him standing. When you look back he is still there.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "the_hum": {
+      "text": "The hum gets into your teeth, and then in behind your eyes, and when you come back to yourself you are standing with one hand flat on the pole and your nose is bleeding onto your shirt and the light has moved.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_peephole": {
+      "text": "You put your eye to the peephole. The room is the same. The painting is the same. But the bed nearest the door has a dent in it now, as though somebody has this moment sat down on the end of it, and the television has changed channel. When you step back the brass number is warm under your hand.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "count_again": {
+      "text": "You count the doors down the east row and get eleven. You count them back up and get twelve. You count them a third time with your hand on every frame, and between two houses where there has never been a house there is a turquoise door with a card on the handle. You don't knock.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    }
+  }
+}

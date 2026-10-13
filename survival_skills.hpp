@@ -6,7 +6,9 @@
 // broadcastCheck is defined in network-sync.hpp (included after this file).
 static void broadcastCheck(int pid, uint8_t skill, CheckResult& r);
 // saveGame() is defined in network-persistence.hpp (included after this file).
+// Game code asks with requestSave(): the Saver task does the SD writes.
 void saveGame();
+static void requestSave();
 // ledFlash is defined in Esp32HexMapCrawl.ino (Core 1 safe — sets LED + endMs timer).
 void ledFlash(uint8_t r, uint8_t g, uint8_t b);
 // effectiveMaxLL is defined in inventory_items.hpp (included after this file).

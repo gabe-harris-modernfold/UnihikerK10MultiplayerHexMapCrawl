@@ -122,7 +122,7 @@ It exists to **taunt and to tell the story**. Styles (`SAY_*`, snd-lpc.hpp):
 | narrator | weather lines, threat-clock lines, deaths, "night falls" |
 | chant | "day N" at dawn, intoned on the key's tonic |
 | whisper | the Doom's taunts — the **same line each phone shows** (`DOOM_TAUNTS[tier][idx % 3]`) |
-| doom | the Doom itself at the hunt: "I see you", "run", "mine", "come here" — a doubled monotone far below |
+| doom | the Doom itself at the hunt: "I see you", "run", "mine", "come here" — a doubled monotone far below; and laughing when someone goes down (below) |
 | barker | the caravan: "step right up. step right up." |
 | radio | joins ("the scout takes up the road with us"), "that is correct / incorrect" on long-odds wins and throws |
 
@@ -142,7 +142,7 @@ every tick, rad, chem, flood) have cooldowns, longer for the voice.
 | join | `EVT_JOINED` | radio blip → signature → radio voice |
 | dawn | `EVT_DAWN` (deduped per day) | dawn style, roll call, chant |
 | dusk | day clock crossing 0.78 | the music box going down, "night falls" |
-| downed | `EVT_DOWNED` | a heart monitor to a flatline, the elegy, the line; "no one is left" |
+| downed | `EVT_DOWNED` | a heart monitor to a flatline, the elegy; 600 ms in, the Doom laughs (b = which, see below); then the line; "no one is left" |
 | threat band | `checkScoreAudio()` | n bell tolls, the TC line, siren + "too late" at 4 |
 | weather | `EVT_WEATHER` | breath/acid/thud + the WX line; the style follows |
 | encounter | `EVT_ENC_*` | into the dark / the one major chord / spark-and-fail / picked clean |
@@ -173,6 +173,22 @@ Scenes are the `SCENES[]` table in `sndsim.cpp`; each is a function fed every
 Stems: `sndsim.exe <outdir> <scene> <seed> <hex part mask> <suffix>` mutes
 music parts (bit = `MusPart`). The effects bus is never masked.
 
+### The Doom's laugh (a death)
+
+`SS_DOWNED`'s `b` picks one of [doom-laugh.h](../doom-laugh.h)'s three, and
+the same number goes to the LCD takeover (`DeathUI::begin()`, which picks it)
+and the TV (the `DOWNED` cue's `arg` in the `/state` fx ring): all three keep
+time off one score, so the skull's jaw drops on every HA it is heard to say.
+0 the villain and 2 the gloat are not SAPI — `scripts/lpc/laugh.py` builds
+them as a voice (Rosenberg pulses, breath, five formants) from the score, and
+the encoder takes their pitch from it rather than tracking it. 1 is the jeer,
+SAPI's "ha! you dead." in the Doom's monotone (`DOOM_LAUGH_VOICE.talk`):
+two synthetic cackles were heard as robotic and unclear on 2026-10-13 and
+were dropped. The laughs play in the Doom's doubled voice, but following
+their own pitch, the second decoder an octave under, at speed 1 with no
+stutter (`sndSpeechNextWord`). Audition: `python scripts/sndsim/sndsim.py
+laughs`.
+
 ## Changing the vocabulary
 
 ```powershell
@@ -181,7 +197,9 @@ python scripts/lpc/gen_vocab.py --only RUN MINE
 ```
 
 Add a line to `scripts/lpc/phrases.txt` (`ID | text`), regenerate, and refer
-to it as `VOC_<ID>`. Order is load-bearing for `N1..N90` (numbers are built
+to it as `VOC_<ID>`. A text of `@laugh N` is laugh N of doom-laugh.h, built by
+`laugh.py` instead of SAPI; `LAUGH0..` must stay consecutive (static_assert in
+snd-engine.hpp). Order is load-bearing for `N1..N90` (numbers are built
 arithmetically), `DOOM00..DOOM32` (tier×3 + idx, mirroring `DOOM_TAUNTS`),
 `TC1..4` and `WX0..5`. The encoder, reference decoder and validation report
 live in `scripts/lpc/`; `out/decoded/*.wav` is what the chip will say.

@@ -101,6 +101,8 @@ struct SceneSnap {
   bool      caravanOn;
   int16_t   kaneQ, kaneR;   // Machine Gun Kane's jeep (kane.hpp)
   uint8_t   kaneMode;       // 0 driving, 1 at his fire, 2 gone (parked for good)
+  int16_t   vacQ, vacR;     // VACANCY's town under the sign (vacancy.hpp)
+  uint8_t   vacStage;       // 0 lit, 1 counting, 2 saved (dark), 3 fallen (NO VACANCY)
   uint8_t   hatchN;
   int16_t   hatchQ[8], hatchR[8];
 };
@@ -3217,6 +3219,18 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
     fxRect(x - 5, y - 3, x - 1, y - 2, FX_PAL[FXP_INK]);   // the barrel
     if (S.kaneMode == 1 && (now / 300) % 2) scPx(x + 5, y + 1, FX_PAL[FXP_GLOW]);
   }
+  // -- VACANCY's sign: a box on a pole over the town. Lit, it stutters like a
+  //    tube about to go; fallen, it holds a steady red (NO VACANCY); saved,
+  //    there is nothing left to draw. --
+  if (S.vacStage != 2 && S.vacQ >= 0 && S.vacQ < cols && S.vacR >= 0 && S.vacR < rows) {
+    int x, y;
+    cell(S.vacQ, S.vacR, &x, &y);
+    const bool fell = (S.vacStage == 3);
+    const bool lit  = fell || ((now / 90) % 23) != 0;
+    fxRect(x + 1, y - 6, x + 2, y + 1, FX_PAL[FXP_INK]);    // the pole
+    fxRect(x - 3, y - 10, x + 6, y - 5, FX_PAL[FXP_INK]);   // the box
+    fxRect(x - 2, y - 9, x + 5, y - 6, FX_PAL[!lit ? FXP_SOOT : fell ? FXP_BLOOD : FXP_CRIT]);
+  }
   // -- the party --
   for (int i = 0; i < SC_SEATS; i++) {
     const SceneSurv& v = S.s[i];
@@ -3274,7 +3288,217 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
   fxGlcd(rem, 3, 304, 1, FX_PAL[FXP_LINE]);
 }
 
-// ── 12. Dispatch ──────────────────────────────────────────────────────────────
+// ── 12. Takeover: THE LAUGH ──────────────────────────────────────────────────
+// When someone goes down the LCD stops being a screen for six seconds and is
+// the Creeping Doom, laughing at it. The gas pulls itself into the skull while
+// the knock lands, then it laughs to one of doom-laugh.h's scores -- the score
+// the speaker is laughing to, counted from the same moment, so the jaw drops
+// on every HA: head thrown back on the big one, rocking with the rest, the
+// embers flaring, the glass jolting. Under it, on the dirt, whoever it was,
+// its gas pooling round them; around it, the noise it is making, lettered in
+// its own green. At the end it lets go of the face. The name and the
+// chronicle's line sit under the ground.
+//
+// The board fills a SceneDeath (ui-death.hpp) and calls this every frame of
+// the takeover; scripts/fxsim renders it as death0..2.
+#include "doom-laugh.h"
+
+struct SceneDeath {
+  char    who[16];          // the fallen
+  char    line[48];         // the chronicle's line for them, a predicate
+  uint8_t seat;             // their archetype: the body on the ground
+  uint8_t laugh;            // which of doom-laugh.h's
+};
+static const int      SCD_GROUND = 258;        // the dirt
+static const float    SCD_R      = 54.0f;      // the cranium, px
+static const uint32_t SCD_LETGO  = 4900;       // ms in: it lets go of the face
+
+// The comic's caption for it -- the voice that is not anybody -- one per laugh.
+static const char* const SCD_QUIP[DOOM_LAUGH_N] = {
+  "SOMETHING OUT THERE|FINDS THIS HILARIOUS.",
+  "NEVER ONE FOR|A EULOGY.",
+  "IT HAS BEEN WAITING|ALL DAY FOR THAT.",
+};
+
+// The noise syllable i makes, as lettered. A said line says its words
+// (DOOM_LAUGH_SAYS); a laugh spells itself -- MWA, HA, HO, HEH -- shouted and
+// stretched on the loudest, with a bang on a long loud one, in lower case as
+// it runs out of breath.
+static void scLaughWord(uint8_t v, int i, char* out, size_t cap) {
+  const uint8_t vi = v % DOOM_LAUGH_N;
+  if (DOOM_LAUGH_SAYS[vi]) { snprintf(out, cap, "%s", DOOM_LAUGH_SAYS[vi][i]); return; }
+  const DoomLaughSyl& s = DOOM_LAUGH[vi].s[i];
+  const bool hum = s.cons == 'm', top = s.amp >= 250, lng = s.len > 300;
+  const char vw = s.vowel == 'o' ? 'O' : (s.vowel == 'e' ? 'E' : 'A');
+  char b[16];
+  int n = 0;
+  b[n++] = hum ? 'M' : 'H';
+  if (hum) b[n++] = 'W';
+  for (int k = 0; k < (top || (lng && s.amp < 140) ? 3 : 1); k++) b[n++] = vw;
+  if (vw == 'E' && !lng) b[n++] = 'H';
+  if (top || (lng && !hum && s.amp >= 200)) b[n++] = '!';
+  b[n] = 0;
+  if (s.amp < 140) {
+    for (int k = 0; k < n; k++) b[k] = (char)tolower((unsigned char)b[k]);
+    if (lng) { b[n++] = '.'; b[n++] = '.'; b[n++] = '.'; b[n] = 0; }
+  }
+  snprintf(out, cap, "%s", b);
+}
+
+// The noise in a balloon: the chronicle's starburst (scBang), but the Doom's
+// -- its gas green inside an ink rim, the word in ink with a green shadow.
+// `pop` > 1 while it slams in: the balloon overshoots and the word lands a
+// size up first.
+static void scLaughBang(const char* w, float cx, float cy, int sc, float pop, uint32_t seed) {
+  const int N = 12;
+  float px[N], py[N];
+  FxRng R; R.s = seed;
+  const float rx = scTypeW(w, sc) * 0.5f + 5.0f * sc, ry = 9.0f * sc;
+  for (int i = 0; i < N; i++) {
+    float a = i * (FX_TAU / N) + R.sgn() * 0.14f, rr = (i & 1) ? 0.62f + 0.1f * R.u() : 1.0f + 0.28f * R.u();
+    px[i] = cx + cosf(a) * rx * rr * pop; py[i] = cy + sinf(a) * ry * rr * pop;
+  }
+  for (int pass = 0; pass < 2; pass++) {
+    const float g = pass ? 1.0f : 1.14f;
+    const uint16_t c = FX_PAL[pass ? FXP_GAS_L : FXP_INK];
+    for (int i = 0; i < N; i++) {
+      int j = (i + 1) % N;
+      fxTri(cx, cy, cx + (px[i] - cx) * g, cy + (py[i] - cy) * g, cx + (px[j] - cx) * g, cy + (py[j] - cy) * g, c);
+    }
+  }
+  const int ws = pop > 1.12f ? sc + 1 : sc, tw = scTypeW(w, ws);
+  const int x = (int)(cx - tw * 0.5f), y = (int)(cy - 3.5f * ws);
+  fxGlcd(w, x + 1 + ws / 2, y + 1 + ws / 2, ws, FX_PAL[FXP_GAS]);
+  fxGlcd(w, x, y, ws, FX_PAL[FXP_INK]);
+}
+
+static void scDeathDraw(const SceneDeath& D, uint32_t now, uint32_t since, uint16_t* buf) {
+  scReset(buf);
+  memset(buf, 0, FX_W * FX_H * sizeof(uint16_t));     // FXP_INK is 0
+  scFigT = now;
+  const uint8_t  v    = D.laugh % DOOM_LAUGH_N;
+  const DoomLaugh& L  = DOOM_LAUGH[v];
+  const float    t    = now * 0.001f;
+  const int32_t  ls   = (int32_t)since - (int32_t)DOOM_LAUGH_DELAY_MS;   // into the laugh
+  const uint32_t seed = 666u + v;
+
+  // How well the gas holds the face: it pulls together while the knock lands,
+  // and lets go again at the end.
+  const float form = fxSmooth(fxClampF(((float)since - 120.0f) / 600.0f, 0.0f, 1.0f));
+  const float let  = fxSmooth(fxClampF(((float)since - (float)SCD_LETGO) / 1000.0f, 0.0f, 1.0f));
+  float coh = (0.2f + 0.8f * form) * (1.0f - 0.8f * let);
+
+  // The laugh: the jaw on the score, the head with it.
+  int syl = -1;
+  const float open = ls >= 0 ? doomLaughOpen(v, ls, &syl) : 0.0f;
+  float jaw = 0.04f, turn = 0.0f, lift = 0.0f, jolt = 0.0f, ember = 0.6f * form;
+  if (syl >= 0) {
+    const DoomLaughSyl& s = L.s[syl];
+    const float u = fxClampF((float)(ls - (int32_t)s.at) / (float)s.len, 0.0f, 1.0f);
+    const float side = (syl & 1) ? 1.0f : -1.0f;
+    jaw   = 0.04f + 0.82f * open;
+    turn  = side * 0.22f * sinf(3.14159f * u) * (s.amp / 255.0f);      // rocking with it
+    jolt  = side * 3.0f * open;
+    lift  = SCD_R * open * (s.amp >= 250 ? 0.20f : 0.10f);             // the big one: head back
+    ember = 0.55f + 0.45f * open;
+  } else if (ls >= 0) {
+    jaw = 0.12f;                                                        // after: the grin it keeps
+    ember = ls > (int32_t)doomLaughMs(v) ? 0.7f : 0.55f;
+  }
+  jaw   = fxLerp(jaw, 0.30f, let);                                      // and the jaw falls slack
+  ember *= 1.0f - let;
+
+  // A jolt down the glass on every syllable, hardest on the loudest.
+  static int32_t lastSince = -1, lastSyl = -1;
+  if ((int32_t)since < lastSince) lastSyl = -1;
+  lastSince = (int32_t)since;
+  if (syl >= 0 && syl != lastSyl) { lastSyl = syl; fxImpact(0.08f + 0.3f * fxCubicIn(L.s[syl].amp / 255.0f)); }
+
+  const float cx = 120.0f + jolt, cy = 124.0f - lift + sinf(t * 2.1f) * 2.5f;
+
+  // 1. The gas it is made of, going up off it.
+  fxGasPlume(cx, cy, SCD_R, 0.12f * sinf(t * 0.7f), -1.0f, 2.3f, coh, t, seed, 1.0f + 0.3f * let);
+
+  // 2. The dirt, and whoever it was on it, in a pool of its gas.
+  for (int y = SCD_GROUND - 4; y < SCD_GROUND + 9; y++) scTone(y, 0, FX_W, y < SCD_GROUND - 2 ? 2.4f : 1.4f);
+  for (int x = 0; x < FX_W; x += 2) {
+    float n = fxNoise1(x * 0.07f, 31) * 2.0f;
+    scPx(x, SCD_GROUND - 4 - (int)n, FX_PAL[FXP_TRACK]);
+  }
+  for (int y = SCD_GROUND - 12; y < SCD_GROUND + 7; y++)
+    for (int x = 28; x < 212; x++) {
+      float dx = fabsf(x - 120.0f) / 92.0f, dy = fabsf(y - (SCD_GROUND - 2.0f)) / 10.0f;
+      float d = (1.0f - dx) * (1.0f - dx) * (1.0f - fminf(1.0f, dy)) * 0.75f * form * (1.0f - 0.5f * let);
+      d *= 0.7f + 0.6f * fxNoise2(x * 0.09f + t * 0.4f, y * 0.2f, 47);
+      if (d > 0.02f && scDot(x, y, d)) scPx(x, y, FX_PAL[scDot(x + 3, y + 5, d * 0.6f) ? FXP_GAS : FXP_GAS_D]);
+    }
+  // Rimmed in the dirt's own dull amber, not the gas: scFigureDraw takes any
+  // rung from FXP_FLAME up for firelight and lights a sliver of one side, and
+  // a black body on black dirt is no body at all.
+  ScFig F = { 112.0f, (float)SCD_GROUND, 1.0f, (uint8_t)(D.seat % SC_SEATS), SCP_LIE, D.seat, 0.0f,
+              FXP_BRICK, 0.0f, -1.0f, 1.75f };
+  for (int q = 0; q < 3; q++) scFigure(F, q);
+
+  // 3. Its gas reaching down to them out of the jaw, then the face itself.
+  fxGasPlume(cx - 2.0f, cy + SCD_R * 0.95f, 22.0f, -0.08f, 1.0f, 2.4f, 0.8f * coh, t, seed + 7, 0.75f * form);
+  fxGasSkull(cx, cy, SCD_R, coh, turn, jaw, ember, 0.0f, -1.0f, t, seed);
+
+  // 4. The noise, a balloon a syllable, slamming in on its side of the head
+  // (the loudest dead centre over it), gone again a beat after.
+  int shown = 0;
+  for (int i = 0; i < L.n && ls >= 0; i++) {
+    const DoomLaughSyl& s = L.s[i];
+    if (s.amp < 100) continue;
+    const int k = shown++;
+    const int32_t age = ls - (int32_t)s.at, life = (int32_t)s.len + (s.amp >= 250 ? 800 : 520);
+    if (age < 0 || age >= life || (int32_t)since >= (int32_t)SCD_LETGO + 400) continue;
+    char w[16];
+    scLaughWord(v, i, w, sizeof(w));
+    const bool top = s.amp >= 250;
+    const int  sc  = top ? 4 : (s.amp >= 180 ? 3 : 2);
+    const uint32_t h = fxHash2((uint32_t)i, seed);
+    float bx, by;
+    if (top) { bx = 120.0f; by = 46.0f; }
+    else {
+      const float side = (k & 1) ? 1.0f : -1.0f;
+      bx = 120.0f + side * (82.0f + fxU(h) * 10.0f);
+      // under the shout's balloon, over the caption box
+      by = 104.0f + (float)(((k >> 1) * 31) % 64) + fxU(h >> 8) * 8.0f;
+    }
+    const float half = scTypeW(w, sc) * 0.5f + 7.0f * sc;
+    bx = fxClampF(bx, half, FX_W - half);
+    const float pop = age < 110 ? 1.0f + 0.5f * (1.0f - fxBackOut(age / 110.0f)) + 0.12f : 1.0f;
+    fxStip = (uint8_t)(255.0f * fxClampF((float)(age - (life - 200)) / 200.0f, 0.0f, 1.0f) * 0.9f);
+    fxStipSeed = h;
+    scLaughBang(w, bx + ((now / 80 + i) & 1 ? 0.6f : -0.6f), by, sc, pop, h);
+    fxStip = 0;
+  }
+
+  // 5. The caption box, once it is properly going.
+  if (since > 1400) scNarration(SCD_QUIP[v], 6, SCD_GROUND - 46, since - 1400);
+
+  // 6. Who, and the chronicle's line, under the dirt.
+  char nm[16];
+  int i = 0;
+  for (; D.who[i] && i < 15; i++) nm[i] = (char)toupper((unsigned char)D.who[i]);
+  nm[i] = 0;
+  const int nw = fxF2Width(nm), nx = (FX_W - nw) / 2;
+  fxF2(nm, nx + 1, SCD_GROUND + 14, FX_PAL[FXP_INK]);
+  fxF2(nm, nx, SCD_GROUND + 13, FX_PAL[FXP_GLOW]);
+  // a line of type, broken at a space if it will not fit on one
+  const char* ln = D.line;
+  const int maxC = (FX_W - 12) / 6, len = (int)strlen(ln);
+  int cut = len;
+  if (len > maxC) { cut = maxC; while (cut > 0 && ln[cut] != ' ') cut--; if (cut <= 0) cut = maxC; }
+  char l1[48], l2[48];
+  snprintf(l1, sizeof(l1), "%.*s", cut, ln);
+  snprintf(l2, sizeof(l2), "%s", ln[cut] == ' ' ? ln + cut + 1 : ln + cut);
+  scType(l1, (FX_W - scTypeW(l1, 1)) / 2, SCD_GROUND + 35, 1, FXP_HDR);
+  if (l2[0]) scType(l2, (FX_W - scTypeW(l2, 1)) / 2, SCD_GROUND + 46, 1, FXP_HDR);
+  scReset(buf);
+}
+
+// ── 13. Dispatch ──────────────────────────────────────────────────────────────
 // Which screens are scenes (the rest still draw through ui-screens.hpp), and
 // how often each wants a new frame.
 static inline bool sceneOwns(uint8_t screen) { return screen >= 1 && screen <= 6; }

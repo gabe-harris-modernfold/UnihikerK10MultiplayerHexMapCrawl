@@ -56,6 +56,11 @@ knows about the game it learns through the same WebSocket a browser uses.
   takes cover when he asks; `contentmax` goes after his five chapters. His
   camps only appear on days that reach dusk, so an all-bot fleet that rests
   early never sees one: put a `sentinel` in a realtime fleet for the story.
+- **VACANCY's four parts open on arrival too** (protocol 10) -- see
+  "VACANCY". Its desk and corridor count only when BANKED at their last
+  node, so a driver that banks early or walks off leaves them open;
+  `decide_vac_part()` plays every part to the end. `vac_check.py` stages it
+  on the mock.
 - **Since 2026-10-13 every survivor uses its items and plays scenes by
   expected value.** See "Items" and "Encounter planning". Earlier numbers
   came from bots that never used a consumable and took the first open
@@ -95,6 +100,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `gearcheck.py` | Equipment audit: declared mods vs the wire, and a survival ranking. |
 | `record.py` | JSONL per run into `runs/` (gitignored). |
 | `kane_check.py` | Machine Gun Kane on the mock: real bots, staged with `dbg_kane` -- do they take cover when asked, and do they read his story to an ending. |
+| `vac_check.py` | VACANCY on the mock: a real quester, staged with `dbg_vac` -- does it read the town, bank both halves, and check the town out; and does the fall turn the town to Broken Urban. |
 | `items.py` | Item rules, as pure functions of items.cfg and recipes.cfg: when a consumable is worth using, what is litter, caravan payment, whether a trade is fair, and loot worth for the planner. |
 | `policy/itemuse.py` | The item layer every `SurvivorPolicy` mixes in: `use_item`, `drop_item`, `car_buy`, extra crafts and trade replies, each with a cooldown. |
 | `quests.py` | The quest catalog (derived from the content where possible), each bot's journal, the fleet's ledger, and the sequencing checks. `python quests.py` lints the content. |
@@ -126,6 +132,40 @@ chain overrides `layers` by name (the sentinel keeps camp instead of running
 errands, the biker sheds junk first) rather than copying it. Every send
 cooldown is a key on the policy's `throttle` (`policy/base.py` `Throttle`),
 on a clock a test can move.
+
+**The Creeping Doom and the full pack (2026-10-13).** The first 25-minute
+quester run on the K10 lost 28 lives, 21 to thirst and 6 to the Doom, and
+both were the bot's doing. Thirst: a pack holding 2 fuel, 2 medicine, 2
+scrap and 2 food has no slot for water, a pile is refused with the pack
+full (`col_fail` reason 2), and the staple hunt still valued the pile at
+100 — so a dry bot stepped onto the pile and off it again every AP of every
+day (700 refused pickups in one run) and died beside it. Now a pile counts
+only while it would fit (`token_room`), `make_room()` puts down the kind it
+holds most of beyond `staple_keeps()` (fuel 0, medicine 1, scrap 1, plus
+the canteen's scrap while that is unmade; the Biker keeps by its own plan),
+and the hunt keeps its target until reached or gone (`_hunt_lock`) so two
+sources cannot shuttle it. The Doom: its position rides every `s`
+broadcast, but no policy read it. From awareness 76 `state.py` prices the
+three hexes around it into `danger_cost` alongside Kane's reach (60 a hex,
+past any one target's worth, so no plan ends beside it); the `doom` layer
+(right after `item`) steps to the hex that gains the most distance once it
+is within `DOOM_FLEE_RADIUS` and keeps going until `DOOM_SAFE_RADIUS` — the
+first rerun stopped at the flee radius, the water hunt walked straight
+back, and the next world tick's three steps closed the gap; and
+`recovery_target()` leaves a grave it is sitting on for later — walking
+back to the grave is how it took the same bot twice. The `weather` layer
+behind it answers the chem storm (20 of 69 deaths on that rerun, all in the
+open): roof the hex with a scrap at once, any shelter being full cover, or
+walk to the nearest Settlement, ruin or roof within today's AP. The quester
+also sleeps under a shelter down to its last scrap, because exposure (2 LL
+a night, never fatal) was pinning it at LL 1–3, resting its days away —
+and since scrap is rare (70 roofs in 2,637 dawns on the third run), the
+`bed` layer walks a hurt or late survivor to cover (a shelter or SV ≥ 2
+terrain, never a hatch) when it is within today's AP, so the rest heal
+climbs instead of trading a point a night with the weather. The
+run summary prints `pois/100d` (POIs opened per hundred game-days, the
+number the quester is judged on) and a `deaths:` line with causes, Doom
+hits, flee steps and room drops.
 
 The two Subterranean Explorers share `TunnelPolicy` (`policy/subterranean.py`)
 on top of that, which owns the dive/surface cycle and the cross-board
@@ -1118,6 +1158,127 @@ quest steps; it found the mock's own house in the glass 6 hexes off) and told
 him the truth, with no Kane findings from the oracles. Nothing on hardware yet:
 the firmware with Kane in it is not flashed.
 
+## VACANCY
+
+A neon motel sign over one random Settlement, and a four-part story the
+whole party shares, like Kane's arc ([vacancy.hpp](../vacancy.hpp),
+`data/encounters/vacancy/1-4.json`, protocol 10). What the bots see: the
+`vac` object in `sync`, every tick's `world` and top-level in `/state`
+(`q r st rm g dq dr kq kr`: the town, the stage -- 0 lit, 1 counting, 2
+saved, 3 fallen -- the rooms left, the bits banked -- 1 the Guest Register,
+2 the Master Key -- and the two sites while they are open), and one event,
+`ev vac` with `w` = hook / desk / keys / room / saved / fallen / lost (pid -1
+for the world's: a room, the fall) or `hum` (unicast: you stood under the
+sign while it counted without both halves; `has` is what you DO carry).
+
+**Every part opens server-side on arrival, like Kane's chapters** (`enc_path`
+and `ev enc_start` carry `"vac": part`; no POI is consumed):
+
+| part | where | counts when |
+|---|---|---|
+| 1 Vacancy | the town, while `st` 0 | its last node is reached: `st` 1, 8 rooms, and the Front Desk and Housekeeping are placed 4-8 hexes out |
+| 2 The Front Desk | `dq dr`, while open | its last node's Guest Register (70) is **banked** -- walking off at the last node leaves the desk open |
+| 3 Housekeeping | `kq kr`, while open | the same, for the Master Key (71) |
+| 4 Check-Out | the town, only for a pack holding **both** | its `vac_ending` node: `st` 2, both halves leave the pack (`item_result` act `vac_out`), +40 score |
+
+A dawn with somebody connected takes a room; at none the town falls and its
+hex becomes Broken Urban (4).
+
+What every `SurvivorPolicy` does about it (`policy/survivor.py`):
+
+- **Walks to the next part** (`vac_quest_action()`): the town while it is
+  unread; while it counts, whichever of the two open sites is nearer (not
+  one whose half it already holds); the town again once it carries both.
+  Mirrors `vacOnArrival()`, so it never walks under the sign without both
+  -- that only hums. `vac_quest_reach` is how far it will walk (None = what
+  is left today). A hex it stood on with no scene (somebody else is in that
+  part, a failed check threw it out, a booby trap went first) is left for
+  `vac_retry_s` (20 s). Below `vac_min_ll` (3) it waits.
+- **Two layers.** `vacancy_today` -- a part within today's AP, beside
+  `craft_today`, ahead of `bed` and the routine top-ups, never in a staple
+  emergency -- and `vacancy`, the longer walk, beside `kane`. The first
+  exists because `bed` walks a quester at LL 4 or less back to cover after
+  every step it takes toward anything (see the caveat below).
+- **Plays every part to its LAST node and banks there** (`decide_vac_part()`).
+  The default "bank at the first bankable node" would pocket the desk's water
+  and leave the register behind; the bank is what counts for parts 2 and 3
+  and is harmless for 1 and 4. Best odds among the choices it may take
+  (`requires_item` held, cost payable), never one that leads to an escape
+  node -- every Check-Out node has that walk-away first. Below `vac_min_ll`
+  it walks away; the part keeps.
+- **Keeps the halves.** The quest journal protects 70 and 71 while
+  Check-Out is open (never litter, never crafted away, picked up off the
+  ground), and lets them go once the sign is out.
+
+| policy | goes after it |
+|---|---|
+| contentmax, quester | yes, up to 60 AP (`vac_quest_reach`); the quester's journal books it as a quest |
+| scoremax, rival, gearmax, biker | on the way only: within today's AP |
+| coward, sentinel, subterranean, tunnelrunner | never (a sentinel camped on the sign's town still reads part 1: it opens on arrival) |
+
+**On the wire after the fact:** `metrics.py` prints `-- vacancy`: the town
+and how it ended, rooms left, the nights counted, who did which part
+(hook / desk / keys / saved with pids), the hums, and the scenes opened by
+part and by bot; `arena.py` prints a `vac:` line per bot (scenes, the parts
+the board credited to it, quest moves, hums, outcome). The `WireOracle`
+flags the stage going backwards over one town (`vac_stage_backwards`), the
+rooms rising while it counts (`vac_rooms_rose`), Check-Out opening for us
+without both halves (`vac_checkout_ungated`, critical), a save from such a
+Check-Out (`vac_saved_without_items`, critical), the pair still in the pack
+after the save (`vac_items_not_spent`), and a desk or corridor banked with
+its item in the haul that never set the bit (`vac_bank_not_counted`).
+
+**`vac_check.py` (mock only)** seats a quester and a staging probe and
+drives the sign with `dbg_vac`; Kane is held still for the duration.
+
+    python vac_check.py [host[:port]] [--parts story,fall] [--policies quester] [--attempts 4]
+
+`story` puts a fresh sign two hexes from the quester; once it reads the
+town, the desk and the corridor are staged two hexes from it, and it has to
+bank both and come back to check out -- real rolls throughout. It passes on
+`st` 2 with `g` 3 and both halves out of the pack. A town that falls is tried
+again with a fresh sign and a fresh survivor (the mock forgets a survivor
+whose socket closes, so no half carries over), up to `--attempts`. `fall`
+stages a counting sign under the probe with one room and runs the dawn:
+`fallen` must arrive, and the town's hex must read Broken Urban both on the
+bots' maps (from the event) and on a fresh vis disk from the board. One
+quester is the default on purpose: two survivors can split the halves
+between their packs, and nothing then brings them together, so Check-Out
+never opens. The mock's survivors sit at LL 2-5 and its days collapse to a
+few seconds, so the script relaxes `vac_min_ll` (1) and `vac_retry_s` (4 s);
+a staged hex where a booby trap goes off is moved, because the trap
+pre-empts the scene (below).
+
+Measured 2026-10-13 on the mock (quester alone, seeds 7-10): all four runs
+pass -- 6 story attempts, 4 towns saved with 4-7 rooms left, 2 lost to the
+count before the second half was banked, no bot deaths; `fall` and the vis
+read-back clean every time; no VACANCY findings from the oracles. Earlier
+the same day, before the last-LL rule and the probe keep-alive, 10 of 25
+attempts saved the town. The losses are the mock's daily food and water
+chores eating most of each night's AP, plus Check-Out's last door (p ~0.58,
+2 LL), which killed a bot at LL 2 before `vac_choice` learned never to
+risk the last LL. Nothing measured on hardware yet.
+
+**Caveats found on the way.**
+
+- **A booby trap under a site hides it.** `trapOnArrival` runs before
+  `vacOnArrival` (survival_state.hpp:714-720), and `vacSiteOk()`
+  (vacancy.hpp:87) never asks about traps, so a desk or corridor placed on
+  an armed trap opens the trap on every arrival instead; backing out leaves
+  it armed. Only working it (a bot needs `trap_min_ll` 4 and odds over
+  `trap_nerve`) or springing it frees the site. The mock's `vacPlaceSite`
+  has the same gap.
+- **`bed` against every walk.** For a contentmax or quester (`rest_below_ll`
+  3) the `bed` layer fires at LL 4 or less whatever the AP, and it sits ahead
+  of every walking errand: a long walk steps out of cover and `bed` steps
+  straight back. One vac_check attempt spent four minutes doing that 25 AP
+  from the town. `vacancy_today` sidesteps it within today's AP; Kane's
+  story, the `vacancy` long walk and `pursue` do not.
+- **The mock's `sync` lists seated players only** (each with its `id`), and
+  `state.py` applies a sync's `p` by index, so after a re-seat on the mock a
+  client's own slot is stale until the next `s` broadcast. vac_check stages
+  by the probe's own hex server-side (`town: 1`) for that reason.
+
 ## Items
 
 Until 2026-10-13 no bot ever sent `use_item`, `car_buy`, `drop_item`,
@@ -1220,7 +1381,7 @@ the old rule as the baseline arm.
 
 **The firmware has no quest system.** There are no quest ids, no per-player
 flags and no stage counters. The only tracked progress is Machine Gun Kane's
-world-shared `stage`. Everything else that reads as a quest is held together
+world-shared `stage` and VACANCY's world-shared sign (`st`, `rm`, `g`). Everything else that reads as a quest is held together
 by the pack: one scene pays an item, and a later scene has a `requires_item`
 choice that only opens for whoever holds it. For the two oldest chains, only
 the choice text says so. `quests.py` derives the catalog from the content where
@@ -1233,6 +1394,7 @@ the content says enough, and declares the rest:
 | The Perambulator | `scrub/21`, `glass/3`, `ridge/3` (one graph on three terrains): items 66-69, and four gated shortcuts they open (`in_tune` 66, `remembers` 68, `leaning` 67, `tyre_pulse` 69 worn) | `requires_item`, enforced by the board. A visit pays at most 3 items (`ENC_MAX_ITEMS`) and makes one arrival and one flatbed choice, so three visits cannot open all four gates |
 | The Null Camp | `meridian/null_camp/1-3` | **Unreachable.** No pool in `index.json` deals it |
 | Machine Gun Kane | chapters 1-5 | the board's own `stage` (see "Machine Gun Kane") |
+| VACANCY | `vacancy/1` read the town, `vacancy/2` bank the Guest Register (70), `vacancy/3` bank the Master Key (71), `vacancy/4` Check-Out (needs 70 + 71) | the board's own sign: the sites open only once the town is read, a site counts only on the bank, and Check-Out opens only for a pack holding both -- whose two `requires_item` choices the board enforces too (see "VACANCY") |
 | The workshop | `settlement/15-21` teach recipes 1-17, then each one is crafted | the recipe bit (`kr`) |
 
 `python quests.py` prints the catalog and lints it. The three problems in the
@@ -1285,7 +1447,8 @@ step, in whatever order the map deals them.
 | `workshop` | every lesson, then every recipe crafted on a `dbg_settle` Settlement |
 | `items` | the heal, wound kit and litter rules |
 
-Kane is covered by `kane_check.py --policies quester,...`.
+Kane is covered by `kane_check.py --policies quester,...`, VACANCY by
+`vac_check.py`.
 
 ## What gets measured
 

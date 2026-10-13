@@ -195,7 +195,7 @@ void saveGame() {
       // panel whose section the scene has already lit stays spent.
       // A Kane chapter has no POI either: its camp and stage live in kane.bin.
       auto savedHex = [](const ActiveEncounter& e) -> HexCell* {
-        if (!e.active || e.trap || e.kane) return nullptr;
+        if (!e.active || e.trap || e.kane || e.vac) return nullptr;
         if (e.depth) return tunnelPanelDark(e.hexQ, e.hexR) ? &G.tunnel[e.hexR][e.hexQ] : nullptr;
         return &G.map[e.hexR][e.hexQ];
       };
@@ -306,6 +306,8 @@ void saveGame() {
     saveLightFile();
     // Machine Gun Kane (kane.hpp): the jeep and the arc, a few dozen bytes.
     saveKaneFile();
+    // VACANCY (vacancy.hpp): the sign, its count, its two sites.
+    saveVacFile();
     // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
     // task has published a change, and on this same serialised save path.
     ecoSaveScarsIfDirty();
@@ -322,11 +324,46 @@ void saveGame() {
 // each saved inline, ~0.6 s of the network task spent on the SD card, and the
 // network wedged at that moment. So handlers only ask: gameLoopTask saves after
 // its next tick (<= TICK_MS later), and asks in between coalesce into one save.
-// A request that lands while a save is running is kept for the next tick.
+// A request that lands while a save is running is kept for the next save.
+//
+// 2026-10-13: the saves moved off GameLoop to their own task on core 0. On
+// GameLoop (core 1, priority 2) the ~200 ms of polled SD writes preempted the
+// display loop (loopTask, core 1, priority 1) mid-frame, and every save was a
+// 250 ms freeze on the LCD -- one every couple of seconds in a bot run. Core 0
+// has the radio and the synth above the Saver and nothing busy beside it.
+// Every save goes through here: GameLoop's dawn and drop saves too.
 static volatile bool g_saveRequested = false;
-static inline void requestSave() { g_saveRequested = true; }
+static TaskHandle_t  g_saveTask      = nullptr;
+static void requestSave() {
+  g_saveRequested = true;
+  if (g_saveTask) xTaskNotifyGive(g_saveTask);
+}
+static void saveTaskFn(void*) {
+  bool loggedStack = false;
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   // every request since the last save, as one
+    if (!g_saveRequested) continue;
+    g_saveRequested = false;
+    saveGame();
+    if (!loggedStack) {
+      loggedStack = true;
+      Log.notice("Saver: first save done core=%d stack_free=%u", (int)xPortGetCoreID(),
+                 (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    }
+  }
+}
+// setup(), once the world is loaded. Requests made before it are kept.
+static void startSaveTask() {
+  if (xTaskCreatePinnedToCore(saveTaskFn, "Saver", 8192, NULL, 1, &g_saveTask, 0) != pdPASS) {
+    g_saveTask = nullptr;
+    Log.error("Saver task create FAILED -- GameLoop saves inline");
+    return;
+  }
+  if (g_saveRequested) xTaskNotifyGive(g_saveTask);
+}
+// GameLoop, after its tick: only the fallback for a Saver that never started.
 static void serviceSaveRequest() {
-  if (!g_saveRequested) return;
+  if (g_saveTask || !g_saveRequested) return;
   g_saveRequested = false;
   saveGame();
 }
@@ -506,6 +543,7 @@ bool tryLoadSave() {
   loadTrailFile();    // the sides of the footprints just loaded (trails.hpp)
   loadLightFile();    // the tunnel's sections and lights, or a fresh layout (tunnels.hpp)
   loadKaneFile();     // the jeep and the arc (kane.hpp); wInit() above rolled the fallback
+  loadVacFile();      // the sign and its count (vacancy.hpp); likewise
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());

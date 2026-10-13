@@ -38,7 +38,7 @@ COMMANDS = ("pick", "m", "n", "wifi", "wifi_forget", "check", "regen",
             "eraseslot", "act", "trade_offer", "trade_accept", "trade_decline",
             "car_trade", "car_buy", "use_item", "equip_item", "unequip_item",
             "drop_item", "drop_res", "pickup_item", "loot", "settings", "enc_start",
-            "enc_choice", "enc_bank", "enc_abort")
+            "enc_choice", "enc_bank", "enc_abort", "enc_assist")
 
 # Commands whose well-formed use is destructive or takes the board off the
 # network.  Only malformed / out-of-range forms of these may appear.

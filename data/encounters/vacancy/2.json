@@ -1,0 +1,118 @@
+{
+  "id": "vacancy_2_front_desk",
+  "title": "The Front Desk",
+  "vacancy": {
+    "part": 2
+  },
+  "start_node": "the_carpet",
+  "nodes": {
+    "the_carpet": {
+      "text": "On the open ground lies a rectangle of carpet, burgundy, patterned with interlocking gold diamonds, its edges cut as clean as if with scissors, and on the carpet stands a front desk. Only the desk: a long laminate counter, a brass bell, a lamp with a fringed shade that is lit with no wire going to it, a rack of pigeonholes with keys on diamond fobs, a stand of postcards of a beach, a little dish of mints. There is no building. The dust blows across the waste and does not settle on the carpet; it goes round. Behind the counter a door marked STAFF ONLY stands in its frame, and through the gap under it you can see the waste going on behind.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Ring the bell.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_clerk",
+          "hazard_id": "ring_twice"
+        },
+        {
+          "label": "Go round behind the counter yourself.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "the_clerk",
+          "hazard_id": "staff_only"
+        }
+      ]
+    },
+    "the_clerk": {
+      "text": "The STAFF ONLY door opens and the night clerk comes out of it, out of the empty air behind it, straightening his tie. He is tall and very clean, in a maroon blazer with a brass name badge, and the name on the badge belongs to somebody from the town: the old woman said it. He has that person's face, more or less. It sits on him the way a borrowed coat does, a little loose at the shoulders. 'Welcome,' he says. 'Checking in?' Behind him there is a key in every pigeonhole but a handful. On the counter, open, turned toward you, with a pen on a little brass chain, is the register.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Tell him you're here to check somebody out.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 3,
+          "success_node": "the_register",
+          "hazard_id": "policy"
+        },
+        {
+          "label": "Ask about the rates while you slide the book your way.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 2,
+          "success_node": "the_register",
+          "hazard_id": "the_pen"
+        }
+      ]
+    },
+    "the_register": {
+      "text": "The register is a long ledger bound in maroon leatherette, and every page at the back of it is the town: names in a careful hand you don't know, a room number beside each, an arrival time, and in the column for departures, nothing. Further forward there are pages and pages of other towns, other names, other rooms, and on the first page of all, dated Friday the eleventh of November 1966, the arrival column says 11:47 on every line, all the way down, page after page. The clerk watches you close it. 'Of course,' he says, smiling with somebody else's mouth. 'Take all the time you need. You can check out any time you like. But you can never - ' and he stops, and frowns, as if a line has been taken off him in the middle of saying it. You put the book under your arm and step off the carpet, and behind you the lamp goes out.",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 70,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "ring_twice": {
+      "text": "You ring once and nobody comes. You ring again. Somewhere in a building that is not there a telephone starts ringing in answer, and every ring is nearer than the last, and you are down on your knees with your hands over your ears before it stops.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "staff_only": {
+      "text": "Behind the counter the carpet is wet, and not with water. You don't look to see with what. It soaks through your boots and up your shins with the cold of a room nobody has heated since 1966, and it takes the rest of the day to get the feeling back.",
+      "penalty": {
+        "water": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "policy": {
+      "text": "'I'm afraid that would be against policy,' he says, very kindly, and lays his hand flat on yours on the counter. It is warm. The warmth goes up your arm and you feel all at once very tired and very welcome, as if you have driven a long way and there is a bed turned down for you somewhere close. Taking your hand back is the hardest thing you do all week.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_pen": {
+      "text": "The pen on its chain starts to write the moment your fingers touch it. It has put the first three letters of your name on the next empty line before you can let go. The clerk turns the book back toward himself, politely, and blots it, and you find you have walked backwards off the carpet without meaning to.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": true
+    }
+  }
+}

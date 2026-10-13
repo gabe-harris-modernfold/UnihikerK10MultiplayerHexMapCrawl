@@ -21,7 +21,7 @@ in this folder (`hexOpenScrub0.png`, `hexSettlement3.png`, etc.), not guessed.
 | 8  | Mountain         | 1 real + 3 placeholder | `#14141C` | **priority** |
 | 9  | Settlement       | 8  | `#1A1206` | done |
 | 10 | Nuke Crater      | 2 real + 2 placeholder | `#0A0E04` | thin |
-| 11 | River Channel    | 0  | `#0B1E0F` | **see note below** |
+| 11 | River Channel    | 8 slots + 15 alternates (23 tiles) | `#0B1E0F` | done (2026-10-13), see note below |
 
 **The tiles are one sheet per terrain, not one file per tile.** The master
 is `art/hex-sheets/hex<Name>.png`: lossless, and outside `data/` so it never
@@ -41,14 +41,16 @@ hex, so when one shows up on the map you can read off which cell to paint:
 that cell and run `hex_sheets.py build`. No `sw.js` bump is needed, because
 the pages are fetched with `?v=<hash>`.
 
-**River Channel is currently drawn as an animated ripple effect
-(`drawRiverRipples()` in [renderer.js](../renderer.js)), not a static image** —
-that's why it has zero files, and it's likely deliberate (fast-moving water
-reads better animated than as a painted still). Adding a River Channel sheet
-(`art/hex-sheets/hexRiverChannel.png`) would work — the renderer falls back to
-art first, ripples only when no image
-is loaded — but check with yourself before spending generations on it; this
-doc includes a subject for it in case you decide you want one anyway.
+**River Channel has painted art since 2026-10-13** (`art/hex-sheets/hexRiverChannel.png`,
+8 pool slots, each with alternates listed in `hexRiverChannel.json`). Before
+that it had no tiles and was drawn as an animated ripple effect
+(`drawRiverRipples()` in [renderer.js](../renderer.js)); the renderer still
+falls back to the ripples whenever the page isn't loaded. The two prompts that
+made the art are below under "River Channel prompts". The river is usually a
+2-wide channel, so its tiles must carry water out to all six edges (no bank
+round the rim) and a swirling current with no single direction (the variant is
+dealt by position, not by which way the channel runs). Details of the cut and
+grade are in [docs/hex-tile-art.md](../../docs/hex-tile-art.md) "River Channel".
 
 ## Why variant 0 matters more than the others
 
@@ -176,7 +178,7 @@ generic wasteland ground.
 | 8 | Mountain | Towering cracked slag-mountain peak with a dark cave mouth cut into its base | a rope anchor hammered into rock by the cave; a rockslide of loose boulders; a rusted mining cart abandoned on a ledge |
 | 9 | Settlement | Fortified survivor camp: scrap-metal palisade wall, a watchtower, strung warning lights | a cookfire with smoke and a hanging pot; a trade stall under a patched awning; a water tower patched with scrap; a vehicle checkpoint gate |
 | 10 | Nuke Crater | Scorched glass-lined detonation crater rim, blackened earth, faint sickly green radioactive glow pooling at the bottom | a twisted girder skeleton at the rim; ash-white fused-glass ripples; a single dead tree silhouette at the edge |
-| 11 | River Channel *(optional — see note above)* | Fast dark river current cutting a channel, whitecap ripples breaking around submerged rocks | a snagged branch caught mid-current; a half-collapsed footbridge; a stranded rowboat wedged against the bank |
+| 11 | River Channel *(done 2026-10-13 — the prompts actually used are under "River Channel prompts")* | Fast dark river current cutting a channel, whitecap ripples breaking around submerged rocks | a snagged branch caught mid-current; a half-collapsed footbridge; a stranded rowboat wedged against the bank |
 | 12 | Bunker Entrance | Pre-war blast door set into a cracked concrete apron, hinges intact, hazard striping worn to ghosts, dark stairwell dropping away behind it | a stencilled bunker number; sandbags slumped either side of the frame; a jammed-open door leaking cold air; a rusted keypad housing prised off |
 | 13 | Vent Shaft | Collapsed air-intake: a rusted grate over a black drop, ringed by subsided earth and torn ducting | scrub grown through the grate bars; a knotted rope tied off to a duct stub; one grate panel folded back; a warm updraught blurring the air |
 | 14 | Tunnel Floor | Cramped service corridor seen from above: cracked concrete slabs, conduit and cable trays along one wall, a seeping cistern stain | a puddle of standing seep water; a toppled supply crate; a dead wall-light in its cage; stripped copper hanging from a tray |
@@ -238,3 +240,42 @@ Notes on the downtown core tiles:
 - Adding a fourth? Sentinels `4_13`..`4_15` are free. The wire packs
   `variant` into 4 bits, so 0–15 is the hard ceiling per terrain. Paint
   cell 13 and bump `CITY_CORE_TILES` in hex-map.hpp Phase 4.
+
+## River Channel prompts
+
+The two prompts behind `hexRiverChannel` (2026-10-13). Both ask for a 3x2
+sheet of flat-top hexes on flat magenta, which mattes cleanly: black would
+merge with the ink outlines (the bunker sheet's trouble) and white with the
+foam. Saved as `river-hexes01..08.png`; 01/02/07/08 came from prompt 1,
+03/04/05 from prompt 2 (06 was a byte-identical copy of 05).
+
+Shared header (both prompts):
+
+```
+A sprite sheet of six separate hexagonal game-board tiles for a post-apocalyptic
+wasteland hex-map game, arranged in a 3-by-2 grid with wide, even gaps between
+them on a flat, solid magenta (#FF00FF) background. Each tile is a FLAT-TOP
+hexagon (pointed ends at left and right, flat edges at top and bottom), about
+1.15 times wider than tall, seen straight down from directly overhead. Not
+isometric, not tilted, no thickness, no slab sides, no 3D base. Each hexagon
+has a crisp, clean edge against the background.
+```
+
+Prompt 1, fast current. Style: gritty 1980s comic-book ink, scratchy black
+linework, cross-hatching and stipple, flat muted colour with soft washes;
+slate grey-teal water, blue-black deep channels, olive-khaki mid-tones, foam in
+pale bone off-white. Subject: water to all six edges, no bank, strong swirling
+current. Tiles: open current; current splitting round three boulders; dead
+tree snag mid-stream; rapids over a rock shelf; rusted oil drum and planks;
+collapsed concrete bridge slab.
+
+Prompt 2, marsh-river (same style, plus "like a hand-inked marsh map tile",
+bleached reeds and brown-headed cattails). Land only as gravel bars, mud spits
+and rock islands inside the water. Tiles: cattail clump on a gravel bar; mossy
+river rocks; capsized rowboat wedged on rocks with cattails; eel-like shadows
+under the surface; half-submerged house with foam on its upstream wall; a
+creature's ridged back and fin surfacing beside cattails.
+
+Both end with: no text, labels, numbers, hex outline stroke, frame, border,
+grid lines, vignette, drop shadow or watermark. The generator drew the
+outline stroke anyway on 01/03/07; the fit insets past it.

@@ -347,11 +347,17 @@ const ACT_SHELTER = 4, ACT_CRAFT = 5, ACT_SURVEY = 6, ACT_REST = 7;
 // server's 0-7 range) — ACT_CRAFT=5 is a REAL server action id (fills the
 // slot TRADE used before it got its own trade_offer/trade_accept protocol).
 const ACT_TRADE = 8;
+// ACT_ASSIST is client-only too: the deck cell that backs a teammate's
+// encounter roll, sent as its own enc_assist message (docs/team-play.md).
+const ACT_ASSIST = 9;
+// Mirrors ENC_ASSIST_CAP / ENC_ASSIST_DN in Esp32HexMapCrawl.ino: one token
+// per helper takes this much DN off the next roll, this many helpers at most.
+const ENC_ASSIST_CAP = 2, ENC_ASSIST_DN = 1;
 const RES_SHORT = ['WAT', 'FOD', 'FUL', 'MED', 'SCP'];  // short labels for trade resource steppers
 const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
 // Why an AO_BLOCKED action was refused — ABW_* in Esp32HexMapCrawl.ino,
 // carried on the act event as "bw".
-const ABW_NONE = 0, ABW_PACK_FULL = 1;
+const ABW_NONE = 0, ABW_PACK_FULL = 1, ABW_NO_TARGET = 10;
 const ACT_NAMES = ['FORAGE','COLLECT WATER','TREAT WOUND','SCAVENGE',
                    'BUILD SHELTER','CRAFT','SURVEY','REST'];
 

@@ -770,8 +770,24 @@ def _energy_viterbi(protos: list, target: np.ndarray, gate: float, cfg: EncoderC
     return out
 
 
+def apply_lag_hint(va: dict, hint, n: int) -> dict:
+    """Override the pitch tracker with a known track, for a synthetic source
+    (scripts/lpc/laugh.py) whose pitch is not a guess. `hint` per frame: a
+    period in samples (voiced, at that period), -1 (unvoiced), 0 (no opinion).
+    The tracker is right most of the time on a laugh, but a syllable onset is
+    one or two frames of a glottal pulse train still settling, and it reads
+    those an octave out -- a blip the score never asked for."""
+    h = np.zeros(n)
+    k = min(n, len(hint))
+    h[:k] = np.asarray(hint, dtype=np.float64)[:k]
+    voiced, lag = va['voiced'].copy(), va['lag'].copy()
+    voiced[h > 0], lag[h > 0] = True, h[h > 0]
+    voiced[h < 0], lag[h < 0] = False, 0.0
+    return dict(va, voiced=voiced, lag=lag)
+
+
 def encode(wav8k: np.ndarray, gain: float = 1.0, cfg: EncoderConfig | None = None,
-           info: dict | None = None) -> list:
+           info: dict | None = None, lag_hint=None) -> list:
     """Encode 8 kHz float audio into TMS5220 frames, ending with STOP.
 
     The decoded output (float, full scale 1.0) is aimed at gain * wav8k, frame
@@ -799,11 +815,15 @@ def encode(wav8k: np.ndarray, gain: float = 1.0, cfg: EncoderConfig | None = Non
          frame i+1, so frame-by-frame choices overshoot there by 10-17 dB.
     If `info` is a dict it receives the per-frame analysis plus `raw`, the
     encoder's own render (bit-identical to decode() of the packed frames).
+    `lag_hint` replaces step 1's pitch and voicing where it has an opinion
+    (apply_lag_hint).
     """
     cfg = cfg or EncoderConfig()
     x = np.asarray(wav8k, dtype=np.float64)
     n = max(1, -(-len(x) // FRAME_LEN))
     va = analyze_voicing(x, cfg)
+    if lag_hint is not None:
+        va = apply_lag_hint(va, lag_hint, n)
     voiced = va['voiced']
 
     # --- which frames will be silent, and which ones the decoder interpolates into

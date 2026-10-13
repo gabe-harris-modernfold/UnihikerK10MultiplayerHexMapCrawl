@@ -18,6 +18,8 @@ struct WorldMarkers {
   uint8_t doomAwareness;   // 0-100
   int16_t kaneQ, kaneR;    // Machine Gun Kane's jeep (kane.hpp)
   uint8_t kaneMode;        // KANE_DRIVE / KANE_CAMP / KANE_GONE
+  int16_t vacQ, vacR;      // VACANCY's town under the sign (vacancy.hpp); -1 = none
+  uint8_t vacStage;        // VAC_ST_*: 0 lit / 1 counting / 2 saved / 3 fallen
 };
 static void snapshotWorldMarkers(WorldMarkers& out);
 
@@ -415,6 +417,7 @@ static void sceneScreenFill(SceneSnap& S, uint8_t screen) {
       S.doomQ = wm.doomQ; S.doomR = wm.doomR;
       S.doomAware = wm.doomAwareness;
       S.kaneQ = wm.kaneQ; S.kaneR = wm.kaneR; S.kaneMode = wm.kaneMode;
+      S.vacQ = wm.vacQ; S.vacR = wm.vacR; S.vacStage = wm.vacStage;
     }
     S.terr = &terr[0][0];
     // The Understory's published copy: read without the lock, as it always was.

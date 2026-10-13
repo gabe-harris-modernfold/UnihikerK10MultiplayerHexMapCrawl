@@ -184,6 +184,10 @@ class EncounterRun:
         # the chapter number, 0 for anything else. Also opened by arriving,
         # and read only once its last node is reached.
         self.kane = 0
+        # One of VACANCY's parts (enc_path "vac": n, vacancy.hpp): 1 the town,
+        # 2 the Front Desk, 3 Housekeeping, 4 Check-Out; 0 for anything else.
+        # Opened by arriving too; 2 and 3 count only once BANKED at the end.
+        self.vac = 0
         self.pushed = 0          # caches pressed on from, in a trap
         self.last_ci = None      # the choice last sent
         self.last_from = None    # ...and the node it was sent from
@@ -297,7 +301,8 @@ class EncounterRun:
         return {"biome": self.biome, "id": self.eid,
                 "title": self.enc.get("title", ""), "node": self.node_key,
                 "rolls": self.rolls, "visited": self.visited,
-                "banked": self.banked, "trap": self.trap, "kane": self.kane}
+                "banked": self.banked, "trap": self.trap, "kane": self.kane,
+                "vac": self.vac}
 
 
 # -- planning a scene ----------------------------------------------------------

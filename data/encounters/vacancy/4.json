@@ -1,0 +1,148 @@
+{
+  "id": "vacancy_4_check_out",
+  "title": "Check-Out",
+  "vacancy": {
+    "part": 4
+  },
+  "start_node": "under_the_sign",
+  "nodes": {
+    "under_the_sign": {
+      "text": "The sign is louder than it was. Every house that has turned has its light on now, warm and yellow, and in each lit window somebody sits on the end of a bed with their hands in their lap, facing out, waiting. The square is full of the ones still left, standing very still, looking up at the small dark box that says NO. You have the register under your arm and the master key in your fist. The pen on its little chain has followed the book in off the waste.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Not tonight. Walk out of the pink light.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "walk_away",
+          "hazard_id": "light_follows"
+        },
+        {
+          "label": "Open the register under the sign.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "the_names",
+          "requires_item": 70,
+          "hazard_id": "your_line"
+        }
+      ]
+    },
+    "the_names": {
+      "text": "You read the names out, one at a time, under the buzzing tubes, and against each one in the departure column you write CHECKED OUT and the time. The pen fights you. Each time you finish a line somebody in the square breathes out. Some of the names belong to people standing right beside you, who have not gone yet, whose arrival times are tomorrow, and the day after. You strike those too. Near the bottom of the last page is a line with the first three letters of your own name on it, and an arrival time of tonight.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Close the book and get out of the square.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "walk_away",
+          "hazard_id": "light_follows"
+        },
+        {
+          "label": "Strike your own line, then take the key down the street.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "the_doors",
+          "requires_item": 71,
+          "hazard_id": "the_last_line"
+        }
+      ]
+    },
+    "the_doors": {
+      "text": "The master key turns in every turquoise door on the street, and every door opens on the same room: two beds, the painting of the sea, the snow on the television. In every room somebody from this town is sitting on the end of a bed, waiting. You read their names out of the book and tell them they have checked out. They look at you as if you are the first person to speak to them in a very long time. Then they get up, and stand in the doorway, and step over the sill onto dirt, and the room behind them is a house again: a kitchen, a coat on a hook, a cold stove. The last door is in the middle of the square, at the foot of the pole, where there has never been a house. It is numbered 1147.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Leave that one shut and walk away.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "walk_away",
+          "hazard_id": "light_follows"
+        },
+        {
+          "label": "Put the key in 1147 and open it.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 4,
+          "success_node": "checked_out",
+          "hazard_id": "room_1147"
+        }
+      ]
+    },
+    "checked_out": {
+      "text": "Room 1147 is every room. It is the room the whole world checked into at eleven forty-seven on the eleventh of November 1966, and it goes back further than the waste goes, and every bed in it is made, and every bed is taken. All of them turn their heads on the pillows to look at you in the doorway. Then the sign above you gives a flat pop like a bulb going, and the hum stops, and the door is an empty frame with the square showing through it, and then not even that. The NO never lit. In the morning the town counts its chairs at supper and there is somebody on every one. Somebody has put the register on the meeting-hall table, where it will never be opened again. You reach into your pocket for the master key and there is only a mint.",
+      "vac_ending": "saved",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            2,
+            2
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            2,
+            2
+          ]
+        },
+        {
+          "res": 3,
+          "qty": [
+            2,
+            2
+          ]
+        }
+      ],
+      "loot_table": "settlement_rare",
+      "choices": []
+    },
+    "walk_away": {
+      "text": "You step back out of the pink light. The ones in the square don't turn round. The sign hums on over all of you. It will still be here. It has always been very patient.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    }
+  },
+  "hazards": {
+    "light_follows": {
+      "text": "The pink light comes after you to the edge of the square, like a hand laid on the back of your neck, and lets you go only when you stop and stand still for it. You lose a while standing there.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "your_line": {
+      "text": "As you open the book the pen swings on its chain and writes, all on its own, the rest of your name on the line that has been waiting for it. For a moment the buzz of the sign is the most restful sound you have ever heard, and you have to bite the inside of your cheek until it bleeds to stop yourself walking toward the nearest lit door.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_last_line": {
+      "text": "Your own line will not be struck. The pen goes through the page and the page under it and the one under that, and your line is still there, unbroken, written deeper. Behind you a turquoise door you had not seen opens a crack, and the light that comes out of it is warm, and it is meant for you.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "room_1147": {
+      "text": "You open the door an inch. Something on the other side, very polite and very strong, closes it again, and the sign flares so bright the whole square goes pink, and when you can see again you are on your back in the dirt with the hum louder than ever and the key still in your fist.",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": true
+    }
+  }
+}

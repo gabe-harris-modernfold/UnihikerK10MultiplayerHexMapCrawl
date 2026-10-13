@@ -28,6 +28,7 @@
     "trail-field.js",
     "world-entities.js",
     "kane-jeep.js",
+    "vacancy.js",
     "engine.js",
     "ui-state.js",
     "network.js",

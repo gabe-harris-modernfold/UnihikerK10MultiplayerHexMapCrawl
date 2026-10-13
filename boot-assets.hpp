@@ -517,6 +517,20 @@ static void loadEncounterIndex() {
     if (pv) jsonStr(pv, kp.path, sizeof(kp.path));
     Log.notice("Kane pool: %d chapters at /%s", (int)kp.count, kp.path);
   }
+  // VACANCY's four parts (vacancy.hpp), file N = part N.
+  //   "vacancy": {"count": 4, "path": "vacancy"}
+  if (const char* ve = strstr(buf, "\"vacancy\"")) {
+    ve += 9;
+    int copyLen = min(80, (int)(sz - (size_t)(ve - buf)));
+    char tmp[84]; strncpy(tmp, ve, copyLen); tmp[copyLen] = 0;
+    if (char* close = strchr(tmp, '}')) *close = 0;   // this entry only
+    EncPoolInfo& vp = encPools[ENC_POOL_VAC];
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) vp.count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, vp.path, sizeof(vp.path));
+    Log.notice("VACANCY pool: %d parts at /%s", (int)vp.count, vp.path);
+  }
   free(buf);
 }
 

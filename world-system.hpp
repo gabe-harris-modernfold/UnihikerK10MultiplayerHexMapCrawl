@@ -49,6 +49,12 @@ static constexpr uint8_t  SCENT_THRESHOLD = 4;   // min track intensity Doom wil
 static constexpr uint8_t  DOOM_BASE_RADIUS = 6;  // scent radius at awareness 0 (see doomDetectionRadius)
 static constexpr uint8_t  AWARENESS_GAIN  = 12;  // per world tick when following scent
 static constexpr uint8_t  AWARENESS_DECAY = 5;   // per world tick when cold
+// Gathering draws it (docs/team-play.md). Survivors who share a surface hex
+// are felt wherever the Doom is, scent or no scent. Per tick a pair adds 6
+// against the cold decay of 5, so even two together keep it from forgetting
+// them; a full party of five adds 15 and walks it from 0 to 100 in ~2.5 min.
+static constexpr uint8_t  DOOM_GATHER_TICK   = 3;  // per world tick, per survivor sharing a hex with another
+static constexpr uint8_t  DOOM_GATHER_ARRIVE = 5;  // at once, when a step lands on a hex another survivor holds
 // Taunts fire on every awareness-tier change, and then keep needling at this
 // cadence while the Doom is still aware of anyone. 8 world ticks is ~2 min:
 // often enough to feel stalked, rare enough that it never fights the toast
@@ -553,6 +559,43 @@ static int nearestConnectedPlayer(int16_t q, int16_t r) {
   return best;
 }
 
+// ── Gathering ─────────────────────────────────────────────────────────────
+// The other side of every reason to stand together (encounter assists,
+// treating a teammate, founding a Settlement): a crowd is loud. Counted on
+// the surface only -- the Doom never goes below -- and only survivors who
+// are up; someone mid-scene still counts, so backing a teammate's roll from
+// the doorway has a price. Caller holds G.mutex.
+static bool sharesSurfaceHex(int pid) {
+  const Player& me = G.players[pid];
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (i == pid) continue;
+    const Player& o = G.players[i];
+    if (o.connected && !o.depth && o.ll > 0 && o.q == me.q && o.r == me.r) return true;
+  }
+  return false;
+}
+
+static void doomRaiseAwareness(int amt) {
+  W.creepingDoom.awareness = (uint8_t)min(100, (int)W.creepingDoom.awareness + amt);
+}
+
+// World tick: every survivor who is not alone on their hex.
+static void tickDoomGathering() {
+  int n = 0;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    const Player& p = G.players[i];
+    if (p.connected && !p.depth && p.ll > 0 && sharesSurfaceHex(i)) n++;
+  }
+  if (n) doomRaiseAwareness(n * DOOM_GATHER_TICK);
+}
+
+// A step (or a climb out of a hatch) that landed pid on someone else's hex.
+static void doomNoteArrival(int pid) {
+  const Player& p = G.players[pid];
+  if (!p.connected || p.depth || p.ll == 0 || !sharesSurfaceHex(pid)) return;
+  doomRaiseAwareness(DOOM_GATHER_ARRIVE);
+}
+
 static void randomWalk(int16_t& q, int16_t& r) {
   int d  = (int)(esp_random() % 6);
   int nq = wrapQ(q + DQ[d]);
@@ -1039,6 +1082,7 @@ static void wInit() {
   W.caravan.active = true;
   restockCaravan();
   kaneInit();   // Machine Gun Kane's jeep, and his arc unread (kane.hpp)
+  vacInit();    // VACANCY: the sign goes up over a random town (vacancy.hpp)
 }
 
 // ── Minimap markers ────────────────────────────────────────────────────────
@@ -1052,4 +1096,5 @@ static void snapshotWorldMarkers(WorldMarkers& out) {
   out.doomR         = W.creepingDoom.r;
   out.doomAwareness = W.creepingDoom.awareness;
   kaneSnapshot(out.kaneQ, out.kaneR, out.kaneMode);
+  vacSnapshot(out.vacQ, out.vacR, out.vacStage);
 }

@@ -715,6 +715,9 @@ static const char* movePlayer(int pid, int dir) {
   // Machine Gun Kane (kane.hpp): his camp, the house in the glass, or his
   // fire at night opens a chapter. Never on a hatch -- his road avoids them.
   kaneOnArrival(pid);
+  // VACANCY (vacancy.hpp): the town under the sign, the front desk, the
+  // corridor. Never on a hatch -- the sites are placed off them.
+  vacOnArrival(pid);
   // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels
   // (tunnels.hpp).  Last, so the surface EVT_MOVE reaches clients before the
   // EVT_TUNNEL_ENTER that follows it.

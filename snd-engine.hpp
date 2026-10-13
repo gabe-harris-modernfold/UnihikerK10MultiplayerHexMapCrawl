@@ -21,6 +21,9 @@
 #include "snd-music.hpp"
 #include "snd-sfx.hpp"
 
+// The laughs are consecutive words, one per score in doom-laugh.h (included by snd-lpc.hpp).
+static_assert(VOC_LAUGH2 - VOC_LAUGH0 + 1 == DOOM_LAUGH_N, "one VOC_LAUGH per DOOM_LAUGH score (scripts/lpc/phrases.txt)");
+
 enum SndStoryKind : uint8_t {
   SS_NONE = 0,
   SS_BOOT,          //
@@ -28,7 +31,7 @@ enum SndStoryKind : uint8_t {
   SS_DUSK,          //
   SS_JOIN,          // a = slot
   SS_LEFT,          // a = slot
-  SS_DOWNED,        // a = slot
+  SS_DOWNED,        // a = slot, b = which laugh (doom-laugh.h)
   SS_THREAT,        // a = band 1..4
   SS_WEATHER,       // a = phase
   SS_ENC_START,     // a = slot
@@ -187,10 +190,16 @@ static void sndHandleCue(const SndCue& c) {
       sndSay(words, 2, SAY_NARRATOR, SAYP_LOW, 4);
       break;
     case SS_DOWNED: {
+      // The flatline; then the Doom laughs (b picks which of doom-laugh.h's,
+      // and the LCD and the TV open its jaw to the same score, counting from
+      // the same moment); then the chronicler says who. Both CRITICAL: the
+      // laugh cuts off whatever was being said and the name queues behind it.
       sndFx(SFX_DEAD_BATTERY);
       if (sndMusicOn()) musElegy(c.a);
+      words[0] = (uint8_t)(VOC_LAUGH0 + c.b % DOOM_LAUGH_N);
+      sndSay(words, 1, SAY_DOOM, SAYP_CRITICAL, 0, (uint8_t)(DOOM_LAUGH_DELAY_MS / 20));
       words[0] = sndSlotWord(c.a); words[1] = VOC_DOWN;
-      sndSay(words, 2, SAY_NARRATOR, SAYP_CRITICAL, 4);
+      sndSay(words, 2, SAY_NARRATOR, SAYP_CRITICAL, 4, 15);
       uint8_t alive = SMu.w.aliveMask & (uint8_t)~(1u << c.a);
       if (!alive) sndSay1(VOC_NO_ONE, SAY_NARRATOR, SAYP_CRITICAL);
       break;

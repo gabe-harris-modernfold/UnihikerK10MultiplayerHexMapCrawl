@@ -1180,6 +1180,48 @@
     k.decal(dots(jit([16, 12.6, 20.4, 13, 14.2, 24, 9.6, 14.2], 0.5, 8)), 'blood', { tone: SHD, w: 1 });
   };
 
+  // ── VACANCY (docs/vacancy.md) ───────────────────────────────────
+
+  // 70 Guest Register: a long ledger in maroon leatherette with brass corners
+  // and a gold rule, a pen hanging off it on a little brass chain. The town
+  // is in the back pages, and the departures column is empty.
+  I[70] = (k) => {
+    const r = (f) => rotate(f, -9);
+    k.solid(r(box(16.9, 15.6, 11.4, 8.2, 0.8)), 'bone', { shade: { t: 'flat', tone: BASE }, grime: 0.3 });
+    k.line(r(union(stroke([7, 22.4, 27.4, 22.4]), stroke([27.4, 8.6, 27.4, 22.4]))), { tone: SHD });
+    k.solid(r(box(15.8, 14.8, 11.4, 8.2, 1.4)), 'blood', { shade: { t: 'round', r: 2.6 }, grime: 0.25, speck: 0.06 });
+    k.decal(r(box(15.8, 9.4, 11.4, 0.7)), 'mustard', { tone: HI });
+    k.decal(r(box(15.8, 15.8, 5, 2.6, 0.4)), 'bone', { tone: BASE });
+    k.line(r(union(stroke([12.6, 15.1, 19, 15.1]), stroke([12.6, 16.7, 17.6, 16.7]))), { tone: SHD });
+    const corner = (x, y, sx, sy) => poly([x, y, x + 3.4 * sx, y, x, y + 3.4 * sy]);
+    k.solid(r(union(corner(4.4, 6.6, 1, 1), corner(27.2, 6.6, -1, 1), corner(4.4, 23, 1, -1), corner(27.2, 23, -1, -1))), 'copper',
+      { shade: { t: 'flat', tone: HI }, wear: 0.1, rust: 0.2 });
+    // the pen, on its chain off the bottom corner
+    k.solid(curve(25.4, 22.2, 26.2, 25.4, 23.6, 26.6, 0.4), 'copper', { shade: { t: 'flat', tone: BASE }, wear: 0, outline: false });
+    k.solid(seg(22.8, 26.6, 28.8, 30, 1.1, 0.6), 'black', { shade: { t: 'round', r: 0.9 }, wear: 0.05 });
+    k.decal(dots([24, 27.2]), 'steel', { tone: GLINT, w: 1 });
+  };
+
+  // 71 Master Key: a long brass key on a red diamond motel fob stamped
+  // MANAGEMENT. Warm, and heavier than brass has any right to be.
+  I[71] = (k) => {
+    const r = (f) => rotate(f, 38, 16, 17);
+    // the key, drawn lying flat and then tilted: bow, a long shank, a deep bit
+    const bow = minus(circle(9.6, 17, 3.6), circle(9.6, 17, 1.4));
+    const shank = seg(12.6, 17, 28.4, 17, 1.15);
+    const bit = minus(box(24.8, 20.2, 3.4, 2.4, 0.3), box(24.6, 21.6, 0.8, 1.2));
+    k.solid(r(union(bow, shank, bit)), 'copper', { shade: { t: 'round', r: 1.3 }, grime: 0.15, rust: 0.12 });
+    k.decal(r(dots([8.4, 15.6])), 'copper', { tone: GLINT, w: 1 });
+    // the split ring through the bow, and the fob hanging off it
+    k.solid(shell(circle(7.4, 9.4, 2.2), 0.5), 'steel', { shade: { t: 'flat', tone: HI }, wear: 0 });
+    const fob = minus(rough(poly([5.6, 4.6, 11.2, 10.2, 5.6, 15.8, 0.4, 10.2].map((v, i) => (i % 2 ? v - 4.2 : v + 1))), 0.15, 1, 1),
+      circle(6.6, 2.8, 0.9));
+    k.solid(fob, 'red', { shade: { t: 'bevel', hw: 1, sw: 1.4 }, grime: 0.2, wear: 0 });
+    k.line(union(stroke([3.4, 6.4, 9.8, 6.4]), stroke([4.4, 8, 8.8, 8])), { mat: 'white', tone: HI });
+    // warm: the air over it wavers
+    k.fx(union(curve(20.4, 13, 21.6, 10.8, 20.6, 8.6, 0.3), curve(24.4, 15.6, 25.6, 13.4, 24.6, 11.2, 0.3)), 'fire', { tone: SHD, w: 1, p: 0.7 });
+  };
+
   // ── Bolt-Ons, vehicles ──────────────────────────────────────────
 
   // 17 Rust Rocket: a rusted-out motor scooter, patched tank, coughing.

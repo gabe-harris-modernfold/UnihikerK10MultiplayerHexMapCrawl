@@ -1025,8 +1025,10 @@ function renderGridLines(cam) {
 
 function isPOIRenderable(mapQ, mapR, meAct) {
   const cell = boardCells()[mapR]?.[mapQ];
-  // Machine Gun Kane's next chapter (kane-jeep.js) is a quest hex too.
-  if (!cell?.poi && !(typeof kaneQuestAt === 'function' && kaneQuestAt(mapQ, mapR))) return false;
+  // Machine Gun Kane's next chapter (kane-jeep.js) is a quest hex too, and so
+  // is VACANCY's next step (vacancy.js).
+  if (!cell?.poi && !(typeof kaneQuestAt === 'function' && kaneQuestAt(mapQ, mapR)) &&
+      !(typeof vacQuestAt === 'function' && vacQuestAt(mapQ, mapR))) return false;
   const dist = boardDist(meAct.q, meAct.r, mapQ, mapR);
   const effectiveVR = getEffectiveVR();
   return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
@@ -1531,6 +1533,9 @@ const LAYERS = [
   // jeep and its range ring while he waits for an answer -- under the pawns
   // like the caravan. His fire is kane_light, over the night tint.
   { name: 'kane',         draw: (cam) => { if (!myDepth) renderKane(cam); } },
+  // VACANCY (vacancy.js): the sign's pole and dead tubes, the front desk, the
+  // corridor's doorway -- under the pawns. What is lit is vacancy_light.
+  { name: 'vacancy',      draw: (cam) => { if (!myDepth) renderVacancy(cam); } },
   // The dust the Motorbikes kick up (bike-dust.js), under the pawns so each
   // bike sits in front of its own cloud. Fed by renderCharacters() below, so
   // it draws what the bikes threw up to last frame.
@@ -1567,6 +1572,9 @@ const LAYERS = [
   // Kane's fire (kane-jeep.js): he only lights it after dusk, so it is light
   // over the tint, the same reasoning as the fireballs above.
   { name: 'kane_light',   draw: (cam) => { if (!myDepth) renderKaneLight(cam); } },
+  // VACANCY's neon, the desk lamp, the corridor's strip light and the windows
+  // of the houses that checked in (vacancy.js): light, so over the tint too.
+  { name: 'vacancy_light', draw: (cam) => { if (!myDepth) renderVacancyLight(cam); } },
 ];
 
 // ── Render ──────────────────────────────────────────────────────

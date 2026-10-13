@@ -106,9 +106,15 @@ static void scDawn(Ctx& c) {
   c.w.day = c.t < 1.0f ? 6 : 7;
 }
 static void scDeath(Ctx& c) {
-  if (at(c, 12.0f)) sndStory(SS_DOWNED, 2);
+  if (at(c, 12.0f)) sndStory(SS_DOWNED, 2, 0);
   if (c.t > 12.0f) c.w.aliveMask = 0x0B;
   c.w.attrition = 200; c.w.woundLoad = 180;
+}
+// The Doom's three laughs (doom-laugh.h) as a death plays them, music off:
+// the flatline, the laugh in the doubled voice, the name.
+static void scLaughs(Ctx& c) {
+  for (int v = 0; v < DOOM_LAUGH_N; v++) if (at(c, 1.0f + v * 8.0f)) sndStory(SS_DOWNED, (uint8_t)v, (uint8_t)v);
+  c.w.musicLevel = 0;
 }
 static void scThreat(Ctx& c) {
   for (int b = 1; b <= 4; b++) if (at(c, 2.0f + (b - 1) * 14.0f)) { sndStory(SS_THREAT, (uint8_t)b); c.w.tcLevel = (uint8_t)b; c.w.tcWeight = (uint8_t)(b * 63); }
@@ -194,7 +200,8 @@ static const Scene SCENES[] = {
   { "tunnels",       50, scTunnels,       "underground: a fourth down, a long cave, water" },
   { "encounter",     40, scEncounter,     "an encounter: held breath, a hazard, a long-odds win, picked clean" },
   { "dawn",          40, scDawn,          "dawn of day 7: the call, the roll call with the Mule's note missing, the chant" },
-  { "death",         45, scDeath,         "the Medic goes down: the flatline, the elegy on her signature" },
+  { "death",         45, scDeath,         "the Medic goes down: the flatline, the Doom laughs, the elegy on her signature" },
+  { "laughs",        25, scLaughs,        "the Doom's three laughs as deaths play them, music off" },
   { "threat",        60, scThreat,        "the threat clock turns four times" },
   { "sfx",           94, scSfx,           "every effect in turn, music off" },
   { "speech",        36, scSpeech,        "the voices: radio, narrator, whisper, Doom, barker, chant" },

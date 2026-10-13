@@ -2255,6 +2255,323 @@ check("metrics: two road questions, one dodged, one burst counted once",
       _kr["calls"] == 2 and _kr["dodged"] == 1 and _kr["bursts"] == 1 and _kr["ll_lost"] == 1)
 check("metrics: who read which chapter", _kr["read"] == [(1, 2)] and _kr["stage"] == 1)
 
+print("vacancy")
+import quests as _VQ
+from config import (VAC_ST_FALLEN, VAC_ST_OPEN, VAC_ST_SAVED, VAC_ST_SIGN)
+
+
+def vac_obs(me_at=(20, 20), town=(20, 22), st=VAC_ST_SIGN, rm=8, g=0, desk=(-1, -1),
+            keys=(-1, -1), items=(), ap=9, ll=7, pid=2):
+    """A survivor on an all-scrub map under VACANCY's sign."""
+    o = Observation()
+    o.pid = pid
+    for rr in range(config.MAP_ROWS):
+        for qq in range(config.MAP_COLS):
+            o.map.grid[rr][qq] = mk()
+    me = o.players[pid]
+    me.connected, me.q, me.r = True, me_at[0], me_at[1]
+    me.ap, me.ll, me.inv_slots, me.valid_moves = ap, ll, 8, 0b111111
+    me.inv, me.food, me.water = [6, 4, 0, 0, 0], 5, 5
+    me.skills = [0, 0, 0, 0, 0]
+    me.inv_type = [0] * config.INV_SLOTS_MAX
+    me.inv_qty = [0] * config.INV_SLOTS_MAX
+    for s, i in enumerate(items):
+        me.inv_type[s], me.inv_qty[s] = i, 1
+    o.synced = True
+    o.apply({"t": "s", "tk": 1, "p": [], "world": {"vac": {
+        "q": town[0], "r": town[1], "st": st, "rm": rm, "g": g,
+        "dq": desk[0], "dr": desk[1], "kq": keys[0], "kr": keys[1]}}})
+    return o
+
+
+# -- the content and the firmware ------------------------------------------
+_vlib = _KLib()
+check("the four VACANCY parts load, from a pool index.json deals",
+      all(_vlib.get("vacancy", n) for n in range(1, 5))
+      and (_vlib.index.get("vacancy") or {}).get("path") == "vacancy")
+_v4 = _vlib.get("vacancy", 4)["nodes"]
+_vgated = {nk: [ch.get("requires_item") for ch in nd.get("choices") or [] if ch.get("requires_item")]
+           for nk, nd in _v4.items()}
+_vgated = {nk: g for nk, g in _vgated.items() if g}
+check("Check-Out gates on the Guest Register and the Master Key",
+      sorted(i for g in _vgated.values() for i in g) == [config.VAC_ITEM_REGISTER, config.VAC_ITEM_KEY])
+check("every gated Check-Out node offers an ungated choice first",
+      all(not _v4[nk]["choices"][0].get("requires_item") for nk in _vgated))
+check("...and it leads to an escape node (the walk-away a bot must never take)",
+      all(_v4.get(_v4[nk]["choices"][0]["success_node"], {}).get("escape") for nk in _vgated))
+check("Check-Out's last node is the ending vacPartRead looks for",
+      any(nd.get("vac_ending") == "saved" and not nd.get("choices") and not nd.get("escape")
+          for nd in _v4.values()))
+for _vpart, _vitem in ((2, config.VAC_ITEM_REGISTER), (3, config.VAC_ITEM_KEY)):
+    _vnodes = _vlib.get("vacancy", _vpart)["nodes"]
+    _vpay = {nk for nk, nd in _vnodes.items() for row in nd.get("loot") or []
+             if isinstance(row, dict) and row.get("item") == _vitem}
+    _vend = {nk for nk, nd in _vnodes.items() if not nd.get("choices") and not nd.get("escape")}
+    check(f"part {_vpart} pays the {config.ITEM_NAME.get(_vitem)} on its terminal node only",
+          bool(_vpay) and _vpay <= _vend)
+check("the two halves are key items nobody can trade",
+      all(config.ITEM_CATEGORY.get(i) == "key"
+          for i in (config.VAC_ITEM_REGISTER, config.VAC_ITEM_KEY)))
+_vsrc = (_FW / "vacancy.hpp").read_text(encoding="utf-8")
+
+
+def _vfw(name):
+    m = re.search(r"\b" + name + r"\s*=\s*(-?\d+)", _vsrc)
+    return int(m.group(1)) if m else None
+
+
+_vdrift = [(n, _vfw(n), getattr(config, n)) for n in (
+    "VAC_ROOMS", "VAC_ITEM_REGISTER", "VAC_ITEM_KEY", "VAC_PART_SIGN", "VAC_PART_DESK",
+    "VAC_PART_KEYS", "VAC_PART_OUT", "VAC_ST_SIGN", "VAC_ST_OPEN", "VAC_ST_SAVED",
+    "VAC_ST_FALLEN", "VAC_GOT_REGISTER", "VAC_GOT_KEY") if _vfw(n) != getattr(config, n)]
+if _vfw("VT_URBAN") != config.VAC_FALLEN_TERRAIN:
+    _vdrift.append(("VT_URBAN", _vfw("VT_URBAN"), config.VAC_FALLEN_TERRAIN))
+check(f"config.py's VACANCY constants match vacancy.hpp {_vdrift}", not _vdrift)
+
+# -- what the bots read off the wire ---------------------------------------
+vo = vac_obs(st=VAC_ST_OPEN, rm=5, g=1, keys=(23, 20))
+check("the world object is read",
+      vo.world.vac_seen and vo.world.vac_live
+      and (vo.world.vac_q, vo.world.vac_r, vo.world.vac_rooms, vo.world.vac_got,
+           vo.world.vac_keys_q, vo.world.vac_desk_q) == (20, 22, 5, 1, 23, -1))
+vo.apply({"t": "ev", "k": "vac", "w": "keys", "pid": 3, "q": 20, "r": 22, "rm": 5})
+check("a site banked sets the bit and closes the site at once",
+      vo.world.vac_got == 3 and vo.world.vac_keys_q == -1)
+vo.apply({"t": "ev", "k": "vac", "w": "room", "pid": -1, "q": 20, "r": 22, "rm": 4})
+check("a house checking in lowers the count", vo.world.vac_rooms == 4)
+vo.apply({"t": "ev", "k": "vac", "w": "hum", "pid": 2, "q": 20, "r": 22, "has": 1})
+check("the hum is ours, with what we carry", (vo.vac_hum or {}).get("has") == 1)
+vo.apply({"t": "ev", "k": "vac", "w": "fallen", "pid": -1, "q": 20, "r": 22, "rm": 0})
+check("NO VACANCY: the sign is down and the town's hex is Broken Urban",
+      not vo.world.vac_live and vo.world.vac_stage == VAC_ST_FALLEN
+      and vo.map[(20, 22)].terrain == config.VAC_FALLEN_TERRAIN and not vo.map[(20, 22)].poi)
+vo.apply({"t": "ev", "k": "regen"})
+check("a regen forgets the sign until the next sync", not vo.world.vac_seen)
+
+# -- walking to the next part ----------------------------------------------
+vp = make_policy("scoremax", random.Random(4))
+vp.set_pid(2)
+_a = vp.vac_quest_action(vac_obs())
+check("an unread sign two hexes south: it walks there",
+      _a is not None and _a.d == 5 and "part 1" in _a.why)
+check("within today's AP, from the vacancy_today layer",
+      vp.decide(vac_obs()).why.startswith("vacancy_today:"))
+_vq4 = make_policy("quester", random.Random(3))
+_vq4.set_pid(2)
+check("a hurt quester (bed would walk it to cover) still steps under the sign",
+      _vq4.decide(vac_obs(ll=4, ap=3)).why.startswith("vacancy_today:"))
+_vfar2 = vac_obs(town=(20, 34))
+check("further than today's AP it is the later vacancy layer's walk",
+      _vq4.decide(_vfar2).why.startswith("vacancy:"))
+_vdry = vac_obs()
+_vdry.players[2].inv[config.RES_WATER] = 0
+check("a staple emergency comes first: no errand ahead of the hunt",
+      _vq4.vac_today(_vdry) is None and _vq4.vac_today(vac_obs()) is not None)
+check("the coward never goes looking",
+      make_policy("coward", random.Random(1)).vac_quest_action(vac_obs()) is None)
+check("nor do the sentinel and the tunnel bots",
+      all(make_policy(n, random.Random(1)).vac_quest_action(vac_obs()) is None
+          for n in ("sentinel", "subterranean", "tunnelrunner")))
+check("hurt, the sign waits", vp.vac_quest_action(vac_obs(ll=3)) is None)
+_a = vp.vac_quest_action(vac_obs(st=VAC_ST_OPEN, desk=(20, 25), keys=(23, 20)))
+check("counting, with both sites open: the nearer one", _a is not None and "part 3" in _a.why)
+_a = vp.vac_quest_action(vac_obs(st=VAC_ST_OPEN, desk=(20, 25), keys=(23, 20), items=(71,)))
+check("already holding the key: the desk", _a is not None and "part 2" in _a.why)
+check("the town while counting, without both halves: not a target (it only hums)",
+      vp.vac_quest_action(vac_obs(st=VAC_ST_OPEN, items=(config.VAC_ITEM_REGISTER,))) is None)
+_a = vp.vac_quest_action(vac_obs(st=VAC_ST_OPEN, desk=(20, 25), keys=(23, 20), items=(70, 71)))
+check("carrying both halves: back to the town for Check-Out",
+      _a is not None and _a.d == 5 and "part 4" in _a.why)
+check("a saved town has nothing left", vp.vac_quest_action(vac_obs(st=VAC_ST_SAVED)) is None)
+check("no Settlement on the board, no sign", vp.vac_quest_action(vac_obs(town=(-1, -1))) is None)
+_vfar = vac_obs(town=(20, 40))
+check("a town twenty hexes off is past today's AP", vp.vac_quest_action(_vfar) is None)
+for _vname in ("contentmax", "quester"):
+    _vcm = make_policy(_vname, random.Random(2))
+    _vcm.set_pid(2)
+    check(f"{_vname} walks that far for it", _vcm.vac_quest_action(_vfar) is not None)
+check("stood on the town with no scene: it lets it be for a while",
+      vp.vac_quest_action(vac_obs(me_at=(20, 22))) is None
+      and ("vac", 1, 20, 22) in vp.throttle.holding())
+
+# -- playing a part ----------------------------------------------------------
+def _vrun(part):
+    r = _KRun(_vlib, "vacancy", part)
+    r.vac = part
+    return r
+
+
+vp2 = make_policy("scoremax", random.Random(5))
+vp2.set_pid(2)
+_ve = vac_obs(st=VAC_ST_OPEN)
+_vr = _vrun(2)
+_a = vp2.decide_vac_part(_ve, _vr)
+check("the Front Desk: in by a choice", _a.kind == "enc_choice")
+_vr.sent_at, _vr.node_key = None, "the_clerk"
+check("a bankable middle node is pushed past -- the register is at the end",
+      vp2.decide_vac_part(_ve, _vr).kind == "enc_choice")
+_vr.sent_at, _vr.node_key = None, "the_register"
+check("and the last node is banked: the bank is what counts",
+      vp2.decide_vac_part(_ve, _vr).kind == "enc_bank")
+_vr.node_key = "the_clerk"
+_ve.players[2].ll = 3
+check("too hurt to risk a check: it walks away, the desk stays open",
+      vp2.decide_vac_part(_ve, _vr).kind in ("enc_bank", "enc_abort"))
+_vb = vac_obs(st=VAC_ST_OPEN, items=(70, 71))
+_v4r = _vrun(4)
+for _vnode in ("under_the_sign", "the_names", "the_doors"):
+    _v4r.sent_at, _v4r.node_key = None, _vnode
+    _a = vp2.decide_vac_part(_vb, _v4r)
+    check(f"Check-Out at {_vnode}: on, never the walk-away", _a.kind == "enc_choice" and _a.ci == 1)
+_v4r.sent_at, _v4r.node_key = None, "checked_out"
+check("Check-Out's ending is banked", vp2.decide_vac_part(_vb, _v4r).kind == "enc_bank")
+_vlow = make_policy("quester", random.Random(7))
+_vlow.set_pid(2)
+_vlow.vac_min_ll = 1                               # vac_check's relaxation
+_v4r.sent_at, _v4r.node_key = None, "the_doors"
+check("relaxed min-LL, at LL 2: the door that costs 2 LL is never tried",
+      _vlow.decide_vac_part(vac_obs(st=VAC_ST_OPEN, items=(70, 71), ll=2), _v4r).kind == "enc_abort")
+_v4r.sent_at = None
+check("...at LL 3 it is", _vlow.decide_vac_part(vac_obs(st=VAC_ST_OPEN, items=(70, 71), ll=3),
+                                                 _v4r).kind == "enc_choice")
+_v4r.node_key = "the_names"
+check("without the key its door is shut and the other leads out: it leaves",
+      vp2.decide_vac_part(vac_obs(st=VAC_ST_OPEN, items=(70,)), _v4r).kind == "enc_abort")
+_v4r.node_key = "walk_away"
+check("out of the pink light it banks what it has (the leave button)",
+      vp2.decide_vac_part(_vb, _v4r).kind == "enc_bank")
+_vb.encounter = {"t": "enc_path", "biome": "vacancy", "id": 3, "vac": 3}
+vp2.run = None
+_a = vp2.decide(_vb)
+check("an enc_path naming a part is played as one",
+      _a.kind == "enc_choice" and vp2.run.vac == 3 and vp2.stats["vac_scenes"] == 1)
+
+# -- the quest journal -------------------------------------------------------
+_vcat = {q.key: q for q in _VQ.build_catalog()}
+_vq = _vcat.get("vacancy")
+check("VACANCY is in the quest catalog: four parts, reachable, the world's",
+      _vq is not None and _vq.reachable and _vq.kind == "story" and len(_vq.steps) == 4
+      and [s.vac_part for s in _vq.steps] == [1, 2, 3, 4])
+check("parts 2 and 3 pay the halves, Check-Out needs both and is gated",
+      [s.pays for s in _vq.steps] == [0, 70, 71, 0]
+      and _vq.steps[3].needed() == (70, 71) and _vq.steps[3].gated)
+check("and it lints clean", not [p for p in _VQ.lint(list(_vcat.values()))
+                                  if p.startswith("vacancy")])
+_vj = _VQ.QuestJournal(ledger=_VQ.QuestLedger())
+check("both halves are protected while Check-Out is still to do",
+      {70, 71} <= _vj.protected_items())
+_vopen = {s.key for s in _vj.open_steps(vac_obs(st=VAC_ST_OPEN, g=1).world)}
+check("a site somebody banked is closed for us, the other is not",
+      "vacancy.1" not in _vopen and "vacancy.2" not in _vopen and "vacancy.3" in _vopen)
+_vj.on_vac("saved", False, 4)
+check("somebody else's save goes on the ledger as theirs",
+      _vj.ledger.steps["vacancy.4"]["by"] == "another survivor" and "vacancy.4" not in _vj.done)
+_vj.open_steps(vac_obs(st=VAC_ST_SAVED).world)
+check("once the sign is out the halves are litter again",
+      not {70, 71} & _vj.protected_items())
+vp3 = make_policy("quester", random.Random(6))
+vp3.set_pid(2)
+vp3.on_event({"k": "vac", "w": "hook", "pid": 2, "q": 20, "r": 22, "rm": 8})
+vp3.on_event({"k": "vac", "w": "room", "pid": -1, "q": 20, "r": 22, "rm": 7})
+vp3.on_event({"k": "vac", "w": "desk", "pid": 4, "q": 20, "r": 22, "rm": 7})
+vp3.on_event({"k": "vac", "w": "hum", "pid": 2, "q": 20, "r": 22, "has": 0})
+check("its own part is booked, another's is not, and the hum is counted",
+      vp3.stats["vac_parts"] == [1] and vp3.stats["vac_hums"] == 1
+      and "vacancy.1" in vp3.journal.done and "vacancy.2" not in vp3.journal.done)
+vp3.on_event({"k": "vac", "w": "fallen", "pid": -1, "q": 20, "r": 22, "rm": 0})
+check("the fall is the world's (pid -1) and still booked", vp3.stats["vac_outcome"] == "fallen")
+_VQ.LEDGER.reset()
+
+# -- the oracle --------------------------------------------------------------
+_vnow = [100.0]
+
+
+def _vwo(name):
+    return WireOracle(FindingLog(), name, clock=lambda: _vnow[0])
+
+
+def _vchecks(o):
+    return {f.check for f in o.findings.first.values()}
+
+
+def _vtick(o, obs, st, rm, g=0, town=(20, 22)):
+    o.on_rx({"t": "s", "tk": 1, "p": [], "world": {"vac": {
+        "q": town[0], "r": town[1], "st": st, "rm": rm, "g": g,
+        "dq": -1, "dr": -1, "kq": -1, "kr": -1}}}, obs)
+
+
+_vw = _vwo("vac")
+_vob = vac_obs()
+for _st, _rm in ((0, 8), (1, 8), (1, 7), (1, 6)):
+    _vtick(_vw, _vob, _st, _rm)
+check("a count going down is fine", not len(_vw.findings))
+_vtick(_vw, _vob, 1, 7)
+check("the count going up while it counts is a finding", "vac_rooms_rose" in _vchecks(_vw))
+_vtick(_vw, _vob, 0, 8)
+check("the sign going back a stage over the same town is a finding",
+      "vac_stage_backwards" in _vchecks(_vw))
+_vw = _vwo("vac")
+_vtick(_vw, _vob, VAC_ST_SAVED, 4)
+_vtick(_vw, _vob, VAC_ST_SIGN, 8, town=(40, 30))
+_vtick(_vw, _vob, VAC_ST_OPEN, 8, town=(40, 30))
+check("a new town starts over: no finding", not len(_vw.findings))
+_vw = _vwo("vac")
+_vo3 = vac_obs(st=VAC_ST_OPEN, items=(70,))
+_vw.on_rx({"t": "ev", "k": "enc_start", "pid": 2, "q": 20, "r": 22, "vac": 4}, _vo3)
+check("Check-Out opening for us with only the register is a finding",
+      "vac_checkout_ungated" in _vchecks(_vw))
+_vw.on_rx({"t": "ev", "k": "vac", "w": "saved", "pid": 2, "q": 20, "r": 22, "rm": 5}, _vo3)
+check("and a save out of it another", "vac_saved_without_items" in _vchecks(_vw))
+for _vspent in (True, False):
+    _vw = _vwo("vac")
+    _vo4 = vac_obs(st=VAC_ST_OPEN, items=(70, 71))
+    _vw.on_rx({"t": "ev", "k": "enc_start", "pid": 2, "q": 20, "r": 22, "vac": 4}, _vo4)
+    if _vspent:                                    # the vac_out item_result landed
+        _vo4.players[2].inv_type[:2] = [0, 0]
+        _vw.on_rx({"t": "item_result", "ok": True, "act": "vac_out"}, _vo4)
+    _vw.on_rx({"t": "ev", "k": "vac", "w": "saved", "pid": 2, "q": 20, "r": 22, "rm": 5}, _vo4)
+    _vnow[0] += 10.0
+    _vw.poll()
+    if _vspent:
+        check("with both halves, and the pair spent: no finding", not len(_vw.findings))
+    else:
+        check("saved with the pair still in the pack is a finding",
+              _vchecks(_vw) == {"vac_items_not_spent"})
+for _vcounted in (True, False):
+    _vw = _vwo("vac")
+    _vo6 = vac_obs(st=VAC_ST_OPEN)
+    _vtick(_vw, _vo6, VAC_ST_OPEN, 8)
+    _vw.on_rx({"t": "enc_path", "biome": "vacancy", "id": 2, "vac": 2}, _vo6)
+    _vw.on_rx({"t": "ev", "k": "enc_res", "pid": 2, "out": 1, "it": 70, "iq": 1}, _vo6)
+    _vw.on_rx({"t": "ev", "k": "enc_bank", "pid": 2}, _vo6)
+    if _vcounted:
+        _vtick(_vw, _vo6, VAC_ST_OPEN, 8, g=1)
+    _vnow[0] += 10.0
+    _vw.poll()
+    if _vcounted:
+        check("a desk banked with the register, and the bit set: no finding", not len(_vw.findings))
+    else:
+        check("a desk banked with the register that never sets the bit is a finding",
+              _vchecks(_vw) == {"vac_bank_not_counted"})
+
+# -- what metrics.py makes of it -------------------------------------------
+with tempfile.TemporaryDirectory() as _vtd:
+    _vp = Path(_vtd) / "v.jsonl"
+    with Recorder(_vp, {"synthetic": True}) as _vrec:
+        for _arch in (1, 2):                       # broadcast: both bots saw each one
+            for _sq, _d in enumerate((
+                    {"k": "enc_start", "pid": 2, "q": 20, "r": 22, "vac": 1},
+                    {"k": "vac", "w": "hook", "pid": 2, "q": 20, "r": 22, "rm": 8},
+                    {"k": "vac", "w": "room", "pid": -1, "q": 20, "r": 22, "rm": 7},
+                    {"k": "vac", "w": "desk", "pid": 3, "q": 20, "r": 22, "rm": 7},
+                    {"k": "vac", "w": "fallen", "pid": -1, "q": 20, "r": 22, "rm": 0}), 1):
+                _vrec.write("rx", _arch, dict(_d, t="ev", sq=_sq))
+    _vm = _kmet.RunReport(_vp).vacancy()
+check("metrics: who did which part, the nights counted, how it ended",
+      _vm["done"] == [("hook", 2), ("desk", 3)] and _vm["nights"] == 1
+      and _vm["outcome"] == "fallen" and _vm["rooms"] == 0 and _vm["opened"] == {1: 1}
+      and _vm["by_bot"] == {2: [1]})
+
 print("config drift (firmware source is the authority)")
 _fw_src = _ino + "".join((_FW / f).read_text(encoding="utf-8")
                          for f in ("tunnels.hpp", "kane.hpp", "world-system.hpp"))
@@ -3447,5 +3764,183 @@ _lp.layers = ("pursue",)
 check("a subclass can reorder the chain by name", _lp.decide(_lo).why.startswith("pursue:"))
 _lp.pursue = lambda obs: Action("noop", why="pinned")
 check("a method replaced on the instance is honoured", _lp.decide(_lo).why == "pursue: pinned")
+
+# -- stale terrain: world events that change a hex, and a refusal that says so
+print("stale terrain (fire, flood, a `terrain` nack)")
+_to = surface_obs(food=0)                  # Open Scrub everywhere: forageable
+_to.map.grid[10][10] = mk(2)               # standing in Forest
+_tp = pmod.make("scoremax", random.Random(1)); _tp.set_pid(2)
+check("hungry in a forest, it forages", _is(_tp.decide(_to), config.ACT_FORAGE))
+_to.apply({"t": "ev", "k": "fire_spread", "q": 10, "r": 10, "intensity": 2})
+check("a hex catching fire is still the same terrain", _to.map[(10, 10)].terrain == 2)
+_to.apply({"t": "ev", "k": "fire_spread", "q": 10, "r": 10, "intensity": 0})
+check("a hex burning out becomes Ash Dunes", _to.map[(10, 10)].terrain == 1)
+check("and it no longer forages there", not _is(_tp.decide(_to), config.ACT_FORAGE))
+_to.apply({"t": "ev", "k": "flood_washout", "q": 11, "r": 10, "intensity": 5})
+check("a washout becomes the terrain in `intensity`", _to.map[(11, 10)].terrain == 5)
+_to.apply({"t": "ev", "k": "flood_washout", "q": 12, "r": 10, "intensity": 3})
+check("the flood front becomes Marsh", _to.map[(12, 10)].terrain == 3)
+# The nack alone, with a map that still says Forest: the hex is marked and
+# the harvest, the hunt and the scrap errand stop asking.
+_to2 = surface_obs(food=0)
+_to2.map.grid[10][10] = mk(2)
+_tp2 = pmod.make("scoremax", random.Random(1)); _tp2.set_pid(2)
+check("before the refusal it forages", _is(_tp2.decide(_to2), config.ACT_FORAGE))
+_tp2.on_reply("act", False, "terrain")
+check("a `terrain` nack marks the hex", (0, 10, 10) in _tp2._terrain_refused)
+check("and the harvest is not sent again there", not _is(_tp2.decide(_to2), config.ACT_FORAGE))
+check("the staple hunt will not walk to a refused hex either",
+      _tp2.terrain_doubtful(_to2, 10, 10) and not _tp2.terrain_doubtful(_to2, 11, 10))
+_to2.me.q = 11                             # a step away, the map is trusted again
+check("a different hex is harvested as before", _is(_tp2.decide(_to2), config.ACT_FORAGE))
+
+# -- the Creeping Doom, a full pack, and the staple hunt ---------------------
+print("the Doom, a full pack, and the staple hunt")
+import re as _re
+from navigate import DOOM_DANGER_COST
+from policy.survivor import DOOM_FLEE_RADIUS
+# The danger map: the Doom's position rides every `s`, and from awareness
+# 76 the ground around it is priced for every planner.
+_dm = surface_obs()
+_dm.apply({"t": "s", "tk": 20, "p": [], "world": {"doom": {"q": 20, "r": 20, "awareness": 100}}})
+check("the Doom awake prices the ground around it",
+      _dm.map.danger_cost.get((20, 20)) == DOOM_DANGER_COST
+      and _dm.map.danger_cost.get((22, 20)) == DOOM_DANGER_COST
+      and (24, 20) not in _dm.map.danger_cost)
+_dm.apply({"t": "s", "tk": 21, "p": [], "world": {"doom": {"q": 20, "r": 20, "awareness": 50}}})
+check("and a dozing Doom prices nothing", (20, 20) not in _dm.map.danger_cost)
+# The flee layer: two hexes from it at awareness 100, step to three.
+_df = surface_obs()
+_df.world.doom_q, _df.world.doom_r, _df.world.doom_awareness = 12, 10, 100
+_dp = pmod.make("scoremax", random.Random(1)); _dp.set_pid(2)
+a = _dp.decide(_df)
+check("two hexes from the Doom, it steps away", a.kind == "move" and a.why.startswith("doom:"))
+check("to a hex three away", "(10,9)" in a.why and "at 3" in a.why)
+_df.world.fire = [[10, 9, 2]]
+a = _dp.decide(_df)
+check("but never onto a burning hex", a.kind == "move" and "(10,9)" not in a.why and "at 3" in a.why)
+_df.world.fire = []
+_df.world.doom_awareness = 60
+check("a Doom below 76 is only a warning: no flee",
+      not _dp.decide(_df).why.startswith("doom:"))
+_df.world.doom_awareness = 100
+_df.world.doom_q = 10 + DOOM_FLEE_RADIUS + 1
+check("out of its flee radius, the chain goes on as before",
+      not _dp.decide(_df).why.startswith("doom:"))
+check("the flee steps are counted", _dp.stats["doom_flee_moves"] == 2)
+# Hysteresis: once fleeing it keeps going past the flee radius, up to
+# the safe one -- the hunt walked the first rerun's bots straight back.
+from policy.survivor import DOOM_SAFE_RADIUS
+_df.world.doom_q = 12
+_dp.decide(_df)                                   # 2 away: fleeing
+_df.world.doom_q = 10 + DOOM_FLEE_RADIUS + 1
+check("past the flee radius it is still fleeing", _dp.decide(_df).why.startswith("doom:"))
+_df.world.doom_q = 10 + DOOM_SAFE_RADIUS + 1
+check("and stops once it is safe", not _dp.decide(_df).why.startswith("doom:"))
+_df.world.doom_q = 10 + DOOM_FLEE_RADIUS + 1
+check("from safe, the flee radius is the trigger again",
+      not _dp.decide(_df).why.startswith("doom:"))
+# Chem storm: roof the hex, or walk to cover.
+_wo = surface_obs()
+_wo.players[2].inv = [5, 4, 0, 0, 1]
+_wp = pmod.make("scoremax", random.Random(1)); _wp.set_pid(2)
+check("clear weather: no cover sought", not _wp.decide(_wo).why.startswith("weather:"))
+_wo.weather = config.WEATHER_CHEM
+a = _wp.decide(_wo)
+check("a chem storm with a scrap: roof this hex now",
+      a.kind == "act" and a.a == config.ACT_SHELTER and a.why.startswith("weather:"))
+_wo.players[2].inv[config.RES_SCRAP] = 0
+_wo.map.grid[10][12] = mk(config.TERR_SETTLEMENT)
+a = _wp.decide(_wo)
+check("without scrap, the nearest cover within today's AP",
+      a.kind == "move" and "weather: chem storm: cover at (12,10)" in a.why)
+_wo.map.grid[10][10] = mk(config.TERR_SETTLEMENT)
+check("already covered: nothing to do", not _wp.decide(_wo).why.startswith("weather:"))
+_wo.map.grid[10][10] = mk(); _wo.map.grid[10][12] = mk()
+_wo.players[2].depth = 1
+check("underground the storm cannot reach", _wp.weather_action(_wo) is None)
+_wo.players[2].depth = 0
+# Bed: hurt or late, cover within today's AP is where the day ends.
+from policy.survivor import BED_AP
+_bo = surface_obs(ll=3, ap=6)
+_bo.map.grid[10][12] = mk(config.TERR_SETTLEMENT)
+_bp = pmod.make("scoremax", random.Random(1)); _bp.set_pid(2)
+a = _bp.decide(_bo)
+check("hurt, with a Settlement two hexes off, it goes to bed there",
+      a.kind == "move" and a.why.startswith("bed:") and "(12,10)" in a.why)
+_bo.players[2].ll = 6
+check("healthy with the day ahead, it does not", not _bp.decide(_bo).why.startswith("bed:"))
+_bo.players[2].ap = BED_AP
+check("but late in the day it does", _bp.decide(_bo).why.startswith("bed:"))
+_bo.players[2].ap = 1
+check("not when cover is out of today's reach", not _bp.decide(_bo).why.startswith("bed:"))
+_bo.players[2].ap = BED_AP
+_bo.players[2].inv[config.RES_WATER] = 0
+check("a staple emergency comes first", not _bp.decide(_bo).why.startswith("bed:"))
+_bo.players[2].inv[config.RES_WATER] = 5
+_bo.map.grid[10][10] = mk(config.TERR_SETTLEMENT)
+check("already covered: no walk", _bp.bed_action(_bo) is None)
+_bo.map.grid[10][10] = mk(TERR_BUNKER); _bo.map.grid[10][12] = mk(TERR_BUNKER)
+check("a hatch is never a bed", _bp.bed_action(_bo) is None)
+_dp.on_event({"k": "doom_act", "pid": 2, "q": 10, "r": 10, "llLost": 1})
+_dp.on_event({"k": "downed", "pid": 2, "cause": "creeping doom"})
+_dp.on_event({"k": "downed", "pid": 3, "cause": "thirst"})      # someone else's
+check("its hits and what killed us are booked",
+      (_dp.stats["doom_hits"], _dp.stats["doom_ll_lost"], _dp.stats["death_causes"])
+      == (1, 1, {"creeping doom": 1}))
+# Not back to a grave the Doom is sitting on.
+_dg = recover_obs(gi={}, res=(3, 0, 0, 0, 0))                    # grave at (14,10)
+_dg.world.doom_q, _dg.world.doom_r, _dg.world.doom_awareness = 15, 10, 100
+_dr = pmod.make("contentmax", random.Random(1)); _dr.set_pid(2)
+check("a grave beside the Doom is left for later", _dr.recovery_target(_dg) is None)
+_dg.world.doom_awareness = 0
+check("and walked to once it has gone", _dr.recovery_target(_dg) is not None)
+# A full pack: the hunt no longer walks onto a pile it cannot hold, and
+# make_room() puts down the junk that keeps the water out.
+_fo = surface_obs(water=0, food=2)
+_fo.players[2].inv = [0, 2, 2, 2, 2]                              # 8 of 8
+_fo.map.grid[10][11] = mk(resource=config.RES_WATER + 1)
+_fp = pmod.make("scoremax", random.Random(1)); _fp.set_pid(2)
+check("a full pack does not hunt a pile it cannot take", _fp.staple_hunt(_fo) is None)
+a = _fp.decide(_fo)
+check("it puts fuel down to make room for two water",
+      a.kind == "drop_res" and a.res == config.RES_FUEL + 1 and a.qty == 2
+      and "making room for water" in a.why)
+check("and not again until the board has answered", _fp.make_room(_fo) is None)
+_fo.players[2].inv = [0, 2, 0, 2, 2]                              # the drop landed
+check("with room, the hunt walks to the pile",
+      "(11,10)" in (_fp.staple_hunt(_fo) or Action("noop")).why)
+_fo.players[2].inv = [0, 2, 0, 1, 1]
+check("nothing spare below the keeps: no drop", _fp.make_room(_fo) is None)
+_fq = pmod.make("quester", random.Random(1)); _fq.set_pid(2)
+_fo.players[2].inv = [0, 2, 0, 2, 5]
+check("a quester without its canteen keeps the canteen's scrap",
+      _fq.staple_keeps(_fo)[config.RES_SCRAP] == config.RECIPES[config.CANTEEN_RECIPE]["cost"][config.RES_SCRAP])
+a = _fq.make_room(_fo)
+check("and drops the scrap beyond it", a is not None and a.res == config.RES_SCRAP + 1 and a.qty == 2)
+check("the quester roofs the night with any scrap", _fq.wants_shelter(_fo))
+_fo.players[2].inv_type[0] = config.CANTEEN_ITEM
+check("once it owns the canteen one scrap is the reserve", _fq.staple_keeps(_fo)[config.RES_SCRAP] == 1)
+_fb = pmod.make("biker", random.Random(1)); _fb.set_pid(2)
+check("the biker keeps by its own plan", isinstance(_fb.staple_keeps(_fo), dict))
+# The hunt locks its target: a new, closer pile does not pull it off course.
+_lo = surface_obs(water=0, food=4)
+_lo.map.grid[10][13] = mk(resource=config.RES_WATER + 1)
+_lo.map.grid[10][7] = mk(resource=config.RES_WATER + 1)
+_lp = pmod.make("scoremax", random.Random(1)); _lp.set_pid(2)
+a = _lp.decide(_lo)
+_m = _re.search(r"EMERGENCY water -> \((\d+),(\d+)\)", a.why)
+check("dry, it hunts one of two equal piles", _m is not None)
+_tq = int(_m.group(1)) if _m else 13
+_lo.map.grid[10][_tq - 1 if _tq > 10 else _tq + 1] = mk()         # (unchanged, scrub)
+_lo.map.grid[10][9 if _tq > 10 else 11] = mk(resource=config.RES_WATER + 1)   # a closer pile the other way
+a = _lp.decide(_lo)
+check("a closer pile the other way does not turn it round", f"({_tq},10)" in a.why)
+_lo.map.grid[10][_tq] = mk()                                      # the pile is gone
+a = _lp.decide(_lo)
+check("the lock drops with the pile", f"({_tq},10)" not in a.why and "EMERGENCY water" in a.why)
+_lo.players[2].inv[0] = 5
+check("and clears when the emergency does",
+      _lp.staple_hunt(_lo) is None and _lp._hunt_lock is None)
 
 print(f"\n{ok} checks passed")

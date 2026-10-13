@@ -369,6 +369,73 @@
         'the wasteland notices. {n}, and the odds shift under everyone.',
       ],
     },
+    // VACANCY (vacancy.hpp): the sign over a town, its count, its endings.
+    // The board's own story, so {name} is whoever was in the scene that
+    // moved it, or 'somebody'.
+    VAC_SIGN: {
+      ANY: [
+        'a sign comes on over a town. it says vacancy. there is no motel.',
+        'new board, new sign. pink, humming, over a town that did not order one.',
+        'somewhere a town has a motel sign now. nobody built it.',
+        'vacancy, says the sign. the town under it has not been asked.',
+      ],
+    },
+    VAC_HOOK: {
+      ANY: [
+        '{name} asks about the sign. the town starts counting: {n} nights.',
+        '{name} hears the town out. {n} rooms left, and nobody can say who lived in the full ones.',
+        'the town tells {name} about the doors. {n} nights. the sign hums louder, once.',
+        '{name} counts the chairs at supper. one too many. {n} to go.',
+      ],
+    },
+    VAC_DESK: {
+      ANY: [
+        '{name} walks off a square of carpet with the register under one arm.',
+        'the front desk loses its book. {name} has it now. the lamp goes out.',
+        '{name} takes the register. the clerk smiles with somebody else\'s mouth.',
+        'one book, a whole town in it, no departures. {name} is carrying it.',
+      ],
+    },
+    VAC_KEYS: {
+      ANY: [
+        '{name} comes back out of a corridor longer than the building, with the master key.',
+        'the maid does not look up. {name} has the key anyway.',
+        '{name} has the master key. it is warm. it should not be.',
+        'every door in the corridor clicks open behind {name}. nobody comes out.',
+      ],
+    },
+    VAC_ROOM: {
+      ANY: [
+        'another house checks in overnight. {n} rooms left.',
+        'a window on the east row is lit now. {n} to go.',
+        'the town counts its chairs again. {n} rooms left.',
+        'somebody goes to sleep in their own bed and wakes up in a motel. {n} left.',
+      ],
+    },
+    VAC_SAVED: {
+      ANY: [
+        '{name} checks the whole town out. the sign pops and goes dark.',
+        'the hum stops. {name} has signed everybody out.',
+        'every chair has somebody on it. {name} did that.',
+        'room 1147 closes. {name} is standing in an empty frame in the square.',
+      ],
+    },
+    VAC_FALLEN: {
+      ANY: [
+        'no vacancy. the town is full.',
+        'the little box lights up. no. the town checked in, all of it.',
+        'the sign finally works perfectly. the town is gone.',
+        'every bed is made and every bed is taken. no vacancy.',
+      ],
+    },
+    VAC_LOST: {
+      ANY: [
+        'the town under the sign is gone, and the sign went with it.',
+        'something got to the town before the sign did.',
+        'no town, no sign. the wasteland settled it the other way.',
+        'the sign goes out with the town. nobody checked out. nobody checked in.',
+      ],
+    },
     VANISHED: {
       ANY: [
         '{name} is gone from the board.',

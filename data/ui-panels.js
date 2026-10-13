@@ -56,7 +56,7 @@ function initActionPanel() {
     actionStatusBar.innerHTML =
       `<span class="act-ap-badge">AP: ${me?.ap ?? 0}</span>` +
       `<span class="act-terrain-ctx">${escHtml(note ?? terrName)}</span>`;
-    ['action-trade-ctrl', 'action-craft-ctrl'].forEach(id => {
+    ['action-trade-ctrl', 'action-craft-ctrl', 'action-treat-ctrl', 'action-assist-ctrl'].forEach(id => {
       document.getElementById(id).style.display = (id === ctrlId) ? '' : 'none';
     });
     actionPanel.classList.add('open');
@@ -432,6 +432,109 @@ function initActionPanel() {
     if (_terrSub) _terrSub.textContent = terrName ? 'IN THE ' + terrName.toUpperCase() : '';
     document.getElementById('action-trade-ctrl').style.display = 'none';
     document.getElementById('action-craft-ctrl').style.display = 'none';
+    document.getElementById('action-treat-ctrl').style.display = 'none';
+    document.getElementById('action-assist-ctrl').style.display = 'none';
+  }
+
+  // ── Team play (docs/team-play.md) ────────────────────────────────
+  // What TREAT would do for survivor p, or null: their wounds pick the job,
+  // exactly as doTreat() reads them. The treater's archetype and the hex
+  // decide whether it is allowed; the treater pays. capOverride stands in
+  // for llCap when the wire has not carried it yet (our own survivor).
+  function treatJobFor(p, treaterIsMedic, terr, capOverride) {
+    if (!p) return null;
+    if ((p.wnd?.[WOUND_MAJOR] ?? 0) > 0)
+      return (treaterIsMedic || terr === 9) ? { label: 'TREAT WOUND', ap: 2 } : null;
+    const cap = p.llCap || capOverride || 0;
+    return (terr === 9 && cap > 0 && (p.ll ?? 0) < cap) ? { label: 'HEAL', ap: 1 } : null;
+  }
+
+  // Survivors on this hex who could be treated right now: up, and not in a scene.
+  function treatableHere() {
+    return players.filter(p => p.id !== myId && p.on && p.ll > 0 && !p.enc && sharesMyHex(p));
+  }
+
+  // TREAT patient picker: shown when someone besides you could use it.
+  function openTreatPicker() {
+    const el = document.getElementById('action-treat-list');
+    el.innerHTML = '';
+    const me = myId >= 0 ? players[myId] : null;
+    if (!me) return;
+    const terr    = myBoardCell()?.terrain ?? null;
+    const isMedic = me.arch === 2;
+    const ap  = me.ap ?? 0, med = me.inv?.[3] ?? 0;
+    const myCap = me.llCap || uiLLCap.val || 0;
+    [me, ...treatableHere()].forEach(p => {
+      const self = p.id === myId;
+      const job  = treatJobFor(p, isMedic, terr, self ? myCap : 0);
+      if (!job) return;
+      const can  = ap >= job.ap && med >= 1;
+      const name = self ? 'Yourself' : (p.nm || 'P' + p.id);
+      const maj  = p.wnd?.[WOUND_MAJOR] ?? 0;
+      const cap  = self ? myCap : (p.llCap || '?');
+      const btn  = document.createElement('button');
+      btn.className = 'chk-action-btn craft-card' + (can ? '' : ' action-disabled');
+      btn.innerHTML =
+        `<span class="act-label">${escHtml(job.label)} — ${escHtml(name)}</span>` +
+        `<span class="act-desc">LL ${p.ll ?? 0}/${cap}` +
+          (maj ? ` · ${maj} major wound${maj > 1 ? 's' : ''} · your Endure vs DN${TREAT_DN}` : ' · no roll') +
+          ` · ${job.ap} AP + 1 Medicine</span>` +
+        (can ? '' : `<span class="act-unavail-reason">${med < 1 ? 'Needs 1 Medicine' : `Needs ${job.ap} AP (have ${ap})`}</span>`);
+      btn.addEventListener('click', () => {
+        if (!can) return;
+        send(self ? { t: 'act', a: ACT_TREAT } : { t: 'act', a: ACT_TREAT, to: p.id });
+        closeActionPanel();
+      });
+      el.appendChild(btn);
+    });
+    openSubPanel('✚ TREAT', 'action-treat-ctrl', 'Your AP and Medicine · their wounds');
+  }
+
+  // ASSIST picker: back the next roll of anyone on this hex who is in a
+  // scene. One token each (enc_assist), no AP; the server spends the help on
+  // that roll and credits the helpers if it comes off.
+  function openAssistPicker() {
+    const el = document.getElementById('action-assist-list');
+    el.innerHTML = '';
+    const me = myId >= 0 ? players[myId] : null;
+    if (!me) return;
+    const scenes = players.filter(p => p.id !== myId && p.on && p.enc && sharesMyHex(p));
+    if (!scenes.length)
+      el.innerHTML = '<div class="action-no-cond">Nobody on this hex is in a scene</div>';
+    scenes.forEach(p => {
+      const n    = p.encAs | 0;
+      const mine = ((p.encAsBy | 0) >> myId) & 1;
+      const head = document.createElement('div');
+      head.className   = 'check-lbl';
+      head.style.marginTop = '10px';
+      head.textContent = `STEADY ${(p.nm || 'P' + p.id).toUpperCase()} — ${n}/${ENC_ASSIST_CAP} BEHIND THE NEXT ROLL`;
+      el.appendChild(head);
+      const full = mine ? 'You are already behind this roll'
+                 : n >= ENC_ASSIST_CAP ? `${ENC_ASSIST_CAP} allies are already behind this roll` : '';
+      if (full) {
+        const d = document.createElement('div');
+        d.className = 'action-no-cond'; d.textContent = full;
+        el.appendChild(d);
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'trade-res-row';
+      RES_SHORT.forEach((lbl, i) => {
+        const have = me.inv?.[i] ?? 0;
+        const b = document.createElement('button');
+        b.className   = 'chk-action-btn assist-res' + (have > 0 ? '' : ' action-disabled');
+        b.textContent = `${lbl} ×${have}`;
+        b.title       = have > 0 ? `Give 1 ${lbl}: their next roll DN −${ENC_ASSIST_DN}` : `No ${lbl} to give`;
+        b.addEventListener('click', () => {
+          if (have <= 0) return;
+          send({ t: 'enc_assist', to: p.id, res: i });
+          closeActionPanel();
+        });
+        row.appendChild(b);
+      });
+      el.appendChild(row);
+    });
+    openSubPanel('◉ ASSIST', 'action-assist-ctrl', `One token · their next roll DN −${ENC_ASSIST_DN} · free`);
   }
 
   // ── Action deck ──────────────────────────────────────────────────
@@ -444,7 +547,7 @@ function initActionPanel() {
   const DECK_ICON = {
     [ACT_FORAGE]: 'forage', [ACT_WATER]: 'water', [ACT_SCAV]: 'scav', [ACT_SHELTER]: 'shelter',
     [ACT_CRAFT]: 'craft', [ACT_TRADE]: 'trade', [ACT_TREAT]: 'treat', [ACT_SURVEY]: 'survey',
-    [ACT_REST]: 'rest',
+    [ACT_REST]: 'rest', [ACT_ASSIST]: 'assist',
   };
 
   // Everything the deck needs to light itself, from the current state.
@@ -505,9 +608,30 @@ function initActionPanel() {
       defs.push({ id: ACT_TREAT, label: 'HEAL', apCost: 1,
                   desc: 'Settlement care — 1 Medicine restores 1 Life Level, no roll' });
     }
+    // TREAT for a teammate on this hex (docs/team-play.md). When anyone else
+    // here could use it, the cell becomes a patient picker -- its cost is the
+    // cheapest job on offer, and the picker gates each patient on its own.
+    const allyPatients = me ? treatableHere().filter(p => treatJobFor(p, isMedic, terr, 0)) : [];
+    if (allyPatients.length) {
+      const jobs = [treatJobFor(me, isMedic, terr, llCap), ...allyPatients.map(p => treatJobFor(p, isMedic, terr, 0))]
+        .filter(Boolean);
+      const teamDef = { id: ACT_TREAT, label: 'TREAT', apCost: Math.min(...jobs.map(j => j.ap)),
+                        desc: 'Patch up yourself or a survivor on your hex — your AP, your Medicine',
+                        teamTreat: true, fire: openTreatPicker };
+      const at = defs.findIndex(d => d.id === ACT_TREAT);
+      if (at >= 0) defs[at] = teamDef; else defs.push(teamDef);
+    }
     // Scout-exclusive: SURVEY is hidden for non-Scouts
     if (isScout) {
       defs.push({ id: ACT_SURVEY, label: 'SURVEY', apCost: 0, desc: 'Reveal terrain beyond vision — free for Scout' });
+    }
+
+    // ASSIST: offered only while someone on this hex is in a scene. Free,
+    // like TRADE -- it costs a token, not a day's work.
+    if (me && players.some(p => p.id !== myId && p.on && p.enc && sharesMyHex(p))) {
+      defs.push({ id: ACT_ASSIST, label: 'ASSIST', apCost: 0,
+                  desc: `Spend one token to steady a teammate's next encounter roll — DN −${ENC_ASSIST_DN} each, ${ENC_ASSIST_CAP} allies at most`,
+                  fire: openAssistPicker });
     }
 
     // TRADE availability: requires another connected player, or the caravan, on the same hex
@@ -529,20 +653,26 @@ function initActionPanel() {
       // Settlement (9), and so does the no-wound heal for every archetype.
       const treatAvail = terr === null || terr === 9 || (isMedic && majorWounds > 0);
       const available  = def.id === ACT_TRADE ? tradeAvail
+                       : def.id === ACT_ASSIST ? true
+                       : def.teamTreat ? true
                        : def.id === ACT_TREAT ? treatAvail
                        : def.id === ACT_CRAFT ? craftAvail
                        :                        terrAvail;
       const hasAP      = ap >= def.apCost;
       const hasScrap   = def.id !== ACT_SHELTER || scrap >= shelterScrapNeeded(shelterLevel);
       const hasMed     = def.id !== ACT_TREAT || med >= 1;
-      const hasWound   = def.id !== ACT_TREAT || majorWounds > 0 || ll < llCap;
-      let canAct       = available && hasAP && hasScrap && hasMed && hasWound;
+      const hasWound   = def.id !== ACT_TREAT || def.teamTreat || majorWounds > 0 || ll < llCap;
+      const hasTokens  = def.id !== ACT_ASSIST || (me?.inv ?? []).some(v => v > 0);
+      let canAct       = available && hasAP && hasScrap && hasMed && hasWound && hasTokens;
 
       // Dynamic desc: BUILD/UPGRADE SHELTER shows actual cost
       if (def.id === ACT_SHELTER) def.desc = getShelterDesc(shelterMaxed, shelterLevel, scrap, ap);
 
-      let blockReason = getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, majorWounds, ll, llCap, terr);
-      if (gate && !(def.id === ACT_TRADE && gateExemptsTrade)) { canAct = false; blockReason = gate; }
+      let blockReason = def.teamTreat        ? (med < 1 ? 'Needs 1 Medicine' : `Needs ${def.apCost} AP (have ${ap})`)
+                      : def.id === ACT_ASSIST ? 'No tokens to give'
+                      : getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, majorWounds, ll, llCap, terr);
+      const freeAct = def.id === ACT_TRADE || def.id === ACT_ASSIST;
+      if (gate && !(freeAct && gateExemptsTrade)) { canAct = false; blockReason = gate; }
       def.canAct = canAct;
       def.blockReason = canAct ? '' : blockReason;
     });
@@ -989,6 +1119,28 @@ function initMenuSystem() {
         )
       ),
 
+      sec('Together',
+        mp({ class: 'menu-text-body' },
+          'Survivors on the same hex can help each other. ◉ ASSIST appears on the deck while a ' +
+          'teammate here is in an encounter: give one token from your pack and their next roll is ' +
+          `DN ${ENC_ASSIST_DN} easier (${ENC_ASSIST_CAP} allies at most, one token each). It costs no AP, and if ` +
+          'the roll comes off you share the credit (+1 pt).'
+        ),
+        mp({ class: 'menu-text-body' },
+          '✚ TREAT works on anyone standing with you: their wounds decide the job, your AP and ' +
+          'Medicine pay for it. The Medic can close a teammate’s Major Wound anywhere; in a ' +
+          'Settlement anyone can heal a teammate 1 LL.'
+        ),
+        mp({ class: 'menu-text-body' },
+          'Three survivors on one hex when an improved shelter finishes raise a Settlement, and every ' +
+          'founder standing there scores the bonus.'
+        ),
+        mp({ class: 'menu-text-hint' },
+          'A crowd is loud. Every survivor sharing a hex raises the Creeping Doom’s awareness, ' +
+          'wherever it is — and stepping onto a teammate’s hex raises it at once.'
+        )
+      ),
+
       sec('Vision & Fog',
         mp({ class: 'menu-text-body' },
           'Your base vision radius is ' + VISION_R + ' hex. Terrain modifies this:'
@@ -1072,6 +1224,12 @@ function initMenuSystem() {
           ),
           md({ class: 'ht-track-row' },
             ms({}, 'SURVEY'), ms({}, '+2 pts first per hex, +0 repeats')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'ASSIST'), ms({}, '+1 pt when the roll you backed succeeds')
+          ),
+          md({ class: 'ht-track-row' },
+            ms({}, 'FOUND A SETTLEMENT'), ms({}, '+20 pts to every founder')
           ),
         ),
         mp({ class: 'menu-text-hint' },

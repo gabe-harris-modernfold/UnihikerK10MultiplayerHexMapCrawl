@@ -63,6 +63,18 @@ TRAP_KNOWN_COST = 8
 # most of the map but not all of it.  state.py fills WorldMap.danger_cost.
 KANE_DANGER_COST = 4
 KANE_CALLED_COST = 30
+# The Creeping Doom (world-system.hpp resolveDoomProximity): from
+# awareness 76 it burns the hex it stands on and strips the node under
+# anyone adjacent; at 100 it also takes an LL every world tick.  Price
+# the ground around it so no plan ends beside it -- the cost is additive,
+# like Kane's reach, so a route *through* it still exists when there is
+# no other.  state.py builds it into WorldMap.danger_cost with his.
+DOOM_DANGER_AWARENESS = 76
+# Radius 3 and a cost past any one hex's worth: on the first rerun a water
+# pile one hex from the Doom was still the hunt's best value, and the bot
+# walked back in the moment the flee layer let go.
+DOOM_DANGER_RADIUS = 3
+DOOM_DANGER_COST = 60
 
 
 def step_cost(cell) -> int | None:

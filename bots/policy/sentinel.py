@@ -103,6 +103,9 @@ class SentinelPolicy(ScoreMaxPolicy):
     # The soak bot holds the day open from its camp; walking off after Machine
     # Gun Kane's story would change what it measures. It still dodges him.
     kane_quest = False
+    # VACANCY likewise (its chain has no "vacancy" layer either); a camp on
+    # the sign's town still opens the town's scene on arrival.
+    vac_quest = False
 
     def __init__(self, rng, **kw):
         super().__init__(rng, **kw)
@@ -145,7 +148,7 @@ class SentinelPolicy(ScoreMaxPolicy):
     # free item actions (a heal, a ration under a threshold, a trade offer
     # to answer) move it nowhere, and the walking ones it leaves to the
     # others.  Everything after `bedtime` is the camp.
-    layers = ("climb_out", "asleep", "gear", "trade_reply", "item",
+    layers = ("climb_out", "asleep", "gear", "trade_reply", "item", "doom",
               "bedtime", "hold_camp", "survival", "camp_errand")
 
     def _decide(self, obs) -> Action:
