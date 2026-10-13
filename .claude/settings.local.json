@@ -134,7 +134,8 @@
       "PowerShell(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'sync_data|curl' } | Select ProcessId, Name, @{n='cmd';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(150,$_.CommandLine.Length\\)\\)}})",
       "PowerShell(cd C:\\\\SourceCode\\\\Esp32HexMapCrawl; $ok=$false; for\\($i=0;$i -lt 20;$i++\\){ $s=curl.exe -s --max-time 3 http://k10.local/state; if\\($s\\){$ok=$true;break}; Start-Sleep 2 }; \"up=$ok\"; if\\($ok\\){ .\\\\scripts\\\\sync_data.ps1 k10.local 2>&1 | Select-String -NotMatch '^\\\\s+\\\\d+ bytes' })",
       "PowerShell(cd C:\\\\SourceCode\\\\Esp32HexMapCrawl; .\\\\scripts\\\\reset_board.ps1 -Port COM5; $s = curl.exe -s --max-time 5 http://k10.local/state | ConvertFrom-Json; $s | Select pv, evtDrops, boot | Format-List; \\(curl.exe -s http://k10.local/assets.json | ConvertFrom-Json\\).version; \\(Get-Content data\\\\assets.json | ConvertFrom-Json\\).version)",
-      "PowerShell(curl.exe -s --max-time 8 http://k10.local/state)"
+      "PowerShell(curl.exe -s --max-time 8 http://k10.local/state)",
+      "PowerShell(\\(Get-Process python -EA SilentlyContinue | Measure-Object\\).Count; try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 6 http://192.168.4.59/state; $j = $r.Content | ConvertFrom-Json; \"pv=$\\($j.pv\\) uptime=$\\($j.uptime\\) heap=$\\($j.heap\\) minHeap=$\\($j.minHeap\\) connected=$\\($j.connected\\) day=$\\($j.day\\)\"; $j.boot | ConvertTo-Json -Compress } catch { \"state failed: $_\" })"
     ]
   }
 }

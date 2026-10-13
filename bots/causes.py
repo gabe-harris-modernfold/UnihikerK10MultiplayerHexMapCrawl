@@ -26,6 +26,7 @@ the damage record nearest to it:
 | lightning | `maybeIgniteLightning` direct strike | `fire_dmg`, `intensity == 10` (sentinel) |
 | creeping doom | `resolveDoomProximity` | `doom_act` with `llLost > 0` |
 | wasteland daisy | `ecoBiteCheck` (ecology.hpp) | `dmg` `cause == "wasteland daisy"` (protocol 3+; the flowers did not exist before) |
+| machine gun kane | `kaneFire` (kane.hpp) | `kane_fire` with `llLost > 0` (protocol 8+; he did not exist before) |
 | encounter hazard | `handleMsg_enc_choice` fail branch | `enc_res` `out == 0`, `penLL < 0` |
 | encounter cost | `handleMsg_enc_choice` `ch.costLL` | `enc_res` `out == 1` then a death (see below) |
 | booby trap | `encRunChoice` fail branch on a trap scene (traps.hpp) | `enc_res` `out == 0`, `penLL < 0`, `trap == 1` -- never a death: the LL floor is 1 |
@@ -59,6 +60,7 @@ from collections import Counter, defaultdict
 CAUSE_ORDER = [
     "thirst", "hunger", "exposure", "bad air", "radiation",
     "fire", "lightning", "flood", "creeping doom", "wasteland daisy",
+    "machine gun kane",
     "encounter hazard", "encounter cost", "booby trap", "action",
     "chem storm", "strangle fog", "unattributed",
 ]
@@ -215,6 +217,11 @@ class DamageLedger:
             elif k == "doom_act":
                 if d.get("llLost", 0) > 0:
                     causes = {"creeping doom": d["llLost"]}
+            elif k == "kane_fire":
+                # A burst (kane.hpp kaneFire): llLost is what landed, capped at
+                # KANE_BURST_CAP and at the LL there was; `ll` is what is left.
+                if d.get("llLost", 0) > 0:
+                    causes = {"machine gun kane": d["llLost"]}
             elif k == "enc_res":
                 if d.get("out") == 0 and d.get("penLL", 0) < 0:
                     causes = {("booby trap" if d.get("trap") else "encounter hazard"): -d["penLL"]}

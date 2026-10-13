@@ -196,11 +196,17 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
       enc.pendingRecipes |= (1u << (ch.recipeId - 1));
       ev.encRecipe = ch.recipeId;
     }
+    // A tunnel control panel's switch: the section comes on now, for
+    // everyone, whatever happens in the rest of the scene (tunnels.hpp).
+    if (ch.nextLights && enc.depth) tunnelLightSection(pid, enc.hexQ, enc.hexR);
     // Advance to the destination node
     strncpy(enc.nodeKey, ch.nextKey, ENC_KEY_LEN - 1); enc.nodeKey[ENC_KEY_LEN - 1] = 0;
     enc.canBank = ch.nextCanBank ? 1 : 0;
     enc.escape  = ch.nextEscape  ? 1 : 0;
     if (ch.nextTerminal) enc.active |= (1 << 7);
+    // The last node of a Kane chapter: it is read, whatever the survivor
+    // banks (kane.hpp). An escape node is a way out, not the end of it.
+    if (enc.kane && ch.nextTerminal && !ch.nextEscape) kaneChapterRead(pid, json, ch.nextKey);
     // cost_ll can take the last point of LL even on a success.
     if (p.ll == 0) encounterEnded = true;
   } else {
@@ -260,6 +266,25 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
   return nullptr;
 }
 
+// A section just came on (tunnelLightSection): everyone below gets a fresh vis
+// disk, which now carries its lit cells -- that is what reveals them and walks
+// the lights out on their screens. pushVisDisk() takes G.mutex itself, so this
+// runs after the handler has let go of it.
+static void pushLitVisDisks() {
+  bool     below[MAX_PLAYERS] = {};
+  uint32_t wsId[MAX_PLAYERS]  = {};
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+  tunnelLightsPending = false;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    below[i] = G.players[i].connected && G.players[i].depth;
+    wsId[i]  = G.players[i].wsClientId;
+  }
+  xSemaphoreGive(G.mutex);
+  for (int i = 0; i < MAX_PLAYERS; i++)
+    if (below[i])
+      if (AsyncWebSocketClient* cl = ws.client(wsId[i])) pushVisDisk(cl, i);
+}
+
 static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
   // {"t":"enc_choice","ci":N}
@@ -278,10 +303,14 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   const bool wasTrap = encounters[pid].trap != 0;
   const char* why = encRunChoice(client, pid, ci, nullptr);
   const bool ended = !encounters[pid].active;
+  const bool kaneMoved = kaneTakeSaveWanted();   // a chapter was just read
+  const bool lit = tunnelLightsPending;          // a section of tunnel lights came on
   xSemaphoreGive(G.mutex);
   if (why) wsNack(client, why);
+  // Everyone below sees it, and the board changed for the save.
+  if (lit) { pushLitVisDisks(); requestSave(); }
   // A trap that went off changed the board for everyone (and for the save).
-  if (wasTrap && ended) requestSave();
+  if ((wasTrap && ended) || kaneMoved) requestSave();
 }
 
 static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -381,6 +410,12 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       // Taking the bait is what disarms it. After the bank event, so every
       // client sees the haul land before the hex goes quiet.
       if (enc.trap) trapSettle(pid, TRAP_OUT_SPENT);
+      // A tunnel panel banked short of its switch is still a panel -- see
+      // endEncounter(). The tunnel scenes never offer a bank before the
+      // lights, so this is the belt to their braces.
+      if (enc.depth && !enc.trap && tunnelPanelDark(enc.hexQ, enc.hexR) &&
+          G.tunnel[enc.hexR][enc.hexQ].poi == 0)
+        G.tunnel[enc.hexR][enc.hexQ].poi = enc.encIdx;
       enc = {};
       banked = true;
     }
@@ -443,6 +478,11 @@ static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t
         // On a failed roll encRunChoice already ended it: a trap hazard always does.
       }
     }
+  } else if (encounters[pid].kane) {
+    // Walking away from one of Kane's chapters leaves it where it was -- his
+    // camp, the house, his fire -- and nobody chose to be there, so the
+    // threat clock does not tick either.
+    endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);
   } else {
     if (G.threatClock < 20) G.threatClock++;
     endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);  // walking away closes the place for good

@@ -503,6 +503,20 @@ static void loadEncounterIndex() {
                (int)trapTierLo[0], (int)trapTierHi[0], (int)trapTierLo[1], (int)trapTierHi[1],
                (int)trapTierLo[2], (int)trapTierHi[2]);
   }
+  // Machine Gun Kane's chapters (kane.hpp): named like the traps, file N =
+  // chapter N.   "kane": {"count": 5, "path": "kane"}
+  if (const char* ke = strstr(buf, "\"kane\"")) {
+    ke += 6;
+    int copyLen = min(80, (int)(sz - (size_t)(ke - buf)));
+    char tmp[84]; strncpy(tmp, ke, copyLen); tmp[copyLen] = 0;
+    if (char* close = strchr(tmp, '}')) *close = 0;   // this entry only
+    EncPoolInfo& kp = encPools[ENC_POOL_KANE];
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) kp.count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, kp.path, sizeof(kp.path));
+    Log.notice("Kane pool: %d chapters at /%s", (int)kp.count, kp.path);
+  }
   free(buf);
 }
 

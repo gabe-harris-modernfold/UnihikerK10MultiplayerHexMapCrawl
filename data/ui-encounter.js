@@ -127,6 +127,11 @@ function initEncounterOverlay() {
   let trapMode     = false;   // a booby trap opened this scene under a step (traps.hpp):
                                // no walking away at the start, and leaving with nothing
                                // leaves it armed -- on your map
+  let panelMode    = false;   // a tunnel control panel (a node carries "lights": true,
+                               // tunnels.hpp): it stays put until its section is lit
+  let kaneCh       = 0;       // 1-5: one of Machine Gun Kane's chapters (the file's top-level
+                               // "kane": {"chapter": n}, kane.hpp) -- walking away leaves it
+                               // where it was, for later
 
   const me = () => (myId >= 0 ? players[myId] : null);
 
@@ -342,7 +347,10 @@ function initEncounterOverlay() {
     if (phase === 'ejected') {
       leaveBtn.textContent = 'LEAVE';
       leaveBtn.classList.add('primary');
-      leaveHint.textContent = trapMode ? 'It went off. It will not go off again.' : 'The encounter is over.';
+      leaveHint.textContent = trapMode  ? 'It went off. It will not go off again.'
+                            : panelMode ? 'The panel is still back there, in the dark. Try it again.'
+                            : kaneCh    ? 'His story is still there. Come back to it.'
+                            : 'The encounter is over.';
       return;
     }
     if (atEscape()) {
@@ -387,7 +395,10 @@ function initEncounterOverlay() {
       return;
     } else {
       leaveBtn.textContent = 'WALK AWAY';
-      leaveHint.textContent = 'Leave empty-handed. The place stays closed to you.';
+      leaveHint.textContent = panelMode
+        ? 'Leave it dark for now. The panel will still be here.'
+        : kaneCh ? 'Leave it for now. It will still be here.'
+        : 'Leave empty-handed. The place stays closed to you.';
       return;
     }
     // Trimmed tokens are not dropped on the hex and there is no refund — say so
@@ -608,8 +619,16 @@ function initEncounterOverlay() {
     });
   };
 
+  // Only these refuse the choice in flight (encRunChoice, network-msg-encounter.hpp;
+  // encChoice in the mock). Any other error that lands mid-roll -- a move
+  // refused with "Cannot move during encounter", a trade, an act -- is about
+  // something else: treating it as a refusal rolled the panel back to the old
+  // node while the server had already moved on, and every click after that
+  // was "not open to you".
+  const CHOICE_REFUSALS = ['That choice is not open to you', 'Cannot afford cost'];
   globalThis._onEncError = function(msg) {
     if (!enc || phase !== 'rolling') return false;  // not ours — let the caller fall back to a toast
+    if (!CHOICE_REFUSALS.some(s => (msg || '').startsWith(s))) return false;
     clearTimeout(rollTimer);
     phase = 'reading';
     renderChoices();
@@ -631,6 +650,8 @@ function initEncounterOverlay() {
   function openEncounter(json, trap = false) {
     enc          = json;
     trapMode     = !!trap;
+    panelMode    = !trapMode && Object.values(json.nodes ?? {}).some(n => n?.lights);
+    kaneCh       = trapMode ? 0 : (json.kane?.chapter | 0);
     overlay.classList.toggle('trap', trapMode);
     picked       = pickPlaceholders(json.placeholders);
     pendingLoot  = [0, 0, 0, 0, 0];
@@ -647,8 +668,9 @@ function initEncounterOverlay() {
     // The board the player is actually on -- underground, p.q/p.r are the hatch.
     const cell = p ? (typeof myBoardCell === 'function' ? myBoardCell() : gameMap[p.r]?.[p.q]) : null;
     const tname = cell ? (TERRAIN[cell.terrain]?.name ?? '') : '';
-    const kind  = trapMode ? 'TRAP' : 'ENCOUNTER';
-    kickerEl.textContent = tname ? `${kind} · ${tname.toUpperCase()}` : kind;
+    const kind  = trapMode ? 'TRAP' : panelMode ? 'CONTROL PANEL' : 'ENCOUNTER';
+    kickerEl.textContent = kaneCh ? `MACHINE GUN KANE · CHAPTER ${kaneCh} OF 5`
+                         : tname ? `${kind} · ${tname.toUpperCase()}` : kind;
 
     overlay.classList.add('open');
     overlay.style.display = '';
@@ -667,6 +689,8 @@ function initEncounterOverlay() {
     enc = null; node = null; nodeKey = '';
     phase = 'idle';
     trapMode = false;
+    panelMode = false;
+    kaneCh = 0;
     overlay.classList.remove('trap');
     pendingLoot = [0, 0, 0, 0, 0]; keepLoot = [0, 0, 0, 0, 0]; pendingItems = []; pendingRecipes = 0;
     terminal = false; pendingNext = ''; pendingHaz = '';

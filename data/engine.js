@@ -282,6 +282,8 @@ function loadTerrainVariants(vc) {
                                forage: Array.isArray(m.forage?.[0]) ? m.forage[0] : null, forageCell: m.forageCell || tileAtlas.forageCell,
                                caravan: m.caravan?.[0]?.length ? m.caravan[0] : null, caravanCell: m.caravanCell || tileAtlas.caravanCell,
                                bike: m.bike?.[0]?.length ? m.bike[0] : null, bikeCell: m.bikeCell || tileAtlas.bikeCell,
+                               // Machine Gun Kane's jeep: cells by mode (kaneSprite(), kane-jeep.js)
+                               kane: m.kane?.[0]?.length ? m.kane[0] : null, kaneCell: m.kaneCell || [384, 384],
                                tunnel: Array.isArray(m.tunnel?.corridor) ? m.tunnel : null });
     tileAtlas.pages = m.pages.map(p => {
       // ?v= is the atlas hash: /img/* is cached forever (sw.js, and the

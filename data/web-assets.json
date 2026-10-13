@@ -27,6 +27,7 @@
     "eco-field.js",
     "trail-field.js",
     "world-entities.js",
+    "kane-jeep.js",
     "engine.js",
     "ui-state.js",
     "network.js",

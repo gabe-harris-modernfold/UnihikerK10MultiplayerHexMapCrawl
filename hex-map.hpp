@@ -1068,7 +1068,8 @@ static int encodeTunnelFog(char* buf, int cap, int pq, int pr, int visR, bool ma
       uint8_t tt, dd, vv;
       int dq = c - pq, dr = r - pr;
       int dist = (abs(dq) + abs(dq + dr) + abs(dr)) / 2;
-      if (dist <= visR || trapKnownBy(G.tunnel[r][c], pid)) {
+      // A lit cell is in sight from anywhere below (tunnels.hpp, "Section lights").
+      if (dist <= visR || trapKnownBy(G.tunnel[r][c], pid) || G.tunnelLit[r][c]) {
         encodeCell(G.tunnel[r][c], maskRes, pid, &tt, &dd, &vv);
       } else {
         tt = 0xFF; dd = 0x00; vv = 0x00;
@@ -1093,10 +1094,25 @@ static int encodeTunnelOps(char* buf, int cap, int pq, int pr, int visR, int pid
     for (int c = 0; c < TUN_COLS; c++) {
       int dq = c - pq, dr = r - pr;
       int dist = (abs(dq) + abs(dq + dr) + abs(dr)) / 2;
-      uint8_t op = (dist <= visR || trapKnownBy(G.tunnel[r][c], pid)) ? G.tunnelOp[r][c] : 0;
+      uint8_t op = (dist <= visR || trapKnownBy(G.tunnel[r][c], pid) || G.tunnelLit[r][c]) ? G.tunnelOp[r][c] : 0;
       if (pos + 2 < cap) { buf[pos++] = HEX_CH[op >> 4]; buf[pos++] = HEX_CH[op & 0xF]; }
     }
   }
+  buf[pos] = 0;
+  return pos;
+}
+
+// The tunnel board's lights (G.tunnelLit, tunnels.hpp "Section lights"), 2
+// hex chars a cell in the same order again, for every cell: a light is not
+// secret, and only a lit cell is ever non-zero -- which encodeTunnelFog()
+// sends unfogged anyway. tsync carries it as "lt".
+static int encodeTunnelLights(char* buf, int cap) {
+  int pos = 0;
+  for (int r = 0; r < TUN_ROWS; r++)
+    for (int c = 0; c < TUN_COLS; c++) {
+      uint8_t lt = G.tunnelLit[r][c];
+      if (pos + 2 < cap) { buf[pos++] = HEX_CH[lt >> 4]; buf[pos++] = HEX_CH[lt & 0xF]; }
+    }
   buf[pos] = 0;
   return pos;
 }
@@ -1171,7 +1187,10 @@ static int encodeTrailDisk(char* buf, int cap, int pq, int pr, int visR) {
 // tells the client which board to apply the cells to; it is omitted at depth
 // 0 so surface traffic is byte-identical to before. Underground an "op"
 // string follows the cells: each one's open sides (G.tunnelOp), 2 hex chars
-// apiece in the same order, with room reserved for it as the cells go in.
+// apiece in the same order, with room reserved for it as the cells go in --
+// and after it an "lt" string, each cell's light (G.tunnelLit), the same way.
+// Underground the disk also carries every lit cell on the board, wherever it
+// is: a lit corridor is in sight from anywhere below (tunnels.hpp).
 // On the surface a "trl" string follows instead (appendTrailRecs): the cells
 // come first, and the trail records take whatever room is left after them.
 // pid is who the disk is for: it decides which traps show (encodeCell).
@@ -1179,7 +1198,28 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
                         int* outCells = nullptr, uint8_t depth = 0, int pid = -1) {
   int pos   = 0;
   int cells = 0;
-  uint8_t ops[128];                    // underground only: a tunnel disk is at most 16x10
+  uint8_t ops[TUN_ROWS * TUN_COLS];    // underground only: at most the whole 16x10 board
+  uint8_t lts[TUN_ROWS * TUN_COLS];
+  // One cell onto the wire. Underground, op and light go into their arrays and
+  // room is reserved for both tails: each cell so far plus this one, at 4 hex
+  // chars apiece, and the `","op":"` / `","lt":"` that open them.
+  auto emit = [&](int cq, int cr) {
+    uint8_t tt, dd, vv;
+    encodeCell(depth ? G.tunnel[cr][cq] : G.map[cr][cq], maskRes, pid, &tt, &dd, &vv);
+    // reserve 2 extra bytes for closing `"}` + snprintf null -- and below,
+    // the whole "op"/"lt" tail for every cell so far plus this one, or on the
+    // surface the `","trl":"` that opens the trail records
+    const int tail = depth ? 20 + 4 * (cells + 1) : 10;
+    if (pos + 12 + tail < cap && (!depth || cells < (int)sizeof(ops))) {
+      if (depth) { ops[cells] = G.tunnelOp[cr][cq]; lts[cells] = G.tunnelLit[cr][cq]; }
+      buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
+      buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
+      buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
+      buf[pos++] = HEX_CH[dd >> 4]; buf[pos++] = HEX_CH[dd & 0xF];
+      buf[pos++] = HEX_CH[vv >> 4]; buf[pos++] = HEX_CH[vv & 0xF];
+      cells++;
+    }
+  };
   if (depth)
     pos += snprintf(buf, cap, "{\"t\":\"vis\",\"dp\":1,\"vr\":%d,\"q\":%d,\"r\":%d,\"cells\":\"", visR, pq, pr);
   else
@@ -1197,27 +1237,25 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
       } else {
         cq = wrapQ(pq + dq); cr = wrapR(pr + dr);
       }
-      uint8_t tt, dd, vv;
-      encodeCell(depth ? G.tunnel[cr][cq] : G.map[cr][cq], maskRes, pid, &tt, &dd, &vv);
-      // reserve 2 extra bytes for closing `"}` + snprintf null -- and below,
-      // the whole "op" tail for every cell so far plus this one, or on the
-      // surface the `","trl":"` that opens the trail records
-      const int tail = depth ? 10 + 2 * (cells + 1) : 10;
-      if (pos + 12 + tail < cap && (!depth || cells < (int)sizeof(ops))) {
-        if (depth) ops[cells] = G.tunnelOp[cr][cq];
-        buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
-        buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
-        buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
-        buf[pos++] = HEX_CH[dd >> 4]; buf[pos++] = HEX_CH[dd & 0xF];
-        buf[pos++] = HEX_CH[vv >> 4]; buf[pos++] = HEX_CH[vv & 0xF];
-        cells++;
-      }
+      emit(cq, cr);
     }
   }
   if (depth) {
+    // Every lit cell the disk above did not already cover.
+    for (int r = 0; r < TUN_ROWS; r++)
+      for (int c = 0; c < TUN_COLS; c++) {
+        if (!G.tunnelLit[r][c]) continue;
+        int dq = c - pq, dr = r - pr;
+        if ((abs(dq) + abs(dr) + abs(dq + dr)) / 2 <= visR) continue;
+        emit(c, r);
+      }
     pos += snprintf(buf + pos, cap - pos, "\",\"op\":\"");
     for (int i = 0; i < cells && pos + 4 < cap; i++) {
       buf[pos++] = HEX_CH[ops[i] >> 4]; buf[pos++] = HEX_CH[ops[i] & 0xF];
+    }
+    pos += snprintf(buf + pos, cap - pos, "\",\"lt\":\"");
+    for (int i = 0; i < cells && pos + 4 < cap; i++) {
+      buf[pos++] = HEX_CH[lts[i] >> 4]; buf[pos++] = HEX_CH[lts[i] & 0xF];
     }
   } else {
     pos += snprintf(buf + pos, cap - pos, "\",\"trl\":\"");

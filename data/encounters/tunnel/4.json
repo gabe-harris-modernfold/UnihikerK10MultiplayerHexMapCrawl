@@ -1,0 +1,99 @@
+{
+  "id": "tunnel_duck_and_cover",
+  "title": "Duck and Cover",
+  "start_node": "drill_room",
+  "nodes": {
+    "drill_room": {
+      "text": "A civil-defence drill room. Benches in rows, and on the benches, {{count}} shop mannequins in rubber gas masks, hands folded in their laps, all facing the lighting console at the front like a class waiting to be dismissed. The chalkboard reads: IN THE EVENT OF DARKNESS, REMAIN SEATED. The console key for {{section}} is in the front mannequin's folded hands. You are fairly sure, as you cross the room, that the one at the end of the second row was facing the other way when you came in.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take the key from its hands",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "console",
+          "hazard_id": "hands_close"
+        },
+        {
+          "label": "Hotwire the console instead",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "console",
+          "hazard_id": "class_turns"
+        }
+      ]
+    },
+    "console": {
+      "text": "The console wakes with a hum and a single amber lamp: SECTION LIGHTS — ARMED. Behind you there is a soft, rubbery creak, the sound of a great many necks turning at once. You do not look. The lamp is waiting for you. So, you suspect, is the class.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Throw the switch. Eyes front.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "eyes_front"
+        },
+        {
+          "label": "Say, firmly, \"Class dismissed.\"",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "lights_dismissed",
+          "hazard_id": "not_dismissed"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "The switch throws. Out in the corridor the lights come on in drill order — one fitting, a pause, the next, the next — the way you were taught in school, walking away from you down {{section}} like a column filing out. When you finally turn around the benches are full and every mask faces the front, exactly as you found them. The front mannequin's hands are folded again. They are folded around a little something for you. You take it. It would be rude not to.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 1] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    },
+    "lights_dismissed": {
+      "text": "Silence. Then, all together and very softly, the benches creak as {{count}} figures stand up. You hear them file past you and out — you do not look; you are not that stupid — and with every footstep out in the corridor a light comes on overhead, clunk, clunk, clunk, the whole of {{section}} lighting up behind a class leaving for the day. When at last you turn around, the room is empty. The benches are dusted with the clean outlines of where they sat.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 1] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "hands_close": {
+      "text": "The folded hands close around your wrist. Rubber, over something that is not. It takes your whole weight to pull free, and you leave a strip of skin behind in its grip.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "class_turns": {
+      "text": "Sparks, a pop, and the console dies — and in the sudden dark every mask in the room turns to you with one squeak of rubber. You are out of the room and halfway down the corridor before you remember to breathe, and you have barked both shins on the way. The console is still back there.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "eyes_front": {
+      "text": "You glance back. Just once. Every seat is empty. The lamp on the console goes out, and from the dark corridor behind you comes the patient shuffle of a class filing back in. You leave by the other door. You do not run. Running would be against the rules.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "not_dismissed": {
+      "text": "\"Class dismissed,\" you say. Nobody moves. Then, in the front row, a mannequin raises its hand. It has a question for you. You do not stay to hear it, and you fall twice on the way out.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION A", "THE SCHOOL WING", "CORRIDOR 12", "RING D", "SUBLEVEL ONE", "THE SHELTER SPUR"],
+    "count": ["eleven", "fourteen", "nineteen", "twenty-two"]
+  }
+}

@@ -154,6 +154,12 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
         trapPathLen = snprintf(trapPath, sizeof(trapPath),
           "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"trap\":1}",
           encPools[ENC_POOL_TRAP].path, (int)encounters[slot].encIdx);
+      // Or one of Machine Gun Kane's chapters opened (kane.hpp): same push,
+      // "kane" = the chapter, so the panel knows whose story it is.
+      else if (!refused && encounters[slot].active && encounters[slot].kane)
+        trapPathLen = snprintf(trapPath, sizeof(trapPath),
+          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"kane\":%d}",
+          encPools[ENC_POOL_KANE].path, (int)encounters[slot].encIdx, (int)encounters[slot].kane);
       // Anything lying on the hex comes with you -- the remains' supplies and
       // every pile.  Surface only: a step that went down a hatch took nothing
       // off it, and piles never lie underground.  Climbing back up onto a
@@ -401,6 +407,7 @@ static void handleMsg_regen(AsyncWebSocketClient* client, char* data, size_t len
     SD.remove(SAVE_PLY_F);
     SD.remove(SAVE_GND_F);
     SD.remove(SAVE_TRL_F);   // generateMap() below clears the sides themselves
+    SD.remove(SAVE_LIT_F);   // and lays out new tunnel sections, every light off
     ecoDiscardScarFile();   // the scars belong to the land they were made on
     ecoRequestRegen();      // the Eco task re-runs genesis on its next tick (ecology.hpp)
     // A new world: nothing from the old one may leak through.

@@ -1,0 +1,116 @@
+{
+  "id": "kane_1_have_you_seen_her",
+  "title": "Have You Seen Her",
+  "kane": {
+    "chapter": 1
+  },
+  "start_node": "the_camp",
+  "nodes": {
+    "the_camp": {
+      "text": "Tyre tracks come in off the open ground and stop in a scuffed oval where something heavy sat idling all night. A ring of stones, the ash still warm under its crust. Around it, swept into a careful second ring, lie spent brass cases: hundreds of them, more than one night's worth, more than one year's. Someone carries his brass with him and lays it out wherever he stops. Against a rock leans a board, painted and repainted until the paint is thicker than the wood: HAVE YOU SEEN HER.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Read the board.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "the_board",
+          "hazard_id": "engine_far"
+        },
+        {
+          "label": "Sift the brass for anything that isn't empty.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "the_board",
+          "hazard_id": "cook_off"
+        }
+      ]
+    },
+    "the_board": {
+      "text": "Nailed to the board is a photograph, or what passes for one: a page torn from a 1966 mail-order catalog. A woman in a belted dress smiles at nobody, one hand on her hip, a price printed under her chin. On the back, in a child's careful capitals: MAMA. Under that, in a shaking grown-up hand, much newer: IS THIS HER. Under that, again: IS THIS HER. It goes on down the page, smaller and smaller, until the pencil went through.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Open the ammo can by the fire.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_catalog",
+          "hazard_id": "can_hinge"
+        },
+        {
+          "label": "Follow his tracks a little way out.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "the_catalog",
+          "hazard_id": "figure_eight"
+        }
+      ]
+    },
+    "the_catalog": {
+      "text": "The ammo can holds no ammunition. It holds the rest of the catalog, every page, and every page has a hole in it the shape of a woman. Dresses with nobody in them. Winter coats with nobody in them. A whole spread of kitchen ranges with a neat empty outline standing at each stove. He cannot remember her face, so he is going through the book, holding them up one at a time against whatever is left of her. Scratched into the bottom of the can, over and over: NOT HER. NOT HER. NOT HER.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "scrub_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "engine_far": {
+      "text": "Somewhere past the horizon an engine coughs, catches and comes on. You are flat in the ash before you know you have moved. It fades. You get up with your heart going and your mouth dry.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "cook_off": {
+      "text": "One of them isn't empty. It is lying in the warm ash, and as your fingers find it the heat finds it too. It goes off with a crack that rings for a long minute and takes a strip of skin off the back of your hand.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "can_hinge": {
+      "text": "The lid is rusted half shut and the hinge bites when it gives. You bleed on a page of winter coats.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "figure_eight": {
+      "text": "His tracks loop. Out, round and back, out again, a figure eight pressed a foot deep, as if he couldn't decide which way she went. By the time you have walked one loop the light has moved, and so has the engine, nearer. You go back to the fire the short way.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    }
+  }
+}

@@ -589,7 +589,10 @@ static void tickGame() {
     spreadFlood();
     tickCaravan();
     resolveCaravanProximity();
+    tickKane();             // Machine Gun Kane: asks, fires, drives on, camps at dusk (kane.hpp)
   }
+  // His camp or his arc moved on: catch it in a save, like dawn does.
+  const bool kaneSave = kaneTakeSaveWanted();
 
   // ── Quakes ───────────────────────────────────────────────────────────────
   // Checked every tick (like the mock), not gated behind dawnOccurred — an
@@ -601,7 +604,7 @@ static void tickGame() {
 
   xSemaphoreGive(G.mutex);
   if (groundAged) broadcastGroundUpdate(-1, -1, "aged");  // takes the mutex itself
-  if (dawnOccurred) saveGame();  // save outside mutex — SD writes are slow
+  if (dawnOccurred || kaneSave) saveGame();  // save outside mutex — SD writes are slow
   if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
 }
 
@@ -801,6 +804,7 @@ static bool findShelterTriangle(int16_t q, int16_t r, int16_t triQ[3], int16_t t
 //               otherwise basic (1 scrap, 1 AP, +4)
 //   basic here: upgrade to improved only (2 scrap, 2 AP, +8)
 //   improved  : nothing to build — blocked
+//   Settlement: nothing to build — blocked (ABW_TERRAIN)
 // A hex is never downgraded and a finished shelter never pays out twice.
 // Keep data/ui-panels.js getShelterDesc() in step with these rules.
 // settle.fired tells the caller whether to broadcastSettle() — see
@@ -809,6 +813,13 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
   Player&  p       = G.players[pid];
   uint8_t  current = G.map[p.r][p.q].shelter;
   settle.fired = false;
+  // A Settlement is already the best cover there is (SV 3, immune to chem and
+  // fog), so a tent on top bought nothing but a free +4/+8 -- and one thing it
+  // should not: dawnUpkeep()'s "resting under a shelter suppresses ALL LL
+  // loss" rule, which handed back the starvation immunity Settlements had
+  // taken away. It also let a Settlement stand as a corner in
+  // findShelterTriangle() and be "founded" a second time for the +20.
+  if (G.map[p.r][p.q].terrain == 9) { ev.actWhy = ABW_TERRAIN; return; }
   if (current >= 2) { ev.actWhy = ABW_NOT_NEEDED; return; }  // already improved
   if (p.inv[4] == 0) { ev.actWhy = ABW_NO_RES;     return; }  // no scrap
   uint8_t shelterType = (p.inv[4] >= 2 && p.apLeft >= 2) ? 2 : 1;

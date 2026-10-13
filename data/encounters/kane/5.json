@@ -1,0 +1,168 @@
+{
+  "id": "kane_5_the_goodbye",
+  "title": "The Goodbye",
+  "kane": {
+    "chapter": 5
+  },
+  "start_node": "the_firelight",
+  "nodes": {
+    "the_firelight": {
+      "text": "You walk into his firelight with your hands where he can see them. He doesn't reach for the gun. It is after dark, and there are rules. Close to, he is older than the jeep. His skin has crazed like old glaze, the cracks dry to the bottom, and in the cold his breath doesn't smoke, because there isn't any. The grin you have seen go past at sixty miles an hour isn't a grin: the mouth just doesn't close any more. He looks you over the way he has looked over everyone for sixty years, and he asks it, in a voice that is still nine years old. 'Have you seen my mama?'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Back out of the light.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "out_of_the_light",
+          "hazard_id": "kicked_ember"
+        },
+        {
+          "label": "Sit down across the fire from him.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 3,
+          "success_node": "the_question",
+          "hazard_id": "her_side"
+        },
+        {
+          "label": "Tell him you found his camps.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_question",
+          "hazard_id": "you_followed_me"
+        }
+      ]
+    },
+    "the_question": {
+      "text": "He listens the way children listen, with his whole face. When you get as far as the glass he stops you with one finger. 'I don't look at the glass,' he says. 'That's a rule.' Then, after a long time, with the fire going down between you: 'You went in, though. Didn't you. You saw the door.' He waits. He has been waiting since 1966, and this is the first time in sixty years that anyone has had an answer.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Say nothing. Back out of the light.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 0,
+          "success_node": "out_of_the_light",
+          "hazard_id": "kicked_ember"
+        },
+        {
+          "label": "Tell him the truth: she died in her doorway at 11:47, on her way to fetch him.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "the_truth",
+          "hazard_id": "point_blank"
+        },
+        {
+          "label": "Lie to him: she is at the Seam, where it is still 1966, coming for him on Saturday.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_lie",
+          "hazard_id": "not_her_words"
+        }
+      ]
+    },
+    "out_of_the_light": {
+      "text": "You back away until the firelight lets go of you. He doesn't follow, and he doesn't call after you. He goes back to watching the dark the way he watches it every night, in case she is the one walking in. At dawn he will drive on. Nothing has changed. You can come back another night.",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    },
+    "the_truth": {
+      "text": "He doesn't shoot. He takes it the way the brass takes the fire: all at once, and then nothing. After a while he unhooks the cable from the steering wheel and lays it on the dash. He takes the paper tag off the mirror and puts it in your hand. Then he climbs down out of the jeep, for the first time in longer than you have been alive, and walks out onto the glass. He doesn't look back at the jeep. It makes it worse. In the morning the jeep is still there, engine cold, and one set of boot prints goes out across the glass toward a house with its door open, and doesn't come back.",
+      "kane_ending": "truth",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            2,
+            2
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            2,
+            2
+          ]
+        }
+      ],
+      "choices": []
+    },
+    "the_lie": {
+      "text": "His whole face changes. 'Saturday,' he says. 'She said Saturday.' He is already turning the key. He doesn't ask you the way. He has always known where the Seam is, the way he has always known where the glass is. The jeep goes out of the firelight with no lamps lit, and you hear it a long time going west, and then you don't. One day somebody will tell you they saw it at the line, empty, among the offerings, a child's coat folded on the seat. Nobody goes through the Seam. That's the rule. He was never any good at other people's rules.",
+      "kane_ending": "lie",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "kicked_ember": {
+      "text": "You back into the edge of the fire and an ember goes up your trouser leg. You don't make a sound. You are very sure you shouldn't.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "her_side": {
+      "text": "You sit where she would have sat. He sees it before you do, and for a moment his hand is on the wheel, and on the cable, and the night isn't safe at all. Then he lets go. You move round the fire. Your heart takes longer.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "you_followed_me": {
+      "text": "'You followed me,' he says, and for one moment he isn't nine at all. The fire spits. You keep very still until he looks away.",
+      "penalty": {
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "point_blank": {
+      "text": "He breaks a rule. It is the first one he has broken in sixty years, and the gun is very close. Afterwards he sits looking at it as if somebody else had done it. Then he starts the engine and goes, lamps dark, long before dawn, and the fire burns down on its own.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    },
+    "not_her_words": {
+      "text": "You get her wrong: some word, some small thing. 'She wouldn't say it like that,' he says. He looks at you a long time. Then he kicks out his own fire, which he never does, and drives off into the dark without lamps. You sit in the smoke and think about the letter, and the day she put in it.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": true
+    }
+  }
+}

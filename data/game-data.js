@@ -4,7 +4,6 @@ const MAP_ROWS    = 57;
 const MAX_PLAYERS = 6;   // seats, one per archetype -- see MAX_SEATED
 const MAX_SEATED  = 5;   // the game is for five: at most this many seated at once
 const CARAVAN_PID = 254;  // sentinel trade partner id — matches world-system.hpp
-const DOOM_BASE_RADIUS = 6;  // Creeping Doom scent radius at awareness 0 — matches world-system.hpp
 // Creeping Doom's voice, indexed by the tier on the doom_taunt event
 // (tickDoomTaunts(), world-system.hpp). Tier 0 is the release beat — it only
 // ever arrives after a higher tier. The server sends a raw byte index which
@@ -85,6 +84,44 @@ function tunnelTauntLine(idx) {
   const n = TUNNEL_TAUNTS.length;
   return TUNNEL_TAUNTS[((idx | 0) % n + n) % n];
 }
+
+// ── Machine Gun Kane's voice (kane.hpp, docs/machine-gun-kane.md) ──────────
+// kane_call carries a raw byte; these are reduced mod their length, so the
+// lines can change without a reflash -- the Doom taunt idiom. A nine-year-old
+// in a seventy-year-old mouth: always a question, always her. The road lines
+// come one world tick before a burst, so they must never read as advice; the
+// camp lines are at his fire, where he does not shoot and you have nothing to
+// tell him yet. Original lines -- the song the user gave is tone only.
+const KANE_LINES = [
+  'Have you seen my mama?',
+  'Have you seen her? She has a coat on. She is waving.',
+  'Mister, is this the way to Meridian County?',
+  'You are not her. Are you with her?',
+  'Did she send you? Did she say Saturday?',
+  'They told me wait where they put me. Did they put you here too?',
+  'Stand still and answer me.',
+  'Are you the train? Are you here to put me on the train?',
+  'Have you seen a lady at a door?',
+  'I am asking first. I always ask first.',
+  'She said she would come. Did she come past here?',
+  'Answer me. I am counting.',
+  'Is it Saturday yet?',
+  'I have been good. Tell her I have been good.',
+  'You got a mama? Where did yours go?',
+  'Nobody is putting me on a train.',
+];
+const KANE_CAMP_LINES = [
+  'Have you seen my mama?',
+  'Sit if you want. Not there. That is hers.',
+  'Shh. She might be the one walking in.',
+  'I keep it lit so she can find it.',
+  'I do not sleep. I do not have to any more.',
+  'You do not know anything. Go on, then.',
+  'Come back when you have seen her.',
+  'It is not Saturday. Go away.',
+];
+function kaneRoadLine(idx) { const n = KANE_LINES.length; return KANE_LINES[((idx | 0) % n + n) % n]; }
+function kaneCampLine(idx) { const n = KANE_CAMP_LINES.length; return KANE_CAMP_LINES[((idx | 0) % n + n) % n]; }
 // ── The board of the admired ──────────────────────────────────────
 // The ladder a survivor is actually climbing. ADMIRED_WIN (10000) is the way
 // out; nothing in the game grants it in one piece, it is a few thousand
@@ -400,7 +437,8 @@ function actAvailable(actId, terrainIdx) {
     case ACT_FORAGE:  return TERRAIN_FORAGE_DN[terrainIdx]  > 0;
     case ACT_WATER:   return TERRAIN_HAS_WATER[terrainIdx]  > 0;
     case ACT_SCAV:    return TERRAIN_SALVAGE_DN[terrainIdx] > 0;
-    case ACT_SHELTER:
+    // A Settlement is already cover: doShelter() refuses it (ABW_TERRAIN).
+    case ACT_SHELTER: return !underground && terrainIdx !== 9;
     case ACT_CRAFT:
     case ACT_SURVEY:  return !underground;
     // REST is the one that works down there: a bunker is the only cover on

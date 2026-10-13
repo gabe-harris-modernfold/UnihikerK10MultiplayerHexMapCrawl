@@ -98,29 +98,48 @@ async def seated(ctx: Ctx, tag: str, prefer=None) -> ProbeClient:
 
 
 async def walk_to(c: ProbeClient, q: int, r: int, budget_s: float = 90.0) -> bool:
-    """Step toward (q, r) on the surface until there or out of time / AP."""
+    """Step toward (q, r) on the surface until there or out of time / AP.
+
+    Steers by each step's own `mv`, not by obs.me: the surface position in the
+    Observation comes from the `s` tick, which can still be the one composed
+    before the step. Reading that walked one hex past the target every time,
+    and the scenario then failed `not_here` / `not_same_hex` (2026-10-12)."""
     deadline = time.monotonic() + budget_s
+    pos = (c.obs.me.q, c.obs.me.r)
     while time.monotonic() < deadline:
-        me = c.obs.me
-        if me.depth:
+        if c.obs.me.depth:
             return False            # fell down a hatch: not this scenario's job
-        if (me.q, me.r) == (q, r):
+        if pos == (q, r):
             return True
-        _dist, first = dijkstra(c.obs.map, me.q, me.r, max_cost=80)
+        _dist, first = dijkstra(c.obs.map, pos[0], pos[1], max_cost=80)
         d = first.get((q, r), -1)
         if d < 0:
             return False
+        # Listen before sending: the mv is drained on the next game tick and
+        # can beat the ack here.
+        step = asyncio.ensure_future(c.wait_for(
+            lambda m: m.get("t") == "ev" and m.get("k") == "mv"
+            and m.get("pid") == c.obs.pid, 3.0))
+        await asyncio.sleep(0)
         reply = await c.request({"t": "m", "d": d})
-        if reply is None:
-            return False
-        if reply.get("t") == "nack":
-            why = reply.get("why")
-            if why == "cooldown":
+        if reply is None or reply.get("t") == "nack":
+            step.cancel()
+            if reply is None:
+                return False
+            if reply.get("why") == "cooldown":
                 await asyncio.sleep(0.6)
                 continue
             return False            # no_ap, terrain, resting, in_enc: give up
-        await c.wait_for(lambda m: m.get("t") == "ev" and m.get("k") == "mv"
-                         and m.get("pid") == c.obs.pid, 2.0)
+        mv = await step
+        if mv is None:
+            # The step's mv was lost or late: take the broadcast's word once
+            # it has had a tick or two to catch up, rather than guess.
+            await asyncio.sleep(0.5)
+            pos = (c.obs.me.q, c.obs.me.r)
+            continue
+        if mv.get("dp"):
+            return False            # stepped onto a hatch and went down
+        pos = (mv.get("q"), mv.get("r"))
     return False
 
 

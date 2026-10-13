@@ -12,12 +12,23 @@ Event kinds (ev.k):
   act car_avail col col_fail dawn doom_act doom_warn downed dusk enc_bank
   enc_end enc_res enc_start fire_dmg fire_spread flood_dmg flood_washout
   join left mv regen rsp trd_off trd_res weather dmg
+  kane_call kane_fire kane_arc
 """
+import time
 from dataclasses import dataclass, field
 from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
-                    TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain)
+                    TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain,
+                    KANE_DRIVE, KANE_GONE, KANE_RANGE, MAP_COLS,
+                    MAP_ROWS, TICK_MS, WORLD_TICK_INTERVAL, kane_open_ground)
 from mapdec import WorldMap
-from navigate import DAISY_BLOOM_COST, DAISY_BUD_COST
+from navigate import (DAISY_BLOOM_COST, DAISY_BUD_COST, KANE_CALLED_COST,
+                      KANE_DANGER_COST, hex_dist_wrap)
+
+# Machine Gun Kane asks, and the burst comes one world tick later
+# (WORLD_TICK_INTERVAL game ticks). His question stays "open" for that long
+# plus slack for a slow board; after that a tick has passed without a burst,
+# which means we were out of the open in time (or he went to his fire).
+KANE_CALL_TTL_S = WORLD_TICK_INTERVAL * TICK_MS / 1000.0 + 5.0
 
 
 @dataclass(slots=True)
@@ -56,7 +67,6 @@ class PlayerState:
     tr: int = 0
     name: str = ""
     archetype: int = -1
-    inv_slots: int = 8
     skills: list = field(default_factory=lambda: [0] * 5)
     known_recipes: int = 0
     resting: bool = False
@@ -102,7 +112,6 @@ class PlayerState:
         if "tr"    in d: self.tr            = d["tr"]
         if "nm"    in d: self.name          = d["nm"]
         if "arch"  in d: self.archetype     = d["arch"]
-        if "is"    in d: self.inv_slots     = d["is"]
         if "sk"    in d: self.skills        = list(d["sk"])
         if "kr"    in d: self.known_recipes = d["kr"]
         if "rt"    in d: self.resting       = bool(d["rt"])
@@ -146,6 +155,24 @@ class WorldState:
     doom_awareness: int = 0
     fire: list = field(default_factory=list)    # [[q, r, intensity], ...]
     flood: list = field(default_factory=list)
+    # Machine Gun Kane (kane.hpp appendKaneJson): the jeep, and the arc it
+    # leaves behind, shared by the whole party. `kane_seen` is False on a
+    # board that does not send him (older firmware).
+    kane_seen: bool = False
+    kane_q: int = -1
+    kane_r: int = -1
+    kane_mode: int = KANE_DRIVE     # KANE_DRIVE / KANE_CAMP (his fire) / KANE_GONE
+    kane_stage: int = 0             # chapters read, 0-5
+    kane_ending: int = 0            # 0 none, 1 truth, 2 lie
+    kane_camp_q: int = -1           # the camp holding chapter stage+1 (1-3)
+    kane_camp_r: int = -1
+    kane_site_q: int = -1           # the house in the glass (chapter 4), only while it is next
+    kane_site_r: int = -1
+
+    @property
+    def kane_driving(self) -> bool:
+        """On the road, and so able to ask -- and then shoot."""
+        return self.kane_seen and self.kane_mode == KANE_DRIVE and not self.kane_ending
 
     def update(self, w):
         car = w.get("caravan") or {}
@@ -160,6 +187,18 @@ class WorldState:
         self.doom_awareness = doom.get("awareness", self.doom_awareness)
         if "fire"  in w: self.fire  = list(w["fire"])
         if "flood" in w: self.flood = list(w["flood"])
+        k = w.get("kane")
+        if isinstance(k, dict):
+            self.kane_seen   = True
+            self.kane_q      = k.get("q", self.kane_q)
+            self.kane_r      = k.get("r", self.kane_r)
+            self.kane_mode   = k.get("m", self.kane_mode)
+            self.kane_stage  = k.get("st", self.kane_stage)
+            self.kane_ending = k.get("e", self.kane_ending)
+            self.kane_camp_q = k.get("cq", self.kane_camp_q)
+            self.kane_camp_r = k.get("cr", self.kane_camp_r)
+            self.kane_site_q = k.get("gq", self.kane_site_q)
+            self.kane_site_r = k.get("gr", self.kane_site_r)
 
 
 class Observation:
@@ -218,6 +257,91 @@ class Observation:
         self.eco_tick = 0
         self.eco_name = ""
         self.daisies: dict[tuple[int, int], tuple[int, int]] = {}
+        # Machine Gun Kane has asked US (a road `kane_call`, unicast): {t, q, r}
+        # with t on time.monotonic(), or None.  The burst follows one world
+        # tick later if we are still in the open -- see kane_call_pending.
+        self.kane_call = None
+        self._kane_sig = None           # what danger_cost was last built from
+        self._surface_rev = 0           # bumps when surface cells are revealed
+        # Trades offered TO us that are still open: offerer pid -> {give,
+        # want, t}.  `give` is what they hand over, `want` what they ask of us.
+        self.trade_offers: dict[int, dict] = {}
+        self.last_trade_fail = None
+        self.last_item_result = None
+
+    # The board lets an offer lapse after 30 s (network-msg-trade.hpp).
+    TRADE_OFFER_TTL_S = 28.0
+
+    def trade_offers_live(self) -> dict:
+        now = time.monotonic()
+        for k in [k for k, o in self.trade_offers.items()
+                  if now - o["t"] > self.TRADE_OFFER_TTL_S]:
+            del self.trade_offers[k]
+        return self.trade_offers
+
+    # ── Machine Gun Kane ────────────────────────────────────────────────
+    @property
+    def kane_call_pending(self) -> bool:
+        """He asked us and the burst has not come yet: one world tick to be
+        somewhere he cannot hit.  Cleared by our burst, by his fire (he does
+        not shoot after dark), or by KANE_CALL_TTL_S running out."""
+        c = self.kane_call
+        if c is None:
+            return False
+        if not self.world.kane_driving or time.monotonic() - c["t"] > KANE_CALL_TTL_S:
+            self.kane_call = None
+            return False
+        return True
+
+    def kane_distance(self, q: int, r: int) -> int:
+        """Hexes from the jeep to surface hex (q, r); a large number when
+        the board has not sent him."""
+        w = self.world
+        if not w.kane_seen or w.kane_q < 0:
+            return 1 << 10
+        return hex_dist_wrap(w.kane_q, w.kane_r, q, r)
+
+    def kane_exposed_at(self, q: int, r: int) -> bool:
+        """Could he hit a survivor standing on surface hex (q, r)?  Mirrors
+        kaneExposed(): open ground within KANE_RANGE of a jeep on the road.
+        An unrevealed hex in his reach counts as open: scrub and dunes are
+        most of the map, and being wrong the other way costs LL."""
+        if not self.world.kane_driving or self.kane_distance(q, r) > KANE_RANGE:
+            return False
+        cell = self.map[(q, r)]
+        return cell is None or kane_open_ground(cell.terrain)
+
+    def kane_exposed(self) -> bool:
+        """Are WE where he can hit us right now?  Never underground."""
+        if self.me.depth:
+            return False
+        me = self.me
+        return self.kane_exposed_at(me.q, me.r)
+
+    def _refresh_kane_danger(self):
+        """Price his reach into the surface map for the pathfinder: open
+        ground within KANE_RANGE of the jeep while he is on the road, at
+        KANE_CALLED_COST once he has asked us.  Rebuilt only when the jeep,
+        his mode, our call or the revealed map changed."""
+        w = self.world
+        called = self.kane_call_pending
+        sig = (w.kane_driving, w.kane_q, w.kane_r, called, self._surface_rev, id(self.map))
+        if sig == self._kane_sig:
+            return
+        self._kane_sig = sig
+        dc = {}
+        if w.kane_driving and w.kane_q >= 0:
+            cost = KANE_CALLED_COST if called else KANE_DANGER_COST
+            for dq in range(-KANE_RANGE, KANE_RANGE + 1):
+                for dr in range(max(-KANE_RANGE, -dq - KANE_RANGE),
+                                min(KANE_RANGE, -dq + KANE_RANGE) + 1):
+                    q, r = (w.kane_q + dq) % MAP_COLS, (w.kane_r + dr) % MAP_ROWS
+                    cell = self.map[(q, r)]
+                    if cell is None:
+                        dc[(q, r)] = cost // 2
+                    elif kane_open_ground(cell.terrain):
+                        dc[(q, r)] = cost
+        self.map.danger_cost = dc
 
     @property
     def me(self):
@@ -318,6 +442,8 @@ class Observation:
             self._apply_gs(msg.get("gs"))
             if "world" in msg:
                 self.world.update(msg["world"])
+            self._surface_rev += 1
+            self._refresh_kane_danger()
             self.ground_items = list(msg.get("gi", []))
             self.remains = list(msg.get("rm", []))
             self._prune_graves()
@@ -342,6 +468,7 @@ class Observation:
             self._apply_gs(msg.get("gs"))
             if "world" in msg:
                 self.world.update(msg["world"])
+            self._refresh_kane_danger()
             self._sync_tunnel_pos()
         elif t == "tsync":
             # The whole fogged tunnel board, unicast on descent and again on
@@ -379,6 +506,8 @@ class Observation:
                 self.vision_r = msg.get("vr", self.vision_r)
                 if "cells" in msg:
                     self.map.apply_vis(msg["cells"])
+                    self._surface_rev += 1
+                    self._refresh_kane_danger()
         elif t == "ev":
             self._apply_event(msg)
         elif t == "err":
@@ -402,6 +531,12 @@ class Observation:
             # resends the mask and it is the only copy outside a sync).
             if "wc"    in msg: me.water_cap  = int(msg["wc"])
             if "kr"    in msg: me.known_recipes = int(msg["kr"])
+            if t == "item_result":
+                self.last_item_result = msg
+        elif t == "trade_fail":
+            # car_buy / car_trade / trade_offer refused (why: 1 no caravan,
+            # 2 cannot pay, 3 no room, 4 offered water). Protocol 2 also nacks.
+            self.last_trade_fail = msg.get("why", 0)
         elif t == "ground_update":
             self.ground_items = list(msg.get("gi", self.ground_items))
             self.remains = list(msg.get("rm", self.remains))
@@ -487,6 +622,29 @@ class Observation:
             pass
         elif k in ("enc_end", "enc_bank") and mine:
             self.encounter = None
+            # A banked scene's recipes are the only knowledge grant in the
+            # game, and kr rides sync (not `s`): the browser ORs `recs` in
+            # here (network.js _evEncBank) and so must we, or a recipe learned
+            # in a scene stays unknown to the bot until its next reconnect.
+            if k == "enc_bank" and isinstance(ev.get("recs"), int):
+                self.me.known_recipes |= ev["recs"]
+        elif k == "trd_off":
+            # An offer TO us (they give `give`, they want `want`); anyone
+            # else's is none of our business. It lapses on the board after
+            # TRADE_OFFER_TTL_S, so a stale one is dropped by trade_offers_live.
+            if ev.get("to") == self.pid and isinstance(ev.get("from"), int):
+                self.trade_offers[ev["from"]] = {
+                    "give": list(ev.get("give") or [0] * 5),
+                    "want": list(ev.get("want") or [0] * 5),
+                    "t": time.monotonic()}
+        elif k == "trd_res":
+            # Accepted, declined, expired or failed: either way the offer is
+            # gone. Keyed by the offerer, so clear it from whichever side.
+            frm, to = ev.get("from"), ev.get("to")
+            if to == self.pid:
+                self.trade_offers.pop(frm, None)
+            elif frm == self.pid:
+                self.trade_offers.pop(to, None)
         elif k == "trap":
             # A booby trap changed state (traps.hpp). "known" only ever comes
             # to the survivor who escaped it -- it is on our map now -- and
@@ -523,6 +681,30 @@ class Observation:
                         h.tq, h.tr = self.tunnel_pos
                     self._pending_hatch = None
                     self.tunnel_pos = None
+        elif k == "kane_call":
+            # Unicast, so it is always about us -- but a reconnect can leave
+            # an old seat's pid in flight, so check anyway.  camp 1 is the
+            # question at his fire, which is harmless; camp 0 is on the road,
+            # and the burst follows a world tick later if we are still in
+            # the open.
+            if mine and not ev.get("camp"):
+                self.kane_call = {"t": time.monotonic(), "q": ev.get("q"), "r": ev.get("r")}
+                self._refresh_kane_danger()
+        elif k == "kane_fire":
+            # The burst answers the question; the next one needs a new call.
+            if mine:
+                self.kane_call = None
+                if isinstance(ev.get("ll"), int):
+                    self.players[self.pid].ll = ev["ll"]
+                self._refresh_kane_danger()
+        elif k == "kane_arc":
+            # A chapter was read (anyone's): the world object says so on the
+            # next tick anyway, this just does not wait for it.
+            if isinstance(ev.get("stage"), int):
+                self.world.kane_stage = max(self.world.kane_stage, ev["stage"])
+            if ev.get("ending") in ("truth", "lie"):
+                self.world.kane_ending = 1 if ev["ending"] == "truth" else 2
+                self.world.kane_mode = KANE_GONE
         elif k == "regen":
             # New world: both cached boards are meaningless now, and so is
             # every hatch pairing -- generateTunnels() re-rolls the lot.
@@ -541,6 +723,10 @@ class Observation:
             # The species died with its world (ecoRequestRegen); the new
             # map above already has an empty extra_cost.
             self.daisies = {}
+            # A fresh jeep and an unread arc come with the sync that follows.
+            self.world.kane_seen = False
+            self.kane_call = None
+            self._kane_sig = None
         elif k == "dawn":
             self.day = ev.get("day", self.day)
             if mine:
@@ -561,6 +747,25 @@ class Observation:
                 cell = self.map[(p.q, p.r)]
                 if cell is not None and (ev["a"] == 4 or ev["cnd"] == 2):
                     cell.shelter = ev["cnd"]
+        elif k == "fire_spread":
+            # intensity 0 is "just burned out": the server has already turned
+            # the hex into Ash Dunes (onFireExtinguished), and the browser
+            # mirrors that (_evFireSpread).  Nothing else refreshes a hex
+            # nobody steps onto, and a bot that still read it as Forest sent
+            # FORAGE there 112 times on 2026-10-13, refused `terrain` every
+            # time, while the Creeping Doom ate it.
+            if ev.get("intensity") == 0:
+                cell = self._surface_cell(ev)
+                if cell is not None:
+                    cell.terrain = 1
+        elif k == "flood_washout":
+            # `intensity` is the terrain id the hex just became -- 3 (Marsh,
+            # the flood front) or 5 (Flooded District, drowned for good); see
+            # spreadFlood() and _evFloodWashout.  Flooded grows no food.
+            t = ev.get("intensity")
+            cell = self._surface_cell(ev)
+            if cell is not None and isinstance(t, int) and 0 <= t < 12:
+                cell.terrain = t
         elif k == "quake":
             # Shelters on the fault line are gone; settlements on it level to
             # Open Scrub (the browser's quake handler does the same).

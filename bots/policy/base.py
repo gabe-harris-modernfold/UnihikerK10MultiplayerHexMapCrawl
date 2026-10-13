@@ -8,7 +8,73 @@ makes them trivially unit-testable against a canned Observation.
 The server refuses both m and act while an encounter is open, so decide() must
 check obs.encounter first and answer with an encounter action instead.
 """
+import time
 from dataclasses import dataclass, field
+
+# A period for Throttle.ok() that never elapses: once per key, ever.
+ONCE = float("inf")
+
+
+class Throttle:
+    """Every sender that the board can refuse without changing anything
+    needs a cooldown, or the same decision comes straight back next cycle
+    and the message is re-sent forever -- EQUIP_RETRY_S was the first lesson
+    (60 identical swaps in 25 s), and by 2026-10-13 there were fifteen
+    hand-rolled copies of the same three lines across the policies, none of
+    them testable without sleeping.  This is the one copy: keyed however the
+    sender likes, on a clock the policy owns, so a test moves time instead
+    of waiting for it.
+
+        if not self.throttle.ok(("equip", slot, item), EQUIP_RETRY_S):
+            return None                     # sent too recently
+
+    `ready` and `mark` are the two halves for a sender that has to pass two
+    cooldowns before it records either; `hold` refuses a key for a while on
+    its own (a chapter hex to leave alone), and `clear` forgets one (a craft
+    that landed need not wait out its refusal cooldown).
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self._at: dict = {}         # key -> when it last went
+        self._until: dict = {}      # key -> held until
+
+    def ready(self, key, period: float) -> bool:
+        """May `key` go now?  Records nothing."""
+        now = self.clock()
+        if now < self._until.get(key, now):
+            return False
+        return now - self._at.get(key, -period) >= period
+
+    def mark(self, key) -> None:
+        self._at[key] = self.clock()
+
+    def ok(self, key, period: float) -> bool:
+        """ready() and mark() in one: True exactly when the send may go."""
+        if not self.ready(key, period):
+            return False
+        self.mark(key)
+        return True
+
+    def hold(self, key, seconds: float) -> None:
+        """Refuse `key` for `seconds` from now, whatever its period."""
+        self._until[key] = self.clock() + seconds
+
+    def held(self, key) -> bool:
+        return self.clock() < self._until.get(key, -1.0)
+
+    def holding(self) -> list:
+        """Every key under a hold that has not run out."""
+        now = self.clock()
+        return [k for k, t in self._until.items() if now < t]
+
+    def clear(self, key) -> None:
+        self._at.pop(key, None)
+        self._until.pop(key, None)
+
+    def reset(self) -> None:
+        self._at.clear()
+        self._until.clear()
 
 
 @dataclass(slots=True)
@@ -17,7 +83,8 @@ class Action:
     kind: str                       # move|act|enc_start|enc_choice|enc_bank|
                                     # enc_abort|use_item|equip_item|
                                     # unequip_item|pickup_item|loot|
-                                    # drop_res|trade_offer|noop
+                                    # drop_res|drop_item|trade_offer|
+                                    # trade_accept|trade_decline|car_buy|noop
     d: int = 0                      # move: direction 0-5
     a: int = 0                      # act: ACT_* id
     ap: int = 1                     # act: AP to spend (ACT_WATER reads this)
@@ -33,8 +100,11 @@ class Action:
                                     # drop_res: 1-5, the resource to put down
     qty: int = 1                    # drop_res: how many
     to: int = 0                     # trade_offer: target pid
-    give: list = field(default_factory=list)
+    give: list = field(default_factory=list)   # trade_offer / car_buy payment
     want: list = field(default_factory=list)
+    item: int = 0                   # car_buy: item id off the caravan shelf
+    n: int = 1                      # car_buy: how many (1-3)
+    frm: int = -1                   # trade_accept / trade_decline: offerer pid
     why: str = ""                   # free-text rationale, recorded not sent
 
     def to_msg(self):
@@ -83,6 +153,21 @@ class Action:
         if k == "trade_offer":
             return {"t": "trade_offer", "to": self.to,
                     "give": self.give, "want": self.want}
+        if k == "drop_item":
+            # A typed item out of the pack onto our hex (handleMsg_drop_item).
+            return {"t": "drop_item", "slot": self.slot, "qty": max(1, self.qty)}
+        if k == "car_buy":
+            # Off the caravan shelf, standing on its hex (handleMsg_caravan_buy):
+            # give[] must be worth at least value x n, and may not hold water.
+            if self.item <= 0 or not 1 <= self.n <= 3 or len(self.give) != 5:
+                raise ValueError("car_buy needs item, n 1-3 and give[5]")
+            if self.give[0]:
+                raise ValueError("car_buy refuses water as payment")
+            return {"t": "car_buy", "item": self.item, "n": self.n, "give": self.give}
+        if k in ("trade_accept", "trade_decline"):
+            if self.frm < 0:
+                raise ValueError(f"{k} needs the offerer's pid")
+            return {"t": k, "from": self.frm}
         raise ValueError(f"unknown action kind {k!r}")
 
 
@@ -102,6 +187,11 @@ class Policy:
         # broadcast with ws.textAll() -- every bot sees every other bot's
         # rolls, so any per-player bookkeeping must filter on this.
         self.pid = -1
+        # The policy's clock, and every send cooldown on it (Throttle).  A
+        # test replaces `clock` to move time; nothing in a policy should
+        # read time.monotonic() directly.
+        self.clock = time.monotonic
+        self.throttle = Throttle(lambda: self.clock())
 
     def set_pid(self, pid: int) -> None:
         self.pid = pid

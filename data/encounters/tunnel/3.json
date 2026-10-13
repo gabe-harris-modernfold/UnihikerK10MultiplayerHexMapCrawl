@@ -1,0 +1,85 @@
+{
+  "id": "tunnel_breathing_room",
+  "title": "The Breathing Room",
+  "start_node": "fuse_room",
+  "nodes": {
+    "fuse_room": {
+      "text": "This chamber is warm. Not warm like a fire — warm like a mouth. The walls are lined with fuse panels, row on row of old glass cartridge fuses, nearly every one blackened. The grille in the ceiling breathes: a long draw of air in, a long sigh out, {{rhythm}}. Each exhale smells faintly of cloves and wet pennies. The master panel for {{section}} hangs open. Six fuses are missing.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Bridge the gaps with scrap",
+          "cost": { "scrap": 1 },
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "wired",
+          "hazard_id": "short"
+        },
+        {
+          "label": "Pull good fuses from the other panels",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "wired",
+          "hazard_id": "panel_pulls_back"
+        }
+      ]
+    },
+    "wired": {
+      "text": "The last bridge goes in. The breathing has changed while you worked — quicker now, shallower, and closer, as though the grille is no longer where the air is coming from. Something about the rhythm matches yours. When you hold your breath to test it, it holds too.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Close the main breaker",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "exhale"
+        },
+        {
+          "label": "Breathe out slowly first, then close it",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "lights_on",
+          "hazard_id": "exhale"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "The breaker drops home. Somewhere in the rock a relay goes clack — clack — clack, marching away from you, and with every clack another tube along {{section}} flares blue-white and settles into a steady, sickly hum, fitting after fitting, until the whole run of it is lit. The breathing stops. Completely. You stand in the clean light for a long minute listening to nothing at all, and that is so much worse. Two of the tubes refuse to hold steady. You decide not to find out why. You pocket the fuses that are still good and leave the warm room behind.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 2] },
+        { "res": 3, "qty": [0, 1] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "short": {
+      "text": "The scrap bridge glows cherry red and spits molten copper down your sleeve.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "panel_pulls_back": {
+      "text": "The fuse you pull is warm, and damp, and something on the far side of the panel pulls back. You win. Just. Your fingertips are numb for an hour.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "exhale": {
+      "text": "The grille exhales all at once — a long hot gust that smells of a room shut up for a lifetime — and the air goes out of your own lungs with it. You come round on your knees out in the corridor, with no memory of walking there. The breaker is still open. The breathing has gone back to {{rhythm}}.",
+      "penalty": { "ll": -2 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION F", "THE PUMP GALLERY", "SUBLEVEL THREE", "RING B", "THE OLD SPUR", "CORRIDOR 7"],
+    "rhythm": ["four seconds in, four seconds out", "slow as a sleeper", "too slow for anything that should be alive", "in time with your own"]
+  }
+}

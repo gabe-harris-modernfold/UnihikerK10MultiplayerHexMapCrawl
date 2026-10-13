@@ -30,6 +30,7 @@ function getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, maj
     if (def.id === ACT_TRADE)  return 'No survivors or caravan on this hex';
     if (def.id === ACT_TREAT)  return 'Only the Medic can treat outside a Settlement';
     if (def.id === ACT_CRAFT)  return 'Needs a Settlement hex';
+    if (def.id === ACT_SHELTER && terr === 9) return 'A Settlement is already shelter';
     return 'Not available here';
   }
   if (!hasAP)    return `Needs ${def.apCost} AP (have ${ap})`;
@@ -964,7 +965,7 @@ function initMenuSystem() {
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
             ms({ class: 'ht-act-cost' }, '1–2 AP'),
-            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 AP, +4 pts); 2+ scrap = improved shelter 🏠 (2 AP, +8 pts). Boosts rest quality for all campers.')
+            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 AP, +4 pts); 2+ scrap = improved shelter 🏠 (2 AP, +8 pts). Boosts rest quality for all campers. Not in a Settlement — it is already cover.')
           ),
           md({ class: 'ht-act-row' },
             ms({ class: 'ht-act-name' }, '◎ SURVEY'),

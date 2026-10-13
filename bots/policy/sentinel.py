@@ -47,7 +47,6 @@ and whether a survivor who does everything right can live through them.
 Never wrap it in sprint mode: SprintPolicy forces REST the moment AP runs
 out, which collapses the day.  arena.py refuses the combination.
 """
-import time
 
 from config import (ACT_FORAGE, ACT_SCAV, ACT_SHELTER, ACT_WATER,
                     DAY_TICKS, IMPASSABLE, NUM_TERRAIN, RES_FOOD, RES_SCRAP,
@@ -101,6 +100,9 @@ def camp_value(cell, q, r, cost) -> float | None:
 class SentinelPolicy(ScoreMaxPolicy):
     name = "sentinel"
     rest_at_ticks = int(DAY_TICKS * REST_AT_FRACTION)
+    # The soak bot holds the day open from its camp; walking off after Machine
+    # Gun Kane's story would change what it measures. It still dodges him.
+    kane_quest = False
 
     def __init__(self, rng, **kw):
         super().__init__(rng, **kw)
@@ -108,7 +110,6 @@ class SentinelPolicy(ScoreMaxPolicy):
         self._camp_v = None
         self._day = None
         self._dawn_tick = None
-        self._shelter_sent: dict[tuple[int, int], float] = {}
         self.camp_stats = {"camps": 0, "shelters": 0, "upgrades": 0,
                            "rests": 0, "rests_in_camp": 0}
 
@@ -137,56 +138,61 @@ class SentinelPolicy(ScoreMaxPolicy):
         return act
 
     # -- main ----------------------------------------------------------------
-    def decide(self, obs) -> Action:
-        self._clock(obs)
-        me = obs.me
-        if not me.connected or me.ll == 0:
-            return Action("noop", why="downed or disconnected")
-        if obs.encounter is not None:
-            return self.decide_encounter(obs)
-        if obs.underground:
-            return self.climb_out(obs, why="fell down a hatch")
-        if me.resting:
-            return Action("noop", why="asleep")
-        act = self.gear_action(obs)
-        if act is not None:
-            return act
+    # The survivor's guards (downed, a scene, Machine Gun Kane's question --
+    # out of the open before the burst, camp or no camp: a camp on scrub is
+    # somewhere he can hit) run first; then this chain instead of the
+    # survivor's.  No grave, canteen, caravan or extra-craft errands: the
+    # free item actions (a heal, a ration under a threshold, a trade offer
+    # to answer) move it nowhere, and the walking ones it leaves to the
+    # others.  Everything after `bedtime` is the camp.
+    layers = ("climb_out", "asleep", "gear", "trade_reply", "item",
+              "bedtime", "hold_camp", "survival", "camp_errand")
 
+    def _decide(self, obs) -> Action:
+        self._clock(obs)
+        return super()._decide(obs)
+
+    def asleep(self, obs) -> Action | None:
+        return Action("noop", why="asleep") if obs.me.resting else None
+
+    def bedtime(self, obs) -> Action | None:
+        """Late in the day: never go to sleep uncovered if a scrap can
+        prevent it -- finish an unbuilt camp, or, caught out on exposed
+        ground, throw up a basic shelter where we stand (it costs what one
+        step would) -- then rest."""
+        if not self.late(obs):
+            return None
+        me = obs.me
         here = obs.here()
         at_camp = self.camp is not None and (me.q, me.r) == self.camp
-
-        if self.late(obs):
-            # Never go to sleep uncovered if a scrap can prevent it: finish an
-            # unbuilt camp, or -- caught out on exposed ground -- throw up a
-            # basic shelter where we stand; it costs what one step would.
-            if (here is not None and here.shelter == 0
-                    and here.terrain != TERR_SETTLEMENT
-                    and (at_camp or (is_exposed(here.terrain) and me.archetype != 5))
-                    and me.inv[RES_SCRAP] >= 1 and me.ap >= 1):
-                act = self._shelter(obs, "bedtime: " + ("finishing camp" if at_camp
-                                                        else "cover where I stand"))
-                if act is not None:
-                    if at_camp:
-                        self.camp_stats["shelters"] += 1
-                    return act
-            act = self.rest_once(obs, "bedtime" + (" in camp" if at_camp else ", away from camp"))
+        if (here is not None and here.shelter == 0
+                and here.terrain != TERR_SETTLEMENT
+                and (at_camp or (is_exposed(here.terrain) and me.archetype != 5))
+                and me.inv[RES_SCRAP] >= 1 and me.ap >= 1):
+            act = self._shelter(obs, "bedtime: " + ("finishing camp" if at_camp
+                                                    else "cover where I stand"))
             if act is not None:
+                if at_camp:
+                    self.camp_stats["shelters"] += 1
                 return act
+        return self.rest_once(obs, "bedtime" + (" in camp" if at_camp else ", away from camp"))
 
+    def hold_camp(self, obs) -> Action | None:
+        """Pick a camp if we have none, and hold it when we are on it."""
         self._choose_camp(obs)
-        at_camp = self.camp is not None and (me.q, me.r) == self.camp
-        if at_camp:
-            act = self._keep_camp(obs, here)
-            return act if act is not None else Action("noop", why="soaking in camp")
+        me = obs.me
+        if self.camp is None or (me.q, me.r) != self.camp:
+            return None
+        act = self._keep_camp(obs, obs.here())
+        return act if act is not None else Action("noop", why="soaking in camp")
 
-        # Away from camp: survival first (harvest underfoot, emergency staples).
-        act = self.survival_action(obs)
-        if act is not None:
-            return act
+    def camp_errand(self, obs) -> Action:
+        """Away from camp, the survival floor quiet: explore until somewhere
+        will do, fetch the scrap the camp needs, or walk back to it."""
         if self.camp is None:
-            return self.pursue(obs)             # explore until somewhere will do
+            return self.pursue(obs)
         cell = obs.map[self.camp]
-        if self._needs_cover(cell) and me.inv[RES_SCRAP] < 1:
+        if self._needs_cover(cell) and obs.me.inv[RES_SCRAP] < 1:
             act = self._fetch_scrap(obs, SCRAP_SEARCH_COST)
             if act is not None:
                 return act
@@ -259,11 +265,8 @@ class SentinelPolicy(ScoreMaxPolicy):
         return None
 
     def _shelter(self, obs, why: str) -> Action | None:
-        key = (obs.me.q, obs.me.r)
-        now = time.monotonic()
-        if now - self._shelter_sent.get(key, -1e9) < SHELTER_RETRY_S:
+        if not self.throttle.ok(("shelter", obs.me.q, obs.me.r), SHELTER_RETRY_S):
             return None
-        self._shelter_sent[key] = now
         return Action("act", a=ACT_SHELTER, why=why)
 
     def _fetch_scrap(self, obs, max_cost) -> Action | None:

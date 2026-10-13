@@ -941,7 +941,7 @@ static void ecoLifecycle() {
 static bool ecoIsInjury(uint8_t cause) {
   switch (cause) {
     case DC_FIRE: case DC_LIGHTNING: case DC_FLOOD: case DC_DOOM:
-    case DC_ENC_HAZARD: case DC_CHEM: case DC_DAISY:
+    case DC_ENC_HAZARD: case DC_CHEM: case DC_DAISY: case DC_KANE:
       return true;
     default:
       return false;

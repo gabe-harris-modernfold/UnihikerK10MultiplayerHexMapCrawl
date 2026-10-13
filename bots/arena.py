@@ -33,7 +33,9 @@ import websockets
 import policy as policy_mod
 from client import BotClient, RateLimiter, SlotBroker
 from config import MAX_PLAYERS, MAX_SEATED, ARCHETYPE_NAME, MIN_PROTO
-from findings import FindingLog
+from findings import Finding, FindingLog
+import items as IT
+from quests import LEDGER as QUEST_LEDGER, catalog as quest_catalog
 from policy.base import Action, Policy
 from policy.survivor import REST_RETRY_S
 from record import Recorder
@@ -45,6 +47,9 @@ RUNS_DIR = Path(__file__).parent / "runs"
 # Generous on purpose: the seat-loss bug unseats everyone at once and the
 # clients re-pick on their own, so a short fuse here scraps healthy runs.
 NO_SEAT_GRACE = 45.0
+# How many times one bot's run() task is started again after raising before
+# the run is given up as a harness failure (bot_crashed).
+BOT_RESTARTS = 3
 
 
 class SprintPolicy(Policy):
@@ -107,6 +112,11 @@ class SprintPolicy(Policy):
         getter = getattr(self.inner, "content_score", None)
         return getter() if callable(getter) else None
 
+    def attach(self, **kw):
+        attach = getattr(self.inner, "attach", None)
+        if callable(attach):
+            attach(**kw)
+
 
 async def verify_reset(host: str, recorder, attempts: int = 8,
                        delay: float = 2.0) -> bool:
@@ -135,6 +145,30 @@ async def verify_reset(host: str, recorder, attempts: int = 8,
                                          "attempt": i + 1})
         await asyncio.sleep(delay)
     return False
+
+
+ERASE_TRIES = 6
+
+
+async def _await_reply(ws, rid: int, timeout: float) -> str:
+    """The ack/nack for `rid` on a raw control socket: "ack", the nack's
+    `why`, or "silent".  Everything else the board broadcasts is skipped."""
+    try:
+        async with asyncio.timeout(timeout):
+            async for raw in ws:
+                try:
+                    m = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if m.get("rid") != rid:
+                    continue
+                if m.get("t") == "ack":
+                    return "ack"
+                if m.get("t") == "nack":
+                    return m.get("why", "nack")
+    except asyncio.TimeoutError:
+        pass
+    return "silent"
 
 
 async def reset_world(host: str, recorder, timeout: float = 20.0) -> bool:
@@ -166,8 +200,22 @@ async def reset_world(host: str, recorder, timeout: float = 20.0) -> bool:
                             break
             except (asyncio.TimeoutError, json.JSONDecodeError):
                 pass
+            # eraseslot waits only 20 ms for G.mutex and nacks `busy` when the
+            # game loop holds it (a dawn save, a world tick) -- the slot is
+            # then untouched, and regen keeps its score.  So each one carries
+            # a rid and is retried until acked.
+            rid = 900000
             for arch in range(MAX_PLAYERS):
-                await ws.send(json.dumps({"t": "eraseslot", "arch": arch}))
+                for _ in range(ERASE_TRIES):
+                    rid += 1
+                    await ws.send(json.dumps({"t": "eraseslot", "arch": arch,
+                                              "rid": rid}))
+                    reply = await _await_reply(ws, rid, 3.0)
+                    if reply == "ack":
+                        break
+                    recorder.write("reset", -1, {"erase_retry": arch,
+                                                 "why": reply})
+                    await asyncio.sleep(0.4)
                 await asyncio.sleep(0.25)
             await asyncio.sleep(0.5)
             await ws.send(json.dumps({"t": "regen"}))
@@ -212,6 +260,8 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
         # One log for the whole run: every bot's WireOracle and the /state
         # poller report into it, so a defect two bots hit is counted once.
         findings = FindingLog(rec)
+        # The quest ledger is fleet-wide and per run (quests.py).
+        QUEST_LEDGER.reset()
         names = args.policies.split(",")
         bots = []
         for i in range(args.bots):
@@ -233,16 +283,19 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
 
         tele = TelemetryPoller(args.host, rec, interval=args.telemetry_interval,
                                findings=findings)
-        tasks = [asyncio.create_task(tele.run())]
+        tele_task = asyncio.create_task(tele.run())
+        bot_tasks = []
         # Each join costs the board a full sendSync(); five at once took free
         # internal heap to 42 KB (largest block 7.6 KB) and wedged it 25 s in
         # on 2026-09-23.  --join-stagger spaces them out; 0 keeps the old burst.
         for i, b in enumerate(bots):
             if i and args.join_stagger > 0:
                 await asyncio.sleep(args.join_stagger)
-            tasks.append(asyncio.create_task(b.run()))
+            bot_tasks.append(asyncio.create_task(b.run()))
+        restarts = [0] * len(bots)
 
         reason, t_start = "unknown", time.monotonic()
+        interrupted = False
         deadline = t_start + args.max_minutes * 60
         # "Nobody is seated" has two completely different meanings and this
         # is the only place that can tell them apart.  A refused pick is
@@ -257,6 +310,36 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
         try:
             while True:
                 await asyncio.sleep(2.0)
+                # A bot whose run() raised is gone for good, but its last
+                # observation still reads as seated -- the 2026-10-12 ENOSPC
+                # run printed "seated=4/5" for minutes with the board at 0.
+                # run() keeps its own state across sockets, so the bot is
+                # started again where it was, a few times, before the run is
+                # given up as a harness failure.
+                for i, t in enumerate(bot_tasks):
+                    if not (t.done() and not t.cancelled() and t.exception() is not None):
+                        continue
+                    e = t.exception()
+                    restarts[i] += 1
+                    rec.write("run", -1, {"bot_task_died": bots[i].label,
+                                          "err": f"{type(e).__name__}: {e}",
+                                          "restart": restarts[i]})
+                    findings.add(Finding(
+                        check="bot_task_died", severity="major",
+                        summary="a bot's run() task raised; the arena restarted it",
+                        source=bots[i].oracle.source, key=(type(e).__name__,),
+                        detail={"err": f"{type(e).__name__}: {e}",
+                                "restart": restarts[i]}))
+                    if restarts[i] > BOT_RESTARTS:
+                        print(f"  bot {bots[i].label} died {restarts[i]} times: "
+                              f"{type(e).__name__}: {e}")
+                        reason = "bot_crashed"
+                        break
+                    print(f"  bot {bots[i].label} task died ({type(e).__name__}: {e}); "
+                          f"restarting ({restarts[i]}/{BOT_RESTARTS})")
+                    bot_tasks[i] = asyncio.create_task(bots[i].run())
+                if reason == "bot_crashed":
+                    break
                 joined = [b for b in bots if b.joined()]
                 scores = [b.obs.me.score for b in joined]
                 alive = [b for b in joined if b.obs.me.ll > 0]
@@ -281,12 +364,19 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                     day = joined[0].obs.day if joined else 0
                     print(f"  t={int(elapsed):4}s day={day:3} seated={len(joined)}/{len(bots)} "
                           f"scores={scores} tick={tele.worst_tick} heap={tele.min_heap}")
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Ctrl-C reaches a task as cancellation, not as KeyboardInterrupt,
+            # and it used to escape past the summary: the log ended without
+            # its `run` row or its findings totals, so metrics.py read an
+            # interrupted run as a crashed one.  Finish the bookkeeping, then
+            # let the cancellation through.
             reason = "interrupted"
+            interrupted = True
         finally:
             for b in bots:
                 b.stop.set()
             tele.stop.set()
+            tasks = [tele_task] + bot_tasks
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -298,6 +388,7 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
             "bots": [b.summary() for b in bots],
             "board": tele.summary(),
             "findings": findings.summary(),
+            "quests": QUEST_LEDGER.to_dict(),
             "log": str(path),
         }
         findings.flush()
@@ -329,6 +420,18 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       # Death drops: loots sent at graves, steps walked back
                       # to our own -- whether a fall still costs the canteen.
                       f"loots={c.get('loots', 0)} recover={c.get('recover_moves', 0)}")
+            if c and (c.get("items_used") or c.get("crafted_extra") or c.get("caravan_buys")
+                      or c.get("trades_accepted") or c.get("trades_declined")):
+                # What it did with its pack: consumables by name, extras
+                # crafted, caravan purchases, trade replies, litter dropped.
+                used = ",".join(f"{IT.name(int(i))}x{n}" for i, n in
+                                sorted(c.get("items_used", {}).items(), key=lambda kv: -kv[1]))
+                made = ",".join(f"r{r}x{n}" for r, n in sorted(c.get("crafted_extra", {}).items()))
+                print(f"       items: used=[{used}] crafted=[{made}] "
+                      f"caravan={c.get('caravan_buys', 0)} trades=+{c.get('trades_accepted', 0)}"
+                      f"/-{c.get('trades_declined', 0)} dropped={c.get('junk_dropped', 0)} "
+                      f"reveals={c.get('reveals', 0)} threat={c.get('threat_items', 0)} "
+                      f"quest_steps={c.get('quest_steps', 0)} probes={c.get('gates_probed', 0)}")
             bike = (c or {}).get("bike")
             if bike:
                 # The Biker: did it get the Backpack, build the bike, and how
@@ -339,6 +442,15 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
                       f"fuel={bike['fuel']} peak={bike['fuel_peak']} "
                       f"gained={bike['fuel_gained']} ride_moves={bike['ride_moves']} "
                       f"kickstarts={bike.get('kickstarts', 0)}")
+            if c and (c.get("kane_calls") or c.get("kane_scenes") or c.get("kane_quest_moves")):
+                # Machine Gun Kane: questions put to this bot and how many it
+                # got out of the open for, bursts and what they took; his
+                # chapters it opened and read, and the walking it did for them.
+                print(f"       kane: asked={c['kane_calls']} dodged={c['kane_dodged']} "
+                      f"shot={c['kane_bursts']} hit={c['kane_hits']} ll={c['kane_ll_lost']} "
+                      f"scenes={c['kane_scenes']} read={c['kane_chapters']} "
+                      f"quest_moves={c['kane_quest_moves']} shadow={c['kane_shadow_moves']}"
+                      + (f" ending={c['kane_ending']}" if c.get("kane_ending") else ""))
             camp = (c or {}).get("camp")
             if camp:
                 # The Sentinel's camp: did it get one, cover it, and sleep in it?
@@ -370,7 +482,15 @@ async def run_once(args, run_idx: int, seed: int) -> dict:
             print(f"    board REBOOTED mid-run: reset={rb.get('reset')} "
                   f"after {rb['uptimeMs_before'] / 1000:.0f}s up"
                   + (f", crash task={cr.get('task')} pc={cr.get('pc')}" if cr else ""))
+        if QUEST_LEDGER.steps or QUEST_LEDGER.problems or QUEST_LEDGER.gates_probed:
+            print("    quests:")
+            for line in QUEST_LEDGER.report(quest_catalog()):
+                print(line)
+            for key, verdict in sorted(QUEST_LEDGER.gates_probed.items(), key=str):
+                print(f"    gate probe {'/'.join(map(str, key))}: {verdict}")
         findings.print_summary()
+        if interrupted:
+            raise asyncio.CancelledError()
         return summary
 
 
@@ -388,14 +508,18 @@ async def main_async(args):
                          f"bots read protocol {MIN_PROTO} (\"ap\", not \"mp\") -- flash it")
 
     summaries = []
-    for i in range(1, args.runs + 1):
-        summaries.append(await run_once(args, i, args.seed + i))
-        if i < args.runs:
-            await asyncio.sleep(5.0)
-
-    out = RUNS_DIR / f"summary-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-    out.write_text(json.dumps(summaries, indent=2, default=str), encoding="utf-8")
-    print(f"\n{len(summaries)} run(s) -> {out}")
+    try:
+        for i in range(1, args.runs + 1):
+            summaries.append(await run_once(args, i, args.seed + i))
+            if i < args.runs:
+                await asyncio.sleep(5.0)
+    finally:
+        # The runs that finished are still worth their summary file when a
+        # --runs batch is interrupted part way.
+        if summaries:
+            out = RUNS_DIR / f"summary-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+            out.write_text(json.dumps(summaries, indent=2, default=str), encoding="utf-8")
+            print(f"\n{len(summaries)} run(s) -> {out}")
 
 
 def parse_args(argv=None):

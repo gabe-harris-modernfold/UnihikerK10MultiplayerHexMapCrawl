@@ -9,10 +9,10 @@ knows about the game it learns through the same WebSocket a browser uses.
 
 ## For AI coding agents (read first, ≤ 1 min)
 
-- **Self-test, no board:** `cd bots && python smoke.py` (503 checks). Run this
+- **Self-test, no board:** `cd bots && python smoke.py` (639 checks). Run this
   before every live run; it catches a broken parser in 2 s instead of wasting
   10 minutes of hardware time. It also reads the firmware source and fails on
-  drift: 36 constants mirrored in `config.py`, the dispatch table, and the
+  drift: 51 constants mirrored in `config.py`, the dispatch table, and the
   cause-of-death names.
 - **Every bot is a tester now.** Each connection carries a `WireOracle` and
   the `/state` poller a `StateOracle` (`oracles.py`); anything the firmware
@@ -51,6 +51,19 @@ knows about the game it learns through the same WebSocket a browser uses.
 - **Booby traps open scenes nobody asked for** (protocol 5) — see "Booby
   traps". A bot that only drives encounters it opened itself will sit in one
   forever; every `SurvivorPolicy` answers them with `decide_trap()`.
+- **Machine Gun Kane shoots survivors in the open, and his story opens scenes
+  on arrival** (protocol 8) — see "Machine Gun Kane". Every `SurvivorPolicy`
+  takes cover when he asks; `contentmax` goes after his five chapters. His
+  camps only appear on days that reach dusk, so an all-bot fleet that rests
+  early never sees one: put a `sentinel` in a realtime fleet for the story.
+- **Since 2026-10-13 every survivor uses its items and plays scenes by
+  expected value.** See "Items" and "Encounter planning". Earlier numbers
+  came from bots that never used a consumable and took the first open
+  choice in every scene. Setting `plan_encounters = False` and
+  `use_items = False` on a policy gives those baseline arms back.
+- **Quests are checked, not just played.** See "Quests". `python quests.py`
+  lints the content, `quest_check.py` stages every chain on the mock, and an
+  arena with a `quester` in the fleet prints the fleet's quest ledger.
 - **Never `nohup` a background run, and never pipe `arena.py` into
   `head`/`tail`.** Both orphan the Python process: it survives, keeps
   playing, and every later `verify_reset()` then sees a dirty board and
@@ -81,6 +94,11 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `metrics.py` | Post-run analysis; `--aggregate` pools runs. |
 | `gearcheck.py` | Equipment audit: declared mods vs the wire, and a survival ranking. |
 | `record.py` | JSONL per run into `runs/` (gitignored). |
+| `kane_check.py` | Machine Gun Kane on the mock: real bots, staged with `dbg_kane` -- do they take cover when asked, and do they read his story to an ending. |
+| `items.py` | Item rules, as pure functions of items.cfg and recipes.cfg: when a consumable is worth using, what is litter, caravan payment, whether a trade is fair, and loot worth for the planner. |
+| `policy/itemuse.py` | The item layer every `SurvivorPolicy` mixes in: `use_item`, `drop_item`, `car_buy`, extra crafts and trade replies, each with a cooldown. |
+| `quests.py` | The quest catalog (derived from the content where possible), each bot's journal, the fleet's ledger, and the sequencing checks. `python quests.py` lints the content. |
+| `quest_check.py` | Stages every quest chain on the mock with `dbg_enc` for a real `quester` to play: in order, out of order, the gates, and the workshop. |
 
 ### Policies
 
@@ -95,11 +113,19 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `biker` | **Wants a Motorbike and nothing else.** Crafts a Backpack, gathers the build (7 scrap, 1 fuel, 1 Sparky Bits), crafts the bike at a Settlement, then rides it collecting all the fuel it can carry. See "The Biker" below. |
 | `subterranean` | **Subterranean Explorer.** Lives in the bunker tunnels: maps the corridors, works them for water and scrap, sleeps below, surfaces only for food. |
 | `tunnelrunner` | **Subterranean Explorer.** Uses the tunnels as transport: dives, walks to the shaft that surfaces furthest away, climbs out and works the fresh ground. |
+| `quester` | **Plays every quest to the end, in order, and checks that the order holds.** A `contentmax` whose encounter planner the quest journal steers. It opens POIs on terrains with open steps first, and Jack's Chopper is visible on the map. Quest goals and items outrank any loot; it wears gate gear and never drops quest items. It probes every gated choice once without its item, and crafts every taught recipe once. Its numbers measure coverage, not balance. See "Quests". |
 | `sentinel` | The soak bot. **Makes camp** (water, forage, an existing shelter or a Settlement; never radioactive or a hatch), **builds a shelter** there (improved when it has 2 scrap, upgrades later, rebuilds after a quake), harvests in place, and stays awake until 90% of each day has passed, **then rests in the shelter** — so days run ~4.5 of 5 minutes and it heals every night. Realtime only — arena refuses it in sprint mode. |
 
 All non-`drunk` policies share `SurvivorPolicy`, which owns the survival floor
-(eat/drink/rest, emergency staple hunting) and encounter handling. Subclasses
-differ only in `pursue()`.
+(eat/drink/rest, emergency staple hunting), encounter handling (the planner),
+and the item layer (`policy/itemuse.py`). Its decision is a chain of named
+layers (`SurvivorPolicy.layers`, top priority first; `LAYER_METHOD` maps a
+name to its method), and every decision's `why` starts with the layer that
+made it. Subclasses differ mostly in `pursue()`; one that needs a different
+chain overrides `layers` by name (the sentinel keeps camp instead of running
+errands, the biker sheds junk first) rather than copying it. Every send
+cooldown is a key on the policy's `throttle` (`policy/base.py` `Throttle`),
+on a clock a test can move.
 
 The two Subterranean Explorers share `TunnelPolicy` (`policy/subterranean.py`)
 on top of that, which owns the dive/surface cycle and the cross-board
@@ -184,7 +210,31 @@ above the pre-crash level.
 ### Probes
 
 All three need protocol 2 (they judge by ack/nack) and a free seat or two.
-**None has been run on hardware yet.**
+
+**First hardware run, 2026-10-12 (firmware aa784f04, protocol 8).**
+- `fuzz.py`: 217 of 221 passed. The two `parse:` cases fail as expected.
+  `n:long-1400` and `n:long-4000` got no reply at all: `onWsEvent`
+  (network-handlers.hpp) handled a text message only when it arrived in one
+  piece, so anything that reached it in two chunks -- over a TCP segment, or
+  WS-fragmented -- was dropped with no reply. **Fixed 2026-10-13 (firmware
+  59e280e4):** `wsDataEvent()` gathers the pieces per client (up to
+  `WS_MSG_MAX`, 4096 B, in PSRAM) and dispatches the whole message;
+  bigger is still dropped whole, since its rid cannot be trusted. The corpus
+  now expects `frame:fragmented` -> `nack:bad_arg` and has `n:long-6000` ->
+  `none`. Re-run: 220 of 222, only the two `parse:` cases.
+- **A run with silences in threes followed by `fuzz_socket_closed` is the
+  Wi-Fi link, not the firmware.** The first fuzz run on 59e280e4 had 8 of
+  them in three bursts (each ~9 s: three 3 s silences, then the board's 5 s
+  ACK timeout drops the socket); the next run, same firmware, had none. Run
+  it again before reading anything into one.
+- `chaos.py`: all six pass. `stalled_reader` held heap at 131 -> 129.5 ->
+  131.5 KB. `abort_encounter` and `trade_then_leave` skip on map luck (no
+  POI in sight, or B out of AP); run them on a fresh world.
+- `walk_to()` used to read the survivor's surface position from the `s` tick,
+  which lags its own `mv`, so it always walked one hex past the target and
+  those two scenarios failed `not_here` / `not_same_hex`. It now steers by the
+  `mv`. Policies still have the same lag -- "moves overshoot" under
+  "Deadlocks to avoid".
 
 **`fuzz.py`** sends the 217-case corpus in `fuzz_cases.py` — every prefix of
 every command, framing (not JSON, binary, fragmented, empty), rid mangling,
@@ -461,6 +511,27 @@ measured over the generator's own corridor paths with the whole network
 known; these bots have one ring of vision and learn the pairings by using
 them, so the gap between the two figures is the cost of not having the map.
 
+**Surface distances before 2026-10-12 were over-counted.**
+`navigate.hex_distance` folded each torus delta to its absolute value before
+combining them, so any crossing where q and r moved in opposite directions
+came out long -- (22,20) to (19,22) read 5 instead of 3, and from one sample
+hex 2816 of the board's 4275 cells were over-counted. It is now the firmware's
+`hexDistWrap()` (`hex_dist_wrap`), and `smoke.py` checks it against a
+breadth-first walk of the whole torus. What that moves:
+
+- `ap_per_surface_hex` / `ap_per_hex` read too optimistic: diagonal crossings
+  counted extra hexes, so the tunnels looked cheaper than they were.
+  `metrics.py` recomputes gaps from the raw `tun_in`/`tun_out` events, so
+  re-running it on an old log gives the corrected figure; the per-bot
+  `transit_hexes` / `longest_transit` stored in an old run's summary stay as
+  recorded.
+- `tunnelrunner` ranked exits by that gap (and `MIN_WORTHWHILE_GAP` filtered on
+  it), so it favoured diagonal exits more than their real distance justified.
+- `coward`'s fire and Creeping Doom radii (2 and 4) and `rival`'s contest and
+  trade ranges (8 and 6) were effectively smaller toward opposite-sign
+  neighbours, so runs before the fix had a coward that walked closer to fire
+  and the Doom than intended.
+
 `dawns_below` / `rests_below` / `below_dawn_ll` are the other half of the
 ledger — read them against a surface bot's exposure losses in
 `-- what killed them`. `stranded_dawns` counts dives that wanted out and were
@@ -716,7 +787,17 @@ protocol 2). Cap attempts per hex and fall through to movement.
 **Scene bookkeeping on a busy board.** On 2026-09-29 the K10 dropped replies
 and unicast messages. `broadcastPartial` reached the thousands with only
 three bots, and sockets closed with `1002 expected a continuation frame`;
-that last one appears in earlier runs too. Four loops came out of it, all
+that last one appears in earlier runs too. **It was the WebSocket library**
+(ESPAsyncWebServer < 3.12.0 tore and re-sent frames under send pressure,
+upstream #453): on 2026-10-12 a 5-bot run on 3.10.3 dropped all five sockets
+at once every 30-100 s and delivered one `enc_start` seven times. On 3.12.1
+the same run had 0 torn frames, 0 duplicates and 14 connection errors instead
+of 139. The rest was the per-client queue of 8 (`build_opt.h`) discarding
+acks, events and `kane_call`s behind state ticks during a multi-second Wi-Fi
+stall; `broadcastState()` now caps state ticks at 2 queued per client
+(firmware aa784f04), and the next run had 0 connection errors and 7
+unanswered requests, all in one stall. A `request_unanswered` burst at one
+moment is a stall; a steady trickle is worth a look. Four loops came out of it, all
 fixed in `SurvivorPolicy` / `EncounterRun` / `BotClient`:
 
 | Symptom | Cause | Fix |
@@ -726,12 +807,29 @@ fixed in `SurvivorPolicy` / `EncounterRun` / `BotClient`:
 | `enc_choice` nacked `no_res` forever | the first "open" choice cost more than the bot carried | `encounters.can_pay()` mirrors `canAfford`, and a nacked choice is struck off at that node (`EncounterRun.refused`) |
 | a trap choice re-sent every cycle, then `no_choice` | the next pick went out before the last roll's `enc_res` came back | one choice in flight (`EncounterRun.awaiting`, up to `CHOICE_WAIT_S`) |
 
-**Still open: moves overshoot on a slow board.** Policies send a move every
-decide cycle, whether or not the last one's `mv` has come back. Most extras
-are refused `cooldown` (about 300 a bot per run), but sometimes both land. A
-Biker one hex from a Settlement stepped onto it and then off it again, and
-its CRAFT was refused on the wrong hex. That predates the Biker and affects
-every policy. The fix is one move in flight, like the choices.
+**Moves overshooting on a slow board** (fixed 2026-10-13). Policies sent a
+move every decide cycle, whether or not the last one's `mv` had come back.
+Most extras were refused `cooldown` (about 300 a bot per run), but sometimes
+both landed: a Biker one hex from a Settlement stepped onto it and then off
+it again, and its CRAFT was refused on the wrong hex. `BotClient` now holds
+one move in flight (`MOVE_WAIT_S`), released by our own `mv` or the nack;
+`moves_held` in the summary counts the steps it kept back.
+
+**The harness's own failures are findings too.** A policy that raises from
+`decide()` is `policy_exception` (and after ten in a row its loop slows to
+`POLICY_ERR_BACKOFF_S`); a decision loop that dies is `decider_died`, and the
+socket is dropped so `run()` starts a fresh pair of tasks instead of leaving
+a bot that reads every tick and never acts; a `run()` task that raises is
+`bot_task_died`, and `arena.py` starts it again up to `BOT_RESTARTS` times
+before ending the run `bot_crashed`. Ctrl-C now writes the run's summary row
+and findings totals before it leaves.
+
+**One decision, one search.** `SurvivorPolicy._decide()` is a priority list
+whose layers each run their own `navigate` search from the same hex, most of
+them to find nothing to walk to -- eight a cycle, 35 ms a cycle for a quester
+on a revealed map, on the one thread that reads every socket. `decide()`
+opens a memo (`navigate.begin_cycle`) that lives exactly as long as the call,
+so the same search is run once; outside a `decide()` nothing is cached.
 
 ---
 
@@ -934,6 +1032,260 @@ Two policies had latent loops that graves made live, both fixed:
 
 Runs from before this are not comparable on anything to do with carrying:
 death used to reset the pack, and now it merely relocates it.
+
+## Machine Gun Kane
+
+A rusted jeep that roams the open road and shoots survivors caught in the
+open, and a five-chapter story left behind it ([kane.hpp](../kane.hpp),
+[machine-gun-kane.md](machine-gun-kane.md)). What the bots see: the `kane`
+object in `sync` and every tick's `world` (`q r m st e cq cr gq gr`), and
+three events -- `kane_call` (unicast: he has asked *you*; `camp: 1` is the
+harmless question at his fire), `kane_fire` (broadcast: a burst, `hits`,
+`llLost`, `ll`) and `kane_arc` (a chapter read, `stage`, `ending`).
+
+**The rule that makes him survivable: he always asks first.** Every world tick
+(150 game ticks, ~15 s) he looks for anyone within `KANE_RANGE` (3) standing
+on open ground -- scrub, dunes or marsh; everything else is cover. The first
+tick he sees you he asks and stops; if you are still exposed on the next one
+he fires 3 rounds at 35%, at most 2 LL, and then has to ask again. Never
+underground, never into a scene, never at night (he sits at his fire).
+
+What every `SurvivorPolicy` does about it (`policy/survivor.py`):
+
+- **Prices his reach.** `Observation._refresh_kane_danger()` fills
+  `WorldMap.danger_cost` with the open ground within range of a jeep on the
+  road -- `KANE_DANGER_COST` (4) normally, `KANE_CALLED_COST` (30) once he has
+  asked us -- and `navigate.dijkstra` adds it, so routes bend around him.
+  Unrevealed hexes in reach are priced at half. In the mock runs this alone
+  kept the bots out of range whenever they had a second's warning.
+- **Takes cover when asked** (`kane_cover_action()`, first after the scene
+  checks): the cheapest hex in today's AP that is cover, out of range or a
+  hatch, searched with `danger=False` because crossing his reach on the way is
+  free -- only where the move ends is checked. No cover in reach and a POI
+  underfoot: open it, since he never fires into a scene.
+- **Holds cover** (`kane_hold()`): `decide()` is now a wrapper around
+  `_decide()`, and while his question is open a move back into the open is
+  replaced by a noop. Subclasses override `_decide()` (sentinel) or call
+  `super().decide()` (biker, subterranean), so all of them get it.
+- **Plays his chapters to the end** (`decide_kane_chapter()`). A chapter
+  counts only when its *last* node is reached, so unlike a POI it is never
+  banked early -- the default "bank at the first bankable node" would pocket a
+  haul and leave the chapter unread for good. It takes the best odds, never a
+  choice that leads to an escape node, and at chapter 5's ending tells the
+  truth when its odds clear `kane_truth_nerve` (0.5), the lie otherwise. Below
+  `kane_min_ll` (3) it walks away; the chapter keeps.
+- **Walks to the next chapter** (`kane_quest_action()`): the camp he left at
+  dawn (1-3), the house in the glass (4), his own hex while he sits at his
+  fire once that is read (5 -- urgent, since the fire goes out two world ticks
+  after dawn). `kane_quest_reach` is the AP it will walk (None = what is left
+  today); a hex it stood on with no scene (somebody else is reading it, or a
+  failed check threw it out) is left for `KANE_QUEST_RETRY_S`.
+
+| policy | dodges | goes after the story |
+|---|---|---|
+| contentmax | yes | yes, up to 60 AP, and shadows the jeep (outside his reach, within 7 hexes) before the last chapter so the fire is a short walk at dusk |
+| scoremax, rival, gearmax, biker | yes | on the way only: within today's AP |
+| coward | yes | never -- every chapter is a string of checks |
+| sentinel, subterranean, tunnelrunner | yes | never: it would skew what they measure |
+
+**The story needs days that reach dusk.** He camps at dusk (`dayTick` >= 78%
+of the day) and leaves a camp when he drives on. `tickGame()` starts a new day
+the moment every connected player rests, so an all-bot fleet whose days
+collapse to seconds never reaches dusk and he never camps: no camps, no
+chapters 1-3, no chapter 5. He still drives and asks all day. For the story,
+run realtime with a `sentinel` holding the days open.
+
+**On the wire after the fact:** `causes.py` books `kane_fire` `llLost` as
+`machine gun kane` (and the firmware names it on `downed`); `metrics.py`
+prints `-- machine gun kane`: questions, how many were dodged (no burst at
+that survivor within `KANE_CALL_TTL_S`), bursts and LL, who read which
+chapter and how it ended; `arena.py` prints a `kane:` line per bot. The
+`WireOracle` flags a burst with no question before it
+(`kane_fired_unasked`), a burst outside its caps, and the arc going back a
+chapter.
+
+**`kane_check.py` (mock only)** seats real bots and a staging probe and
+drives him with `dbg_kane`. `cover` parks the jeep beside a bot on open
+ground, has him ask and fires one beat later (`--gap`, 6 s; a real world tick
+is 15). `story` leaves each camp at dawn two hexes from the quester, then the
+house (staged beside it if the mock put it out of reach) and his fire, with
+real rolls. The mock is not the economy -- its survivors sit at LL 2-3, so
+the script relaxes `kane_min_ll` -- and the probe re-seats itself, because it
+never eats and dies within a few collapsed days. Measured 2026-10-12 on the
+mock (contentmax, scoremax, rival): `cover` -- 9 questions, 9 dodged, 0
+bursts; `story` -- the contentmax read all five chapters on real rolls (34
+quest steps; it found the mock's own house in the glass 6 hexes off) and told
+him the truth, with no Kane findings from the oracles. Nothing on hardware yet:
+the firmware with Kane in it is not flashed.
+
+## Items
+
+Until 2026-10-13 no bot ever sent `use_item`, `car_buy`, `drop_item`,
+`trade_accept` or `trade_decline`, and none crafted anything beyond the three
+starter recipes. Every Trauma Patch, ration and wound kit a scene paid out
+stayed in the pack until the survivor died with it. A recipe banked in a scene
+also stayed unknown to the bot until it reconnected, because `kr` rides only
+on `sync`; the bots now OR in `ev enc_bank` `recs`, as the browser does.
+Every `SurvivorPolicy` now mixes in `ItemUseMixin` (`policy/itemuse.py`) on top
+of `items.py`:
+
+| when | what | rule (`items.py`) |
+|---|---|---|
+| any cycle, free | `use_item` | `choose_consumable`, first match wins (see the list below) |
+| mid-scene, before a roll | `use_item` | a threat reducer, only when it drops the clock below a tier (5/10/15/20; `computeEncounterDN` adds +5 risk at each); a heal on the last LL |
+| where there is fog | `use_item` | the Net Map once per world. The Diary and Pendulum (reusable) and Static Chew when at least 40% of their disk is unseen (60% for a one-shot). Never Bright Bad Idea when its +2 threat would cross a tier |
+| pack has no free slot | `drop_item` | litter: Panic Juice, a material no recipe uses, a key item with no effect. Never a quest item an open step still needs |
+| a trade offer to us | `trade_accept` / `trade_decline` | accept when `TOKEN_WORTH` says we come out at least even and the staple floors hold; decline the rest. The board needs both survivors still on the same hex, so this runs before anything that walks |
+| at or near a Settlement | `act` CRAFT | any learned recipe whose output it would use (fewer than 2 held) or wear (beats what that slot holds). Within 10 AP, spending only tokens above `token_reserve`. Not the starter recipes, which have their own errands |
+| caravan within 12 AP | `car_buy` | the consumable worth the most per token among those it holds fewer than 2 of, paid in spare food/med/scrap/fuel with the least overpayment. Water is refused (why 4) |
+
+`choose_consumable` checks these in order and takes the first that applies:
+
+1. LL 2 or below: the biggest heal. The Uranium Candy only on the last LL.
+2. Any wound: a wound kit.
+3. A food or water item that lifts a track back over a threshold it **fell
+   through** (the `fth`/`wth` bits). That LL comes back.
+4. Radiation 5 or above.
+5. No tokens left to feed a track at dawn.
+6. LL that fits under `llCap` with nothing spilled.
+7. AP, only when `wants_ap` (out of a staple).
+
+Only the craft and the walks cost AP, so the free actions sit right after the
+grave loot in `_decide()`. Every sender has a cooldown: a refusal changes
+nothing, and an unguarded rule re-sends the same message every cycle forever.
+`EQUIP_RETRY_S` was the first lesson in that.
+
+**What the firmware does with a used item** (`useItem`, inventory_items.hpp):
+
+- **Food and water move the 0-6 track, not the tokens**, one step at a time
+  through `applyFStep`/`applyWStep`. A step back over a threshold the track
+  fell through returns that LL.
+- **LL** clamps to `llCap`, **radiation** to 0..10, and **AP** changes at once.
+- **Key items** with an effect are never spent.
+- **Nothing is checked**: no encounter, AP or LL check, and nothing stops a
+  wasteful use. That is why the rules above refuse to spill.
+
+The `sentinel` takes only the free half (heals, rations, trade replies). Its
+job is to hold its camp, so it never walks to a caravan or a Settlement for an
+extra. In sprint mode `SprintPolicy` rests the moment AP hits 0, so AP items
+are never used there.
+
+`arena.py` prints an `items:` line per bot: uses by name, extra crafts, caravan
+buys, trade replies, litter, reveals, threat items, quest steps and gate
+probes. `metrics.py` prints `-- items` from the wire: every item message sent,
+uses by name, crafts by recipe, and the `item_result` acts the board
+confirmed.
+
+## Encounter planning
+
+`SurvivorPolicy` used to take the first open choice until a node was bankable,
+then bank. That was deliberate, to measure whether the content was reachable.
+It now plays a scene by expected value (`encounters.plan`):
+
+- **A choice** is worth `p * (what the node it leads to pays + the best of
+  what follows) + (1 - p) * (its hazard)`. `p` is the 2d6 check from the bot's
+  own stats.
+- **A failed roll** costs its hazard. A hazard with `ends_encounter` also
+  loses everything still pending, so a survivor with a haul in hand banks
+  rather than risk it. A roll that could take the last LL is priced at
+  `DOWNED_COST`.
+- **Banking** is worth what is pending, plus a little at a terminal node for
+  the full clear. Pending is read from the `enc_res` events, not the file.
+- **`requires_item` choices** are planned only when the survivor may take them
+  (it has the item, worn if it is equipment) and can pay for them.
+- **Loot** is valued by `items.Worth`:
+  - tokens by need;
+  - consumables by what they do;
+  - equipment by how much it beats that slot (the policy's own gear weights);
+  - unknown recipes high;
+  - quest items and quest goal nodes very high for a `quest_drive` policy.
+
+  `novelty_bonus` adds worth to nodes the bot has never seen (contentmax 3,
+  quester 1).
+- **`encounter_risk`** scales every hazard: coward 2.0, contentmax and
+  quester 0.8.
+
+Two fixes came with it:
+
+- **Terminal nodes.** At a terminal node not marked `can_bank`, the old rule
+  sent `enc_abort`. That gave up the +10 full clear and ticked the threat
+  clock, when `enc_bank` is allowed at any terminal node.
+- **Mid-scene items.** An item can now be used mid-scene, before a roll.
+
+Traps and Kane's chapters keep their own drivers (`decide_trap`,
+`decide_kane_chapter`). Setting `plan_encounters = False` on a policy restores
+the old rule as the baseline arm.
+
+## Quests
+
+**The firmware has no quest system.** There are no quest ids, no per-player
+flags and no stage counters. The only tracked progress is Machine Gun Kane's
+world-shared `stage`. Everything else that reads as a quest is held together
+by the pack: one scene pays an item, and a later scene has a `requires_item`
+choice that only opens for whoever holds it. For the two oldest chains, only
+the choice text says so. `quests.py` derives the catalog from the content where
+the content says enough, and declares the rest:
+
+| quest | steps | how the order is held |
+|---|---|---|
+| Jack's Chopper | `scrub/19` agree to fetch the mask, then `urban/19` find the mask (85%), then `scrub/20` hand it over (pays the Motorbike) | **Not at all.** `scrub/20`'s only choice never asks for the mask (`quest_ungated`), and nothing says you met Jack (`quest_out_of_order`) |
+| The Sticky Note | `scrub/18` take the note, then `urban/15` present it and fight the Router (pays the Net Map) | **Not at all.** "Present the Sticky Note" has no `requires_item` |
+| The Perambulator | `scrub/21`, `glass/3`, `ridge/3` (one graph on three terrains): items 66-69, and four gated shortcuts they open (`in_tune` 66, `remembers` 68, `leaning` 67, `tyre_pulse` 69 worn) | `requires_item`, enforced by the board. A visit pays at most 3 items (`ENC_MAX_ITEMS`) and makes one arrival and one flatbed choice, so three visits cannot open all four gates |
+| The Null Camp | `meridian/null_camp/1-3` | **Unreachable.** No pool in `index.json` deals it |
+| Machine Gun Kane | chapters 1-5 | the board's own `stage` (see "Machine Gun Kane") |
+| The workshop | `settlement/15-21` teach recipes 1-17, then each one is crafted | the recipe bit (`kr`) |
+
+`python quests.py` prints the catalog and lints it. The three problems in the
+table are what it reports today. smoke.py checks that every declared node and
+gate still exists.
+
+**Every bot keeps a journal** (`QuestJournal`), so a step any policy stumbles
+through reaches the fleet's ledger, `quests.LEDGER`. `arena.py` prints the
+ledger and saves it in the run summary, and `metrics.py` reads it back as
+`-- quests`. The journal is also an oracle; its findings go through the bot's
+`WireOracle`:
+
+| check | severity | means |
+|---|---|---|
+| `gate_bypassed` | critical | a `requires_item` choice ran for a survivor without the item |
+| `quest_ungated` | major | a step that needs an item (per the catalog) went through without it: the content never asks for it |
+| `banked_item_missing` | major | `enc_res` said an item was won and the scene was banked, but `ITEM_ARRIVAL_S` later the item is not in the pack, worn, or on the hex |
+| `quest_out_of_order` | minor | a chain step finished before an earlier one: nothing orders the chain |
+
+**The quester** (`policy/quester.py`) is the policy that drives these chains:
+
+- **Finds the steps.** It hunts POIs on terrains with open steps (2.5x). It
+  walks to Jack's Chopper on sight; the Open Scrub art variant 10 makes it the
+  one quest POI the map shows.
+- **Plays them.** In a scene, quest goals and quest items rank above any loot.
+  It wears gate gear (the Dirty Glove) while a gate needs it, and keeps quest
+  items.
+- **Probes the gates.** It tries every gate once without its item and expects
+  `no_item`. On the mock, which never replies, the expected result is silence
+  and no roll.
+- **Crafts and reads.** It crafts every taught recipe once fleet-wide, and goes
+  after Kane's chapters like a contentmax.
+
+On the board a quest step is found only by opening POIs. Every file in a pool
+is placed exactly once (Phase 5), so a fleet that opens every POI meets every
+step, in whatever order the map deals them.
+
+**`quest_check.py` (mock)** stages each chain on the quester's own seat with
+`dbg_enc`. It forces the rolls with `dbg_force` unless you pass
+`--real-rolls`:
+
+    python quest_check.py [localhost:8765] [--parts jack,ungated,sticky,peram,workshop,items]
+
+| part | what it stages |
+|---|---|
+| `jack` | the chain in order: accept, mask, hand-over, then the Motorbike, with no finding |
+| `ungated` | the hand-over again, from a fresh journal and without the mask; the oracle must flag it |
+| `sticky` | the Sticky Note chain |
+| `peram` | all three Perambulators: items first, then gates, with every gate probed and refused |
+| `workshop` | every lesson, then every recipe crafted on a `dbg_settle` Settlement |
+| `items` | the heal, wound kit and litter rules |
+
+Kane is covered by `kane_check.py --policies quester,...`.
 
 ## What gets measured
 

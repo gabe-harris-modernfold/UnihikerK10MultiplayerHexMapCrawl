@@ -51,6 +51,13 @@ from wire import ReplyTracker
 # How often to re-log a persisting noop reason. A stalled fleet should be
 # obvious in the log within seconds, without a line every decide cycle.
 NOOP_HEARTBEAT_S = 15.0
+# A policy raising on this many consecutive cycles is broken, not unlucky:
+# slow its loop down so the log stays readable (the finding keeps the count).
+POLICY_ERR_BACKOFF_AFTER = 10
+POLICY_ERR_BACKOFF_S = 2.0
+# Longest a move is held in flight waiting for its `mv` before the next may
+# go.  The event is drained on the next 100 ms tick; this covers a stall.
+MOVE_WAIT_S = 2.0
 
 
 class RateLimiter:
@@ -138,9 +145,14 @@ class BotClient:
         self.seats_lost = 0
         self.respawns = 0
         self._downed_since = None
+        self._fell = False          # our own `downed` arrived on this socket
+        self._sync_tk = -1          # tick our seat was granted on (sync tk)
         self._last_noop_why = None
         self._last_noop_log = 0.0
         self._noop_streak = 0
+        self._policy_errors = 0     # consecutive decide() exceptions
+        self._move_sent = 0.0       # when the move in flight went out (0 = none)
+        self.moves_held = 0         # steps not sent because one was in flight
         self.stop = asyncio.Event()
         # Connection lifecycle.  Worth tracking explicitly rather than
         # reconstructing from the log: the board can drop a player slot while
@@ -160,6 +172,11 @@ class BotClient:
         self.oracle = WireOracle(self.findings, f"bot{preferred_arch}:{policy.name}",
                                  self.repro)
         self.replies = ReplyTracker(self.oracle)
+        # The quest journal's sequencing checks (quests.py) become findings
+        # through the same oracle, signed with this bot's name.
+        attach = getattr(policy, "attach", None)
+        if callable(attach):
+            attach(flag=self.oracle.flag, who=self.oracle.source)
 
     # Reply counters, read by summary() and arena's report.
     @property
@@ -224,6 +241,8 @@ class BotClient:
         if not ok:
             self.recorder.write("nack", self._log_arch(),
                                 {"rid": msg.get("rid"), "cmd": cmd, "why": why})
+            if cmd == "m":
+                self._move_sent = 0.0       # refused: nothing is in flight
         self.oracle.on_reply(ok, cmd, why, seated=self.joined())
         self.policy.on_reply(cmd, ok, why)
         # A refused pick used to be indistinguishable from a slow one, so the
@@ -273,6 +292,7 @@ class BotClient:
                 await self.broker.release(self.arch)
                 self._pending_slot = None
                 self.replies.clear()        # a new socket has no replies coming
+                self._move_sent = 0.0
                 self.arch = -1
                 self.obs.synced = False
                 self._downed_since = None
@@ -288,6 +308,25 @@ class BotClient:
         try:
             async for raw in self.ws:
                 if self.stop.is_set():
+                    break
+                if decider.done():
+                    # The decider is the bot.  If it is gone, a socket that is
+                    # still delivering ticks is a zombie: drop it so run()
+                    # reconnects with a fresh pair of tasks.  Anything but a
+                    # clean return (a closed send, see _decide_loop) is a
+                    # harness defect worth a finding.
+                    exc = None if decider.cancelled() else decider.exception()
+                    if exc is not None:
+                        self.errors += 1
+                        self._close_reason = "decider_died"
+                        self.recorder.write("decider_died", self._log_arch(),
+                                            {"err": f"{type(exc).__name__}: {exc}"})
+                        self.findings.add(Finding(
+                            check="decider_died", severity="major",
+                            summary="a bot's decision loop died; the socket was dropped to recover",
+                            source=self.oracle.source, repro=self.repro.snapshot(),
+                            key=(type(exc).__name__,),
+                            detail={"err": f"{type(exc).__name__}: {exc}"}))
                     break
                 self.received += 1
                 try:
@@ -368,6 +407,8 @@ class BotClient:
                 self._episode["joined"] = time.monotonic()
                 self._episode["arch"] = self.arch
             self._pending_slot = None
+            self._fell = False
+            self._sync_tk = msg.get("tk", -1)
             self._synced_evt.set()
             # ev messages are broadcast to every client, so the policy needs
             # to know which pid is its own before it starts counting anything.
@@ -376,6 +417,10 @@ class BotClient:
                                 {"policy": self.policy.name, "label": self.label})
 
         if t == "ev":
+            if msg.get("k") == "downed" and msg.get("pid") == self.arch:
+                self._fell = True
+            elif msg.get("k") == "mv" and msg.get("pid") == self.arch:
+                self._move_sent = 0.0       # the step landed: the next may go
             self.policy.on_event(msg)
 
         if t == "s" and self.arch >= 0 and self.obs.synced:
@@ -446,6 +491,24 @@ class BotClient:
         """
         me = self.obs.players[self.arch]
 
+        if not me.connected and self._fell:
+            # Since protocol 4 a death empties the seat too: EVT_DOWNED moves
+            # the client to the lobby and the next `s` leaves us out. That is
+            # the respawn path, not a seat loss -- Kane's first kill on
+            # 2026-10-12 was booked as one.
+            self.respawns += 1
+            self._downed_since = None
+            self._close_reason = "respawn"
+            self.recorder.write("respawn", self.arch,
+                                {"day": self.obs.day, "score": me.score})
+            await self.ws.close()
+            return True
+
+        if not me.connected and self.obs.tick <= self._sync_tk:
+            # A broadcast composed on the tick the pick landed, before it did,
+            # can reach us after our sync. The next tick lists us.
+            return False
+
         if not me.connected:
             self.seats_lost += 1
             self._close_reason = "seat_lost"
@@ -491,15 +554,15 @@ class BotClient:
         # appendPackArrays() -- never re-add the bonuses client-side.
         return {"tk": self.obs.tick, "day": self.obs.day, "wp": self.obs.weather,
                 "sc": me.score, "sp": me.steps, "ll": me.ll, "ap": me.ap,
+                # Gear state per tick (eq/is/llCap). Without these a run
+                # records that a bot *sent* equip_item but not what it was
+                # actually wearing at any moment, so "did the bonus apply" had
+                # to be inferred from item_result acks scattered through the
+                # rx channel.  gearcheck.py reads these three keys.
                 "eq": list(me.equip), "is": me.inv_slots, "llCap": me.ll_cap,
                 "wnd": list(me.wounds), "it": list(me.inv_type),
                 "food": me.food, "water": me.water, "rad": me.rad,
                 "q": me.q, "r": me.r, "inv": me.inv, "vm": me.valid_moves,
-                # Gear state per tick. Without these a run records that a bot
-                # *sent* equip_item but not what it was actually wearing at
-                # any moment, so "did the bonus apply" had to be inferred from
-                # item_result acks scattered through the rx channel.
-                "eq": list(me.equip), "is": me.inv_slots, "llcap": me.ll_cap,
                 # canteenCap(): gearcheck.py checks the Canteen's water_cap
                 # against it, and without it no run could say it was worn.
                 "wc": me.water_cap}
@@ -508,18 +571,43 @@ class BotClient:
         while not self.stop.is_set():
             await asyncio.sleep(self.decide_interval)
             self.oracle.poll()
+            # Requests nobody answered are written off here as well as on the
+            # next send: a bot that has gone quiet (resting, holding cover)
+            # would otherwise carry them unexpired for as long as it is quiet.
+            for rid, cmd in self.replies.expire(self.obs.proto):
+                self.recorder.write("unanswered", self._log_arch(),
+                                    {"rid": rid, "cmd": cmd})
             # arch < 0 means the pick has not been confirmed; acting now would
             # just be shouting into the lobby.
             if self.arch < 0 or not self.obs.synced or self.ws is None:
                 continue
             try:
                 action = self.policy.decide(self.obs)
+                # to_msg() validates (an enc_start without q/r raises) -- it
+                # used to run outside this try, so one bad Action killed the
+                # decider and left a bot that read every tick and never acted
+                # again until its socket happened to drop.
+                msg = action.to_msg()
             except Exception as e:
                 self.errors += 1
+                self._policy_errors += 1
                 self.recorder.write("policy_err", self._log_arch(),
-                                    {"err": f"{type(e).__name__}: {e}"})
+                                    {"err": f"{type(e).__name__}: {e}",
+                                     "consecutive": self._policy_errors})
+                # A policy that raises is a harness defect, and it belongs in
+                # the run's findings next to the board's -- not only in a log
+                # line per cycle that nobody reads until the numbers look odd.
+                self.findings.add(Finding(
+                    check="policy_exception", severity="major",
+                    summary="a policy raised from decide(); the cycle was skipped",
+                    source=self.oracle.source, repro=self.repro.snapshot(),
+                    key=(self.policy.name, type(e).__name__),
+                    detail={"err": f"{type(e).__name__}: {e}", "day": self.obs.day}))
+                if self._policy_errors >= POLICY_ERR_BACKOFF_AFTER:
+                    # Raising every cycle: stop writing a line every 0.35 s.
+                    await asyncio.sleep(POLICY_ERR_BACKOFF_S)
                 continue
-            msg = action.to_msg()
+            self._policy_errors = 0
             if msg is None:
                 # A noop sends nothing, so it used to leave no trace at all --
                 # which made a fully-stalled fleet look identical to dead
@@ -542,9 +630,33 @@ class BotClient:
                 continue
             self._last_noop_why = None
             self._noop_streak = 0
+            if msg.get("t") == "m":
+                # One move in flight.  Policies decide every cycle whether or
+                # not the last step's `mv` has come back, and on a slow board
+                # the extras were mostly refused `cooldown` (~300 a bot a
+                # run) but sometimes both landed: a Biker one hex from a
+                # Settlement stepped onto it and off it again, and crafted on
+                # the wrong hex.  Hold the next step until our own `mv` (or
+                # the nack) arrives, or MOVE_WAIT_S passes.
+                now = time.monotonic()
+                if self._move_sent and now - self._move_sent < MOVE_WAIT_S:
+                    self.moves_held += 1
+                    continue
+                self._move_sent = now
             self.recorder.write("decide", self._log_arch(),
                                 {"kind": action.kind, "why": action.why})
-            await self._send(msg)
+            try:
+                await self._send(msg)
+            except websockets.ConnectionClosed:
+                # The reader sees the same close and run() reconnects; this
+                # task just has nothing left to send on.
+                self._close_reason = self._close_reason or "send_closed"
+                return
+            except Exception as e:
+                self.errors += 1
+                self.recorder.write("send_err", self._log_arch(),
+                                    {"err": f"{type(e).__name__}: {e}",
+                                     "kind": action.kind})
 
     def joined(self) -> bool:
         """Seated right now.  Use ever_joined for post-run reporting -- the
@@ -562,7 +674,7 @@ class BotClient:
                "pick_failures": self.pick_failures,
                "seats_lost": self.seats_lost, "respawns": self.respawns,
                "acks": self.acks, "nacks": self.nacks,
-               "unanswered": self.unanswered,
+               "unanswered": self.unanswered, "moves_held": self.moves_held,
                "connection": self.connection_report()}
         out["pts_per_step"] = round(me.score / me.steps, 2) if me.steps else None
         # ContentMax is judged on this rather than score, so it has to reach

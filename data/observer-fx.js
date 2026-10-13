@@ -60,10 +60,11 @@
   // ── 1. The phosphor ─────────────────────────────────────────────
   // FX_PAL in ui-fx.hpp, rung for rung. MIRRORED-IN ui-fx.hpp.
   const P = { INK: 0, SOOT: 1, BAND: 2, TRACK: 3, DIM: 4, LINE: 5, EMBER: 6, RUST: 7, BRICK: 8,
-              OK: 9, HDR: 10, FLAME: 11, CRIT: 12, HOT: 13, GLOW: 14, WHITE: 15, BLOOD: 16 };
+              OK: 9, HDR: 10, FLAME: 11, CRIT: 12, HOT: 13, GLOW: 14, WHITE: 15, BLOOD: 16,
+              GAS_D: 17, GAS: 18, GAS_L: 19 };
   const PAL_RGB = [0x000000, 0x0C0400, 0x1E0A00, 0x2E1206, 0x3A1808, 0x502010, 0x6E2C0E, 0x8C3A12,
                    0xA84A14, 0xC05810, 0xD06818, 0xE07C1C, 0xE89018, 0xF8A830, 0xFFC860, 0xFFF0C8,
-                   0x6A1004];
+                   0x6A1004, 0x24320A, 0x6E8E22, 0xC6E06A];
   const rgba = (c, a) => (((a & 255) << 24) | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF)) >>> 0;
   const PAL = PAL_RGB.map((c) => rgba(c, 255));
   const SHADE = (a) => rgba(0, a);          // black at alpha a: dimming the DOM under the overlay
@@ -669,49 +670,158 @@
     stip = 0;
   }
 
-  function eye(cx, cy, w, h, open, look, dir, seed, fillA, fillB, brow) {
-    const hw = w * 0.5, x0 = Math.floor(cx - hw - 3), x1 = Math.ceil(cx + hw + 3);
-    if (open < 0.08) {
-      stroke(cx - hw, cy + h * 0.05, cx + hw, cy + h * 0.25 * dir, 2.8, 1.2, PAL[brow]);
-    } else {
-      for (let pass = 0; pass < 2; pass++) {
-        const grow = pass === 0 ? 2.2 : 0;
-        for (let x = x0; x < x1; x++) {
-          const t = (x + 0.5 - cx) / (hw + grow);
-          if (t <= -1 || t >= 1) continue;
-          const tt = t * dir, q = 1 - t * t, wob = 1 + 0.1 * (noise1(x * 0.21, seed) - 0.5);
-          const yu = cy - h * open * Math.pow(q, 0.62) * wob + tt * h * 0.42 - grow;
-          const yl = cy + h * open * 0.52 * Math.pow(q, 0.95) + tt * h * 0.18 + grow;
-          for (let y = Math.ceil(yu - 0.5); y < Math.ceil(yl - 0.5); y++) {
-            let col;
-            if (pass === 0) col = PAL[P.INK];
-            else {
-              const r = Math.abs(t) + Math.abs(y + 0.5 - cy) / (h + 0.01) * 0.6, tone = (r * 300 - 60) | 0;
-              col = PAL[DOT[(y & 7) * 8 + (x & 7)] < tone ? fillB : fillA];
-            }
-            put(x, y, col);
-          }
-        }
-      }
-      const px = cx + look * hw * 0.35, pr = h * open * 0.78;
-      for (let y = (cy - pr) | 0; y < ((cy + pr) | 0); y++) {
-        const q = 1 - ((y + 0.5 - cy) / pr) * ((y + 0.5 - cy) / pr);
-        if (q <= 0) continue;
-        const pw = Math.max(0.8, w * 0.035 * Math.sqrt(q));
-        span(y, (px - pw) | 0, (px + pw + 1) | 0, PAL[P.INK]);
-      }
-      disc(px - w * 0.09, cy - pr * 0.45, Math.max(1, w * 0.03), PAL[P.WHITE]);
+  // The Creeping Doom: a skull of sick green gas, the one thing on the glass
+  // that is not phosphor (fxGasSkull in ui-fx.hpp; the web map's DoomGas in
+  // world-entities.js is the same monster in its own hand). A signed-distance
+  // skull torn by value noise; `coh` 0-1 is how well the gas holds the face,
+  // halftone across the three gas rungs, ink sockets, ember eyes. Big skulls
+  // sample the gas on 2x2 blocks with the dots kept per pixel. MIRRORED-IN
+  // ui-fx.hpp.
+  const sstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+  function sdBox(x, y, hw, hh, rr) {
+    const dx = Math.abs(x) - hw + rr, dy = Math.abs(y) - hh + rr;
+    const mx = Math.max(dx, 0), my = Math.max(dy, 0);
+    return Math.sqrt(mx * mx + my * my) + Math.min(Math.max(dx, dy), 0) - rr;
+  }
+  const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+  function sdEll(dx, dy, rx, ry, ca, sa) {
+    const u = (dx * ca + dy * sa) / rx, v = (dy * ca - dx * sa) / ry;
+    return (Math.sqrt(u * u + v * v) - 1) * Math.min(rx, ry);
+  }
+  // In cranium radii, y down, origin mid-face: the bone's distance, and the
+  // cavities' left in skullCav.
+  let skullCav = 0;
+  function skullSd(x, y, turn, jaw, teeth) {
+    const fx = x - turn * 0.13;
+    const kx = (x + turn * 0.06) * 1.06, ky = y + 0.2;
+    const cran = Math.sqrt(kx * kx + ky * ky) - 0.68;
+    const face = sdBox(fx, y - 0.3, 0.48, 0.22, 0.16);
+    const ca = fx + 0.46, cb = fx - 0.46, ce = y - 0.2;
+    const cheek = Math.sqrt(Math.min(ca * ca, cb * cb) + ce * ce) - 0.13;
+    const jy = 0.7 + jaw * 0.34;
+    const taper = 1 - 0.3 * clamp((y - jy + 0.05) / 0.2, 0, 1);
+    const jd = sdBox(fx / taper, y - jy, 0.36, 0.15, 0.12) * taper;
+    const bone = smin(smin(smin(cran, face, 0.22), cheek, 0.12), jd, 0.08);
+    const C = 0.9394, S = 0.3429;                       // sockets tipped 0.35 rad: a scowl
+    const sL = sdEll(fx + 0.29, y - 0.1, 0.22, 0.17, C, S);
+    const sR = sdEll(fx - 0.29, y - 0.1, 0.22, 0.17, C, -S);
+    const ny = y - 0.25;
+    const nose = Math.max(Math.abs(fx) - (0.012 + 0.09 * ny / 0.17), -ny, ny - 0.17);
+    const mouth = sdBox(fx, y - (0.535 + jaw * 0.17), 0.3 - jaw * 0.05, 0.016 + jaw * 0.17, 0.015);
+    let c = Math.min(sL, sR, nose, mouth);
+    if (teeth && Math.abs(fx) < 0.28 &&
+        ((y > 0.45 && y < 0.52) || (y > 0.55 + jaw * 0.34 && y < 0.61 + jaw * 0.34))) {
+      let f = (fx + 0.3) / 0.1;
+      f -= Math.floor(f);
+      c = Math.min(c, Math.abs(f - 0.5) - 0.38);
     }
-    stroke(cx - hw * 1.05 * dir, cy - h * 1.35, cx + hw * 0.85 * dir, cy - h * 0.55, 2, 1 + w * 0.09, PAL[brow]);
-    const R = new Rng(seed);
-    for (let k = 0; k < 3; k++) {
-      const a = -0.35 + k * 0.35 + R.sgn() * 0.1, sx = cx - hw * 1.08 * dir;
-      stroke(sx, cy + k * 2 - 2, sx - Math.cos(a) * w * 0.28 * dir, cy + Math.sin(a) * w * 0.28, 1.6, 0.6, PAL[brow]);
+    skullCav = c;
+    return bone;
+  }
+  const GAS_RAMP = [P.GAS_D, P.GAS, P.GAS_L];
+  function gasTone(x, y, lum) {
+    const v = clamp(lum, 0, 0.999) * 2, lo = v | 0;
+    const d = DOT[((y + 3) & 7) * 8 + ((x + 5) & 7)];
+    return PAL[GAS_RAMP[lo + (d < (((v - lo) * 256) | 0) ? 1 : 0)]];
+  }
+  function gasSkull(cx, cy, R, coh, turn, jaw, ember, bx, by, t, seed, yMin = 0, yMax = H) {
+    if (R < 7) return;
+    const ext = 1.45, inv = 1 / R, blk = R >= 14 ? 2 : 1;
+    const A = 0.05 + (1 - coh) * 0.55;
+    const soft = Math.max(0.04 + (1 - coh) * 0.2, 0.9 * inv), softC = Math.max(0.025, 0.8 * inv);
+    const thr = (1 - coh) * 0.62, cavK = clamp((coh - 0.15) / 0.5, 0, 1), boneK = 0.35 + 0.6 * coh;
+    const teeth = R >= 20, pad = A + 0.16;
+    const x0 = Math.max(0, Math.floor(cx - R * (0.85 + pad + (bx < 0 ? -bx * 0.4 : 0))));
+    const x1 = Math.min(W, Math.ceil(cx + R * (0.85 + pad + (bx > 0 ? bx * 0.4 : 0))));
+    const y0 = Math.max(0, yMin, Math.floor(cy - R * (0.88 + pad + (by < 0 ? -by * 0.4 : 0))));
+    const y1 = Math.min(H, yMax, Math.ceil(cy + R * (0.85 + jaw * 0.34 + pad + (by > 0 ? by * 0.4 : 0))));
+    for (let sy = y0; sy < y1; sy += blk) {
+      const y = (sy + blk * 0.5 - cy) * inv;
+      for (let sx = x0; sx < x1; sx += blk) {
+        const x = (sx + blk * 0.5 - cx) * inv;
+        const r = Math.sqrt(x * x + y * y);
+        if (r > ext * 0.98) continue;
+        const wn = noise2(x * 1.7 + 11.3 + t * 0.21, y * 1.7 - t * 0.37, seed);
+        let wx = A * (wn - 0.5) * 2;
+        let wy = A * (noise2(x * 1.7 - 7.9 - t * 0.17, y * 1.7 + 3.1 - t * 0.29, (seed + 1) >>> 0) - 0.5) * 2;
+        const lee = Math.max(0, x * bx + y * by);
+        wx -= bx * lee * wn * 0.45;
+        wy -= by * lee * wn * 0.45;
+        const sdb = skullSd(x + wx, y + wy, turn, jaw, teeth), cav = skullCav;
+        const win = sstep(ext * 0.98, ext * 0.8, r);
+        let bone = sstep(soft, -soft, sdb) * win, e = 0.5;
+        if (bone > 0.002) {
+          const rim = sstep(-0.22, 0, sdb) * 0.22;
+          e = noise2(x * 2.4 + t * 0.13, y * 2.4 - t * 0.31, (seed + 2) >>> 0);
+          bone *= sstep(thr + rim - 0.12, thr + rim + 0.12, e);
+        }
+        const ab = bone * boneK * (0.62 + 0.38 * sstep(0.32, 0.68, e));
+        const ah = sstep(0.13, 0.01, sdb) * (0.25 + 0.4 * coh) * win;
+        const ac = sstep(softC, -softC, cav) * cavK * win;
+        const ia = (ab * 256) | 0, ih = (ah * 256) | 0, ic = (ac * 256) | 0;
+        if (ia <= 0 && ih <= 0 && ic <= 0) continue;
+        const lum = 0.4 + (e - 0.5) * 1.8 + Math.min(0.3, Math.max(0, -sdb) * 0.8);
+        for (let py = sy; py < sy + blk && py < y1; py++)
+          for (let px = sx; px < sx + blk && px < x1; px++) {
+            const d = DOT[(py & 7) * 8 + (px & 7)];
+            if (d < ic) put(px, py, PAL[P.INK]);
+            else if (d < ia) put(px, py, gasTone(px, py, lum));
+            else if (d < ih) put(px, py, PAL[P.INK]);
+          }
+      }
+    }
+    if (ember <= 0.01) return;
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const ex = cx + (sd * 0.29 + turn * 0.13) * R, ey = cy + 0.11 * R;
+      const fl = ember * (0.75 + 0.25 * noise1(t * 7 + sd * 19.3, (seed + 3) >>> 0));
+      const er = R * (0.2 + 0.06 * ember);
+      for (let py = Math.floor(ey - er); py <= Math.ceil(ey + er); py++)
+        for (let px = Math.floor(ex - er); px <= Math.ceil(ex + er); px++) {
+          const dx = px + 0.5 - ex, dy = py + 0.5 - ey, q = 1 - Math.sqrt(dx * dx + dy * dy) / er;
+          if (q <= 0 || DOT[(py & 7) * 8 + (px & 7)] >= ((q * fl * 300) | 0)) continue;
+          put(px, py, PAL[q > 0.62 ? P.GLOW : q > 0.36 ? P.HOT : P.FLAME]);
+        }
+      disc(ex, ey, Math.max(0.7, R * 0.055), PAL[fl > 0.8 ? P.WHITE : P.GLOW]);
     }
   }
-  function eyePair(cx, cy, w, h, gap, open, look, seed, fillA, fillB, brow) {
-    eye(cx - gap * 0.5 - w * 0.5, cy, w, h, open, look, 1, seed, fillA, fillB, brow);
-    eye(cx + gap * 0.5 + w * 0.5, cy, w, h, open, look, -1, (seed + 9) >>> 0, fillA, fillB, brow);
+  // The gas it sheds, streaming along (bx,by) for about `len` cranium radii,
+  // torn into strands; drawn before the skull. (fxGasPlume in ui-fx.hpp.)
+  function gasPlume(cx, cy, R, bx, by, len, coh, t, seed, dens = 1) {
+    if (R < 2) return;
+    const inv = 1 / R, loose = (1 - coh) * (1 - coh), pad = 1.6 + 2 * loose;
+    const tx = cx + bx * len * R, ty = cy + by * len * R;
+    const x0 = Math.max(0, Math.floor(Math.min(cx, tx) - pad * R)), x1 = Math.min(W, Math.ceil(Math.max(cx, tx) + pad * R));
+    const y0 = Math.max(0, Math.floor(Math.min(cy, ty) - pad * R)), y1 = Math.min(H, Math.ceil(Math.max(cy, ty) + pad * R));
+    const blk = R >= 10 ? 2 : 1;
+    const trailK = 0.55 + 0.4 * coh, cloudK = 0.9 * loose;
+    const cloudR = 1.3 + (1 - coh) * 1.4, flow = 0.5 + 0.9 * coh;
+    for (let sy = y0; sy < y1; sy += blk) {
+      const y = (sy + blk * 0.5 - cy) * inv;
+      for (let sx = x0; sx < x1; sx += blk) {
+        const x = (sx + blk * 0.5 - cx) * inv;
+        const r2 = x * x + y * y, s = x * bx + y * by, dp = y * bx - x * by;
+        let env;
+        if (s > 0) { const w = 0.8 + 0.22 * s; env = Math.exp(-(dp * dp) / (w * w) - s / len) * sstep(len + 1.2, len * 0.5, s); }
+        else env = Math.exp(-r2 / 0.72);
+        env *= trailK;
+        if (cloudK > 0.01) env = Math.max(env, Math.exp(-r2 / (cloudR * cloudR)) * cloudK * sstep(pad, pad * 0.7, Math.sqrt(r2)));
+        env *= dens;
+        if (env < 0.04) continue;
+        const ax = x - bx * t * flow, ay = y - by * t * flow;
+        const n = noise2(ax * 1.45 + 3.7, ay * 1.45 - 1.9, seed);
+        const rg = 1 - Math.abs(2 * noise2(ax * 2.3 - 8.1, ay * 2.3 + 4.4, (seed + 1) >>> 0) - 1);
+        const body = env * sstep(0.3, 0.7, n + env * 0.35);
+        const strand = env * sstep(0.72, 0.92, rg) * 0.9;
+        const ia = (Math.min(1, body * 0.75 + strand) * 0.8 * 256) | 0;
+        const il = (sstep(0.1, 0.8, strand * 1.2 + body * 0.3) * 256) | 0;
+        if (ia <= 0) continue;
+        for (let py = sy; py < sy + blk && py < y1; py++)
+          for (let px = sx; px < sx + blk && px < x1; px++) {
+            if (DOT[(py & 7) * 8 + (px & 7)] >= ia) continue;
+            put(px, py, PAL[DOT[((py + 3) & 7) * 8 + ((px + 5) & 7)] < il ? P.GAS : P.GAS_D]);
+          }
+      }
+    }
   }
 
   // The nest's cast (section 8 of ui-fx.hpp): sections 12 and 13 stage them,
@@ -1202,7 +1312,13 @@
         if (t + 240 > st.hold) open *= clamp((st.hold - t) / 240, 0, 1);
         const look = (noise1(t * 0.0021, C.seed) - 0.5) * 2.2;
         focusLines(cx, cy, W * 0.4, C.h * 0.3, 56, C.seed, boil, PAL[P.TRACK], 2.5);
-        eyePair(cx, cy + C.h * 0.05, W * 0.14, C.h * 0.22, W * 0.05, open, look, C.seed, P.GLOW, P.CRIT, P.EMBER);
+        // The Doom's face, whole, in its own smoke (fxGasSkull's cut-in in ui-fx.hpp).
+        const R = C.h * 0.48, ts = t * 0.001, coh = 0.55 + 0.45 * open;
+        const reach = C.h * 0.5 + W * 0.3 * Math.abs(C.k) + 4;
+        const jaw = C.kind === 'DOOM_HUNT' ? 0.24 + 0.08 * Math.abs(Math.sin(ts * 9)) : 0.02;
+        gasPlume(cx, cy + C.h * 0.03, R, 0.3, -0.95, 2.2, coh, ts, C.seed);
+        gasSkull(cx, cy + C.h * 0.03, R, coh, look * 0.5, jaw, open, 0.3, -0.95, ts, C.seed,
+                 Math.floor(cy - reach), Math.ceil(cy + reach));
         break;
       }
       default: break;
@@ -2646,11 +2762,10 @@
     if (t > 1700) open *= clamp((2100 - t) / 400, 0, 1);
     const look = (noise1(t * 0.003, FX.eyesT0 >>> 0) - 0.5) * 2;
     const k = H / 320 * 1.3, cx = FX.eyesX + shx, cy = FX.eyesY + shy;
-    for (let y = (cy - 16 * k) | 0; y < ((cy + 16 * k) | 0); y++) {
-      const q = (y + 0.5 - cy) / (16 * k), w = 54 * k * Math.sqrt(Math.max(0, 1 - q * q)) * clamp(open * 3, 0, 1);
-      span(y, (cx - w) | 0, (cx + w) | 0, PAL[P.INK]);
-    }
-    eyePair(cx, cy, 34 * k, 8.5 * k, 16 * k, open, look, FX.eyesT0 >>> 0, P.HOT, P.BRICK, P.RUST);
+    // A pool of black, then the gas finds a face in it (fxEyesFrame in ui-fx.hpp).
+    disc(cx, cy + 2 * k, 30 * k * clamp(open * 3, 0, 1), PAL[P.INK]);
+    if (open < 0.05) return;
+    gasSkull(cx, cy, 19 * k, 0.25 + 0.65 * open, look * 0.5, 0, open, 0, -1, t * 0.001, FX.eyesT0 >>> 0);
   }
 
   // ── 15. The DOM side: shake, filters, scanlines ─────────────────

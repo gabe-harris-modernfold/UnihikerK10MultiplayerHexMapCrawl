@@ -39,9 +39,17 @@
     "count": 23,
     "path": "settlement"
   },
+  "14": {
+    "count": 6,
+    "path": "tunnel"
+  },
   "traps": {
     "count": 20,
     "path": "traps",
     "tiers": [6, 9, 5]
+  },
+  "kane": {
+    "count": 5,
+    "path": "kane"
   }
 }

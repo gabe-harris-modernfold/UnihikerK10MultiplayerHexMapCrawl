@@ -21,8 +21,13 @@ $script:Fqbn     = 'UNIHIKER:esp32:k10'
 # name@version as arduino-cli's library index spells them. Bump here, then
 # run setup_libs.ps1 (build.ps1 does it automatically when the stamp differs).
 $script:PinnedLibs = @(
-  'ESP Async WebServer@3.10.3',
-  'Async TCP@3.4.10',
+  # 3.12.x, not 3.10/3.11: those tear the WebSocket stream under send-buffer
+  # pressure (upstream #453, fixed in 3.12.0 by PR #462) -- a frame header
+  # left in the TCP stream after a failed add()/send(), then the frame resent.
+  # Clients drop with 1002 "expected a continuation frame" and see duplicated
+  # messages. 3.12 requires Async TCP >= 3.5.0.
+  'ESP Async WebServer@3.12.1',
+  'Async TCP@3.5.0',
   'ArduinoLog@1.1.1',
   # 1.1.16, not 1.2.x: 1.2.x ships src/lgfx/v1/lv_font/font_fmt_txt.c, whose
   # lv_font_*_fmt_txt symbols collide with the core's liblvgl at link time.

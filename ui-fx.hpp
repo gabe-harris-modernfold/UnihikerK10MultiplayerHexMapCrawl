@@ -84,16 +84,18 @@ static uint32_t fxNowMs();
 // Sixteen rungs of one amber, black to white-hot, monotonic in brightness. The
 // anchors are the screens' own constants (C_BAND, C_TRACK, C_DIM, C_LINE, C_OK,
 // C_HDR, C_CRIT), so a cut-in and the dashboard under it are one palette.
-// BLOOD is the single step off the ramp: redder and darker, for drips.
+// BLOOD is one step off the ramp: redder and darker, for drips. The other
+// three are the Creeping Doom's gas, dark to bright (fxGasSkull) -- the only
+// green on the glass, so the one thing on it that is not phosphor is it.
 enum : uint8_t {
   FXP_INK = 0, FXP_SOOT, FXP_BAND, FXP_TRACK, FXP_DIM, FXP_LINE, FXP_EMBER,
   FXP_RUST, FXP_BRICK, FXP_OK, FXP_HDR, FXP_FLAME, FXP_CRIT, FXP_HOT, FXP_GLOW,
-  FXP_WHITE, FXP_BLOOD, FXP_COUNT
+  FXP_WHITE, FXP_BLOOD, FXP_GAS_D, FXP_GAS, FXP_GAS_L, FXP_COUNT
 };
 static const uint32_t FX_PAL_RGB[FXP_COUNT] = {
   0x000000, 0x0C0400, 0x1E0A00, 0x2E1206, 0x3A1808, 0x502010, 0x6E2C0E, 0x8C3A12,
   0xA84A14, 0xC05810, 0xD06818, 0xE07C1C, 0xE89018, 0xF8A830, 0xFFC860, 0xFFF0C8,
-  0x6A1004,
+  0x6A1004, 0x24320A, 0x6E8E22, 0xC6E06A,
 };
 static uint16_t FX_PAL[FXP_COUNT];    // byte-swapped RGB565, the sprite's own format
 static uint8_t  FX_DOT[64];           // the halftone screen, see fxInitTables()
@@ -1000,62 +1002,196 @@ static void fxSplatDraw(uint32_t now, float shx, float shy) {
   fxStip = 0;
 }
 
-// The eyes. Two almonds whose lids are noise-bent curves, pinched at the
-// inner corners (it is angry), a vertical slit for a pupil, a heavy brow and
-// crow's-feet at the outer corners -- the eyes a villain gets in the one panel
-// before the reveal. `open` 0-1 lifts the lids; `look` slides the pupils.
-static void fxEye(float cx, float cy, float w, float h, float open, float look, float dir,
-                  uint32_t seed, uint8_t fillA, uint8_t fillB, uint8_t brow) {
-  float hw = w * 0.5f;
-  int x0 = (int)floorf(cx - hw - 3), x1 = (int)ceilf(cx + hw + 3);
-  if (open < 0.08f) {
-    fxStroke(cx - hw, cy + h * 0.05f, cx + hw, cy + h * 0.25f * dir, 2.8f, 1.2f, FX_PAL[brow]);
-  } else {
-    for (int pass = 0; pass < 2; pass++) {
-      float grow = pass == 0 ? 2.2f : 0.0f;
-      for (int x = x0; x < x1; x++) {
-        float t = (x + 0.5f - cx) / (hw + grow);
-        if (t <= -1.0f || t >= 1.0f) continue;
-        float tt = t * dir, q = 1.0f - t * t;
-        float wob = 1.0f + 0.10f * (fxNoise1(x * 0.21f, seed) - 0.5f);
-        float yu = cy - h * open * powf(q, 0.62f) * wob + tt * h * 0.42f - grow;
-        float yl = cy + h * open * 0.52f * powf(q, 0.95f) + tt * h * 0.18f + grow;
-        for (int y = (int)ceilf(yu - 0.5f); y < (int)ceilf(yl - 0.5f); y++) {
-          uint16_t col;
-          if (pass == 0) col = FX_PAL[FXP_INK];
-          else {
-            float r = fabsf(t) + fabsf(y + 0.5f - cy) / (h + 0.01f) * 0.6f;
-            int tone = (int)(r * 300.0f) - 60;
-            col = FX_PAL[(int)FX_DOT[(y & 7) * 8 + (x & 7)] < tone ? fillB : fillA];
-          }
-          fxPut(x, y, col);
-        }
-      }
-    }
-    // Slit pupil, and one hard highlight: it is looking at you.
-    float px = cx + look * hw * 0.35f, pr = h * open * 0.78f;
-    for (int y = (int)(cy - pr); y < (int)(cy + pr); y++) {
-      float q = 1.0f - ((y + 0.5f - cy) / pr) * ((y + 0.5f - cy) / pr);
-      if (q <= 0) continue;
-      float pw = fmaxf(0.8f, w * 0.035f * sqrtf(q));
-      fxSpan(y, (int)(px - pw), (int)(px + pw + 1), FX_PAL[FXP_INK]);
-    }
-    fxDisc(px - w * 0.09f, cy - pr * 0.45f, fmaxf(1.0f, w * 0.03f), FX_PAL[FXP_WHITE]);
+// The Creeping Doom: a skull of sick green gas, the one thing on the glass
+// that is not phosphor (the web map draws the same monster -- DoomGas in
+// data/world-entities.js). Rasterised pixel by pixel from a signed-distance
+// skull whose edges are torn by value noise; `coh` 0-1 is how well the gas
+// holds the face -- a smear at 0, a hard scowl at 1. Shaded in halftone across
+// the three gas rungs, sockets and mouth in ink, and once it cares (`ember`)
+// the eyes are embers. A big skull samples the gas on 2x2 blocks -- the dots
+// stay per pixel, so it does not read blocky -- because a full-size one is the
+// dearest thing a scene draws. Under R 7 it is mush and is not drawn at all:
+// the map sets a skull by hand instead (scDoomMark). MIRRORED-IN
+// data/observer-fx.js.
+static inline float fxSStep(float e0, float e1, float x) {
+  float t = fxClampF((x - e0) / (e1 - e0), 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+static inline float fxSdBox(float x, float y, float hw, float hh, float rr) {
+  float dx = fabsf(x) - hw + rr, dy = fabsf(y) - hh + rr;
+  float mx = fmaxf(dx, 0.0f), my = fmaxf(dy, 0.0f);
+  return sqrtf(mx * mx + my * my) + fminf(fmaxf(dx, dy), 0.0f) - rr;
+}
+static inline float fxSmin(float a, float b, float k) {
+  float h = fmaxf(k - fabsf(a - b), 0.0f) / k;
+  return fminf(a, b) - h * h * k * 0.25f;
+}
+static inline float fxSdEll(float dx, float dy, float rx, float ry, float ca, float sa) {
+  float u = (dx * ca + dy * sa) / rx, v = (dy * ca - dx * sa) / ry;
+  return (sqrtf(u * u + v * v) - 1.0f) * fminf(rx, ry);
+}
+// The skull in units of its cranium radius, y down, origin mid-face. Returns
+// the bone's signed distance and leaves the cavities' in *cav. `turn` -1..1
+// slides the face toward where it is looking; `jaw` 0-0.35 drops the jaw.
+static float fxSkullSd(float x, float y, float turn, float jaw, bool teeth, float* cav) {
+  const float fx = x - turn * 0.13f;
+  const float kx = (x + turn * 0.06f) * 1.06f, ky = y + 0.20f;
+  const float cran = sqrtf(kx * kx + ky * ky) - 0.68f;
+  const float face = fxSdBox(fx, y - 0.30f, 0.48f, 0.22f, 0.16f);
+  const float ca = fx + 0.46f, cb = fx - 0.46f, ce = y - 0.20f;
+  const float cheek = sqrtf(fminf(ca * ca, cb * cb) + ce * ce) - 0.13f;
+  const float jy = 0.70f + jaw * 0.34f;
+  const float taper = 1.0f - 0.30f * fxClampF((y - jy + 0.05f) / 0.2f, 0.0f, 1.0f);
+  const float jd = fxSdBox(fx / taper, y - jy, 0.36f, 0.15f, 0.12f) * taper;
+  const float bone = fxSmin(fxSmin(fxSmin(cran, face, 0.22f), cheek, 0.12f), jd, 0.08f);
+  // Sockets tipped inner-end-down (0.35 rad): a scowl, not a stare.
+  const float C = 0.9394f, S = 0.3429f;
+  const float sL = fxSdEll(fx + 0.29f, y - 0.10f, 0.22f, 0.17f, C, S);
+  const float sR = fxSdEll(fx - 0.29f, y - 0.10f, 0.22f, 0.17f, C, -S);
+  const float ny = y - 0.25f;
+  const float nose = fmaxf(fmaxf(fabsf(fx) - (0.012f + 0.09f * ny / 0.17f), -ny), ny - 0.17f);
+  const float mouth = fxSdBox(fx, y - (0.535f + jaw * 0.17f), 0.30f - jaw * 0.05f, 0.016f + jaw * 0.17f, 0.015f);
+  float c = fminf(fminf(sL, sR), fminf(nose, mouth));
+  if (teeth && fabsf(fx) < 0.28f &&
+      ((y > 0.45f && y < 0.52f) || (y > 0.55f + jaw * 0.34f && y < 0.61f + jaw * 0.34f))) {
+    float f = (fx + 0.3f) / 0.1f;
+    f -= floorf(f);
+    c = fminf(c, fabsf(f - 0.5f) - 0.38f);              // a slit between every tooth
   }
-  // The brow comes down toward the nose; the creases fan off the outer corner.
-  fxStroke(cx - hw * 1.05f * dir, cy - h * 1.35f, cx + hw * 0.85f * dir, cy - h * 0.55f,
-           2.0f, 1.0f + w * 0.09f, FX_PAL[brow]);
-  FxRng R; R.s = seed;
-  for (int k = 0; k < 3; k++) {
-    float a = (-0.35f + k * 0.35f + R.sgn() * 0.1f), sx = cx - hw * 1.08f * dir;
-    fxStroke(sx, cy + k * 2.0f - 2.0f, sx - cosf(a) * w * 0.28f * dir, cy + sinf(a) * w * 0.28f,
-             1.6f, 0.6f, FX_PAL[brow]);
+  *cav = c;
+  return bone;
+}
+// A gas rung for a brightness 0-1, dithered between the two it falls between
+// on a screen offset from the coverage one (so the two tests do not agree).
+static const uint8_t FX_GAS_RAMP[3] = { FXP_GAS_D, FXP_GAS, FXP_GAS_L };
+static inline uint16_t fxGasTone(int x, int y, float lum) {
+  float v = fxClampF(lum, 0.0f, 0.999f) * 2.0f;
+  int lo = (int)v;
+  int d = FX_DOT[((y + 3) & 7) * 8 + ((x + 5) & 7)];
+  return FX_PAL[FX_GAS_RAMP[lo + (d < (int)((v - lo) * 256.0f) ? 1 : 0)]];
+}
+// cx,cy is mid-face and R the cranium radius in px; (bx,by) the way its gas
+// goes (a unit vector -- that side of the skull is pulled after it); t in
+// seconds. Rows outside [yMin,yMax) are never visited: a cut-in band only
+// shows a strip of a big face, and the rest would be paid for and clipped.
+static void fxGasSkull(float cx, float cy, float R, float coh, float turn, float jaw, float ember,
+                       float bx, float by, float t, uint32_t seed, int yMin = 0, int yMax = FX_H) {
+  if (R < 7.0f) return;
+  const float ext = 1.45f, inv = 1.0f / R;
+  const int   blk = R >= 14.0f ? 2 : 1;
+  const float A = 0.05f + (1.0f - coh) * 0.55f;
+  const float soft = fmaxf(0.04f + (1.0f - coh) * 0.2f, 0.9f * inv);
+  const float softC = fmaxf(0.025f, 0.8f * inv);
+  const float thr = (1.0f - coh) * 0.62f;
+  const float cavK = fxClampF((coh - 0.15f) / 0.5f, 0.0f, 1.0f);
+  const float boneK = 0.35f + 0.6f * coh;
+  const bool  teeth = R >= 20.0f;
+  // Only the box the skull can reach: its own outline, the warp and the lip,
+  // and on the side its gas goes, the pull after it.
+  const float pad = A + 0.16f;
+  const int x0 = fxMaxI(0, (int)floorf(cx - R * (0.85f + pad + (bx < 0 ? -bx * 0.4f : 0.0f))));
+  const int x1 = fxMinI(FX_W, (int)ceilf(cx + R * (0.85f + pad + (bx > 0 ? bx * 0.4f : 0.0f))));
+  const int y0 = fxMaxI(fxMaxI(0, yMin), (int)floorf(cy - R * (0.88f + pad + (by < 0 ? -by * 0.4f : 0.0f))));
+  const int y1 = fxMinI(fxMinI(FX_H, yMax), (int)ceilf(cy + R * (0.85f + jaw * 0.34f + pad + (by > 0 ? by * 0.4f : 0.0f))));
+  for (int sy = y0; sy < y1; sy += blk) {
+    const float y = (sy + blk * 0.5f - cy) * inv;
+    for (int sx = x0; sx < x1; sx += blk) {
+      const float x = (sx + blk * 0.5f - cx) * inv;
+      const float r = sqrtf(x * x + y * y);
+      if (r > ext * 0.98f) continue;
+      const float wn = fxNoise2(x * 1.7f + 11.3f + t * 0.21f, y * 1.7f - t * 0.37f, seed);
+      float wx = A * (wn - 0.5f) * 2.0f;
+      float wy = A * (fxNoise2(x * 1.7f - 7.9f - t * 0.17f, y * 1.7f + 3.1f - t * 0.29f, seed + 1) - 0.5f) * 2.0f;
+      const float lee = fmaxf(0.0f, x * bx + y * by);
+      wx -= bx * lee * wn * 0.45f;
+      wy -= by * lee * wn * 0.45f;
+      float cav;
+      const float sdb = fxSkullSd(x + wx, y + wy, turn, jaw, teeth, &cav);
+      const float win = fxSStep(ext * 0.98f, ext * 0.8f, r);
+      float bone = fxSStep(soft, -soft, sdb) * win, e = 0.5f;
+      if (bone > 0.002f) {
+        const float rim = fxSStep(-0.22f, 0.0f, sdb) * 0.22f;    // ragged at the rim, solid inside
+        e = fxNoise2(x * 2.4f + t * 0.13f, y * 2.4f - t * 0.31f, seed + 2);
+        bone *= fxSStep(thr + rim - 0.12f, thr + rim + 0.12f, e);
+      }
+      const float ab = bone * boneK * (0.62f + 0.38f * fxSStep(0.32f, 0.68f, e));
+      // A dark lip round the bone, so it holds against any ground.
+      const float ah = fxSStep(0.13f, 0.01f, sdb) * (0.25f + 0.4f * coh) * win;
+      const float ac = fxSStep(softC, -softC, cav) * cavK * win;
+      const int ia = (int)(ab * 256.0f), ih = (int)(ah * 256.0f), ic = (int)(ac * 256.0f);
+      if (ia <= 0 && ih <= 0 && ic <= 0) continue;
+      const float lum = 0.40f + (e - 0.5f) * 1.8f + fminf(0.3f, fmaxf(0.0f, -sdb) * 0.8f);
+      for (int py = sy; py < sy + blk && py < y1; py++)
+        for (int px = sx; px < sx + blk && px < x1; px++) {
+          const int d = FX_DOT[(py & 7) * 8 + (px & 7)];
+          if (d < ic)      fxPut(px, py, FX_PAL[FXP_INK]);
+          else if (d < ia) fxPut(px, py, fxGasTone(px, py, lum));
+          else if (d < ih) fxPut(px, py, FX_PAL[FXP_INK]);
+        }
+    }
+  }
+  if (ember <= 0.01f) return;
+  // The embers: a halftone glow and a hot core in each socket, guttering.
+  for (int sd = -1; sd <= 1; sd += 2) {
+    const float ex = cx + (sd * 0.29f + turn * 0.13f) * R, ey = cy + 0.11f * R;
+    const float fl = ember * (0.75f + 0.25f * fxNoise1(t * 7.0f + sd * 19.3f, seed + 3));
+    const float er = R * (0.20f + 0.06f * ember);
+    for (int py = (int)floorf(ey - er); py <= (int)ceilf(ey + er); py++)
+      for (int px = (int)floorf(ex - er); px <= (int)ceilf(ex + er); px++) {
+        const float dx = px + 0.5f - ex, dy = py + 0.5f - ey, q = 1.0f - sqrtf(dx * dx + dy * dy) / er;
+        if (q <= 0.0f || FX_DOT[(py & 7) * 8 + (px & 7)] >= (int)(q * fl * 300.0f)) continue;
+        fxPut(px, py, FX_PAL[q > 0.62f ? FXP_GLOW : q > 0.36f ? FXP_HOT : FXP_FLAME]);
+      }
+    fxDisc(ex, ey, fmaxf(0.7f, R * 0.055f), FX_PAL[fl > 0.8f ? FXP_WHITE : FXP_GLOW]);
   }
 }
-static void fxEyePair(float cx, float cy, float w, float h, float gap, float open, float look,
-                      uint32_t seed, uint8_t fillA, uint8_t fillB, uint8_t brow) {
-  fxEye(cx - gap * 0.5f - w * 0.5f, cy, w, h, open, look,  1.0f, seed,     fillA, fillB, brow);
-  fxEye(cx + gap * 0.5f + w * 0.5f, cy, w, h, open, look, -1.0f, seed + 9, fillA, fillB, brow);
+// The gas it sheds: a plume off the skull at (cx,cy), streaming along (bx,by)
+// for about `len` cranium radii, torn into strands by ridged noise, in the two
+// darker gas rungs. Drawn before the skull, so the face sits in its own smoke.
+// A loose skull (`coh` low) also sits in a cloud of it. `dens` thins the lot.
+static void fxGasPlume(float cx, float cy, float R, float bx, float by, float len, float coh, float t,
+                       uint32_t seed, float dens = 1.0f) {
+  if (R < 2.0f) return;
+  const float inv = 1.0f / R, loose = (1.0f - coh) * (1.0f - coh);
+  const float pad = 1.6f + 2.0f * loose;
+  const float tx = cx + bx * len * R, ty = cy + by * len * R;
+  const int x0 = fxMaxI(0, (int)floorf(fminf(cx, tx) - pad * R)), x1 = fxMinI(FX_W, (int)ceilf(fmaxf(cx, tx) + pad * R));
+  const int y0 = fxMaxI(0, (int)floorf(fminf(cy, ty) - pad * R)), y1 = fxMinI(FX_H, (int)ceilf(fmaxf(cy, ty) + pad * R));
+  const int blk = R >= 10.0f ? 2 : 1;
+  const float trailK = 0.55f + 0.4f * coh, cloudK = 0.9f * loose;
+  const float cloudR = 1.3f + (1.0f - coh) * 1.4f, flow = 0.5f + 0.9f * coh;
+  for (int sy = y0; sy < y1; sy += blk) {
+    const float y = (sy + blk * 0.5f - cy) * inv;
+    for (int sx = x0; sx < x1; sx += blk) {
+      const float x = (sx + blk * 0.5f - cx) * inv;
+      const float r2 = x * x + y * y, s = x * bx + y * by, dp = y * bx - x * by;
+      float env;
+      if (s > 0.0f) {
+        const float w = 0.8f + 0.22f * s;
+        env = expf(-(dp * dp) / (w * w) - s / len) * fxSStep(len + 1.2f, len * 0.5f, s);
+      } else {
+        env = expf(-r2 / 0.72f);
+      }
+      env *= trailK;
+      if (cloudK > 0.01f)
+        env = fmaxf(env, expf(-r2 / (cloudR * cloudR)) * cloudK * fxSStep(pad, pad * 0.7f, sqrtf(r2)));
+      env *= dens;
+      if (env < 0.04f) continue;
+      const float ax = x - bx * t * flow, ay = y - by * t * flow;
+      const float n  = fxNoise2(ax * 1.45f + 3.7f, ay * 1.45f - 1.9f, seed);
+      const float rg = 1.0f - fabsf(2.0f * fxNoise2(ax * 2.3f - 8.1f, ay * 2.3f + 4.4f, seed + 1) - 1.0f);
+      const float body = env * fxSStep(0.30f, 0.70f, n + env * 0.35f);
+      const float strand = env * fxSStep(0.72f, 0.92f, rg) * 0.9f;
+      const int ia = (int)(fminf(1.0f, body * 0.75f + strand) * 0.8f * 256.0f);
+      const int il = (int)(fxSStep(0.10f, 0.80f, strand * 1.2f + body * 0.3f) * 256.0f);
+      if (ia <= 0) continue;
+      for (int py = sy; py < sy + blk && py < y1; py++)
+        for (int px = sx; px < sx + blk && px < x1; px++) {
+          if (FX_DOT[(py & 7) * 8 + (px & 7)] >= ia) continue;
+          fxPut(px, py, FX_PAL[FX_DOT[((py + 3) & 7) * 8 + ((px + 5) & 7)] < il ? FXP_GAS : FXP_GAS_D]);
+        }
+    }
+  }
 }
 
 // The nest's cast. Section 12 stages them; these only draw. All of it is on
@@ -1961,15 +2097,23 @@ static void fxBandDraw(const FxCut& C, uint32_t t, float ox, float oy) {
       fxSunburst(cx, cy + C.h * 0.9f, 22, C.seed, -FX_TAU * 0.5f + t * 0.00012f, FX_PAL[FXP_GLOW]);
       break;
     case FXF_EYES: {
-      // The eye strip: open over a quarter second, a look to one side, one
-      // blink, and shut again before the blade.
+      // The Doom's face, close: over a quarter second the gas pulls into a
+      // skull as it turns to look, the embers catch, one gutters, and it lets
+      // go of the face again before the blade. Hunting, the jaw is going.
+      // All of it, in its own smoke: the band is too short for a close-up --
+      // cropped, a skull is a green box with two lights in it.
       float open = fxClampF((t - 60.0f) / 260.0f, 0.0f, 1.0f);
       uint32_t hold = st.holdMs;
       if (t > 1150 && t < 1290) open *= fabsf((float)t - 1220.0f) / 70.0f;
       if (t + 240 > hold) open *= fxClampF((hold - (float)t) / 240.0f, 0.0f, 1.0f);
       float look = (fxNoise1(t * 0.0021f, C.seed) - 0.5f) * 2.2f;
       fxFocusLines(cx, cy, 128.0f, 26.0f, 44, C.seed, boil, FX_PAL[FXP_TRACK], 2.5f);
-      fxEyePair(cx, cy + 4.0f, 68.0f, 17.0f, 22.0f, open, look, C.seed, FXP_GLOW, FXP_CRIT, FXP_EMBER);
+      const float R = C.h * 0.48f, ts = t * 0.001f, coh = 0.55f + 0.45f * open;
+      const float reach = C.h * 0.5f + 70.0f * fabsf(C.k) + 4.0f;
+      const float jaw = C.kind == FXK_DOOM_HUNT ? 0.24f + 0.08f * fabsf(sinf(ts * 9.0f)) : 0.02f;
+      fxGasPlume(cx, cy + 2.0f, R, 0.3f, -0.95f, 2.2f, coh, ts, C.seed);
+      fxGasSkull(cx, cy + 2.0f, R, coh, look * 0.5f, jaw, open,
+                 0.3f, -0.95f, ts, C.seed, (int)(cy - reach), (int)(cy + reach));
       break;
     }
     default:
@@ -4318,8 +4462,8 @@ static void fxAmbient(uint32_t now) {
   }
 }
 
-// Put the eyes where the screen is darkest -- they should be looking out of
-// the black, not printed over a number.
+// Put it where the screen is darkest -- it should come up out of the black,
+// not be printed over a number.
 static void fxPlaceEyes(const uint16_t* src) {
   int bestX = 120, bestY = 160;
   uint32_t best = 0xFFFFFFFFU;
@@ -4327,8 +4471,8 @@ static void fxPlaceEyes(const uint16_t* src) {
     uint32_t h = fxHash(FX.eyesT0 + k * 977);
     int cx = 50 + (int)(h % 140), cy = 50 + (int)((h >> 12) % 220);
     uint32_t lit = 0;
-    for (int y = cy - 12; y < cy + 12; y += 3)
-      for (int x = cx - 46; x < cx + 46; x += 3)
+    for (int y = cy - 30; y < cy + 30; y += 3)
+      for (int x = cx - 30; x < cx + 30; x += 3)
         if (src[y * FX_W + x]) lit++;
     if (lit < best) { best = lit; bestX = cx; bestY = cy; }
   }
@@ -4343,13 +4487,12 @@ static void fxEyesFrame(const uint16_t* src, uint32_t now, float shx, float shy)
   if (t > 1700) open *= fxClampF((2100.0f - t) / 400.0f, 0.0f, 1.0f);
   float look = (fxNoise1(t * 0.003f, FX.eyesT0) - 0.5f) * 2.0f;
   float cx = FX.eyesX + shx, cy = FX.eyesY + shy;
-  // A pool of black behind them first, so they sit in the dark, not on the UI.
-  for (int y = (int)cy - 16; y < (int)cy + 16; y++) {
-    float q = (y + 0.5f - cy) / 16.0f;
-    float w = 54.0f * sqrtf(fmaxf(0.0f, 1.0f - q * q)) * fxClampF(open * 3.0f, 0.0f, 1.0f);
-    fxSpan(y, (int)(cx - w), (int)(cx + w), FX_PAL[FXP_INK]);
-  }
-  fxEyePair(cx, cy, 34.0f, 8.5f, 16.0f, open, look, FX.eyesT0, FXP_HOT, FXP_BRICK, FXP_RUST);
+  // A pool of black first, so it comes up out of the dark, not over the UI.
+  // Then the gas finds a face in it, the embers catch, one gutters, and it
+  // lets go of the shape again.
+  fxDisc(cx, cy + 2.0f, 30.0f * fxClampF(open * 3.0f, 0.0f, 1.0f), FX_PAL[FXP_INK]);
+  if (open < 0.05f) return;
+  fxGasSkull(cx, cy, 19.0f, 0.25f + 0.65f * open, look * 0.5f, 0.0f, open, 0.0f, -1.0f, t * 0.001f, FX.eyesT0);
 }
 
 // ── 15. Switching and reprinting ─────────────────────────────────────────────

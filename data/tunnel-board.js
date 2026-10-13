@@ -210,3 +210,112 @@ function setMyDepth(d) {
 // onto a Bunker Entrance (12) or Vent Shaft (13) does it, server-side, as the
 // last act of that move (tunnelStepDown/tunnelStepUp in tunnels.hpp). The
 // client just receives a tsync / vis disk for the board it is now on.
+
+// ── Section lights ────────────────────────────────────────────────
+// The board is cut into sections, each with a control panel -- a scene from
+// the tunnel pool (data/encounters/tunnel). Reach its "lights" node and the
+// section's overhead lights come on for everyone, for good (tunnels.hpp,
+// "Section lights"). Every tunnel cell carries `lt` from tsync / dp=1 vis:
+//   0          dark
+//   bits 0-5   the bank it came on in: its corridor distance from the panel,
+//              plus one -- the server's order, so every screen agrees
+//   bit 6      a tube that never settles
+// A lit cell is in sight from anywhere below; the server sends it in every
+// underground vis disk whatever the distance, and the renderer draws it.
+//
+// The lights do not all come on at once. Cells that turn lit while we are
+// below are walked out bank by bank from the panel, TUN_LIGHT_BANK_MS apart,
+// each with a fluorescent start-up stutter; cells already lit when we came
+// down (tsync) are simply on. While the encounter panel is open -- the
+// survivor who threw the switch is still reading about it -- the walk waits
+// for it to close, so they get to watch it.
+const TUN_LIT_BANK      = 0x3F;
+const TUN_LIT_FLICKER   = 0x40;
+const TUN_LIGHT_BANK_MS = 420;   // one bank to the next (SS_LIGHTS thuds on the K10 match)
+const TUN_LIGHT_HOLD_MS = 350;   // a beat after the encounter panel closes, before the first
+const TUN_LIGHT_WARM_MS = 1100;  // one tube's start-up, from first blink to full
+const _tunLitStart = new Map();  // "q_r" -> performance.now() its strike began; 0 = already on
+let   _tunLitPending = [];       // [{ key, bank }] lit, waiting for their walk to be scheduled
+
+// After a tsync (animate false: the lights were on before we came down) or a
+// dp=1 vis (animate true: any cell lit that we have not seen lit yet came on
+// just now). A tsync rebuilds the board, so it forgets what was known first.
+function tunnelLightsSync(animate) {
+  if (!animate) { _tunLitStart.clear(); _tunLitPending = []; }
+  for (let r = 0; r < tunnelRows; r++) {
+    for (let q = 0; q < tunnelCols; q++) {
+      const lt = tunnelMap[r]?.[q]?.lt | 0;
+      const key = `${q}_${r}`;
+      if (!lt || _tunLitStart.has(key)) continue;
+      if (!animate) { _tunLitStart.set(key, 0); continue; }
+      _tunLitStart.set(key, Infinity);           // dark until its bank comes round
+      _tunLitPending.push({ key, bank: lt & TUN_LIT_BANK });
+    }
+  }
+}
+
+// Once a frame (renderer.js): schedule any pending walk once nothing is in
+// front of the board. Banks are relative to the nearest one that is new, so
+// a section lit far away still starts at once rather than after a pause the
+// length of the corridor between.
+function tunnelLightsTick(now) {
+  if (!_tunLitPending.length) return;
+  if (document.getElementById('enc-overlay')?.classList.contains('open')) return;
+  const first = Math.min(..._tunLitPending.map(p => p.bank || 1));
+  const t0 = now + TUN_LIGHT_HOLD_MS;
+  for (const p of _tunLitPending) _tunLitStart.set(p.key, t0 + ((p.bank || 1) - first) * TUN_LIGHT_BANK_MS);
+  _tunLitPending = [];
+}
+
+// A small stable hash per cell, so every tube stutters its own way.
+function _tunLitHash(q, r) {
+  let h = Math.imul(q + 1, 73856093) ^ Math.imul(r + 1, 19349663);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+function _tunLitNoise(n) {
+  const s = Math.sin(n * 12.9898) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// A tube coming on: a blink, a dead beat, a stutter, then the slow warm-up
+// to full. Each tube skews the timings a little.
+function _tunStrike(age, h) {
+  const t = age - (h % 6) * 14;
+  if (t < 0)   return 0;
+  if (t < 55)  return 0.95;
+  if (t < 150) return 0.04;
+  if (t < 190) return 0.7;
+  if (t < 340) return 0;
+  if (t < 380) return 0.5;
+  if (t < 450) return 0.08;
+  return Math.min(1, 0.5 + (t - 450) / (TUN_LIGHT_WARM_MS - 450) * 0.5);
+}
+
+// A tube that never settles: steady most of the time, now and then dipping
+// out for a beat, and every several seconds a slow fit of stuttering. Slow
+// and rare on purpose (user-tuned 2026-10-12): a fast strobe read as a fault
+// in the screen, not in the bunker. Deterministic in time and cell, so the
+// same tube misbehaves the same way on every screen in the room.
+const TUN_FLICKER_STEP_MS = 150;   // one stutter beat
+function _tunFlicker(now, h) {
+  const n = _tunLitNoise(Math.floor(now / TUN_FLICKER_STEP_MS) * 7.31 + (h % 9973));
+  const cycle = 6500 + (h % 7) * 900;
+  if ((now + (h % 9000)) % cycle < 900) return n < 0.45 ? 0.08 : 0.85;   // the fit
+  if (n < 0.02) return 0.15;
+  if (n < 0.05) return 0.6;
+  return 0.94 + 0.06 * n;
+}
+
+// How lit (q, r) is right now, 0..1. 0 for a dark cell, and for a lit one
+// whose bank has not come round yet.
+function tunnelLightLevel(q, r, cell, now) {
+  const lt = cell?.lt | 0;
+  if (!lt) return 0;
+  const st = _tunLitStart.get(`${q}_${r}`) ?? 0;
+  if (now < st) return 0;
+  const h = _tunLitHash(q, r);
+  let lv = (st > 0 && now - st < TUN_LIGHT_WARM_MS) ? _tunStrike(now - st, h) : 1;
+  if (lt & TUN_LIT_FLICKER) lv *= _tunFlicker(now, h);
+  return lv;
+}

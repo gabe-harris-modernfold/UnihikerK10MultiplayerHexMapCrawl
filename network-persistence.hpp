@@ -96,6 +96,65 @@ static void loadTrailFile() {
   Log.notice("SD READ: %s records=%d", SAVE_TRL_F, loaded);
 }
 
+// ── Tunnel section lights (SAVE_LIT_F) ───────────────────────────────────────
+// Two whole-board byte blocks, G.tunnelSec then G.tunnelLit (tunnels.hpp,
+// "Section lights"), 320 bytes at 16x10 -- small enough to write every save.
+struct __attribute__((packed)) SaveLightHdr {
+  uint32_t magic;
+  uint8_t  version;
+  uint8_t  cols, rows;   // a file for another board shape is ignored
+};
+
+// Inside saveGame()'s G.mutex hold.
+static void saveLightFile() {
+  File f = SD.open(SAVE_LIT_F, FILE_WRITE);
+  if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_LIT_F); return; }
+  SaveLightHdr h = { LIGHT_SAVE_MAGIC, 1, (uint8_t)TUN_COLS, (uint8_t)TUN_ROWS };
+  size_t bytes = f.write((uint8_t*)&h, sizeof(h));
+  bytes += f.write((uint8_t*)G.tunnelSec, TUNNEL_LIGHT_BYTES);
+  bytes += f.write((uint8_t*)G.tunnelLit, TUNNEL_LIGHT_BYTES);
+  f.close();
+  Log.verbose("SD WRITE: %s bytes=%u", SAVE_LIT_F, (unsigned)bytes);
+}
+
+// Called by tryLoadSave() once the tunnel board has loaded. No file -- a save
+// from before the lights -- or one for another board lays the sections out
+// afresh on the loaded one, panels and all, every light off. "Another board"
+// is a malformed byte anywhere, or a layout that disagrees with the floor on
+// more than a quarter of its cells; a few cells off (nothing collapses a
+// corridor today, but a reader should not have to know that) are just put
+// right: a section on rock is cleared, and floor with no section stays dark.
+static void loadLightFile() {
+  bool ok = false;
+  if (!SD.exists(SAVE_LIT_F)) {
+    Log.notice("No %s: laying out tunnel sections on the loaded board", SAVE_LIT_F);
+  } else if (File f = SD.open(SAVE_LIT_F, FILE_READ)) {
+    SaveLightHdr h;
+    ok = f.read((uint8_t*)&h, sizeof(h)) == sizeof(h) && h.magic == LIGHT_SAVE_MAGIC &&
+         h.version == 1 && h.cols == TUN_COLS && h.rows == TUN_ROWS &&
+         f.read((uint8_t*)G.tunnelSec, TUNNEL_LIGHT_BYTES) == TUNNEL_LIGHT_BYTES &&
+         f.read((uint8_t*)G.tunnelLit, TUNNEL_LIGHT_BYTES) == TUNNEL_LIGHT_BYTES;
+    f.close();
+    int cells = 0, off = 0;
+    for (int r = 0; ok && r < TUN_ROWS; r++)
+      for (int q = 0; ok && q < TUN_COLS; q++) {
+        uint8_t s = G.tunnelSec[r][q], lt = G.tunnelLit[r][q];
+        if (s == TUN_SEC_NONE) { ok = (lt == 0); if (tunLightable(q, r)) off++; continue; }
+        ok = s < TUN_SECTIONS_MAX && (lt & 0x80) == 0;
+        cells++;
+        if (!tunLightable(q, r)) { off++; G.tunnelSec[r][q] = TUN_SEC_NONE; G.tunnelLit[r][q] = 0; }
+      }
+    if (ok && off * 4 > cells) ok = false;
+    if (!ok) Log.warning("%s unreadable or for another board -- laying sections out afresh", SAVE_LIT_F);
+  } else {
+    Log.error("SD OPEN FAIL (read): %s", SAVE_LIT_F);
+  }
+  if (!ok) { tunnelPlaceSections(); return; }
+  int total = 0, lit = 0;
+  tunnelSectionCounts(&total, &lit);
+  Log.notice("SD READ: %s sections=%d lit=%d", SAVE_LIT_F, total, lit);
+}
+
 // ── SD Save ───────────────────────────────────────────────────────────────────
 void saveGame() {
   if (SD.cardType() == CARD_NONE) { Log.warning("saveGame: no SD card"); return; }
@@ -130,12 +189,22 @@ void saveGame() {
       // boards alone, so it rides the header alongside the tunnel block.
       memcpy(hdr.bunkerHatches, bunkerHatches, sizeof(hdr.bunkerHatches));
       hdr.hatchCount = hatchCount;
+      // On the board the scene is on (a tunnel panel's hex shares its q/r
+      // with some surface hex), and never for a trap, whose encIdx is a trap
+      // file and which has no POI to put back -- traps.hpp owns that hex. A
+      // panel whose section the scene has already lit stays spent.
+      // A Kane chapter has no POI either: its camp and stage live in kane.bin.
+      auto savedHex = [](const ActiveEncounter& e) -> HexCell* {
+        if (!e.active || e.trap || e.kane) return nullptr;
+        if (e.depth) return tunnelPanelDark(e.hexQ, e.hexR) ? &G.tunnel[e.hexR][e.hexQ] : nullptr;
+        return &G.map[e.hexR][e.hexQ];
+      };
       uint8_t savedPoi[MAX_PLAYERS] = {0};
       for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!encounters[i].active) continue;
-        HexCell& c = G.map[encounters[i].hexR][encounters[i].hexQ];
-        savedPoi[i] = c.poi;
-        c.poi = encounters[i].encIdx;
+        HexCell* c = savedHex(encounters[i]);
+        if (!c) continue;
+        savedPoi[i] = c->poi;
+        c->poi = encounters[i].encIdx;
       }
       mapBytes += f.write((uint8_t*)&hdr, sizeof(hdr));
       mapBytes += f.write((uint8_t*)G.map, MAP_BYTES);
@@ -147,10 +216,8 @@ void saveGame() {
       // board's walls live here, not in HexCell, so without it every
       // corridor would load sealed.
       mapBytes += f.write((uint8_t*)G.tunnelOp, TUNNEL_OP_BYTES);
-      for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!encounters[i].active) continue;
-        G.map[encounters[i].hexR][encounters[i].hexQ].poi = savedPoi[i];
-      }
+      for (int i = 0; i < MAX_PLAYERS; i++)
+        if (HexCell* c = savedHex(encounters[i])) c->poi = savedPoi[i];
       f.close();
       Log.notice("SD WRITE: %s bytes=%u", SAVE_MAP_F, (unsigned)mapBytes);
     } else {
@@ -235,6 +302,10 @@ void saveGame() {
     }
     // Which way everyone went (trails.hpp): its own file, only when it changed.
     saveTrailFile();
+    // The tunnel sections and their lights (tunnels.hpp).
+    saveLightFile();
+    // Machine Gun Kane (kane.hpp): the jeep and the arc, a few dozen bytes.
+    saveKaneFile();
     // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
     // task has published a change, and on this same serialised save path.
     ecoSaveScarsIfDirty();
@@ -332,6 +403,13 @@ bool tryLoadSave() {
     Log.warning("Save map read short: %s", SAVE_MAP_F);
     f.close(); return false;
   }
+  // doShelter() used to build on Settlements; it refuses now. Strip any tent
+  // a save made before that, or the "rest under a shelter = no LL loss" rule
+  // keeps a starvation-proof bed in town. No SAVE_VERSION bump: the layout is
+  // unchanged, this only drops a value the rules no longer allow.
+  for (int r = 0; r < MAP_ROWS; r++)
+    for (int q = 0; q < MAP_COLS; q++)
+      if (G.map[r][q].terrain == 9) G.map[r][q].shelter = 0;
   // v17 tunnel board. A short read means a truncated save: bail rather than
   // leave G.tunnel half-populated, since generateMap() (which regenerates the
   // tunnels too) is the safe fallback.
@@ -426,6 +504,8 @@ bool tryLoadSave() {
              (unsigned)G.weatherPhase, giLoaded);
   loadGroundFile();   // needs G.dayCount, set above
   loadTrailFile();    // the sides of the footprints just loaded (trails.hpp)
+  loadLightFile();    // the tunnel's sections and lights, or a fresh layout (tunnels.hpp)
+  loadKaneFile();     // the jeep and the arc (kane.hpp); wInit() above rolled the fallback
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());

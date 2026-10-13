@@ -1,0 +1,85 @@
+{
+  "id": "tunnel_keep_turning",
+  "title": "Keep Turning",
+  "start_node": "dynamo",
+  "nodes": {
+    "dynamo": {
+      "text": "A hand-crank dynamo bolted to the floor of a room no bigger than a closet, cabled into the conduit that feeds {{section}}. Somebody has painted KEEP TURNING on every wall, floor to ceiling, hundreds of times over, in a hand that gets steadier as it goes. The crank handle is wrapped in rag. The rag is wrapped in a second rag. The second rag is stiff and brown.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Take the handle and crank",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 4,
+          "success_node": "cranking",
+          "hazard_id": "kickback"
+        },
+        {
+          "label": "Rig a belt drive out of scrap",
+          "cost": { "scrap": 1 },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "cranking",
+          "hazard_id": "belt_snaps"
+        }
+      ]
+    },
+    "cranking": {
+      "text": "The dynamo whines up to speed and the bulb on its housing begins to glow — and to hum. Not a buzz: a tune — {{tune}}, picked out note by note in the pitch of the filament, louder the faster you turn. And down the corridor, very faintly, the tune is being hummed back. Not by the wiring.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Keep turning",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "the_hum"
+        },
+        {
+          "label": "Turn until your hands bleed, and drown it out",
+          "cost": { "ll": 1 },
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "the_hum"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "Something in the conduit catches with a hard mechanical KUNK and the dynamo spins free, its load passed on to something bigger. Out in {{section}} the tubes come on one at a time, each one taking up the tune exactly where the last left off, until the whole corridor is lit and humming {{tune}} in sickly fluorescent harmony. Then, all together, they stop humming. The light stays. On the wall by the door, in paint so fresh it is still running: THANK YOU. YOU CAN STOP NOW. You find you have to make yourself let go of the handle.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 2, "qty": [1, 1] },
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "kickback": {
+      "text": "The crank kicks back like a mule and breaks something small in your wrist.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "belt_snaps": {
+      "text": "The belt lets go at speed and lashes across your face.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "the_hum": {
+      "text": "The tune gets inside your head and stays there. You realise you have been cranking for an hour, maybe two; your palms are blistered raw, the corridor is still dark, and something is humming right behind your ear, very close, in perfect time. You let go and run. The dynamo spins down behind you. The humming does not.",
+      "penalty": { "ll": -2 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION E", "THE CISTERN RUN", "CORRIDOR 3", "RING A", "SUBLEVEL FOUR", "THE LONG SPUR"],
+    "tune": ["a lullaby", "a hymn you half remember", "the theme from a programme that has not aired in eighty years", "a nursery rhyme with too many verses"]
+  }
+}

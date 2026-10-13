@@ -7,7 +7,7 @@ a wrong reading of the firmware; both are worth knowing.
 
     expect      meaning
     ------      -------
-    "none"      no reply at all (not JSON, no "t", binary, fragmented)
+    "none"      no reply at all (not JSON, no "t", binary, over 4096 bytes)
     "reply"     exactly one ack or nack, either is fine
     "ack"       an ack
     "nack"      a nack, any reason
@@ -127,9 +127,10 @@ CASES: list[Case] = [
     Case("frame:no-t", '{"x":1,"rid":@RID@}', "none", seated=False),
     Case("frame:t-key-only", '"t"', "none", seated=False),
     Case("frame:binary", b'\x00\xff{"t":"n","name":"bin"}', "none", seated=False),
-    Case("frame:fragmented", '{"t":"check","sk":9,"dn":5,"rid":@RID@}', "none",
+    Case("frame:fragmented", '{"t":"check","sk":9,"dn":5,"rid":@RID@}', "nack:bad_arg",
          seated=False, fragments=3,
-         note="handleMessage only takes a message that arrives as one final frame"),
+         note="reassembled before dispatch (network-handlers.hpp wsDataEvent); "
+              "before 2026-10-13 it was dropped with no reply"),
 
     # -- before seating: every gameplay command must say so --------------------
     Case("unseated:m", {"t": "m", "d": 0}, "nack:not_seated", seated=False),
@@ -186,7 +187,9 @@ CASES: list[Case] = [
     Case("n:long-1400", {"t": "n", "name": "N" * 1400}, "ack",
          note="near one TCP segment"),
     Case("n:long-4000", {"t": "n", "name": "N" * 4000}, "ack",
-         note="spans several TCP segments; handleMessage needs one callback"),
+         note="spans several TCP segments; reassembled (WS_MSG_MAX 4096)"),
+    Case("n:long-6000", {"t": "n", "name": "N" * 6000}, "none",
+         note="over WS_MSG_MAX: dropped whole, since its rid cannot be trusted"),
     Case("n:restore", {"t": "n", "name": "fuzz"}, "ack"),
     Case("pick:seated", {"t": "pick", "arch": 0}, "nack:not_in_lobby"),
     Case("pick:no-arch", {"t": "pick"}, "nack:parse"),

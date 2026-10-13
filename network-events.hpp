@@ -96,13 +96,17 @@ static void evTextTo(AsyncWebSocketClient* cl, const char* json, int len) {
 
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
-  int16_t  pq[MAX_PLAYERS], pr[MAX_PLAYERS];
-  bool     conn[MAX_PLAYERS];
-  uint32_t wsId[MAX_PLAYERS];
-  int      visR[MAX_PLAYERS];
+  // Static, so a G.mutex timeout below really does fall back to the last
+  // snapshot, as its log line says. As stack locals they were uninitialised
+  // on that path, and col_fail and the vision-culled events were routed by
+  // whatever garbage was there. Only the GameLoop task calls this.
+  static int16_t  pq[MAX_PLAYERS], pr[MAX_PLAYERS];
+  static bool     conn[MAX_PLAYERS];
+  static uint32_t wsId[MAX_PLAYERS];
+  static int      visR[MAX_PLAYERS];
   // Condition, for the chronicle's plates: enc_res reports what a hazard cost
   // but not what it left behind, and the plate wants the figure after.
-  uint8_t  pll[MAX_PLAYERS] = {0}, prad[MAX_PLAYERS] = {0};
+  static uint8_t  pll[MAX_PLAYERS], prad[MAX_PLAYERS];
 
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -528,7 +532,11 @@ static void drainEvents() {
         // way; "dp" as everywhere else, omitted on the surface. Broadcasting
         // a trap's q/r gives nothing away: it is not armed while a scene runs
         // (and nobody can see it who was not already standing there).
-        if (ev.amt)
+        if (ev.res)   // res = 1-5: one of Machine Gun Kane's chapters opened on arrival (kane.hpp)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"kane\":%d}",
+            ev.pid, (int)ev.q, (int)ev.r, (int)ev.res);
+        else if (ev.amt)
           len = snprintf(buf, sizeof(buf),
             "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":%d,\"trap\":1}",
             ev.pid, (int)ev.q, (int)ev.r, (int)ev.depth);
@@ -543,7 +551,17 @@ static void drainEvents() {
 
         evTextAll(buf, len);
 
-        if (ev.amt) {
+        if (ev.res) {
+          // A Kane chapter: the book says where they walked into his story.
+          static const char* const KANE_IN[5] = {
+            "finds where Kane sat the night.",
+            "finds another of Kane's camps, and a coat left on purpose.",
+            "finds Kane's tidiest camp, and a list.",
+            "walks out onto the glass, toward the house.",
+            "walks into Kane's firelight with empty hands.",
+          };
+          k10LogAdd(KANE_IN[(ev.res - 1) % 5], (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        } else if (ev.amt) {
           // The LCD cuts to the wire parting (ui-fx.hpp section 13b); the
           // caption is this same sentence.
           const char* tl = K10_SAY("puts a foot down and hears it click.",
@@ -912,6 +930,91 @@ static void drainEvents() {
           k10LogAdd(dl, (int8_t)ev.pid, TONE_OMEN, GLY_DOOM);
           fxCue(FXK_DOOM_ACT, (int8_t)ev.pid, dl);
         }
+        break;
+      }
+
+      case EVT_KANE_CALL: {
+        // He asks before he fires (kane.hpp). res = line index the client
+        // reduces mod its own table (KANE_LINES in data/game-data.js, the
+        // road calls; KANE_CAMP_LINES for camp = 1) -- wordings never go on
+        // the wire. Unicast: it is a question put to one survivor, and the
+        // 15 seconds it buys are theirs to use. Nothing in the book: the
+        // burst, if it comes, is the thing that happened.
+        Log.notice("EVT kane_call pid=%d camp=%d", (int)ev.pid, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"kane_call\",\"pid\":%d,\"q\":%d,\"r\":%d,\"camp\":%d,\"idx\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt, (int)ev.res);
+        if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
+        break;
+      }
+
+      case EVT_KANE_FIRE: {
+        // A burst (kane.hpp): q/r = the jeep, where the tracers start; the
+        // target is pid. Broadcast -- everyone in sight sees the tracers.
+        Log.notice("EVT kane_fire pid=%d from=(%d,%d) hits=%d lost=%d ll=%d",
+                   (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt, (int)ev.res, (int)ev.actNewLL);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"kane_fire\",\"pid\":%d,\"q\":%d,\"r\":%d,\"hits\":%d,\"llLost\":%d,\"ll\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt, (int)ev.res, (int)ev.actNewLL);
+        evTextAll(buf, len);
+        if (ev.res)
+          k10LogAdd(K10_SAY("is caught in the open by Kane's gun.",
+                            "didn't have an answer for Kane.",
+                            "learns why the brass is everywhere."),
+                    (int8_t)ev.pid, TONE_ILL, GLY_CLASH);
+        else
+          k10LogAdd(K10_SAY("hears Kane's rounds go past, close.",
+                            "is shot at by the jeep, and missed."),
+                    (int8_t)ev.pid, TONE_OMEN, GLY_CLASH);
+        break;
+      }
+
+      case EVT_KANE_ARC: {
+        // amt = chapters read (1-5), res = ending (KANE_END_*). Broadcast:
+        // the arc is the world's, and an ending retires the jeep for everyone.
+        static const char* const ENDING[3] = { "none", "truth", "lie" };
+        const char* endName = ENDING[ev.res < 3 ? ev.res : 0];
+        Log.notice("EVT kane_arc pid=%d stage=%d ending=%s", (int)ev.pid, (int)ev.amt, endName);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"kane_arc\",\"pid\":%d,\"stage\":%d,\"ending\":\"%s\"}",
+          (int)ev.pid, (int)ev.amt, endName);
+        evTextAll(buf, len);
+        static const char* const KANE_READ[4] = {
+          "reads the back of a catalog page: NOT HER.",
+          "reads a mother's note on a child's tag.",
+          "reads Kane's rules, and the tally of his calls.",
+          "reads the letter by her door. Saturday.",
+        };
+        if (ev.res == 1)
+          k10LogAdd("tells Kane the truth. He walks into the glass.", (int8_t)ev.pid, TONE_OMEN, GLY_DEPART);
+        else if (ev.res == 2)
+          k10LogAdd("tells Kane she is waiting at the Seam. He goes.", (int8_t)ev.pid, TONE_OMEN, GLY_DEPART);
+        else if (ev.amt >= 1 && ev.amt <= 4)
+          k10LogAdd(KANE_READ[ev.amt - 1], (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        break;
+      }
+
+      case EVT_TUNNEL_LIGHTS: {
+        // A control-panel scene threw its switch (tunnels.hpp, "Section
+        // lights"). Broadcast: everyone hears the bunker wake up, below or
+        // not. The cells themselves -- which are lit, and in what order they
+        // come on -- ride the vis disks pushed to everyone underground
+        // (pushLitVisDisks) and every tsync after, as "lt".
+        Log.notice("EVT tun_lit pid=%d section=%d panel=(%d,%d) banks=%d lit=%d/%d",
+                   (int)ev.pid, (int)ev.amt, (int)ev.q, (int)ev.r, (int)ev.res,
+                   (int)ev.actOut, (int)ev.actType);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"tun_lit\",\"pid\":%d,\"sec\":%d,\"q\":%d,\"r\":%d,\"banks\":%d,\"lit\":%d,\"of\":%d}",
+          (int)ev.pid, (int)ev.amt, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.actOut, (int)ev.actType);
+        evTextAll(buf, len);
+        k10LogAdd(ev.actOut >= ev.actType && ev.actType
+                    ? K10_SAY("throws the last switch. The whole bunker is lit.",
+                              "brings the last lights on below. Nothing is dark down there now.")
+                    : K10_SAY("finds the switch. The lights come on below, one after another.",
+                              "turns the lights on in the tunnels. One of them will not settle.",
+                              "wakes a section of the bunker. Clunk. Clunk. Clunk."),
+                  (int8_t)ev.pid, TONE_OMEN, GLY_LIGHT);
+        sndStory(SS_LIGHTS, ev.res);
         break;
       }
 

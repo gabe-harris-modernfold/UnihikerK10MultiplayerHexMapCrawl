@@ -26,6 +26,11 @@ firmware source rather than from observation:
     a death names a cause (protocol 2): "unattributed" is a DOWNED site
       somebody forgot to tag
     a blocked `act` names why (bw != 0 on protocol 2)
+    Machine Gun Kane (kane.hpp, protocol 8):
+      a burst at us follows a road `kane_call` to us -- rule one is ALWAYS
+        ASK FIRST, and the question is wiped by the burst it earns
+      llLost <= min(hits, KANE_BURST_CAP), hits <= KANE_ROUNDS
+      the arc's stage never goes backwards (short of a regen)
 
   on replies (protocol 2)
     an acked `m` is followed by our own `mv`
@@ -44,6 +49,7 @@ Checks never fire on protocol 1 boards where the firmware makes no promise.
 import time
 from collections import deque
 
+from config import KANE_BURST_CAP, KANE_ROUNDS
 from findings import Finding, FindingLog, ReproBuffer
 
 # How long an acked request has to show its effect.  The event is drained on
@@ -88,6 +94,11 @@ class WireOracle:
         self.last_tk = -1
         self.last_sq = 0
         self.kinds_at_sq: set[str] = set()
+        # Machine Gun Kane: has he asked us since his last burst at us, and
+        # the furthest the arc has got. A reconnect can miss the question, so
+        # both start over -- resetting can only miss a defect, not invent one.
+        self.kane_asked = None          # None = unknown on this socket
+        self.kane_stage = -1
         self._expect.clear()
         self.dead.clear()
         self.steps.clear()
@@ -217,6 +228,29 @@ class WireOracle:
         elif k == "regen":
             self.dead.clear()
             self.steps.clear()
+            self.kane_stage = -1
+        elif k == "kane_call" and mine and not msg.get("camp"):
+            self.kane_asked = True
+        elif k == "kane_fire":
+            hits, lost = msg.get("hits", 0), msg.get("llLost", 0)
+            if not (0 <= hits <= KANE_ROUNDS and 0 <= lost <= min(hits, KANE_BURST_CAP)):
+                self.flag("kane_burst_out_of_range", "major",
+                          "a burst outside KANE_ROUNDS / KANE_BURST_CAP", key=(pid,),
+                          pid=pid, hits=hits, llLost=lost)
+            if mine:
+                if self.kane_asked is False:
+                    self.flag("kane_fired_unasked", "major",
+                              "Kane fired at us without asking first (ALWAYS ASK FIRST)",
+                              key=(pid,), pid=pid)
+                self.kane_asked = False
+        elif k == "kane_arc":
+            st = msg.get("stage")
+            if isinstance(st, int):
+                if st < self.kane_stage:
+                    self.flag("kane_stage_backwards", "major",
+                              "Machine Gun Kane's arc went back a chapter",
+                              stage=st, prev=self.kane_stage)
+                self.kane_stage = max(self.kane_stage, st)
         elif k == "act" and self.proto >= 2:
             if msg.get("out") == 0 and not msg.get("bw"):
                 self.flag("blocked_without_reason", "minor",

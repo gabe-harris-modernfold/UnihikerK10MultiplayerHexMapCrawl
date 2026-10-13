@@ -371,6 +371,77 @@ def gear_score(item_id, weights):
         score += weights.get("nar", {}).get(nar, 0.0)
     return score
 
+
+# -- What a used item does (useItem / dispatchEffect, inventory_items.hpp) ----
+# Every consumable, and every key item with an effect (those are "used" any
+# number of times and never spent).  food/water move the 0-6 TRACK, not the
+# tokens -- applyFStep/applyWStep -- and a step back up over a threshold the
+# track fell through gives that LL back, which is what makes them worth more
+# than they look.  Parsed from items.cfg like everything above.
+NAR_TELEPORT, NAR_CAP_LOSS = 10, 29
+# Narrative ids the server ignores (11 screen scramble, 12 reversed keys): an
+# item whose only effect is one of these does nothing on the board.
+NAR_CLIENT_ONLY = frozenset((11, 12))
+
+
+def _parse_item_fx(path=None):
+    """{id: fx} for every consumable and every key item, plus {id: value} and
+    {id: trade} for the caravan.  fx keys: ll food water rad ap (signed
+    deltas), threat (signed), cure (wounds closed), reveal (radius; 99 = the
+    whole map), cap_loss (lowers the LL ceiling for good), teleport, key."""
+    import os
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "data", "items.cfg")
+    blocks, cur = [], None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.split("#")[0].strip()
+                if line == "[item]":
+                    cur = {}
+                    blocks.append(cur)
+                elif cur is not None and "=" in line:
+                    k, v = (x.strip() for x in line.split("=", 1))
+                    cur[k] = v
+    except OSError:
+        return {}, {}, {}
+    fx, value, trade = {}, {}, {}
+    for d in blocks:
+        try:
+            iid = int(d["id"])
+        except (KeyError, ValueError):
+            continue
+        value[iid] = max(1, int(d.get("value", 0) or 0))
+        trade[iid] = d.get("trade", "").lower().startswith(("y", "1"))
+        cat = d.get("category")
+        effects = [(d.get("effect"), d.get("param")), (d.get("effect2"), d.get("param2"))]
+        effects = [(e, int(p)) for e, p in effects if e and e != "none" and p]
+        if cat == "key" and not any(e != "narrative" or p not in NAR_CLIENT_ONLY
+                                    for e, p in effects):
+            continue                    # a key item that does nothing when used
+        if cat not in ("consumable", "key"):
+            continue
+        sb = lambda p: p - 256 if p > 127 else p
+        fx[iid] = {
+            "ll": int(d.get("ll", 0)), "food": int(d.get("food", 0)),
+            "water": int(d.get("water", 0)), "rad": int(d.get("rad", 0)),
+            "ap": int(d.get("ap", 0)),
+            "threat": sum(sb(p) for e, p in effects if e == "threat_mod"),
+            "cure": sum(p for e, p in effects if e == "cure_status"),
+            "reveal": max([p for e, p in effects if e == "reveal_fog" and p >= 2] or [0]),
+            "cap_loss": any(e == "narrative" and p == NAR_CAP_LOSS for e, p in effects),
+            "teleport": any(e == "narrative" and p == NAR_TELEPORT for e, p in effects),
+            "key": cat == "key",
+        }
+    return fx, value, trade
+
+
+ITEM_FX, ITEM_VALUE, ITEM_TRADE = _parse_item_fx()
+# Payment worth at the caravan (caravanPaymentValue, world-system.hpp): food,
+# med and scrap count 1 each, fuel 2; water is refused outright (why 4).
+CARAVAN_PAY_WORTH = (0, 1, 2, 1, 1)
+
 # Salvage DN per terrain (Esp32HexMapCrawl.ino:256).  Tunnel Floor salvages at
 # 7 and TERRAIN_IS_RUINS[14] is 0, so scavenging underground is the one place
 # in the game that yields scrap *without* raising the threat clock.
@@ -419,6 +490,34 @@ def can_salvage(terrain: int) -> bool:
 WEATHER_CLEAR, WEATHER_RAIN, WEATHER_STORM = 0, 1, 2
 WEATHER_CHEM, WEATHER_FOG, WEATHER_MIST    = 3, 4, 5
 WEATHER_NAME = ("clear", "rain", "storm", "chem", "strangle-fog", "mist")
+
+# ── Machine Gun Kane (kane.hpp, docs/machine-gun-kane.md) ────────────────────
+# A jeep that roams the open road and shoots survivors caught in the open.
+# Every world tick (WORLD_TICK_INTERVAL game ticks, ~15 s) he looks for anyone
+# within KANE_RANGE standing on open ground. The first tick he sees you he
+# calls out (`kane_call`, unicast) and stops; if you are STILL exposed on the
+# next world tick he fires a burst (`kane_fire`): KANE_ROUNDS rounds at
+# KANE_HIT_PCT each, at most KANE_BURST_CAP LL. Then he has to ask again.
+# Cover is the terrain of your own hex, not a sight line, and he never fires
+# underground, into a scene, at a downed survivor or after dark (his camp).
+# There is no fighting back: the only answer is to be somewhere else.
+KANE_RANGE        = 3
+KANE_ROUNDS       = 3
+KANE_HIT_PCT      = 35
+KANE_BURST_CAP    = 2
+KANE_BREAK_TICKS  = 2     # world ticks after dawn he sits on at his fire
+KANE_CHAPTERS     = 5
+KANE_DRIVE, KANE_CAMP, KANE_GONE = 0, 1, 2
+# kaneOpenGround(): the only terrain he can hit you on.
+KT_SCRUB, KT_DUNES, KT_MARSH = 0, 1, 3
+KANE_OPEN_GROUND = (KT_SCRUB, KT_DUNES, KT_MARSH)
+WORLD_TICK_INTERVAL = 150  # game ticks between world ticks (world-system.hpp)
+
+
+def kane_open_ground(terrain: int) -> bool:
+    """Terrain Kane can shoot you on (kaneOpenGround).  Everything else --
+    forest, ruins, a Settlement, the glass, a hatch -- is cover."""
+    return terrain in KANE_OPEN_GROUND
 
 # Oldest firmware PROTO_VERSION these bots can read.  7 renamed every "mp"
 # key to "ap": on an older board me.ap reads 0 forever and every bot just

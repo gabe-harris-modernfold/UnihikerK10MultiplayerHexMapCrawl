@@ -139,6 +139,10 @@ class TunnelPolicy(SurvivorPolicy):
     name = "tunnel"
     tunnel_capable = True
     engage_encounters = True
+    # Machine Gun Kane's story is a surface errand that would skew the
+    # dive/surface numbers these two exist to measure. A corridor is cover,
+    # and on the surface they still dodge him.
+    kane_quest = False
     # Underground sight is TUNNEL_VIS_BASE 1 -- your own hex and one ring --
     # so a single +1 is proportionally worth far more down there than the
     # same point is on the surface. A corridor step costs TUNNEL_MC 2, which

@@ -1,0 +1,111 @@
+{
+  "id": "tunnel_shift_log",
+  "title": "The Shift Log",
+  "start_node": "duty_desk",
+  "nodes": {
+    "duty_desk": {
+      "text": "A duty desk at a junction of pipes. A green-shaded lamp with no bulb in it. A shift log, open at the last page. The entries are neat, a different hand every shift, decades of them: SECTION LIGHTS NOMINAL. SECTION LIGHTS NOMINAL. Then: {{section}} LIGHTS FAILED 0300. SOMETHING TURNING THEM OFF. Then: IT KNOWS WHERE THE SWITCH IS. The last entry is dated {{date}}. On the wall behind the desk is a big knife switch, its blade hanging open.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Close the knife switch",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "tug",
+          "hazard_id": "live_blade"
+        },
+        {
+          "label": "Read the whole log first",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "read_log",
+          "hazard_id": "the_entry"
+        }
+      ]
+    },
+    "read_log": {
+      "text": "You read back through forty years of night shifts. The failures always start at 0300. The switch is always found open. One officer tried sitting up all night with a hand on it; their entry ends in the middle of a word. The next entry, in another hand, says only: DON'T FIGHT IT. LET IT HAVE THE FIRST PULL. Under that, somebody has drawn a hand. It has too many joints.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Close the switch — and let go when it pulls",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "lights_on",
+          "hazard_id": "it_keeps_pulling"
+        },
+        {
+          "label": "Close the switch and hold it shut",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "tug",
+          "hazard_id": "live_blade"
+        }
+      ]
+    },
+    "tug": {
+      "text": "You push the blade home. It meets resistance a finger's width short of the contacts — not rust, not a spring. Pressure. Something on the other side of the wall has its hand on the same switch, and it is pushing back. You feel it shift its grip.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Lean on it with everything you have",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "it_wins"
+        },
+        {
+          "label": "Let go, wait, then slam it home",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "lights_on",
+          "hazard_id": "it_keeps_pulling"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "The resistance goes — just stops, the way a hand lets go — and the blade slams into the contacts in a crack of blue light. Then: clunk. And down {{section}}, one tube, then the next, then the next, the lights walk out along the corridor in exactly the order the log says they should, until the last fitting in sight is burning steady. One of them flickers, the way the log says one always does. When you look back at the desk there is a new line at the bottom of the page, in ink still wet: {{section}} LIGHTS RESTORED. THANK YOU. It is in your handwriting.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "live_blade": {
+      "text": "The blade is live, and has been for a very long time. It bites.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "the_entry": {
+      "text": "You turn the page. The next entry is today's. It says that you are reading it. It says what happens next, and you are so busy reading that you do not hear it happen. You come round on the floor with the log shut and the switch still hanging open.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "it_wins": {
+      "text": "It pulls. The blade tears out of your hands and slams open, and the whole wall shudders as if something on the far side has thrown itself against it. You are back in the corridor before you have decided to leave. The switch is still open behind you.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "it_keeps_pulling": {
+      "text": "You let go. It does not. The blade keeps travelling — past open, past the stop, the bracket shrieking — and the arc that jumps off it takes the skin off your forearm.",
+      "penalty": { "ll": -2 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION 4", "RING E", "THE PIPE GALLERY", "SUBLEVEL TWO", "CORRIDOR 9", "THE NORTH SPUR"],
+    "date": ["tomorrow", "a day that has not happened yet", "today, in your handwriting"]
+  }
+}

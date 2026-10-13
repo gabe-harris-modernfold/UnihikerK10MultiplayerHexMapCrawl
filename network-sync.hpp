@@ -10,7 +10,34 @@ static uint32_t lobbyIds[MAX_PLAYERS] = {0};
 // ── broadcastState() telemetry, surfaced via /state (game-server.hpp) ────────
 static uint32_t g_broadcastSkips       = 0;  // total ticks skipped: G.mutex busy
 static uint32_t g_broadcastSkipsConsec = 0;  // current consecutive-skip streak
-static uint32_t g_broadcastPartial     = 0;  // ticks where >=1 client missed the send (queue full)
+static uint32_t g_broadcastPartial     = 0;  // ticks where >=1 client missed the send (backlogged)
+
+// Most `s` ticks a client's send queue may hold. The queue is 8 deep
+// (WS_MAX_QUEUED_MESSAGES, build_opt.h) and the library DISCARDS whatever
+// arrives once it is full -- so through a few seconds' Wi-Fi stall it used to
+// fill with superseded 3-4 KB ticks and then drop every ack, nack, event and
+// unicast behind them (2026-10-12: one 8 s stall lost 15 replies in a row; a
+// lost kane_call meant a burst with no warning). A queued tick is stale 100 ms
+// later anyway, so a backlogged client skips ticks instead, and the other six
+// slots stay free for the messages that are not resent.
+static constexpr size_t WS_STATE_MAX_QUEUED = 2;
+
+// AsyncWebSocket's client-list lock: what textAll() holds while it walks the
+// clients. broadcastState() walks them itself (to read each queue's depth), so
+// it must hold it too -- a client is erased from that list, and destroyed, the
+// moment it disconnects (async_tcp task, or cleanupClients() in loop()), so an
+// AsyncWebSocketClient* used outside it can dangle. The member is private and
+// the library offers no locked per-client walk. An explicit instantiation is
+// exempt from access checking ([temp.explicit]), which is what lets this name
+// it; a library that renames it fails to compile here instead of racing.
+template <typename Tag, typename Tag::type M>
+struct WsPrivate { friend typename Tag::type wsPrivate(Tag) { return M; } };
+struct WsClientsLockTag {
+  typedef asyncsrv::mutex_type AsyncWebSocket::*type;
+  friend type wsPrivate(WsClientsLockTag);
+};
+template struct WsPrivate<WsClientsLockTag, &AsyncWebSocket::_ws_clients_lock>;
+static asyncsrv::mutex_type& wsClientsLock() { return ws.*wsPrivate(WsClientsLockTag()); }
 
 // ── Skill check broadcast ─────────────────────────────────────────────────────
 static void broadcastCheck(int pid, uint8_t skill, CheckResult& r) {
@@ -168,8 +195,8 @@ static int appendFloodArray(char* buf, size_t cap) {
 // 16x10 at 6 chars/cell is 960 chars, so this fits a small stack buffer; it
 // deliberately does NOT reuse sendSync()'s 40 KB PSRAM buffer.
 static void sendTunnelSync(AsyncWebSocketClient* client) {
-  // header ~70 + map 960 + op 320 + closers: ~1.36 KB at 16x10
-  char buf[1440];
+  // header ~70 + map 960 + op 320 + lt 320 + closers: ~1.7 KB at 16x10
+  char buf[1800];
   int pid = findSlot(client->id());
   if (pid < 0) return;
   int visR; bool maskRes;
@@ -187,6 +214,9 @@ static void sendTunnelSync(AsyncWebSocketClient* client) {
   // Which sides of each cell are open (tunnels.hpp), for the same cells.
   pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"op\":\"");
   pos += encodeTunnelOps(buf + pos, (int)sizeof(buf) - pos, pq, pr, visR, pid);
+  // Which cells are lit, and in what order they came on (tunnels.hpp).
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "\",\"lt\":\"");
+  pos += encodeTunnelLights(buf + pos, (int)sizeof(buf) - pos);
   xSemaphoreGive(G.mutex);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "\"}");
   client->text(buf, (size_t)pos);
@@ -272,8 +302,10 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
   pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
+  pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
+  pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
   pos += appendFloodArray(buf + pos, sizeof(buf) - pos);
@@ -389,29 +421,42 @@ static void broadcastState() {
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
   pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},\"fire\":[",
+    "]},\"doom\":{\"q\":%d,\"r\":%d,\"awareness\":%d},",
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
+  pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
+  pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
   pos += appendFloodArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "]}}");
   xSemaphoreGive(G.mutex);
-  // setCloseClientOnQueueFull(false) (see handleConnect) means a backlogged
-  // client silently misses this tick's send instead of getting force-closed —
-  // track how often that happens so a chronically-lagging client is visible.
-  AsyncWebSocket::SendStatus st = ws.textAll(buf, (size_t)pos);
-  // textAll() returns DISCARDED whenever there are zero WS clients at all
-  // (hit==0), same as it would for a real all-clients-backlogged case — guard
-  // on count() so an idle/empty server doesn't masquerade as one every tick.
-  if (st != AsyncWebSocket::ENQUEUED && ws.count() > 0) {
+
+  // textAll(), plus one test: a client already holding WS_STATE_MAX_QUEUED
+  // messages is passed over this tick. Same recipients, same single shared
+  // copy, same lock held across the walk (wsClientsLock() above), taken after
+  // G.mutex is released exactly as textAll() always was.
+  AsyncWebSocketSharedBuffer shared = std::make_shared<std::vector<uint8_t>>(
+      (const uint8_t*)buf, (const uint8_t*)buf + pos);
+  int held = 0, dropped = 0;
+  {
+    asyncsrv::lock_guard_type lk(wsClientsLock());
+    for (AsyncWebSocketClient& c : ws.getClients()) {
+      if (c.status() != WS_CONNECTED) continue;
+      if (c.queueLen() >= WS_STATE_MAX_QUEUED) { held++; continue; }
+      if (!c.text(shared)) dropped++;
+    }
+  }
+  // setCloseClientOnQueueFull(false) (see handleConnect): a backlogged client
+  // misses ticks rather than being closed. Count the ticks where anyone did,
+  // so a chronically lagging client is visible in /state.
+  if (held || dropped) {
     g_broadcastPartial++;
     static uint32_t lastPartialLogMs = 0;
     uint32_t nowMs = millis();
     if (nowMs - lastPartialLogMs >= 1000) {
       lastPartialLogMs = nowMs;
-      LOG_VERBOSE("broadcastState: send %s (rate-limited) totalPartial=%lu",
-                  st == AsyncWebSocket::DISCARDED ? "DISCARDED" : "PARTIAL",
-                  (unsigned long)g_broadcastPartial);
+      LOG_VERBOSE("broadcastState: held=%d dropped=%d (rate-limited) totalPartial=%lu",
+                  held, dropped, (unsigned long)g_broadcastPartial);
     }
   }
 }

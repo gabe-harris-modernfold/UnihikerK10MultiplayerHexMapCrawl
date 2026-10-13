@@ -29,6 +29,11 @@ import heapq
 from config import (DQ, DR, MAP_COLS, MAP_ROWS, TERRAIN_MC, IMPASSABLE,
                     NUM_TERRAIN, TERR_TUNNEL, tun_distance)
 
+_NEIGH = tuple(zip(DQ, DR))
+# TERRAIN_MC with the impassables as None, so the inner loop is one index.
+_MC = tuple(None if mc == IMPASSABLE else mc for mc in TERRAIN_MC)
+_BIG = 1 << 30
+
 # What an unrevealed cell is assumed to cost.  Slightly above the average
 # passable cost (1.50 measured over the real map) so a bot prefers a known
 # road to a gamble, but not so high it refuses to explore.
@@ -48,6 +53,16 @@ DAISY_BUD_COST = 1
 # of most of a day is taken first -- but never impassable, since it may be
 # the only way out of a pocket.
 TRAP_KNOWN_COST = 8
+
+# Machine Gun Kane's reach (kane.hpp): open ground within KANE_RANGE of a jeep
+# on the road. Standing there gets you asked, and still standing there a world
+# tick later gets you shot, so a route through it is priced, never forbidden
+# -- he moves a hex a tick and the next tick's ring is a guess. Once he has
+# asked US, leaving cover costs most of a day's AP: the burst is 15 s away.
+# Unrevealed hexes in his reach are priced at half, since scrub and dunes are
+# most of the map but not all of it.  state.py fills WorldMap.danger_cost.
+KANE_DANGER_COST = 4
+KANE_CALLED_COST = 30
 
 
 def step_cost(cell) -> int | None:
@@ -75,7 +90,32 @@ def walled(here, there, direction) -> bool:
     return False
 
 
-def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
+# -- one decision, one search -------------------------------------------------
+# SurvivorPolicy._decide() walks a priority list, and up to eight of its
+# layers (the grave, the canteen errand, the staple hunt, the caravan, Kane's
+# chapters, pursuit) each run their own search from the same hex over the
+# same map, most of them only to find there is nothing to walk to.  Measured
+# 2026-10-13 on a fully revealed map: a quester spent 35 ms a cycle this way,
+# 5 bots x 3 cycles/s of it on the one asyncio thread that also reads every
+# socket.  Within one decide() the map cannot change, so the searches are
+# memoised for exactly that long: SurvivorPolicy.decide() opens a cycle and
+# closes it, and outside a cycle nothing is cached, so a test that mutates a
+# map between two searches sees the mutation.
+_memo: dict | None = None
+
+
+def begin_cycle() -> None:
+    global _memo
+    _memo = {}
+
+
+def end_cycle() -> None:
+    global _memo
+    _memo = None
+
+
+def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None,
+             danger=True):
     """Cost-to-reach every cell within max_cost.
 
     Returns (dist, first_dir): dist[(q, r)] -> AP, first_dir[(q, r)] -> the
@@ -91,54 +131,89 @@ def dijkstra(world, start_q, start_r, max_cost=60, cost_fn=None, stop_at=None):
     merely passes over one does not exist -- it ends there, somewhere the
     caller did not choose.  Without it the pathfinder happily plots a line
     through a hatch and the survivor is ejected mid-journey.
+
+    `danger=False` leaves out WorldMap.danger_cost (Machine Gun Kane's reach).
+    Only the search for cover from him wants that: it is fine to cross his
+    reach on the way, as long as the step that ends the move is out of it.
     """
-    dist = {(start_q, start_r): 0}
-    first = {(start_q, start_r): -1}
+    # Callers only read the result, so a memo hit hands back the same dicts.
+    key = (id(world), start_q, start_r, max_cost, cost_fn, stop_at, danger)
+    memo = _memo
+    if memo is not None:
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+    start = (start_q, start_r)
+    dist = {start: 0}
+    first = {start: -1}
     pq = [(0, start_q, start_r)]
     wraps = getattr(world, "wraps", True)
     cols, rows = world.cols, world.rows
-    cost = cost_fn or step_cost
+    grid = world.grid
     extra = getattr(world, "extra_cost", None) or None
+    hazard = (getattr(world, "danger_cost", None) or None) if danger else None
+    heappop, heappush = heapq.heappop, heapq.heappush
     while pq:
-        d, q, r = heapq.heappop(pq)
-        if d > dist.get((q, r), 1 << 30):
+        d, q, r = heappop(pq)
+        if d > dist.get((q, r), _BIG):
             continue
         if d >= max_cost:
             continue
-        if stop_at is not None and (q, r) != (start_q, start_r) \
-                and stop_at(world[(q, r)], q, r):
+        here = world[(q, r)]
+        if stop_at is not None and (q, r) != start and stop_at(here, q, r):
             continue        # enterable, but the journey ends on it
-        for direction in range(6):
-            nq = q + DQ[direction]
-            nr = r + DR[direction]
+        for direction, (dq, dr) in enumerate(_NEIGH):
+            nq = q + dq
+            nr = r + dr
             if wraps:
                 nq %= cols
                 nr %= rows
-            elif not (0 <= nq < cols and 0 <= nr < rows):
-                continue        # walled board: off the edge is rock
-            if not wraps and walled(world[(q, r)], world[(nq, nr)], direction):
-                continue        # a wall between two cells, not a doorway
-            c = cost(world[(nq, nr)])
-            if c is None:
-                continue
+                cell = grid[nr][nq]
+            else:
+                if not (0 <= nq < cols and 0 <= nr < rows):
+                    continue    # walled board: off the edge is rock
+                cell = grid[nr][nq]
+                if walled(here, cell, direction):
+                    continue    # a wall between two cells, not a doorway
+            # step_cost(), inlined: this loop is most of a decide cycle.
+            if cost_fn is not None:
+                c = cost_fn(cell)
+                if c is None:
+                    continue
+            elif cell is None:
+                c = UNKNOWN_COST
+            else:
+                t = cell.terrain
+                if t >= NUM_TERRAIN:
+                    continue
+                c = _MC[t]
+                if c is None:
+                    continue
+                if cell.trap:
+                    c += TRAP_KNOWN_COST
             if extra:
                 c += extra.get((nq, nr), 0)
+            if hazard:
+                c += hazard.get((nq, nr), 0)
             nd = d + c
-            if nd < dist.get((nq, nr), 1 << 30):
+            if nd < dist.get((nq, nr), _BIG):
                 dist[(nq, nr)] = nd
-                first[(nq, nr)] = direction if (q, r) == (start_q, start_r) else first[(q, r)]
-                heapq.heappush(pq, (nd, nq, nr))
+                first[(nq, nr)] = direction if (q, r) == start else first[(q, r)]
+                heappush(pq, (nd, nq, nr))
+    if memo is not None:
+        memo[key] = (dist, first)
     return dist, first
 
 
 def best_target(world, start_q, start_r, score_fn, max_cost=40,
-                cost_fn=None, stop_at=None):
+                cost_fn=None, stop_at=None, danger=True):
     """Pick the reachable cell maximising score_fn(cell, q, r, cost).
 
     score_fn returns None for "not a candidate".  Ties break toward the
     cheaper cell.  Returns (q, r, direction, cost, value) or None.
     """
-    dist, first = dijkstra(world, start_q, start_r, max_cost, cost_fn, stop_at)
+    dist, first = dijkstra(world, start_q, start_r, max_cost, cost_fn, stop_at,
+                           danger=danger)
     best = None
     for (q, r), cost in dist.items():
         if cost == 0:
@@ -155,12 +230,31 @@ def best_target(world, start_q, start_r, score_fn, max_cost=40,
 
 
 def hex_distance(q1, r1, q2, r2) -> int:
-    """Shortest axial distance on the torus, ignoring terrain."""
-    dq = min((q1 - q2) % MAP_COLS, (q2 - q1) % MAP_COLS)
-    dr = min((r1 - r2) % MAP_ROWS, (r2 - r1) % MAP_ROWS)
-    # Flat-top axial: the third cube coordinate moves opposite to q+r.
-    ds = abs(dq + dr)
-    return max(dq, dr, ds) if (dq and dr) else max(dq, dr, ds)
+    """Shortest axial distance on the torus, ignoring terrain -- the
+    firmware's hexDistWrap(), via hex_dist_wrap().
+
+    Until 2026-10-12 this folded each torus delta to its absolute value
+    before combining them, which throws away the one thing the third cube
+    coordinate needs: whether q and r moved the same way.  Every step with
+    opposite-sign deltas was over-counted -- (22,20) to (19,22) came out 5
+    instead of 3 -- so the coward's fire and doom radii and the rival's
+    contest radius were effectively smaller than written, and the tunnel
+    bots' and metrics.py's "surface hexes crossed" overstated diagonal
+    trips.  Same-sign and single-axis deltas were always right."""
+    return hex_dist_wrap(q1, r1, q2, r2)
+
+
+def hex_dist_wrap(q1, r1, q2, r2) -> int:
+    """Exact port of hexDistWrap() (hex-map.hpp): the axial distance to the
+    nearest of the nine wrapped copies of (q2, r2).  hex_distance() is this;
+    the firmware decides who Machine Gun Kane can reach with it."""
+    best = 1 << 30
+    for wq in (-1, 0, 1):
+        for wr in (-1, 0, 1):
+            aq = q2 + wq * MAP_COLS - q1
+            ar = r2 + wr * MAP_ROWS - r1
+            best = min(best, (abs(aq) + abs(aq + ar) + abs(ar)) // 2)
+    return best
 
 
 def frontier_bonus(world, q, r) -> int:
@@ -173,15 +267,16 @@ def frontier_bonus(world, q, r) -> int:
     it and pin an explorer against the wall."""
     n = 0
     wraps = getattr(world, "wraps", True)
-    for direction in range(6):
-        nq = q + DQ[direction]
-        nr = r + DR[direction]
+    cols, rows, grid = world.cols, world.rows, world.grid
+    for dq, dr in _NEIGH:
+        nq = q + dq
+        nr = r + dr
         if wraps:
-            nq %= world.cols
-            nr %= world.rows
-        elif not (0 <= nq < world.cols and 0 <= nr < world.rows):
+            nq %= cols
+            nr %= rows
+        elif not (0 <= nq < cols and 0 <= nr < rows):
             continue
-        if world[(nq, nr)] is None:
+        if grid[nr][nq] is None:
             n += 1
     return n
 

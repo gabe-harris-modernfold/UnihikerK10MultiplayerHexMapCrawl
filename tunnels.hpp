@@ -543,6 +543,224 @@ static int placeCaveIns(int want) {
   return placed;
 }
 
+// ── Section lights ──────────────────────────────────────────────────────────
+// The board is cut into a handful of sections, each with a control panel in
+// one of its rooms: a scene from the tunnel pool (data/encounters/tunnel,
+// encPools[14]). Reach the end of it -- a node marked "lights": true -- and
+// that section's overhead lights come on, for everyone, for good. A lit cell
+// is in sight for anyone below wherever they stand (buildVisDisk and
+// encodeTunnelFog, hex-map.hpp): the one light down here that beats a flare.
+//
+// G.tunnelSec[r][q] is the section a cell belongs to, TUN_SEC_NONE for rock.
+// G.tunnelLit[r][q] is 0 while dark. Once lit, bits 0-5 are the bank the
+// cell came on in -- its corridor distance from the panel, plus one -- and
+// bit 6 marks a tube that never settles. The lights do not all come on at
+// once: the client walks them out from the panel bank by bank, and the bank
+// number is what makes every client (and the TV) agree on the order. Both
+// arrays ride /save/lights.bin (network-persistence.hpp).
+//
+// Sections partition the floor by corridor distance. Panels are spread out by
+// farthest-point sampling over the rooms, then every floor cell joins
+// whichever panel's flood reaches it first. A multi-source flood only ever
+// claims a cell from a neighbour the same panel already holds, so a section
+// is one connected run of corridor with its panel inside it -- which is what
+// lets tunnelLightSection() find the whole of it from the panel alone.
+//
+// A panel is a fixture, not a cache: its POI only goes for good once the
+// section is lit (endEncounter(), handleMsg_enc_bank). Driven out, downed or
+// walked away, the panel is still there in the dark for the next try.
+static constexpr uint8_t TUN_SEC_NONE      = 0xFF;
+static constexpr int     TUN_SECTIONS_MAX  = 6;
+static constexpr int     TUN_SECTION_CELLS = 11;   // floor cells a section aims for
+static constexpr uint8_t TLIT_BANK         = 0x3F;
+static constexpr uint8_t TLIT_FLICKER      = 0x40;
+static constexpr int     TLIT_FLICKER_PCT  = 10;   // tubes that never settle (user-tuned 2026-10-12, was 18)
+
+// Set by tunnelLightSection(), under G.mutex, so the handler that ran the
+// scene knows to push fresh vis disks to everyone below once it has let go of
+// the mutex (pushVisDisk takes it itself). See handleMsg_enc_choice.
+static bool tunnelLightsPending = false;
+
+// Walkable cells a light can hang over: floor, and both kinds of shaft.
+static inline bool tunLightable(int q, int r) {
+  uint8_t t = G.tunnel[r][q].terrain;
+  return t == 12 || t == 13 || t == 14;
+}
+
+// Breadth-first over open sides from (q0,r0): corridor steps to every
+// lightable cell, 0xFF where it does not reach. With sec set, only cells of
+// that section are walked. Caller holds G.mutex (or is generating the board),
+// which is what makes the static queue safe -- off the stack, because this
+// also runs on the async_tcp task.
+static void tunSteps(int q0, int r0, uint8_t steps[TUN_ROWS][TUN_COLS], uint8_t sec = TUN_SEC_NONE) {
+  static struct { int8_t q, r; } queue[TUN_ROWS * TUN_COLS];
+  memset(steps, 0xFF, TUN_ROWS * TUN_COLS);
+  int head = 0, tail = 0;
+  steps[r0][q0] = 0;
+  queue[tail++] = { (int8_t)q0, (int8_t)r0 };
+  while (head < tail) {
+    int cq = queue[head].q, cr = queue[head].r;
+    head++;
+    for (int d = 0; d < 6; d++) {
+      if (!tunOpen(cq, cr, d)) continue;
+      int nq = cq + DQ[d], nr = cr + DR[d];
+      if (!tunIn(nq, nr) || steps[nr][nq] != 0xFF || !tunLightable(nq, nr)) continue;
+      if (sec != TUN_SEC_NONE && G.tunnelSec[nr][nq] != sec) continue;
+      steps[nr][nq] = (uint8_t)min(254, (int)steps[cr][cq] + 1);
+      queue[tail++] = { (int8_t)nq, (int8_t)nr };
+    }
+  }
+}
+
+// Lay out the sections and put a panel scene in each. Called at the end of
+// generateTunnels(), and by tryLoadSave() for a save made before the lights
+// existed (no /save/lights.bin) -- which is why it clears every tunnel POI
+// first and skips trapped cells: on a loaded board the traps are already
+// down. Every light starts off. Returns how many sections it made.
+static int tunnelPlaceSections() {
+  memset(G.tunnelSec, TUN_SEC_NONE, TUNNEL_LIGHT_BYTES);
+  memset(G.tunnelLit, 0, TUNNEL_LIGHT_BYTES);
+  static uint8_t cand[TUN_ROWS * TUN_COLS][2];
+  int nc = 0, floorCells = 0;
+  for (int r = 0; r < TUN_ROWS; r++)
+    for (int q = 0; q < TUN_COLS; q++) {
+      G.tunnel[r][q].poi = 0;
+      if (G.tunnel[r][q].terrain != 14) continue;
+      floorCells++;
+      // A control room is a room. Hatch cells are 12/13, so never here.
+      if ((G.tunnelOp[r][q] & TOP_ROOM) && !G.tunnel[r][q].trapEnc) {
+        cand[nc][0] = (uint8_t)q; cand[nc][1] = (uint8_t)r; nc++;
+      }
+    }
+  if (nc == 0)                                       // no rooms: any floor will do
+    for (int r = 0; r < TUN_ROWS; r++)
+      for (int q = 0; q < TUN_COLS; q++)
+        if (G.tunnel[r][q].terrain == 14 && !G.tunnel[r][q].trapEnc) {
+          cand[nc][0] = (uint8_t)q; cand[nc][1] = (uint8_t)r; nc++;
+        }
+  if (nc == 0) { Log.warning("tunnelPlaceSections: no floor -- no sections"); return 0; }
+  int want = constrain((floorCells + TUN_SECTION_CELLS / 2) / TUN_SECTION_CELLS, 3, TUN_SECTIONS_MAX);
+  want = min(want, nc);
+
+  // Farthest-point sampling: each new panel is the room furthest along the
+  // corridors from every panel so far, with a little noise between near-ties.
+  static uint8_t nearest[TUN_ROWS][TUN_COLS], steps[TUN_ROWS][TUN_COLS];
+  memset(nearest, 0xFF, sizeof(nearest));
+  uint8_t panQ[TUN_SECTIONS_MAX], panR[TUN_SECTIONS_MAX];
+  int k = 0, pick = (int)(esp_random() % (uint32_t)nc);
+  while (k < want && pick >= 0) {
+    panQ[k] = cand[pick][0]; panR[k] = cand[pick][1];
+    tunSteps(panQ[k], panR[k], steps);
+    k++;
+    for (int r = 0; r < TUN_ROWS; r++)
+      for (int q = 0; q < TUN_COLS; q++) nearest[r][q] = min(nearest[r][q], steps[r][q]);
+    pick = -1;
+    int best = -1;
+    for (int i = 0; i < nc; i++) {
+      uint8_t d = nearest[cand[i][1]][cand[i][0]];
+      if (d == 0 || d == 0xFF) continue;              // a panel already, or cut off from them
+      int score = (int)d * 8 + (int)(esp_random() % 8);
+      if (score > best) { best = score; pick = i; }
+    }
+  }
+
+  // Multi-source flood: every lightable cell joins the first panel to reach it.
+  static struct { int8_t q, r; } queue[TUN_ROWS * TUN_COLS];
+  int head = 0, tail = 0;
+  for (int s = 0; s < k; s++) {
+    G.tunnelSec[panR[s]][panQ[s]] = (uint8_t)s;
+    queue[tail++] = { (int8_t)panQ[s], (int8_t)panR[s] };
+  }
+  while (head < tail) {
+    int cq = queue[head].q, cr = queue[head].r;
+    head++;
+    for (int d = 0; d < 6; d++) {
+      if (!tunOpen(cq, cr, d)) continue;
+      int nq = cq + DQ[d], nr = cr + DR[d];
+      if (!tunIn(nq, nr) || G.tunnelSec[nr][nq] != TUN_SEC_NONE || !tunLightable(nq, nr)) continue;
+      G.tunnelSec[nr][nq] = G.tunnelSec[cr][cq];
+      queue[tail++] = { (int8_t)nq, (int8_t)nr };
+    }
+  }
+
+  // A different scene at every panel while the pool lasts: a shuffled deck.
+  const int scenes = (int)encPools[14].count;
+  if (scenes > 0) {
+    uint8_t deck[32];
+    const int n = min(scenes, 32);
+    for (int i = 0; i < n; i++) deck[i] = (uint8_t)(i + 1);
+    for (int i = n - 1; i > 0; i--) {
+      int j = (int)(esp_random() % (uint32_t)(i + 1));
+      uint8_t t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+    }
+    for (int s = 0; s < k; s++) G.tunnel[panR[s]][panQ[s]].poi = deck[s % n];
+  }
+  Log.notice("Tunnel sections=%d floor=%d rooms=%d scenes=%d", k, floorCells, nc, scenes);
+  return k;
+}
+
+// Sections on the board, and how many of them are lit. A section is lit when
+// any cell of it is -- tunnelLightSection() lights them whole.
+static void tunnelSectionCounts(int* outTotal, int* outLit) {
+  uint8_t seen = 0, lit = 0;
+  for (int r = 0; r < TUN_ROWS; r++)
+    for (int q = 0; q < TUN_COLS; q++) {
+      uint8_t s = G.tunnelSec[r][q];
+      if (s >= 8) continue;
+      seen |= (uint8_t)(1 << s);
+      if (G.tunnelLit[r][q]) lit |= (uint8_t)(1 << s);
+    }
+  *outTotal = __builtin_popcount(seen);
+  *outLit   = __builtin_popcount(lit);
+}
+
+// Is (q,r) a panel whose section is still dark? The encounter engine asks
+// this to decide whether a scene ending here puts its POI back.
+static bool tunnelPanelDark(int q, int r) {
+  return tunIn(q, r) && G.tunnelSec[r][q] != TUN_SEC_NONE && G.tunnelLit[r][q] == 0;
+}
+
+// Throw the switch: light the section the panel at (q0,r0) is in. Every cell
+// gets its bank -- corridor steps from the panel, plus one -- and a few get a
+// tube that never settles; the panel's own light is always steady. Queues
+// EVT_TUNNEL_LIGHTS and raises tunnelLightsPending. Returns the number of
+// banks, 0 if there is no section here or it was already lit. Caller holds
+// G.mutex.
+static int tunnelLightSection(int pid, int q0, int r0) {
+  if (!tunIn(q0, r0)) return 0;
+  const uint8_t sec = G.tunnelSec[r0][q0];
+  if (sec == TUN_SEC_NONE || G.tunnelLit[r0][q0]) return 0;
+  static uint8_t steps[TUN_ROWS][TUN_COLS];
+  tunSteps(q0, r0, steps, sec);
+  int banks = 0, cells = 0, flick = 0;
+  for (int r = 0; r < TUN_ROWS; r++)
+    for (int q = 0; q < TUN_COLS; q++) {
+      if (steps[r][q] == 0xFF) continue;
+      uint8_t bank = (uint8_t)min((int)TLIT_BANK, (int)steps[r][q] + 1);
+      uint8_t b = bank;
+      if (bank > 1 && (int)(esp_random() % 100) < TLIT_FLICKER_PCT) { b |= TLIT_FLICKER; flick++; }
+      G.tunnelLit[r][q] = b;
+      banks = max(banks, (int)bank);
+      cells++;
+    }
+  int total = 0, lit = 0;
+  tunnelSectionCounts(&total, &lit);
+  GameEvent ev = {};
+  ev.type    = EVT_TUNNEL_LIGHTS;
+  ev.pid     = (uint8_t)pid;
+  ev.q       = (int16_t)q0;
+  ev.r       = (int16_t)r0;
+  ev.amt     = sec;
+  ev.res     = (uint8_t)banks;
+  ev.actOut  = (uint8_t)lit;
+  ev.actType = (uint8_t)total;
+  enqEvt(ev);
+  tunnelLightsPending = true;
+  Log.notice("tun lights pid=%d section=%u panel=(%d,%d) cells=%d banks=%d flicker=%d lit=%d/%d",
+             pid, (unsigned)sec, q0, r0, cells, banks, flick, lit, total);
+  return banks;
+}
+
 // ── Tunnel board generation ─────────────────────────────────────────────────
 // Called from the end of generateMap() (forward-declared in hex-map.hpp), so
 // the surface map is already final and hatches can be placed against it.
@@ -679,26 +897,11 @@ static void generateTunnels() {
       }
     }
 
-  // Encounter POIs, same shuffle-and-deal as the surface Phase 5: every file in
-  // the tunnel pool is placed at least once.  encPools[14].count is 0 until
-  // data/encounters/index.json defines a "14" entry, in which case this is a
-  // no-op — that content lands in a later step.
-  if (encPools[14].count > 0) {
-    uint8_t cells[TUN_ROWS * TUN_COLS][2];
-    int n = 0;
-    for (int r = 0; r < TUN_ROWS; r++)
-      for (int q = 0; q < TUN_COLS; q++)
-        if (G.tunnel[r][q].terrain == 14) { cells[n][0] = (uint8_t)q; cells[n][1] = (uint8_t)r; n++; }
-    for (int i = n - 1; i > 0; i--) {                    // Fisher-Yates
-      int j = (int)(esp_random() % (uint32_t)(i + 1));
-      uint8_t t0 = cells[i][0], t1 = cells[i][1];
-      cells[i][0] = cells[j][0]; cells[i][1] = cells[j][1];
-      cells[j][0] = t0;          cells[j][1] = t1;
-    }
-    int place = min(n, (int)encPools[14].count);
-    for (int i = 0; i < place; i++)
-      G.tunnel[cells[i][1]][cells[i][0]].poi = (uint8_t)(i + 1);
-  }
+  // Encounter POIs: the tunnel pool is the control-panel scenes, one in a
+  // room of every lighting section (see "Section lights" above). No pool --
+  // index.json without a "14" entry -- still lays out the sections, with no
+  // panels to light them.
+  tunnelPlaceSections();
 
   // ── Art ──
   // Rooms are dealt from a shuffled deck of every room the art has, so a

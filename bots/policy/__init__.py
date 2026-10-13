@@ -10,6 +10,7 @@ from .subterranean import SubterraneanPolicy, TunnelPolicy
 from .tunnelrunner import TunnelRunnerPolicy
 from .sentinel import SentinelPolicy
 from .biker import BikerPolicy
+from .quester import QuesterPolicy
 
 REGISTRY = {
     "drunk": DrunkPolicy,
@@ -30,6 +31,9 @@ REGISTRY = {
     # Builds a Motorbike (a Backpack first, since the parts will not fit a
     # bare pack), then rides it collecting all the fuel it can carry.
     "biker": BikerPolicy,
+    # Plays every quest chain to the end, in order, and checks the order
+    # holds: gate probes, the workshop, Kane's chapters (quests.py).
+    "quester": QuesterPolicy,
 }
 
 # The encounter library is ~100 JSON files; parse it once and share the
@@ -60,5 +64,5 @@ def make(name: str, rng, **kw) -> Policy:
 __all__ = ["Policy", "Action", "NOOP", "SurvivorPolicy", "DrunkPolicy",
            "ScoreMaxPolicy", "ContentMaxPolicy", "CowardPolicy", "RivalPolicy",
            "TunnelPolicy", "SubterraneanPolicy", "TunnelRunnerPolicy", "SentinelPolicy",
-           "GearMaxPolicy", "BikerPolicy",
+           "GearMaxPolicy", "BikerPolicy", "QuesterPolicy",
            "REGISTRY", "make", "shared_library"]

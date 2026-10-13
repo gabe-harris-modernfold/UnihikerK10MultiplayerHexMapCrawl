@@ -65,6 +65,81 @@ static volatile uint32_t g_lastWsDataMs = 0;  // inbound traffic only (DATA / PI
                                               // DISCONNECT is lwIP giving up, not the link working
 static volatile uint32_t g_wsEvtN       = 0;  // every WS event; NETWD reports the rate
 
+// ── Reassembly of messages that arrive in pieces ─────────────────────────────
+// The library raises WS_EVT_DATA once per chunk: a message split across TCP
+// segments, or sent as several WS frames, comes in two or more calls. Only
+// the one-call case used to be handled, so anything else was dropped with no
+// reply -- fuzz.py's n:long-1400/4000 got silence (2026-10-12), and a small
+// command split across segments by a retransmit would have vanished the same
+// way. Pieces are gathered per client here and dispatched whole. Only the
+// async_tcp task runs onWsEvent, so none of this needs a lock.
+static constexpr size_t WS_MSG_MAX   = 4096;  // a client command is ~300 B at most
+static constexpr int    WS_ASM_SLOTS = 8;     // clients mid-message at once
+struct WsAsm { uint32_t id; uint32_t len; bool over; };
+static WsAsm s_wsAsm[WS_ASM_SLOTS] = {};
+
+static char* wsAsmBuf(int slot) {
+  PSRAM_STATIC(char, bufs, [WS_ASM_SLOTS][WS_MSG_MAX + 1]);
+  return bufs[slot];
+}
+
+static void wsAsmFree(uint32_t id) {
+  for (int i = 0; i < WS_ASM_SLOTS; i++) if (s_wsAsm[i].id == id) s_wsAsm[i].id = 0;
+}
+
+static void wsDataEvent(AsyncWebSocketClient* client, AwsFrameInfo* info,
+                        uint8_t* data, size_t len) {
+  uint32_t id    = client->id();
+  // A message starts on a frame's first byte that is not a continuation; it
+  // ends on the last byte of its final frame. (info->num is no use here: the
+  // library resets it whenever a frame is split.)
+  bool     start = info->index == 0 && info->opcode != WS_CONTINUATION;
+  bool     end   = info->final && info->index + len == info->len;
+
+  if (info->message_opcode != WS_TEXT) {   // binary is never a command
+    if (end) Log.warning("WS binary msg dropped id=%u len=%u", (unsigned)id, (unsigned)info->len);
+    wsAsmFree(id);
+    return;
+  }
+  if (start && end) {                      // the usual case: whole in one call
+    wsAsmFree(id);
+    data[len] = 0;                         // the library leaves room for it
+    handleMessage(client, (char*)data, len);
+    return;
+  }
+
+  int s = -1;
+  for (int i = 0; i < WS_ASM_SLOTS && s < 0; i++) if (s_wsAsm[i].id == id) s = i;
+  if (start) {
+    if (s < 0) for (int i = 0; i < WS_ASM_SLOTS && s < 0; i++) if (!s_wsAsm[i].id) s = i;
+    if (s < 0) { Log.warning("WS reassembly full, msg dropped id=%u", (unsigned)id); return; }
+    s_wsAsm[s] = { id, 0, false };
+  } else if (s < 0) {
+    return;                                // the rest of a message already given up on
+  }
+  WsAsm& a = s_wsAsm[s];
+  if (!a.over) {
+    if (a.len + len > WS_MSG_MAX) {
+      a.over = true;                       // no reply: its rid cannot be trusted
+      Log.warning("WS msg over %u B dropped id=%u", (unsigned)WS_MSG_MAX, (unsigned)id);
+    } else {
+      memcpy(wsAsmBuf(s) + a.len, data, len);
+      a.len += len;
+    }
+  }
+  if (end) {
+    char* buf = wsAsmBuf(s);
+    bool  ok  = !a.over;
+    uint32_t n = a.len;
+    a.id = 0;                              // free before dispatch: a handler may send
+    if (ok) {
+      buf[n] = 0;
+      LOG_VERBOSE("WS reassembled id=%u len=%u", (unsigned)id, (unsigned)n);
+      handleMessage(client, buf, n);
+    }
+  }
+}
+
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
   g_lastWsEvtMs = millis();
@@ -84,19 +159,8 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
 
   switch (type) {
     case WS_EVT_CONNECT:    handleConnect(client); break;
-    case WS_EVT_DISCONNECT: handleDisconnect(client); break;
-    case WS_EVT_DATA: {
-      AwsFrameInfo* info = (AwsFrameInfo*)arg;
-      if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-        data[len] = 0;
-        handleMessage(client, (char*)data, len);
-      } else {
-        Log.warning("WS frame drop id=%u final=%d idx=%u len=%u opcode=%d",
-                    (unsigned)client->id(), (int)info->final,
-                    (unsigned)info->index, (unsigned)info->len, (int)info->opcode);
-      }
-      break;
-    }
+    case WS_EVT_DISCONNECT: wsAsmFree(client->id()); handleDisconnect(client); break;
+    case WS_EVT_DATA:       wsDataEvent(client, (AwsFrameInfo*)arg, data, len); break;
     case WS_EVT_ERROR: {
       // Only raised when the peer sends a WS close frame with reason code >
       // 1001 (see AsyncWebSocket.cpp) — arg is that code, data/len its reason

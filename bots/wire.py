@@ -266,7 +266,7 @@ class ProbeClient:
     async def send_raw(self, data, fragments: int = 0) -> None:
         """Send exactly `data` (str -> text frame, bytes -> binary frame), no
         rid, no tracking.  fragments > 1 splits it across continuation frames,
-        which handleMessage never reassembles."""
+        which the board reassembles before dispatch (wsDataEvent)."""
         await self._throttle()
         self.oracle.on_tx(data if isinstance(data, str) else repr(data))
         self._log("tx_raw", {"data": data if isinstance(data, str) else repr(data),

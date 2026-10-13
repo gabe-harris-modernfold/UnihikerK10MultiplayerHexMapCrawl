@@ -17,7 +17,7 @@ Water is the real constraint.  ACT_WATER needs Marsh, Flooded or River
 terrain -- about 4.7% of the map once the raft-gated River is excluded --
 so most water has to come from walking onto piles.
 """
-import time
+from dataclasses import replace
 
 from config import (ACT_CRAFT, ACT_FORAGE, ACT_REST, ACT_SCAV, ACT_SHELTER,
                     ACT_WATER, can_salvage,
@@ -27,10 +27,15 @@ from config import (ACT_CRAFT, ACT_FORAGE, ACT_REST, ACT_SCAV, ACT_SHELTER,
                     NAR_FIRE_STARTER, NAR_LAND_FORAGE, NAR_RIVER_FORAGE,
                     NAR_SCAV_DOUBLE, RES_FOOD, RES_SCRAP, RES_WATER,
                     ascend_cost, can_forage, gear_score, ground_days_left,
-                    has_water, is_exposed, is_hatch_terrain)
-from encounters import EncounterLibrary, EncounterRun, success_chance
-from navigate import best_target
-from .base import Policy, Action
+                    has_water, is_exposed, is_hatch_terrain,
+                    KANE_CAMP, KANE_GONE, KANE_RANGE, neighbor)
+from encounters import (EncounterLibrary, EncounterRun, can_pay,
+                        has_for_choice, plan, success_chance)
+import items as IT
+from navigate import begin_cycle, best_target, dijkstra, end_cycle
+from quests import QuestJournal, LEDGER
+from .base import Policy, Action, ONCE
+from .itemuse import ItemUseMixin
 
 # Dawn eats 1 food + 2 water.  Keep a day of slack on top of that so a bot is
 # never one bad step from a threshold break.
@@ -101,6 +106,27 @@ SALVAGE_VALUE = 60.0
 # The whole tunnel board is 16x10 and a corridor step costs 2 AP, so this
 # reaches across all of it.
 TUNNEL_ESCAPE_COST = 80
+# Machine Gun Kane (kane.hpp).  A chapter hex we stood on without a scene
+# opening -- somebody else is in it (one reader at a time), or a failed check
+# threw us out -- is left alone this long before we come back and step on it
+# again.  A scene only ever opens on arrival.
+KANE_QUEST_RETRY_S = 20.0
+# Shadowing him before the last chapter (kane_shadow): stay within this many
+# hexes so his fire is a short walk at dusk, looking up to KANE_SHADOW_COST AP
+# for a place to stand that he cannot hit.
+KANE_SHADOW_FAR = 7
+KANE_SHADOW_COST = 40
+
+
+# Layer name -> method, for the names that are not a method already.  A
+# subclass adds its own layers here (sentinel.py, biker.py) by name.
+LAYER_METHOD = {
+    "remains": "remains_action", "trade_reply": "trade_reply_action",
+    "item": "item_action", "survival": "survival_action", "gear": "gear_action",
+    "reveal": "reveal_action", "recover": "recover_action", "craft": "craft_action",
+    "craft_extra": "craft_extra_action", "caravan": "caravan_action",
+    "kane": "kane_story", "poi": "poi_action", "climb_out": "climb_out_action",
+}
 
 
 def token_room(me, res: int = -1) -> int:
@@ -129,11 +155,28 @@ def ends_journey(cell, q, r) -> bool:
     return cell is not None and is_hatch_terrain(cell.terrain)
 
 
-class SurvivorPolicy(Policy):
+class SurvivorPolicy(ItemUseMixin, Policy):
     """Base for scoremax / contentmax / coward / rival."""
 
     # --- knobs subclasses override -------------------------------------
     engage_encounters = True    # open a POI when standing on one
+    # Play a scene by expected value over its node graph (encounters.plan):
+    # odds, loot, what a failed roll costs, quest goals.  False is the old
+    # rule -- the first open choice until a node is bankable, then bank --
+    # kept as a baseline arm, since it is what every number in
+    # docs/bot-testing.md before 2026-10-13 was measured with.
+    plan_encounters = True
+    # Scales every hazard in that plan: a coward prices a failed roll higher.
+    encounter_risk = 1.0
+    # Worth of reaching a node this bot has never seen (contentmax).
+    novelty_bonus = 0.0
+    # Let the quest journal steer: goal nodes and quest items are worth a
+    # great deal to the planner, quest items are never dropped or used up,
+    # and gate gear is worn.  Every bot keeps a journal; only these act on it.
+    quest_drive = False
+    # Deliberately send each requires_item choice once WITHOUT the item, to
+    # check the board refuses it (no_item).  The quester's job, nobody else's.
+    probe_gates = False
     # Does this policy know what to do underground?  Stepping onto a hatch IS
     # the descent -- there is no control to refuse and no confirmation -- and
     # terrain 12/13 costs 1 AP, which makes it the *cheapest* hex on the
@@ -176,6 +219,46 @@ class SurvivorPolicy(Policy):
     trap_push = 0.60
     trap_min_ll = 4
 
+    # Machine Gun Kane (kane.hpp, docs/machine-gun-kane.md). He asks before he
+    # fires, and the burst comes a world tick (~15 s) later if we are still on
+    # open ground within his reach -- so a survivor who listens never has to
+    # be shot. `kane_dodge` is that: take cover when asked, and do not step
+    # back into the open until the question is answered.
+    #
+    # His story is the world's: five chapters, each opened by stepping onto a
+    # hex -- the camp he left at dawn (1-3), the house in the glass (4), his
+    # own fire at night once that is read (5). `kane_quest` walks there when
+    # it is within `kane_quest_reach` AP (None = whatever is left today, so it
+    # is an errand on the way rather than an expedition); `kane_shadow` keeps
+    # close to the jeep before the last chapter so the fire is a short walk at
+    # dusk. Below `kane_min_ll` the story waits: a failed check costs LL.
+    # Chapter 5 tells him the truth when the odds are at least
+    # `kane_truth_nerve`, and the lie otherwise -- both end his road.
+    kane_dodge = True
+    kane_quest = True
+    kane_quest_reach = None
+    kane_shadow = False
+    kane_min_ll = 3
+    kane_truth_nerve = 0.50
+
+    # The decision chain, top priority first.  Each name is a layer: a
+    # method of `obs` returning an Action or None (LAYER_METHOD maps the
+    # names), and the first Action wins; its `why` is prefixed with the
+    # layer's name so the run log says which rule decided.  A subclass
+    # reorders, drops or inserts by name -- the sentinel and the biker do --
+    # instead of carrying its own copy of the chain.  The guards that run
+    # before it (downed, a scene open, Kane's question) are in _decide().
+    #
+    # Why this order: everything that costs no AP sits first (a grave
+    # underfoot, a trade that only holds while we share the hex, a
+    # consumable that pays now), then the two errands bounded by today's
+    # AP (a grave of ours, the canteen -- see recover_today), then the
+    # survival floor, then Kane's fire (lit only at night), then the free
+    # gear and map items, then the walking errands, and pursuit last.
+    layers = ("remains", "trade_reply", "item", "recover_today", "craft_today",
+              "survival", "kane_urgent", "gear", "reveal", "recover", "craft",
+              "craft_extra", "caravan", "kane", "poi", "climb_out", "pursue")
+
     def __init__(self, rng, library: EncounterLibrary | None = None):
         super().__init__(rng)
         self.lib = library if library is not None else EncounterLibrary()
@@ -201,15 +284,42 @@ class SurvivorPolicy(Policy):
                       "loots": 0, "recover_moves": 0,
                       # Booby traps: forced scenes, which door, and how they ended.
                       "traps": 0, "trap_backouts": 0, "trap_worked": 0,
-                      "trap_banked": 0, "trap_sprung": 0}
-        self._craft_sent = 0.0      # monotonic time of the last CRAFT we sent
-        self._equip_sent: dict[tuple[int, int], float] = {}   # (slot, item) -> t
-        self._pickup_sent: dict[tuple[int, int], float] = {}  # (gslot, item) -> t
-        self._loot_sent: dict[tuple[int, int], float] = {}    # (q, r) -> t
-        self._had_canteen = False
-        self._shelter_sent = None   # (day, q, r) of the last SHELTER sent
+                      "trap_banked": 0, "trap_sprung": 0,
+                      # Machine Gun Kane: questions put to us, the ones we got
+                      # out of the open for, bursts taken, rounds that hit and
+                      # LL they took; his chapters opened and read by us,
+                      # steps walked toward them, steps spent shadowing him.
+                      "kane_calls": 0, "kane_dodged": 0, "kane_bursts": 0,
+                      "kane_hits": 0, "kane_ll_lost": 0, "kane_scenes": 0,
+                      "kane_chapters": 0, "kane_quest_moves": 0,
+                      "kane_shadow_moves": 0, "kane_ending": None}
+        # Every send cooldown lives in self.throttle (base.Throttle): equip,
+        # pickup, loot, craft, shelter, the lost-scene abort, Kane's chapter
+        # hexes, and the item layer's.
         self._lost_since = None     # when a scene we cannot see was first noticed
-        self._lost_abort = 0.0      # when we last walked away from one
+        self._kane_dodged = None    # the question (its kane_call["t"]) last counted as dodged
+        # (depth, q, r) hexes the board refused an act on for `terrain`: our
+        # map is wrong about them (see on_reply).
+        self._terrain_refused: set[tuple[int, int, int]] = set()
+        self._items_init()
+        # Quests (quests.py): every bot keeps a journal so any step any bot
+        # stumbles through reaches the ledger; quest_drive lets it steer.
+        self.journal = QuestJournal()
+        self._obs = None            # the client's Observation, for event hooks
+        self._probe = None          # (key, ci, sent_at) of a gate probe in flight
+        self._last_item_result = None   # the item_result _book_craft last read
+        self.stats.update({"quest_steps": 0, "gates_probed": 0, "plans": 0})
+
+    def attach(self, flag=None, who=None) -> None:
+        """BotClient hands over its oracle's flag() and its label, so the
+        quest journal's sequencing checks become findings like any other."""
+        if flag is not None:
+            self.journal.flag = flag
+        if who is not None:
+            self.journal.who = who
+
+    def protected_items(self, obs) -> set:
+        return self.journal.protected_items()
 
     # --- event plumbing -------------------------------------------------
     def on_event(self, ev):
@@ -218,6 +328,8 @@ class SurvivorPolicy(Policy):
         if self.pid >= 0 and ev.get("pid") not in (None, self.pid):
             return
         k = ev.get("k")
+        obs = self._obs
+        day = obs.day if obs is not None else 0
         if k == "enc_res":
             self.stats["rolls"] += 1
             if ev.get("out"):
@@ -226,22 +338,71 @@ class SurvivorPolicy(Policy):
                 self.stats["trap_sprung"] += 1
             if ev.get("rec"):
                 self.stats["recipes"] += 1
+            if self._probe is not None:
+                # A roll answered our gate probe: the board ran a choice it
+                # should have refused no_item.  journal.on_result books it.
+                LEDGER.gates_probed[self._probe[0]] = "ACCEPTED without the item"
+                self._probe = None
             if self.run is not None:
                 self.run.on_result(ev)
                 if self.run.node_key:
                     self.stats["nodes_seen"].add(
                         f"{self.run.biome}/{self.run.eid}/{self.run.node_key}")
+                if obs is not None:
+                    done = len(self.journal.done)
+                    self.journal.on_result(self.run, ev, obs.me, day)
+                    self.stats["quest_steps"] += len(self.journal.done) - done
                 if ev.get("ends"):
                     self.run = None
         elif k == "enc_bank":
             self.stats["encounters_banked"] += 1
+            if obs is not None:
+                done = len(self.journal.done)
+                if self.run is not None:
+                    self.journal.on_bank(self.run, obs.me, day)
+                if isinstance(ev.get("recs"), int) and ev["recs"]:
+                    self.journal.on_recipes(ev["recs"], day)
+                self.stats["quest_steps"] += len(self.journal.done) - done
             self.run = None
+        elif k == "act" and ev.get("a") == ACT_CRAFT and ev.get("out") == 1:
+            # A craft landed: the workshop's "made one" step, and no reason
+            # to sit out craft_at_settlement's refusal cooldown for the next.
+            self.throttle.clear("craft")
+            if ev.get("ar"):
+                done = len(self.journal.done)
+                self.journal.on_craft(int(ev["ar"]), day)
+                self.stats["quest_steps"] += len(self.journal.done) - done
         elif k == "enc_end":
             self.run = None
         elif k == "downed":
             self.stats["downed"] += 1
+        elif k == "kane_call" and not ev.get("camp"):
+            self.stats["kane_calls"] += 1
+        elif k == "kane_fire":
+            self.stats["kane_bursts"] += 1
+            self.stats["kane_hits"] += ev.get("hits", 0) or 0
+            self.stats["kane_ll_lost"] += ev.get("llLost", 0) or 0
+        elif k == "kane_arc":
+            self.stats["kane_chapters"] += 1
+            if ev.get("ending") in ("truth", "lie"):
+                self.stats["kane_ending"] = ev["ending"]
+            if isinstance(ev.get("stage"), int):
+                self.journal.on_kane(ev["stage"], True, day)
 
     def on_reply(self, cmd, ok, why):
+        # The board says this hex is not what our map says it is (a FORAGE
+        # or WATER refused `terrain`): a world event changed it under us
+        # and no vis disk follows until we move.  Remember the hex, so the
+        # harvest and the hunts stop asking -- the 2026-10-13 quester run had
+        # two bots refused 483 times between them, standing still, starving.
+        if not ok and cmd == "act" and why == "terrain" and self._obs is not None:
+            self._terrain_refused.add((self._obs.me.depth,) + self._obs.pos())
+        # A gate probe's verdict: no_item is the board doing its job.
+        if self._probe is not None and cmd == "enc_choice":
+            key = self._probe[0]
+            if not ok:
+                LEDGER.gates_probed[key] = "refused" if why == "no_item" else f"refused ({why})"
+                self._probe = None
         # No scene is open on the board (see BotClient._on_reply): drop the
         # node tracker too, or the next scene with the same id resumes it.
         if not ok and why == "no_enc":
@@ -258,85 +419,117 @@ class SurvivorPolicy(Policy):
 
     # --- main entry -----------------------------------------------------
     def decide(self, obs) -> Action:
+        # Whatever the layers below chose, never step back into Machine Gun
+        # Kane's reach while his question is open (kane_hold).  Subclasses
+        # override _decide(), or call super().decide(), so this covers them.
+        self._obs = obs
+        self.journal.check_arrivals(obs)
+        self._book_craft(obs)
+        # One decision, one search: the layers below ask navigate for the
+        # same route up to eight times a cycle.  The memo lives exactly as
+        # long as this call (see navigate.begin_cycle).
+        begin_cycle()
+        try:
+            return self.kane_hold(obs, self._decide(obs))
+        finally:
+            end_cycle()
+
+    def _book_craft(self, obs) -> None:
+        """A craft the board confirmed, read off its item_result rather than
+        the act event: the firmware sends both (`ar` on the event, `recipe`
+        on the ack) but the mock sends only the ack, and the workshop's
+        "made one" step must not depend on which board it is played on."""
+        ir = obs.last_item_result
+        if ir is None or ir is self._last_item_result:
+            return
+        self._last_item_result = ir
+        if ir.get("act") == "craft" and ir.get("ok") and isinstance(ir.get("recipe"), int):
+            self.throttle.clear("craft")
+            if ir["recipe"] == CANTEEN_RECIPE:
+                self.stats["crafted"] += 1
+            done = len(self.journal.done)
+            self.journal.on_craft(int(ir["recipe"]), obs.day)
+            self.stats["quest_steps"] += len(self.journal.done) - done
+
+    def _decide(self, obs) -> Action:
+        """The guards, then the chain (`layers`)."""
         me = obs.me
         if not me.connected or me.ll == 0:
             return Action("noop", why="downed or disconnected")
-
-        # Count a canteen the moment it appears.  Here rather than in
-        # craft_action(), which gear_action() pre-empts on the very cycle
-        # the crafted item lands in the pack.
-        have = self.owns(me, CANTEEN_ITEM)
-        if have and not self._had_canteen and self._craft_sent:
-            self.stats["crafted"] += 1
-        self._had_canteen = have
-
         if obs.encounter is not None:
             self._lost_since = None
             return self.decide_encounter(obs)
         if me.in_encounter:
             return self.lost_scene_action(obs)
         self._lost_since = None
-
-        # Stood on a grave: what is on it is free (no AP, no check) and ours
-        # for the taking, so take it before any errand walks us off the hex.
-        act = self.remains_action(obs)
+        # Machine Gun Kane has asked us and we are still in the open: the
+        # burst is one world tick away, and nothing below is worth up to 2 LL.
+        act = self.kane_cover_action(obs)
         if act is not None:
             return act
+        return self.run_layers(obs)
 
-        # A canteen within today's AP outranks topping up the pack.  The top-up
-        # floor is often above what the economy sustains, so on hardware it
-        # ate every AP of every day and a survivor sat on a pond 4 hexes from a
-        # Settlement for ~100 s holding the scrap (2026-09-23).  Emergencies
-        # still win -- this only pre-empts the routine harvest.  A grave of our
-        # own within today's AP goes first: the canteen is usually lying on it.
-        if not self.in_emergency(obs):
-            act = self.recover_action(obs, max_cost=obs.me.ap)
-            if act is not None:
-                return act
-            act = self.craft_action(obs, max_cost=obs.me.ap)
-            if act is not None:
-                return act
-
-        act = self.survival_action(obs)
-        if act is not None:
+    def run_layers(self, obs) -> Action:
+        """The first layer in `layers` with something to do decides.
+        Resolved by name on every call, not once, so a test or a driver that
+        replaces a method on the instance (quest_check.py pins `pursue`) is
+        honoured."""
+        for name in self.layers:
+            act = getattr(self, LAYER_METHOD.get(name, name))(obs)
+            if act is None:
+                continue
+            if act.why and not act.why.startswith(name + ":"):
+                act = replace(act, why=f"{name}: {act.why}")
             return act
+        return Action("noop", why="no layer had anything to do")
 
-        # Put on anything useful we are carrying.  Costs no AP and no time, so
-        # it sits above every goal-directed branch.
-        act = self.gear_action(obs)
-        if act is not None:
-            return act
+    # --- the layers that are not a plain method already -------------------
+    def recover_today(self, obs) -> Action | None:
+        """A grave of our own within today's AP, ahead of the survival
+        floor: the canteen is usually lying on it.  Not in an emergency."""
+        if self.in_emergency(obs):
+            return None
+        return self.recover_action(obs, max_cost=obs.me.ap)
 
-        # The walk back for our own pack, once the survival floor is quiet.
-        # Ahead of the canteen errand, which stands down while this has a
-        # grave to go to (see craft_action).
-        act = self.recover_action(obs)
-        if act is not None:
-            return act
+    def craft_today(self, obs) -> Action | None:
+        """A canteen within today's AP outranks topping up the pack.  The
+        top-up floor is often above what the economy sustains, so on hardware
+        it ate every AP of every day and a survivor sat on a pond 4 hexes
+        from a Settlement for ~100 s holding the scrap (2026-09-23).
+        Emergencies still win -- this only pre-empts the routine harvest."""
+        if self.in_emergency(obs):
+            return None
+        return self.craft_action(obs, max_cost=obs.me.ap)
 
-        # The canteen errand: after the survival floor (never walk off to
-        # craft while dying of thirst) and after gear (a crafted canteen is
-        # equipped by gear_action on the very next cycle).
-        act = self.craft_action(obs)
-        if act is not None:
-            return act
+    def kane_urgent(self, obs) -> Action | None:
+        """His fire is lit only at night and for two world ticks after dawn,
+        so the last chapter goes ahead of every errand that can wait a day."""
+        return self.kane_quest_action(obs, urgent=True)
 
-        # Standing on an unopened POI: take it, whatever the policy is.
-        # Walking past one is pure waste -- POIs are consumed permanently, so
-        # the alternative is leaving it for a rival -- and exercising the
-        # encounter content is the whole point of these runs.
-        # handleMsg_enc_start() is board-aware, so this works on either board.
-        if self.engage_encounters:
-            here = obs.here()
-            if here is not None and here.poi and obs.me.ap > 0:
-                opened = self.try_open_poi(obs, "POI underfoot")
-                if opened is not None:
-                    return opened
+    def kane_story(self, obs) -> Action | None:
+        """The camp he left, the house in the glass, or (kane_shadow)
+        staying near him until his fire is lit."""
+        return self.kane_quest_action(obs)
 
+    def poi_action(self, obs) -> Action | None:
+        """Standing on an unopened POI: take it, whatever the policy is.
+        Walking past one is pure waste -- POIs are consumed permanently, so
+        the alternative is leaving it for a rival -- and exercising the
+        encounter content is the whole point of these runs.
+        handleMsg_enc_start() is board-aware, so this works on either board."""
+        if not self.engage_encounters:
+            return None
+        here = obs.here()
+        if here is not None and here.poi and obs.me.ap > 0:
+            return self.try_open_poi(obs, "POI underfoot")
+        return None
+
+    def climb_out_action(self, obs) -> Action | None:
+        """A surface policy that fell down a hatch climbs straight back out
+        rather than flailing on a board it is not reading."""
         if obs.underground and not self.tunnel_capable:
             return self.climb_out(obs, why="fell down a hatch")
-
-        return self.pursue(obs)
+        return None
 
     # --- equipment ------------------------------------------------------
     # What this policy wants out of a piece of gear.  One weight per stat that
@@ -426,6 +619,21 @@ class SurvivorPolicy(Policy):
                 return self._equip(slot, CANTEEN_ITEM,
                                    f"{verb} canteen -> slot {ceslot}")
 
+        # A quest gate that wants gear WORN (the Dirty Glove at the
+        # Perambulator's tyre): put it on, whatever it scores, and pin it
+        # below until the gate is done.  Never over the canteen.
+        pinned = self.quest_pinned(obs)
+        for item_id in sorted(pinned):
+            eslot = EQUIPMENT.get(item_id)
+            if eslot is None or me.equip[eslot] == item_id or item_id not in me.inv_type:
+                continue
+            worn = me.equip[eslot]
+            if worn and (worn == CANTEEN_ITEM or worn in pinned
+                         or not self.gear_swap_ok(obs, worn, item_id)):
+                continue
+            return self._equip(me.inv_type.index(item_id), item_id,
+                               f"quest: wear the {IT.name(item_id)} for its gate")
+
         # Best carried candidate per equip slot, against whatever is worn.
         # Strictly greater, so equal-scoring items never trade places -- a tie
         # that swapped would put the loser straight back in the pack and swap
@@ -440,6 +648,8 @@ class SurvivorPolicy(Policy):
             worn = me.equip[eslot]
             if self.craft_canteen and worn and worn == CANTEEN_ITEM:
                 continue                    # pinned
+            if worn and worn in pinned:
+                continue                    # a quest gate still needs it on
             gain = gear_score(item_id, self.gear_weights) - gear_score(worn, self.gear_weights)
             if gain <= 0 and not (self.equip_anything and not worn):
                 continue
@@ -452,6 +662,14 @@ class SurvivorPolicy(Policy):
         _, slot, item_id, eslot, worn = best
         verb = f"swap {worn} for" if worn else "equip"
         return self._equip(slot, item_id, f"{verb} item {item_id} -> slot {eslot}")
+
+    def quest_pinned(self, obs) -> set:
+        """Gear a quest gate needs worn, that we hold (quest_drive only)."""
+        if not self.quest_drive:
+            return set()
+        me = obs.me
+        need = {s.needs for s in self.journal.open_steps(obs.world) if s.worn and s.needs}
+        return {i for i in need if i in me.inv_type or i in me.equip}
 
     @staticmethod
     def pack_has_slot(me) -> bool:
@@ -471,8 +689,9 @@ class SurvivorPolicy(Policy):
         me = obs.me
         if me.depth or not self.pack_has_slot(me):
             return None
+        quest = self.protected_items(obs) | set(self.journal.item_bonus(me))
         for gi in obs.ground_items:
-            if gi.get("id") not in EQUIPMENT:
+            if gi.get("id") not in EQUIPMENT and gi.get("id") not in quest:
                 continue
             if (gi.get("q"), gi.get("r")) != (me.q, me.r):
                 continue
@@ -484,11 +703,8 @@ class SurvivorPolicy(Policy):
     def _pickup(self, gi, why) -> Action | None:
         """pickup_item for ground pile `gi`, at most once per PICKUP_RETRY_S
         for the same (gslot, item) -- see PICKUP_RETRY_S."""
-        key = (gi.get("g", 0), gi.get("id"))
-        now = time.monotonic()
-        if now - self._pickup_sent.get(key, -PICKUP_RETRY_S) < PICKUP_RETRY_S:
+        if not self.throttle.ok(("pickup", gi.get("g", 0), gi.get("id")), PICKUP_RETRY_S):
             return None
-        self._pickup_sent[key] = now
         return Action("pickup_item", gslot=gi.get("g", 0), why=why)
 
     def _equip(self, slot, item_id, why) -> Action | None:
@@ -496,11 +712,8 @@ class SurvivorPolicy(Policy):
         item).  A refusal or a dead socket leaves the pack unchanged, so the
         same decision comes back every cycle; this is what stops it being
         re-sent every cycle."""
-        now = time.monotonic()
-        key = (slot, item_id)
-        if now - self._equip_sent.get(key, -EQUIP_RETRY_S) < EQUIP_RETRY_S:
+        if not self.throttle.ok(("equip", slot, item_id), EQUIP_RETRY_S):
             return None
-        self._equip_sent[key] = now
         return Action("equip_item", slot=slot, why=why)
 
     # --- crafting -------------------------------------------------------
@@ -593,11 +806,11 @@ class SurvivorPolicy(Policy):
         me = obs.me
         if obs.underground or me.ap < 1 or not self.result_fits(me, rid):
             return None
-        if time.monotonic() - self._craft_sent < CRAFT_RETRY_S:
+        if not self.throttle.ready("craft", CRAFT_RETRY_S):
             return None
         cell = obs.here()
         if cell is not None and cell.terrain == TERR_SETTLEMENT:
-            self._craft_sent = time.monotonic()
+            self.throttle.mark("craft")
             return Action("act", a=ACT_CRAFT, recipe=rid, why=why)
         legal = me.legal_dirs()
         if not legal:
@@ -624,7 +837,8 @@ class SurvivorPolicy(Policy):
         if token_room(me, RES_SCRAP) <= 0:
             return None
         cell = obs.here()
-        if cell is not None and can_salvage(cell.terrain) and me.ap >= 2:
+        if (cell is not None and can_salvage(cell.terrain) and me.ap >= 2
+                and not self.terrain_doubtful(obs, me.q, me.r)):
             return Action("act", a=ACT_SCAV, ap=2,
                           why=f"canteen: salvaging scrap ({me.inv[RES_SCRAP]} held)")
         legal = me.legal_dirs()
@@ -632,7 +846,7 @@ class SurvivorPolicy(Policy):
             return None
 
         def value(c, q, r, cost):
-            if cost <= 0 or c is None:
+            if cost <= 0 or c is None or self.terrain_doubtful(obs, q, r):
                 return None
             if c.resource == RES_SCRAP + 1:
                 return SCRAP_PILE_VALUE / cost
@@ -707,10 +921,7 @@ class SurvivorPolicy(Policy):
         if rm is None:
             return None
         if self.room_for_remains(me, rm):
-            key = (me.q, me.r)
-            now = time.monotonic()
-            if now - self._loot_sent.get(key, -LOOT_RETRY_S) >= LOOT_RETRY_S:
-                self._loot_sent[key] = now
+            if self.throttle.ok(("loot", me.q, me.r), LOOT_RETRY_S):
                 self.stats["loots"] += 1
                 whose = "our own" if self.is_my_grave(obs, rm) else f"{rm.get('nm') or 'someone'}'s"
                 return Action("loot", why=f"loot {whose} remains {rm.get('res')}")
@@ -794,6 +1005,8 @@ class SurvivorPolicy(Policy):
         # decides whether to forage based on a hex 30 metres overhead.
         cell = obs.here()
         terr = cell.terrain if cell else 0
+        if self.terrain_doubtful(obs, *obs.pos()):
+            terr = -1               # the board refused this hex: harvest nothing here
 
         # Harvest right here first -- always cheaper than walking.  A worn
         # canteen raises the target by its capacity, but only while there is
@@ -858,6 +1071,11 @@ class SurvivorPolicy(Policy):
 
         return None
 
+    def terrain_doubtful(self, obs, q: int, r: int) -> bool:
+        """Did the board refuse an act on this hex of this board for
+        `terrain`?  Then our cell for it is stale and it is no harvest."""
+        return (obs.me.depth, q, r) in self._terrain_refused
+
     def wants_shelter(self, obs) -> bool:
         """Subclass hook: may shelter_here() spend scrap on a roof tonight?
         The --shelter experiment arm by default; the Biker also spends the
@@ -898,10 +1116,8 @@ class SurvivorPolicy(Policy):
         # refusal the bot did not predict changes nothing, and at low LL this
         # fires on every AP, so without it one refusal ate the whole day.
         # The mock has no doShelter() at all, which is how it was found.
-        key = (obs.day, me.q, me.r)
-        if self._shelter_sent == key:
+        if not self.throttle.ok(("shelter", obs.day, me.q, me.r), ONCE):
             return None
-        self._shelter_sent = key
         return Action("act", a=ACT_SHELTER,
                       why=f"exposed at SV<2, {me.inv[RES_SCRAP]} scrap, ap={me.ap}")
 
@@ -924,7 +1140,7 @@ class SurvivorPolicy(Policy):
             return None
 
         def value(cell, q, r, cost):
-            if cost <= 0 or cell is None:
+            if cost <= 0 or cell is None or self.terrain_doubtful(obs, q, r):
                 return None
             v = 0.0
             if dry:
@@ -990,7 +1206,7 @@ class SurvivorPolicy(Policy):
         # dawnUpkeep rolls TUNNEL_REST_LL_PCT for bad air -- but that is the
         # caller's judgement, not this sender's, and the caller that cares
         # makes it (the critical-LL branch in emergency()).
-        now = time.monotonic()
+        now = self.clock()
         if (self._rested_day == obs.day
                 and now - self._last_rest_sent < REST_RETRY_S):
             return None
@@ -1033,9 +1249,14 @@ class SurvivorPolicy(Policy):
         if self.run is None or (self.run.biome, self.run.eid) != (biome, eid):
             self.run = EncounterRun(self.lib, biome, eid)
             self.run.trap = bool(enc.get("trap"))
-            self.stats["traps" if self.run.trap else "encounters_opened"] += 1
+            # A Machine Gun Kane chapter (enc_path "kane": n, kane.hpp): opened
+            # by arriving, like a trap, and not a POI -- counted on its own.
+            self.run.kane = int(enc.get("kane") or 0)
+            self.stats["traps" if self.run.trap else
+                       "kane_scenes" if self.run.kane else "encounters_opened"] += 1
             if self.run.node_key:
                 self.stats["nodes_seen"].add(f"{biome}/{eid}/{self.run.node_key}")
+            self.journal.on_open(self.run, obs.day)
 
     def lost_scene_action(self, obs) -> Action:
         """The board has a scene open for us that we never heard about (see
@@ -1043,14 +1264,13 @@ class SurvivorPolicy(Policy):
         trap's start is a back-out roll, and a failed one nacks "trap" and
         leaves us in -- the retry rolls again.  The enc_end that follows, or
         the next broadcast's enc flag, is what clears me.in_encounter."""
-        now = time.monotonic()
+        now = self.clock()
         if self._lost_since is None:
             self._lost_since = now
         if now - self._lost_since < LOST_SCENE_GRACE_S:
             return Action("noop", why="in a scene, waiting for its enc_path")
-        if now - self._lost_abort < LOST_SCENE_RETRY_S:
+        if not self.throttle.ok("lost_abort", LOST_SCENE_RETRY_S):
             return Action("noop", why="lost scene: abort sent, waiting")
-        self._lost_abort = now
         self.stats["encounters_aborted"] += 1
         return Action("enc_abort", why="in a scene whose enc_path never came: walking away")
 
@@ -1063,25 +1283,40 @@ class SurvivorPolicy(Policy):
             return Action("enc_bank", why="unknown encounter, bank out")
         if run.awaiting(CHOICE_WAIT_S):
             return Action("noop", why=f"waiting for the roll at {run.node_key}")
+        # Items work inside a scene: a threat reducer that drops the clock a
+        # tier before the next roll, a heal on the last LL.
+        act = self.encounter_item_action(obs, run)
+        if act is not None:
+            return act
         if run.trap:
             return self.decide_trap(obs, run)
+        if run.kane:
+            return self.decide_kane_chapter(obs, run)
 
-        # Drive straight down the first branch until the node is bankable,
-        # then take the haul.  Deliberately simple, and deliberately not
-        # odds-weighted: the point of these runs is to find out whether the
-        # encounter content is reachable and what it pays, and an
-        # odds-weighted policy that walks away from anything risky answers a
-        # different question while never finishing a scene.  Aborting also
-        # consumes the POI for good (restorePoi=false), so it is pure loss.
+        act = self.probe_gate(obs, run)
+        if act is not None:
+            return act
+
+        if self.plan_encounters:
+            return self.planned_choice(obs, run)
+
+        # The baseline arm: drive straight down the first branch until the
+        # node is bankable, then take the haul.  Deliberately not odds-
+        # weighted -- it answers "is the content reachable and what does it
+        # pay" -- and what every number before 2026-10-13 was measured with.
+        # Aborting also consumes the POI for good (restorePoi=false).
         if run.can_bank():
             run.banked = True
             return Action("enc_bank", why=f"bankable at node {run.node_key}")
 
         choices = run.choices
         if not choices:
-            # Terminal node with nothing to take: nothing to do but leave.
-            self.stats["encounters_aborted"] += 1
-            return Action("enc_abort", why=f"dead end at node {run.node_key}")
+            # A terminal node: enc_bank is allowed at any of them (the full
+            # clear, +10) even when it is not marked can_bank and nothing is
+            # pending -- an abort here forfeits that and ticks the threat
+            # clock, which is what this used to send.
+            run.banked = True
+            return Action("enc_bank", why=f"end of the scene at {run.node_key}")
 
         # First option we may take: a "requires_item" choice for an item we
         # lack is refused server-side, and a refused pick changes nothing,
@@ -1091,9 +1326,81 @@ class SurvivorPolicy(Policy):
             self.stats["encounters_aborted"] += 1
             return Action("enc_abort", why=f"no open option at node {run.node_key}")
         run.choose(ci)
+        self.journal.on_choice(run, ci, obs.me)
         p = success_chance(choices[ci], obs)
         return Action("enc_choice", ci=ci,
                       why=f"first open option at {run.node_key} (p={p:.2f})")
+
+    # --- planning a scene -------------------------------------------------
+    def worth(self, obs):
+        """This policy's loot values for encounters.plan(): its gear weights,
+        its staple floors, the quest journal's items and goals (quest_drive),
+        and unseen nodes (novelty_bonus)."""
+        me = obs.me
+        quest_nodes = self.journal.node_bonus(me) if self.quest_drive else None
+        seen = self.stats["nodes_seen"]
+        nov = self.novelty_bonus
+
+        def node_bonus(biome, eid, key):
+            v = quest_nodes(biome, eid, key) if quest_nodes else 0.0
+            if nov and f"{biome}/{eid}/{key}" not in seen:
+                v += nov
+            return v
+
+        return IT.Worth(me, weights=self.gear_weights,
+                        floors=(self.water_floor, self.food_floor, 0, 0, 0),
+                        bonus=self.journal.item_bonus(me) if self.quest_drive else {},
+                        node_bonus=node_bonus)
+
+    def planned_choice(self, obs, run) -> Action:
+        """encounters.plan(): the best of banking, each open choice, and
+        (where banking is not allowed) walking away, by expected value."""
+        kind, ci, val = plan(run, obs, self.worth(obs), risk=self.encounter_risk)
+        self.stats["plans"] += 1
+        if kind == "bank":
+            run.banked = True
+            return Action("enc_bank", why=f"plan: bank at {run.node_key} (v={val:.1f})")
+        if kind == "abort":
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort", why=f"plan: nothing worth the risk at {run.node_key}")
+        run.choose(ci)
+        self.journal.on_choice(run, ci, obs.me)
+        p = success_chance(run.choices[ci], obs)
+        return Action("enc_choice", ci=ci,
+                      why=f"plan: {run.node_key}[{ci}] p={p:.2f} v={val:.1f}")
+
+    def probe_gate(self, obs, run) -> Action | None:
+        """probe_gates: send a requires_item choice we may NOT take, once per
+        (file, node, choice) across the fleet, and expect the board to refuse
+        it no_item.  An enc_res instead is gate_bypassed (journal.on_result).
+        The refusal changes nothing, so the scene carries on as before."""
+        if not self.probe_gates:
+            return None
+        now = self.clock()
+        if self._probe is not None:
+            if now - self._probe[2] < CHOICE_WAIT_S:
+                return Action("noop", why="gate probe: waiting for the verdict")
+            # No reply and no roll: a pre-protocol-2 board (the mock) refusing
+            # with an err and nothing else.
+            LEDGER.gates_probed[self._probe[0]] = "refused (no reply)"
+            self._probe = None
+        me = obs.me
+        for ci, ch in enumerate(run.choices):
+            need = int(ch.get("requires_item", 0) or 0)
+            if not need or has_for_choice(ch, me) or run.is_refused(ci):
+                continue
+            key = (run.biome, run.eid, run.node_key, ci)
+            if key in LEDGER.gates_probed:
+                continue
+            LEDGER.gates_probed[key] = "sent"
+            self._probe = (key, ci, now)
+            self.stats["gates_probed"] += 1
+            run.choose(ci)
+            self.journal.on_choice(run, ci, me)
+            return Action("enc_choice", ci=ci,
+                          why=f"gate probe: {run.node_key}[{ci}] needs the {IT.name(need)}, "
+                              f"which we lack -- expecting no_item")
+        return None
 
     def decide_trap(self, obs, run) -> Action:
         """A booby trap (traps.hpp): there is no walking away at the start.
@@ -1136,6 +1443,203 @@ class SurvivorPolicy(Policy):
         self.stats["trap_backouts"] += 1
         return Action("enc_choice", ci=ci,
                       why=f"trap: back out (p={success_chance(run.choices[ci], obs):.2f})")
+
+    # --- Machine Gun Kane (kane.hpp) -------------------------------------
+    def kane_cover_action(self, obs) -> Action | None:
+        """He has asked us and we are still where he can hit us: be
+        somewhere else before the next world tick.
+
+        Cover is the terrain of the hex you end on (kaneOpenGround: scrub,
+        dunes and marsh are open, everything else is not), or being more than
+        KANE_RANGE from the jeep, or being underground -- a hatch counts.  He
+        stops to wait for the answer, so his position is the one that matters.
+        The search ignores his reach (danger=False): crossing it on the way is
+        free, only where the move ENDS is checked.  With no cover in today's
+        AP, a scene is cover too -- he never fires into one."""
+        if not self.kane_dodge or obs.underground or not obs.kane_call_pending:
+            return None
+        me = obs.me
+        if not obs.kane_exposed():
+            asked = obs.kane_call["t"]
+            if self._kane_dodged != asked:  # one dodge per question
+                self._kane_dodged = asked
+                self.stats["kane_dodged"] += 1
+            return None
+        if me.ap <= 0 or me.resting:
+            return None
+        legal = me.legal_dirs()
+        q0, r0 = obs.pos()
+
+        def safe(cell, q, r, cost):
+            if cost <= 0 or cost > me.ap or obs.kane_exposed_at(q, r):
+                return None
+            # The nearest cover; further from him breaks ties, since he asks
+            # again the moment we are back in the open.
+            return 100.0 / cost + 0.1 * min(obs.kane_distance(q, r), 2 * KANE_RANGE)
+
+        target = best_target(obs.map, q0, r0, safe, max_cost=me.ap,
+                             stop_at=ends_journey, danger=False) if legal else None
+        if target is not None and target[2] in legal:
+            q, r, d, cost, _ = target
+            return Action("move", d=d, why=f"KANE asked: cover at ({q},{r}) c={cost}")
+        here = obs.here()
+        if self.engage_encounters and here is not None and here.poi:
+            return self.try_open_poi(obs, "KANE asked: no cover in reach, a scene is cover")
+        return None
+
+    def kane_hold(self, obs, act):
+        """While his question is open, the one move that costs LL is a step
+        back into the open: every other layer of decide() prices his reach,
+        but a fallback or a pile-chase can still pick it.  Hold instead.  Once
+        we are already exposed (no cover was in reach) any step may help."""
+        if (act is None or act.kind != "move" or not self.kane_dodge
+                or obs.underground or not obs.kane_call_pending):
+            return act
+        me = obs.me
+        q, r = neighbor(me.q, me.r, act.d)
+        if obs.kane_exposed() or not obs.kane_exposed_at(q, r):
+            return act
+        return Action("noop", why=f"KANE asked: holding cover, not stepping to ({q},{r})")
+
+    @staticmethod
+    def kane_quest_target(obs):
+        """(q, r, chapter) of the hex where his story goes on, or None.
+        Mirrors kaneOnArrival(): the live camp holds chapter stage+1 (1-3),
+        the house in the glass chapter 4, and once that is read his own hex
+        while he sits at his fire is chapter 5 -- before then, walking up to
+        him there only gets you his question."""
+        w = obs.world
+        if not w.kane_seen or w.kane_ending or w.kane_mode == KANE_GONE:
+            return None
+        if w.kane_stage < 3 and w.kane_camp_q >= 0:
+            return (w.kane_camp_q, w.kane_camp_r, w.kane_stage + 1)
+        if w.kane_stage == 3 and w.kane_site_q >= 0:
+            return (w.kane_site_q, w.kane_site_r, 4)
+        if w.kane_stage == 4 and w.kane_mode == KANE_CAMP:
+            return (w.kane_q, w.kane_r, 5)
+        return None
+
+    def kane_quest_action(self, obs, urgent: bool = False) -> Action | None:
+        """Walk to the next chapter.  `urgent` asks only about his fire
+        (chapter 5), which goes out two world ticks after dawn; the camps and
+        the house keep until somebody reads them.  The route prices his reach
+        like any other, so a survivor walking to his camp does not walk into
+        his gun -- at his fire he does not shoot, so there is nothing to price."""
+        if not self.kane_quest or obs.underground:
+            return None
+        me = obs.me
+        if me.ll <= self.kane_min_ll or me.ap <= 0:
+            return None
+        tgt = self.kane_quest_target(obs)
+        if tgt is None:
+            return None if urgent else self.kane_shadow_action(obs)
+        q, r, ch = tgt
+        if urgent != (ch == 5):
+            return None
+        key = ("kane", obs.world.kane_stage, q, r)
+        if (me.q, me.r) == (q, r):
+            # On it and no scene: somebody else is reading it, or a failed
+            # check put us out. A scene only opens on arrival, so come back.
+            self.throttle.hold(key, KANE_QUEST_RETRY_S)
+            return None
+        if self.throttle.held(key):
+            return None
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+        reach = self.kane_quest_reach if self.kane_quest_reach is not None else me.ap
+        dist, first = dijkstra(obs.map, me.q, me.r, max_cost=reach + 1,
+                               stop_at=ends_journey)
+        cost = dist.get((q, r))
+        if cost is None or cost > reach:
+            return None
+        d = first.get((q, r), -1)
+        if d not in legal:
+            return None
+        self.stats["kane_quest_moves"] += 1
+        return Action("move", d=d, why=f"KANE chapter {ch} at ({q},{r}) c={cost}")
+
+    def kane_shadow_action(self, obs) -> Action | None:
+        """Before the last chapter: his fire is only lit at night, so keep
+        within KANE_SHADOW_FAR of the jeep -- on ground he cannot hit -- and
+        the walk in at dusk is short.  Only while he is further than that;
+        inside it the rest of the day carries on as usual."""
+        w = obs.world
+        if not self.kane_shadow or w.kane_stage != 4 or not w.kane_driving:
+            return None
+        me = obs.me
+        if obs.kane_distance(me.q, me.r) <= KANE_SHADOW_FAR:
+            return None
+        legal = me.legal_dirs()
+        if not legal:
+            return None
+
+        def value(cell, q, r, cost):
+            if cost <= 0 or obs.kane_distance(q, r) > KANE_SHADOW_FAR \
+                    or obs.kane_exposed_at(q, r):
+                return None
+            return 10.0 / cost
+
+        target = best_target(obs.map, me.q, me.r, value, max_cost=KANE_SHADOW_COST,
+                             stop_at=ends_journey)
+        if target is None or target[2] not in legal:
+            return None
+        q, r, d, cost, _ = target
+        self.stats["kane_shadow_moves"] += 1
+        return Action("move", d=d, why=f"KANE: keeping near the jeep -> ({q},{r}) c={cost}")
+
+    def kane_choice(self, obs, run):
+        """The choice to send in one of his chapters, or None.  Never one
+        that leads to an escape node (backing out of the light reads nothing),
+        and otherwise the best odds -- a failed check ends the scene with the
+        chapter unread.  At the ending: the truth when its odds clear
+        kane_truth_nerve, else whichever ending is likelier."""
+        me = obs.me
+        nodes = run.enc.get("nodes") or {}
+        best, best_p, endings = None, -1.0, {}
+        for i, ch in enumerate(run.choices):
+            if run.is_refused(i) or not has_for_choice(ch, me) or not can_pay(ch, me):
+                continue
+            nxt = nodes.get(ch.get("success_node", ""), {})
+            if nxt.get("escape"):
+                continue
+            p = success_chance(ch, obs)
+            if nxt.get("kane_ending"):
+                endings[nxt["kane_ending"]] = (i, p)
+            if p > best_p:
+                best, best_p = i, p
+        if "truth" in endings and endings["truth"][1] >= self.kane_truth_nerve:
+            return endings["truth"][0]
+        if endings:
+            return max(endings.values(), key=lambda ip: ip[1])[0]
+        return best
+
+    def decide_kane_chapter(self, obs, run) -> Action:
+        """One of Machine Gun Kane's chapters (kane.hpp).  It counts once its
+        LAST node is reached (kaneChapterRead) -- so unlike a POI it is never
+        banked early: pocketing a haul halfway leaves the chapter unread, and
+        nobody can open it again without stepping off and back on.  At the
+        last node, or an escape node, bank whatever was won (that is what the
+        browser's leave button sends).  Too hurt to risk a check: walk away,
+        the chapter keeps."""
+        me = obs.me
+        if run.at_escape or not run.choices:
+            if run.can_bank():
+                run.banked = True
+            what = "backed out" if run.at_escape else "read"
+            return Action("enc_bank", why=f"KANE chapter {run.kane} {what} at {run.node_key}")
+        if me.ll <= self.kane_min_ll:
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_bank" if run.can_bank() else "enc_abort",
+                          why=f"KANE chapter {run.kane}: LL {me.ll}, leaving it for later")
+        ci = self.kane_choice(obs, run)
+        if ci is None:
+            self.stats["encounters_aborted"] += 1
+            return Action("enc_abort", why=f"KANE chapter {run.kane}: no way on at {run.node_key}")
+        run.choose(ci)
+        p = success_chance(run.choices[ci], obs)
+        return Action("enc_choice", ci=ci,
+                      why=f"KANE chapter {run.kane} at {run.node_key} (p={p:.2f})")
 
     # --- crossing back to the surface -----------------------------------
     def climb_out(self, obs, prefer=None, why: str = "climbing out",

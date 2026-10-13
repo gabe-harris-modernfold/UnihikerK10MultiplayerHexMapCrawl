@@ -133,11 +133,11 @@ static void run(const char* name, const std::string& in, const std::string& out,
 // A picture screen (ui-scenes.hpp): the scene is redrawn into the canvas every
 // scenePeriod() ms, exactly as the board's loop does, and composed on top.
 static SceneSurv surv(const char* nm, uint8_t arch, uint8_t ll, uint8_t cap, uint8_t food, uint8_t water,
-                      uint8_t rad, int8_t moves = 3, uint8_t depth = 0, bool inEnc = false, uint16_t score = 0) {
+                      uint8_t rad, int8_t ap = 3, uint8_t depth = 0, bool inEnc = false, uint16_t score = 0) {
   SceneSurv v = {};
   v.on = true; snprintf(v.name, sizeof(v.name), "%s", nm);
   v.arch = arch; v.ll = ll; v.llCap = cap; v.food = food; v.water = water; v.rad = rad;
-  v.moves = moves; v.depth = depth; v.inEnc = inEnc; v.score = score;
+  v.ap = ap; v.depth = depth; v.inEnc = inEnc; v.score = score;
   return v;
 }
 static void runScene(const char* name, const std::string& out, uint8_t screen, SceneSnap S,
@@ -452,7 +452,7 @@ int main(int argc, char** argv) {
       M.terr = &T[0][0]; M.cols = 75; M.rows = 57;
       M.s[0].q = 30; M.s[0].r = 20; M.s[1].q = 33; M.s[1].r = 24; M.s[3].q = 28; M.s[3].r = 26; M.s[4].q = 52; M.s[4].r = 12; M.s[4].depth = 1;
       M.caravanOn = true; M.caravanQ = 12; M.caravanR = 40;
-      M.doomQ = 47; M.doomR = 30; M.doomRadius = 5; M.doomAware = 82;
+      M.doomQ = 47; M.doomR = 30; M.doomAware = 82;
       M.hatchN = 3; M.hatchQ[0] = 52; M.hatchR[0] = 12; M.hatchQ[1] = 8; M.hatchR[1] = 8; M.hatchQ[2] = 66; M.hatchR[2] = 48;
       if (want("waste")) runScene("waste", out, 5, M, 6000, {}, calm);
     }

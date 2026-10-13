@@ -16,7 +16,8 @@ struct WorldMarkers {
   bool    caravanActive;
   int16_t doomQ, doomR;
   uint8_t doomAwareness;   // 0-100
-  int16_t doomRadius;      // hexes of scent detection at the current awareness
+  int16_t kaneQ, kaneR;    // Machine Gun Kane's jeep (kane.hpp)
+  uint8_t kaneMode;        // KANE_DRIVE / KANE_CAMP / KANE_GONE
 };
 static void snapshotWorldMarkers(WorldMarkers& out);
 
@@ -411,8 +412,9 @@ static void sceneScreenFill(SceneSnap& S, uint8_t screen) {
       snapshotWorldMarkers(wm);   // W lives under G.mutex too
       xSemaphoreGive(G.mutex);
       S.caravanOn = wm.caravanActive; S.caravanQ = wm.caravanQ; S.caravanR = wm.caravanR;
-      S.doomQ = wm.doomQ; S.doomR = wm.doomR; S.doomRadius = wm.doomRadius;
+      S.doomQ = wm.doomQ; S.doomR = wm.doomR;
       S.doomAware = wm.doomAwareness;
+      S.kaneQ = wm.kaneQ; S.kaneR = wm.kaneR; S.kaneMode = wm.kaneMode;
     }
     S.terr = &terr[0][0];
     // The Understory's published copy: read without the lock, as it always was.

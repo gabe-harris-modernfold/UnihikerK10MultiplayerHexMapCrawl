@@ -1,0 +1,108 @@
+{
+  "id": "tunnel_lights_out_procedure",
+  "title": "Lights-Out Procedure",
+  "start_node": "cabinet",
+  "nodes": {
+    "cabinet": {
+      "text": "A grey steel cabinet stands in the alcove, door shut, a laminated placard riveted to it: LIGHTS-OUT RESTORATION PROCEDURE — {{section}}. Seven steps. Somebody has scratched out steps five, six and seven so hard the bare steel shows through, and under them, in grease pencil: DO THEM ANYWAY. The cabinet is padlocked. From the inside. You can see the shackle through the vent slots.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Follow the procedure, step by step",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "step_four",
+          "hazard_id": "procedure_wrong"
+        },
+        {
+          "label": "Pry the door off its hinges",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "inside",
+          "hazard_id": "door_bites"
+        }
+      ]
+    },
+    "step_four": {
+      "text": "Steps one to three go easily: isolate, earth, count sixty. At sixty the cabinet opens on its own. The padlock is lying on the floor inside it, open, and warm. Step four reads: DO NOT LOOK DOWN THE CORRIDOR WHILE THE TUBES ARE WARMING. The master switch is a fat black rotary. Behind you, {{section}} has gone very still — the particular stillness of something standing in it.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Turn the switch and keep your eyes on the panel",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "you_looked"
+        },
+        {
+          "label": "Turn the switch, then turn around",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 4,
+          "success_node": "lights_looked",
+          "hazard_id": "you_looked"
+        }
+      ]
+    },
+    "inside": {
+      "text": "The door comes away with a shriek you feel in your fillings. The cabinet is papered inside with pages from the procedure manual — hundreds of them, every one with steps five to seven torn out. The rotary switch is there. On the shelf above it someone has laid out a tidy row of teeth, sorted by size, smallest to largest. There is a gap at the end of the row.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Turn the switch and don't look at the shelf",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "you_looked"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "The rotary turns with a sound like a bone setting. Nothing — and then, far down {{section}}, a tube blinks, and the dark starts to fall back toward you in stages: clunk, and the next fitting; clunk, and the next, each one pushing the black a little closer to where you stand until the last one, right over your head, stammers on. One fitting halfway down never settles. It flickers, and while it flickers there are more shadows in the corridor than there should be. When it steadies, there are the right number. At the bottom of the placard, under step seven, there is a signature now: {{signature}}. There was not one before.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 0, "qty": [1, 1] },
+        { "res": 4, "qty": [1, 1] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    },
+    "lights_looked": {
+      "text": "You turn. The tubes are coming on one after another, walking toward you down {{section}}, and in each new pool of light there is a set of footprints in the dust — bare, and coming your way — and each pool's prints are one step closer than the last. The final light comes on over your own head. The prints stop at your boots. That is all. Nothing is there. Nothing is there, and the lights stay on.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 3, "qty": [1, 1] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "procedure_wrong": {
+      "text": "Step two says EARTH THE CABINET. You do, and the cabinet earths you instead. You come round on the floor with your teeth buzzing in your jaw.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    },
+    "door_bites": {
+      "text": "The door springs back on its hinge and takes two fingernails with it.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "you_looked": {
+      "text": "From the far end of the corridor someone says your name, the way your mother used to say it. You look. Of course you look. Every warming tube dies at once, and you are running before you know you have started, the switch untouched behind you. It will still be there. So will they.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION 4", "THE LONG GALLERY", "CORRIDOR K", "SUBLEVEL TWO", "RING C", "THE DORMITORY SPUR"],
+    "signature": ["H. VANCE", "DUTY OFFICER", "SGT. ODOM", "a name pressed so hard it tore the laminate"]
+  }
+}

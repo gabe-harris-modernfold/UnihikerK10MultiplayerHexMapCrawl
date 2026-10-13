@@ -29,6 +29,9 @@ NUKE_CRATER = 10
 class CowardPolicy(SurvivorPolicy):
     # Never works a booby trap: every forced scene is a back-out.
     trap_nerve = 2.0
+    # Never goes looking for Machine Gun Kane's story -- every chapter is a
+    # string of checks -- but takes cover the moment he asks, like everyone.
+    kane_quest = False
 
     name = "coward"
     # Gear the way it plays: nothing but not dying. Exposure is the largest
@@ -44,6 +47,8 @@ class CowardPolicy(SurvivorPolicy):
                 NAR_SCAV_DOUBLE: 0.5},
     }
     engage_encounters = True
+    # A failed roll is priced at double in its scene plans (encounters.plan).
+    encounter_risk = 2.0
     rest_below_ll = 4          # rests much earlier than the others
     pack_headroom = 2
 

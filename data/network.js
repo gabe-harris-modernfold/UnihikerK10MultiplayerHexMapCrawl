@@ -286,6 +286,7 @@ function _applyWorldState(world) {
     trailField?.step('v', 0, c.q, c.r, _lastCaravanHex?.q, _lastCaravanHex?.r);
     _lastCaravanHex = { q: c.q, r: c.r };
   }
+  if (world.kane) kaneApplyWorld();   // his ruts, the same way (kane-jeep.js)
 }
 
 function _msgAsgn(msg) {
@@ -532,7 +533,8 @@ function _msgVis(msg) {
     if (depth) { players[myId].tq = msg.q; players[myId].tr = msg.r; }
     else       { players[myId].q  = msg.q; players[myId].r  = msg.r; }
   }
-  applyVisDisk(msg.cells, depth, depth ? msg.op : null);
+  applyVisDisk(msg.cells, depth, depth ? msg.op : null, depth ? msg.lt : null);
+  if (depth) tunnelLightsSync(true);   // a cell newly lit came on just now: walk it out
   if (!depth) applyTrailRecs(msg.trl);
   if (myId >= 0) _handleSelfVis();
   updateTerrainCard();
@@ -545,7 +547,8 @@ function _msgVis(msg) {
 // TUN_COLS/TUN_ROWS and the client just follows.
 function _msgTunnelSync(msg) {
   initTunnelMap(msg.cols | 0, msg.rows | 0);
-  parseMapFog(msg.map, tunnelMap, tunnelCols, tunnelRows, 'TUN', msg.op || null);
+  parseMapFog(msg.map, tunnelMap, tunnelCols, tunnelRows, 'TUN', msg.op || null, msg.lt || null);
+  tunnelLightsSync(false);   // whatever is lit was lit before we came down
   if (msg.vr !== undefined) myVisionR = msg.vr;
   if (msg.q !== undefined && myId >= 0) {
     players[myId].tq = msg.q;
@@ -1286,6 +1289,26 @@ function _evTrap(ev) {
   }
 }
 
+// A section of the tunnels just lit up (tunnels.hpp, "Section lights"). The
+// cells themselves arrive in the vis disk the server pushes to everyone below
+// (tunnelLightsSync walks them out); this is the news. lit/of: sections lit
+// now, out of how many.
+const TUNNEL_LIT_TOASTS = [
+  'Somewhere down the corridors, the lights come on. Clunk. Clunk. Clunk.',
+  'A hum in the walls, then light, a long way off. Somebody found a switch.',
+  'Far down the tunnels a bank of tubes stutters awake.',
+];
+function _evTunLit(ev) {
+  const mine = ev.pid === myId;
+  const who  = mine ? 'You' : escHtml(players[ev.pid]?.nm || `P${ev.pid}`);
+  const all  = ev.of && ev.lit >= ev.of;
+  const tally = all ? ' Every section is lit.' : (ev.of ? ` ${ev.lit} of ${ev.of} sections lit.` : '');
+  addLog(`<span class="log-tunnel-lit">☼ ${who} turned the lights on below.${tally}</span>`);
+  if (mine) return;   // the scene already told them, and they are about to watch it
+  if (myDepth) showToast(TUNNEL_LIT_TOASTS[(ev.sec | 0) % TUNNEL_LIT_TOASTS.length], 'tunnel');
+  else if (all) showToast('☼ Every light below the wasteland is burning.', 'tunnel');
+}
+
 function _evTunTaunt(ev) {
   const line = tunnelTauntLine(ev.idx);
   addLog(`<span class="log-tunnel-taunt">\u25BE ${escHtml(line)}</span>`);
@@ -1563,6 +1586,10 @@ function handleEvent(ev) {
     case 'doom_act':    _evDoomAct(ev);    break;
     case 'doom_taunt':  _evDoomTaunt(ev);  break;
     case 'tun_taunt':   _evTunTaunt(ev);   break;
+    case 'kane_call':   _evKaneCall(ev);   break;   // Machine Gun Kane (kane-jeep.js)
+    case 'kane_fire':   _evKaneFire(ev);   break;
+    case 'kane_arc':    _evKaneArc(ev);    break;
+    case 'tun_lit':     _evTunLit(ev);     break;
     case 'trap':        _evTrap(ev);       break;
     case 'fire_spread':   _evFireSpread(ev);   break;
     case 'fire_dmg':      _evFireDamage(ev);   break;
@@ -1572,6 +1599,13 @@ function handleEvent(ev) {
     case 'item_result': _evItemResult(ev); break;
     case 'enc_start': {
       const encWho = players[ev.pid]?.nm || `P${ev.pid}`;
+      if (ev.kane) {
+        // One of Machine Gun Kane's chapters opened on arrival (kane.hpp) --
+        // his camp, the house, his fire. No POI was taken, so leave the hex be.
+        addLog(`<span class="log-col">\u2316 ${escHtml(ev.pid === myId ? 'You' : encWho)} found ${ev.kane === 5 ? 'Kane\u2019s fire' : ev.kane === 4 ? 'the house in the glass' : 'where Kane camped'}</span>`);
+        updateSidebar();
+        break;
+      }
       if (ev.trap) {
         // A booby trap fired under someone (traps.hpp) -- there was no POI.
         addLog(`<span class="log-check-fail">\u26A0 ${escHtml(ev.pid === myId ? 'You' : encWho)} set off a trap</span>`);

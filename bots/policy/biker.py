@@ -30,7 +30,6 @@ from Jack's Chopper just moves it to the right one:
 The canteen errand every other survivor runs is off: the canteen goes in the
 body slot, which is where the Backpack has to stay.
 """
-import time
 from functools import lru_cache
 
 from config import (ACT_FORAGE, ACT_SCAV, ACT_TREAT, BIKE_ITEM, BIKE_RECIPE,
@@ -41,8 +40,10 @@ from config import (ACT_FORAGE, ACT_SCAV, ACT_TREAT, BIKE_ITEM, BIKE_RECIPE,
 from encounters import item_drop_terrains
 from navigate import best_target, frontier_bonus, step_cost
 from .base import Action
-from .survivor import (CRAFT_SEARCH_COST, FOOD_FLOOR, WATER_FLOOR,
+from .survivor import (CRAFT_SEARCH_COST, FOOD_FLOOR, LAYER_METHOD, WATER_FLOOR,
                        SurvivorPolicy, ends_journey, token_room)
+
+LAYER_METHOD["shed_junk"] = "shed_junk_layer"
 
 # Food and water kept beside the build: one dawn's worth (1 food + 2 water).
 # The pack has to hold the build's tokens AND this, which is what makes a bare
@@ -132,8 +133,9 @@ class BikerPolicy(SurvivorPolicy):
         self._crafting = None       # recipe id of the last CRAFT we sent
         self._owned = {}            # item id -> owned at the last cycle
         self._fuel_seen = None
-        self._treat_sent = {}       # (q, r, ll, med) -> monotonic time
-        self._drop_sent = {}        # (res, held) -> monotonic time
+        self._ph = None             # this cycle's phase, for the shed_junk layer
+        # Cooldowns: self.throttle keys ("treat", q, r, ll, med) and
+        # ("drop_res", res, held).
 
     # --- the plan -------------------------------------------------------
     def build_tokens(self) -> int:
@@ -193,20 +195,24 @@ class BikerPolicy(SurvivorPolicy):
         return max(LEAN_WATER, min(WATER_FLOOR, room - LEAN_FOOD)), LEAN_FOOD
 
     # --- main entry -----------------------------------------------------
+    # The survivor's chain with one layer in front: put down what the plan
+    # has no room for before anything else is decided (free: no AP, no check).
+    layers = ("shed_junk",) + SurvivorPolicy.layers
+
     def decide(self, obs) -> Action:
         me = obs.me
-        act = None
+        self._ph = None
         if me.connected and me.ll > 0:
-            ph = self.phase(obs)
+            self._ph = ph = self.phase(obs)
             _, _, self.water_floor, self.food_floor = self.plan(obs, ph)
             self._book(obs, ph)
-            if obs.encounter is None:
-                act = self.shed_junk(obs, ph)
-        if act is None:
-            act = super().decide(obs)
+        act = super().decide(obs)
         if act.kind == "move" and self.bike["phase"] == "ride":
             self.bike["ride_moves"] += 1
         return act
+
+    def shed_junk_layer(self, obs) -> Action | None:
+        return self.shed_junk(obs, self._ph) if self._ph is not None else None
 
     def _book(self, obs, ph) -> None:
         me, b = obs.me, self.bike
@@ -331,15 +337,12 @@ class BikerPolicy(SurvivorPolicy):
             short = sum(toks.values()) + staples - token_room(me)
         if short <= 0:
             return None
-        now = time.monotonic()
         for k in (RES_MED, RES_SCRAP, RES_FUEL):
             cap = self.keeps(ph).get(k)
             if cap is None or me.inv[k] <= cap:
                 continue
-            key = (k, me.inv[k])
-            if now - self._drop_sent.get(key, -DROP_RETRY_S) < DROP_RETRY_S:
+            if not self.throttle.ok(("drop_res", k, me.inv[k]), DROP_RETRY_S):
                 continue
-            self._drop_sent[key] = now
             n = me.inv[k] - cap
             return Action("drop_res", res=k + 1, qty=n,
                           why=f"{ph}: dropping {n} {('water', 'food', 'fuel', 'med', 'scrap')[k]}"
@@ -392,10 +395,8 @@ class BikerPolicy(SurvivorPolicy):
         cost = 2 if major else 1
         if me.ap < cost:
             return None
-        key, now = (me.q, me.r, me.ll, me.inv[RES_MED]), time.monotonic()
-        if now - self._treat_sent.get(key, -TREAT_RETRY_S) < TREAT_RETRY_S:
+        if not self.throttle.ok(("treat", me.q, me.r, me.ll, me.inv[RES_MED]), TREAT_RETRY_S):
             return None
-        self._treat_sent[key] = now
         return Action("act", a=ACT_TREAT, ap=cost,
                       why=f"{ph}: treat at a Settlement (LL {me.ll}, med {me.inv[RES_MED]})")
 

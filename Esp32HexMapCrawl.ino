@@ -695,7 +695,23 @@ enum EvtType : uint8_t {
   // A daily-cost item that stalled at dawn found its fuel and started
   // (kickStartItems, inventory_items.hpp): pid, res = item id, amt = AP it
   // brought, moveAP = apLeft now, dawnUnfuelled = slots still dormant.
-  EVT_REFUEL        = 33
+  EVT_REFUEL        = 33,
+  // ── Machine Gun Kane (kane.hpp) ──
+  // He asks before he fires: pid = who he is asking (unicast), q/r = the
+  // jeep, amt = 0 on the road / 1 at his fire, res = line index.
+  EVT_KANE_CALL     = 34,
+  // A burst: pid = the target, q/r = the jeep (where the tracers start),
+  // amt = rounds that hit, res = LL lost, actNewLL = LL now. Broadcast.
+  EVT_KANE_FIRE     = 35,
+  // The arc moved: pid = the reader, amt = chapters read (1-5), res =
+  // ending (KANE_END_*). Broadcast -- it is the world's story.
+  EVT_KANE_ARC      = 36,
+  // ── Tunnel section lights (tunnels.hpp) ──
+  // A control-panel scene threw its switch and a section came on: pid = who,
+  // q/r = the panel (tunnel board), amt = section index, res = how many banks
+  // the lights come on in, actOut = sections lit now, actType = sections in
+  // all. Broadcast -- the whole party hears the bunker wake up.
+  EVT_TUNNEL_LIGHTS = 37
 };
 static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
 static constexpr uint8_t TRAP_OUT_SPRUNG = 1;   // a check failed: it went off, and it is gone
@@ -708,12 +724,14 @@ enum DownCause : uint8_t {
   DC_FIRE, DC_LIGHTNING, DC_FLOOD, DC_DOOM, DC_ENC_HAZARD, DC_ENC_COST,
   DC_ACTION, DC_CHEM, DC_FOG,
   DC_DAISY,   // a bloomed Wasteland Daisy bit (ecology.hpp) -- the Understory's one mechanical effect
+  DC_KANE,    // caught in the open by Machine Gun Kane's burst (kane.hpp)
   DC_COUNT
 };
 static const char* const DC_NAME[DC_COUNT] = {
   "unattributed", "thirst", "hunger", "exposure", "bad air", "radiation",
   "fire", "lightning", "flood", "creeping doom", "encounter hazard",
-  "encounter cost", "action", "chem storm", "strangle fog", "wasteland daisy"
+  "encounter cost", "action", "chem storm", "strangle fog", "wasteland daisy",
+  "machine gun kane"
 };
 static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] : DC_NAME[0]; }
 
@@ -734,7 +752,13 @@ static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] :
 //   7: Action Points: every "mp" key is now "ap" (sync, tick "s", /state,
 //      ev mv/tun_in/tun_out/dawn/act/refuel, the act request), refuel's
 //      "mpd" is "apd", the move nack "no_mp" is "no_ap", items.cfg "ap =".
-static constexpr int PROTO_VERSION = 7;
+//   8: Machine Gun Kane (kane.hpp): sync and the tick broadcast carry
+//      world "kane"; ev kane_call / kane_fire / kane_arc; enc_start and
+//      enc_path carry "kane" (the chapter); downed cause "machine gun kane".
+//      Also tunnel section lights (tunnels.hpp): tsync and every
+//      underground vis carry "lt" (a light byte per cell, beside "op"), an
+//      underground vis also lists every lit cell on the board; ev tun_lit.
+static constexpr int PROTO_VERSION = 8;
 
 // ── The Understory (ecology.hpp) ──────────────────────────────────────────
 // Hooks the earlier includes call into. ecology.hpp itself comes after
@@ -855,6 +879,8 @@ struct ActiveEncounter {
                             // LL floored at 1 on a hazard, every hazard ends it
   uint8_t  escape;          // current node carries "escape": true -- leaving banks nothing
                             // and scores no full clear (a trap stays armed)
+  uint8_t  kane;            // 1-5 = a Machine Gun Kane chapter (kane.hpp), opened by arrival;
+                            // its state is the world's, so there is no POI to put back
 };
 static ActiveEncounter encounters[MAX_PLAYERS];
 
@@ -881,6 +907,16 @@ static bool trapOnArrival(int pid);
 // encounters[pid], so call it before the slot is cleared. Caller holds G.mutex.
 static constexpr uint8_t TRAP_SETTLE_REARM = 3;
 static void trapSettle(int pid, uint8_t outcome);
+// Machine Gun Kane (kane.hpp, included after the code that calls these).
+// kaneInit: from wInit(). tickKane: the world tick. kaneOnArrival: the
+// surface step, after the trap check. kaneTakeSaveWanted: read-and-clear,
+// the arc or his camp changed. kaneSnapshot: the LCD map's marker. Caller
+// holds G.mutex for all of them.
+static void kaneInit();
+static void tickKane();
+static bool kaneOnArrival(int pid);
+static bool kaneTakeSaveWanted();
+static void kaneSnapshot(int16_t& q, int16_t& r, uint8_t& mode);
 
 struct EncPoolInfo {
   uint8_t count;
@@ -891,7 +927,9 @@ struct EncPoolInfo {
 // Sized so the tunnel pool (14) fits -- index.json only defines a subset;
 // the rest stay count=0 and never fire.
 static constexpr uint8_t ENC_POOL_TRAP  = NUM_TERRAIN;
-static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 1;
+// Machine Gun Kane's five chapters (kane.hpp): index.json "kane", file = chapter.
+static constexpr uint8_t ENC_POOL_KANE  = NUM_TERRAIN + 1;
+static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 2;
 static EncPoolInfo encPools[ENC_POOL_COUNT];
 // Trap tiers: contiguous file-id ranges inside the traps pool, from
 // index.json "traps"."tiers" (counts per tier, cheap first). Tier t is ids
@@ -925,6 +963,8 @@ struct GameState {
   HexCell  (*map)[MAP_COLS];   // PSRAM: MAP_ROWS rows, allocated by allocPsramGlobals(); G.map[r][q] unchanged
   HexCell  (*tunnel)[TUN_COLS];  // PSRAM: the bunker tunnel board, G.tunnel[r][q] (tunnels.hpp)
   uint8_t  (*tunnelOp)[TUN_COLS];  // PSRAM: per tunnel cell, which sides are open + art bits (TOP_* in tunnels.hpp)
+  uint8_t  (*tunnelSec)[TUN_COLS]; // PSRAM: per tunnel cell, its lighting section (TUN_SEC_NONE: rock; tunnels.hpp)
+  uint8_t  (*tunnelLit)[TUN_COLS]; // PSRAM: per tunnel cell, 0 = dark, else TLIT_* -- the bank it came on in (tunnels.hpp)
   Player*  players;           // PSRAM: [MAX_PLAYERS], allocated by allocPsramGlobals(); G.players[i] unchanged
   uint32_t tickId;
   int      connectedCount;
@@ -945,6 +985,7 @@ static constexpr int  EVT_QUEUE_SIZE = 64;
 static constexpr size_t MAP_BYTES    = sizeof(HexCell) * MAP_ROWS * MAP_COLS;
 static constexpr size_t TUNNEL_BYTES = sizeof(HexCell) * TUN_ROWS * TUN_COLS;
 static constexpr size_t TUNNEL_OP_BYTES = sizeof(uint8_t) * TUN_ROWS * TUN_COLS;
+static constexpr size_t TUNNEL_LIGHT_BYTES = sizeof(uint8_t) * TUN_ROWS * TUN_COLS;   // tunnelSec, and again tunnelLit
 
 static GameState      G;
 
@@ -986,6 +1027,16 @@ static constexpr uint32_t GROUND_SAVE_MAGIC = 0x444E5247ul;   // "GRND"
 // the footprint bits, as it did before the file existed.
 static const char         SAVE_TRL_F[] = "/save/trail.bin";
 static constexpr uint32_t TRAIL_SAVE_MAGIC = 0x534C5254ul;    // "TRLS"
+// Tunnel section lights (tunnels.hpp): which section every tunnel cell is in,
+// and which of them are lit. Its own file for the same reason again, so the
+// lights landed without a SAVE_VERSION bump: a save without it has its
+// sections laid out on load (tunnelPlaceSections) with every light off.
+static const char         SAVE_LIT_F[] = "/save/lights.bin";
+static constexpr uint32_t LIGHT_SAVE_MAGIC = 0x54494C54ul;    // "TLIT"
+// Machine Gun Kane (kane.hpp): the jeep and the arc. Same reason again -- a
+// save without it loads with a fresh jeep and the story unread.
+static const char         SAVE_KANE_F[] = "/save/kane.bin";
+static constexpr uint32_t KANE_SAVE_MAGIC = 0x454E414Bul;     // "KANE"
 
 struct __attribute__((packed)) SaveHeader {
   uint32_t magic;
@@ -1332,6 +1383,7 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 #include "actions_game_loop.hpp"   // depends on all 3 above
 #include "encounter_engine.hpp"    // server-side encounter JSON resolution
 #include "traps.hpp"               // booby traps: placement, forced entry, knowledge
+#include "kane.hpp"                // Machine Gun Kane: the roaming jeep and its five-chapter arc
 
 // Network layer
 #include "network-persistence.hpp"
@@ -1357,6 +1409,9 @@ static void allocPsramGlobals() {
   G.map         = (HexCell(*)[MAP_COLS])    psramStaticAlloc(MAP_BYTES);
   G.tunnel      = (HexCell(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_BYTES);
   G.tunnelOp    = (uint8_t(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_OP_BYTES);
+  G.tunnelSec   = (uint8_t(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_LIGHT_BYTES);
+  G.tunnelLit   = (uint8_t(*)[TUN_COLS])    psramStaticAlloc(TUNNEL_LIGHT_BYTES);
+  memset(G.tunnelSec, 0xFF, TUNNEL_LIGHT_BYTES);   // TUN_SEC_NONE until a board is generated or loaded
   W_hex         = (HexDynamic(*)[MAP_COLS]) psramStaticAlloc(W_HEX_BYTES);
   trailSides    = (uint8_t(*)[MAP_COLS][TRAIL_SLOTS]) psramStaticAlloc(TRAIL_BYTES);
   memset(trailSides, TRAIL_NONE, TRAIL_BYTES);   // "no record", not side 0 -- psramStaticAlloc zero-fills

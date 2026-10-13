@@ -12,7 +12,9 @@
 //   VV = high nibble: resource type (0-5), low nibble: terrain variant (0-15)
 // Tunnel cells also carry an "op" byte beside the cells string (tunnels.hpp,
 // "Open sides"): bits 0-5 = open sides, bit 6 = bit 4 of the art index, bit 7
-// = a room. The client draws the corridor art from it (tunnel-board.js).
+// = a room. The client draws the corridor art from it (tunnel-board.js). And
+// an "lt" byte after that: the cell's light, 0 while dark (tunnel-board.js,
+// "Section lights").
 function decodeCell(terrainByte, dataByte, variantByte = 0) {
   if (terrainByte === 0xFF) return null;
   const hasShelter = (dataByte >> 6) & 1;
@@ -34,7 +36,7 @@ function decodeCell(terrainByte, dataByte, variantByte = 0) {
 
 // grid/cols/rows default to the surface map; the tsync handler passes the
 // tunnel board instead, and its "op" string (2 hex chars a cell, same order).
-function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, label = 'MAP', ops = null) {
+function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, label = 'MAP', ops = null, lts = null) {
   let revealed = 0, fog = 0, poiCount = 0, shelterCount = 0, resourceCount = 0;
   // Surface only — the tunnel board is transient and gets no memory.
   const surface = (grid === gameMap);
@@ -47,6 +49,7 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
       const vv  = Number.parseInt(hexStr.substr(idx + 4, 2), 16);
       grid[r][c] = decodeCell(tt, dd, vv);
       if (ops && grid[r][c]) grid[r][c].op = Number.parseInt(ops.substr((r * cols + c) * 2, 2), 16) || 0;
+      if (lts && grid[r][c]) grid[r][c].lt = Number.parseInt(lts.substr((r * cols + c) * 2, 2), 16) || 0;
       if (tt === 0xFF) { fog++; }
       else {
         revealed++;
@@ -83,11 +86,12 @@ function parseMapFog(hexStr, grid = gameMap, cols = MAP_COLS, rows = MAP_ROWS, l
 // Format: "QQRRTTDDVV..." — 10 hex chars per cell (5 bytes)
 //   QQ=col, RR=row, TT=terrain, DD=data, VV=variant
 // depth 0 writes the surface map, 1 the bunker tunnel board, whose disks
-// carry "op" -- each cell's open sides, 2 hex chars apiece in cell order. The collected-
+// carry "op" -- each cell's open sides, 2 hex chars apiece in cell order -- and
+// "lt", each cell's light, the same way. The collected-
 // resource guard and the amount carry-forward below are surface-only: they
 // exist to reconcile a `col` event racing a visdisk, and the tunnel board has
 // no such history to preserve on a fresh descend.
-function applyVisDisk(cells, depth = 0, ops = null) {
+function applyVisDisk(cells, depth = 0, ops = null, lts = null) {
   const grid = depth ? tunnelMap  : gameMap;
   const cols = depth ? tunnelCols : MAP_COLS;
   const rows = depth ? tunnelRows : MAP_ROWS;
@@ -103,6 +107,7 @@ function applyVisDisk(cells, depth = 0, ops = null) {
     if (r < rows && q < cols) {
       const cell = decodeCell(tt, dd, vv);
       if (ops && cell) cell.op = Number.parseInt(ops.substr((i / 10) * 2, 2), 16) || 0;
+      if (lts && cell) cell.lt = Number.parseInt(lts.substr((i / 10) * 2, 2), 16) || 0;
       const key  = `${q}_${r}`;
       if (!depth && collectedCells.has(key)) {
         if (cell && cell.resource > 0) {

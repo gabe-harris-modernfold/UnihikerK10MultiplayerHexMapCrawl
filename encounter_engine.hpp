@@ -191,6 +191,7 @@ struct EncChoice {
   bool     nextCanBank;
   bool     nextTerminal;
   bool     nextEscape;                    // destination carries "escape": true
+  bool     nextLights;                    // destination carries "lights": true -- a tunnel panel's switch (tunnels.hpp)
   uint8_t  loot[5];                       // rolled resource loot on the destination node
   uint8_t  itemType[2], itemQty[2];       // rolled "item" loot entries (max two)
   uint8_t  recipeId;                      // "recipe" loot entry — a recipe learned on success
@@ -232,6 +233,7 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
     out.nextCanBank  = jsonBool(jsonObjGet(next, "can_bank"));
     out.nextTerminal = (jsonArrLen(jsonObjGet(next, "choices")) == 0);
     out.nextEscape   = jsonBool(jsonObjGet(next, "escape"));
+    out.nextLights   = jsonBool(jsonObjGet(next, "lights"));
     jsonCopyStr(jsonObjGet(next, "loot_table"), out.lootTable, sizeof(out.lootTable));
     const char* loot = jsonObjGet(next, "loot");
     int n = jsonArrLen(loot);
@@ -338,6 +340,13 @@ static void endEncounter(int pid, uint8_t reason, bool restorePoi) {
     else if (reason == ENC_END_HAZARD || reason == ENC_END_DOWNED) trapSettle(pid, TRAP_OUT_SPRUNG);
     restorePoi = false;
   }
+  // A Kane chapter (kane.hpp) never took a POI: its camp is world state and
+  // stays put until somebody reads to the end.
+  if (enc.kane) restorePoi = false;
+  // A tunnel control panel is a fixture, not a cache (tunnels.hpp, "Section
+  // lights"): the scene only closes for good once its section is lit. Driven
+  // out, downed or walked away short of the switch, the panel stays.
+  if (enc.depth && !enc.trap && reason != ENC_END_REGEN && tunnelPanelDark(hq, hr)) restorePoi = true;
   // Put the POI back on the board it came from. Without enc.depth a tunnel
   // encounter ended involuntarily (dawn, disconnect, hazard) would restore
   // its POI onto a surface hex that happens to share those coordinates.

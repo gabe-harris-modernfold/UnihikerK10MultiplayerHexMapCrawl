@@ -202,6 +202,38 @@ check("best_target finds the pile", t is not None and (t[0], t[1]) == (14, 10))
 check("best_target returns a legal first dir", t[2] in range(6))
 # Torus: q=0 and q=74 are neighbours.
 check("distance wraps", navigate.hex_distance(0, 10, 74, 10) == 1)
+# q and r moving in opposite directions: the old fold-to-absolute version
+# said 5 here (2026-10-12).
+check("opposite-sign deltas are not over-counted",
+      navigate.hex_distance(22, 20, 19, 22) == 3
+      and navigate.hex_distance(10, 10, 13, 7) == 3)
+check("both seams at once", navigate.hex_distance(0, 0, config.MAP_COLS - 1, config.MAP_ROWS - 1) == 2)
+
+
+def _bfs_steps(q0, r0):
+    """Ground truth: steps over the six real neighbours (config.DQ/DR) on the
+    torus, to every cell."""
+    seen = {(q0, r0): 0}
+    frontier = [(q0, r0)]
+    while frontier:
+        nxt = []
+        for q, r in frontier:
+            for d in range(6):
+                n = ((q + config.DQ[d]) % config.MAP_COLS, (r + config.DR[d]) % config.MAP_ROWS)
+                if n not in seen:
+                    seen[n] = seen[(q, r)] + 1
+                    nxt.append(n)
+        frontier = nxt
+    return seen
+
+
+_hd_bad = []
+for _src in ((22, 20), (0, 0), (37, 56), (74, 28)):
+    for (_q, _r), _steps in _bfs_steps(*_src).items():
+        if navigate.hex_distance(_src[0], _src[1], _q, _r) != _steps:
+            _hd_bad.append((_src, (_q, _r), _steps, navigate.hex_distance(_src[0], _src[1], _q, _r)))
+check(f"hex_distance is the true step count to every cell of the torus {_hd_bad[:3]}",
+      not _hd_bad)
 w.grid[10][12] = None
 check("frontier_bonus counts fog", navigate.frontier_bonus(w, 11, 10) == 1)
 # A bloomed daisy patch on (11,10): the straight line to (12,10) now costs
@@ -287,7 +319,8 @@ import policy as pmod
 
 check("registry has every policy", set(pmod.REGISTRY) ==
       {"drunk", "scoremax", "contentmax", "coward", "rival",
-       "subterranean", "tunnelrunner", "sentinel", "gearmax", "biker"})
+       "subterranean", "tunnelrunner", "sentinel", "gearmax", "biker",
+       "quester"})
 # GearMax is the only policy that will wear a net-negative item, which is
 # what makes its runs usable for auditing whether penalties land at all.
 check("only gearmax wears junk on purpose",
@@ -314,7 +347,8 @@ for pname in sorted(pmod.REGISTRY):
             json.dumps(m)
     check(f"{pname} yields valid actions", kinds and kinds <= {
         "move", "act", "noop", "enc_start", "enc_choice", "enc_bank",
-        "enc_abort", "use_item", "trade_offer", "drop_res"})
+        "enc_abort", "use_item", "trade_offer", "drop_res", "drop_item",
+        "car_buy", "trade_accept", "trade_decline"})
 
 sm = pmod.make("scoremax", random.Random(3))
 check("scoremax walks toward the pile", sm.decide(o3).kind == "move")
@@ -346,6 +380,9 @@ except ValueError:
 
 o3.encounter = {"biome": "dunes", "id": 1}
 cm2 = pmod.make("contentmax", random.Random(3))
+# The baseline arm (plan_encounters=False): first open choice, bank when
+# bankable. The planner is checked on its own under "items and quests".
+cm2.plan_encounters = False
 a = cm2.decide(o3)
 check("encounter binds to local json", a.kind in ("enc_choice", "enc_bank", "enc_abort"))
 # Drive the first branch until the node is bankable, then take the haul.
@@ -521,7 +558,7 @@ me7.archetype = 2
 # whole dawn loss, so it has to outrank the emergency hunt *here* only.
 me7.inv = [0, 4, 0, 0, 2]
 w3.grid[10][16] = mk(resource=config.RES_WATER + 1)
-ps._shelter_sent = None     # a separate scenario on the same hex and day
+ps.throttle.reset()     # a separate scenario on the same hex and day
 check("shelter beats the water hunt on the last AP",
       ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
 me7.ap = 6
@@ -529,7 +566,7 @@ check("but the water hunt still wins earlier in the day",
       ps.decide(o7).kind == "move")
 w3.grid[10][16] = mk()
 me7.ap = 1
-ps._shelter_sent = None
+ps.throttle.reset()
 check("shelters once", ps.decide(o7).to_msg().get("a") == config.ACT_SHELTER)
 check("and a SHELTER that built nothing is not re-sent the same day",
       ps.decide(o7).to_msg().get("a") != config.ACT_SHELTER)
@@ -1791,12 +1828,13 @@ class _FakeWS:
     async def send(self, data):
         if not isinstance(data, str):
             if not isinstance(data, (bytes, bytearray)):
-                data = "".join(data)     # fragmented: the board drops it
+                data = "".join(data)     # fragmented: the board reassembles it
                 self.sent.append(("frag", data))
+            else:
+                self.sent.append(("bin", data))
                 return
-            self.sent.append(("bin", data))
-            return
-        self.sent.append(("text", data))
+        else:
+            self.sent.append(("text", data))
         # Mimic the firmware's own scanner rather than a JSON parser.
         import re as _re
         t = _re.search(r'"t"\s*:\s*"([^"]*)"', data)
@@ -1988,9 +2026,238 @@ check("caught out at bedtime on exposed ground, it shelters where it stands",
 _sc.apply({"t": "ev", "k": "act", "pid": 2, "a": config.ACT_SHELTER, "out": 1, "cnd": 1})
 check("then goes to sleep", _is(_sp2.decide(_sc), config.ACT_REST))
 
+print("machine gun kane")
+import time as _ktime
+from config import (KANE_CAMP, KANE_DRIVE, KANE_GONE, KANE_RANGE)
+from encounters import EncounterLibrary as _KLib, EncounterRun as _KRun
+from navigate import KANE_CALLED_COST, KANE_DANGER_COST
+from state import KANE_CALL_TTL_S
+_K_FOREST = 2
+
+
+def kane_obs(me_at=(20, 20), kane_at=(22, 20), mode=KANE_DRIVE, st=0, e=0,
+             camp=(-1, -1), site=(-1, -1), ap=9, ll=7, pid=2):
+    """A survivor on an all-scrub map with Machine Gun Kane somewhere near."""
+    o = Observation()
+    o.pid = pid
+    for rr in range(config.MAP_ROWS):
+        for qq in range(config.MAP_COLS):
+            o.map.grid[rr][qq] = mk()
+    me = o.players[pid]
+    me.connected, me.q, me.r = True, me_at[0], me_at[1]
+    me.ap, me.ll, me.inv_slots, me.valid_moves = ap, ll, 8, 0b111111
+    me.inv, me.food, me.water = [6, 4, 0, 0, 0], 5, 5
+    me.skills = [0, 0, 0, 0, 0]
+    o.synced = True
+    o.world.update({"kane": {"q": kane_at[0], "r": kane_at[1], "m": mode, "f": -1,
+                             "st": st, "e": e, "cq": camp[0], "cr": camp[1],
+                             "gq": site[0], "gr": site[1]}})
+    o._refresh_kane_danger()
+    return o
+
+
+def kane_called(o, camp=0):
+    w = o.world
+    o.apply({"t": "ev", "k": "kane_call", "pid": o.pid, "q": w.kane_q, "r": w.kane_r,
+             "camp": camp, "idx": 7})
+
+
+# -- what the bots read off the wire --------------------------------------
+ko = kane_obs()
+check("the world object is read", ko.world.kane_seen and ko.world.kane_driving
+      and (ko.world.kane_q, ko.world.kane_r) == (22, 20))
+check("two hexes from him on scrub is exposed", ko.kane_exposed())
+check("his reach is priced into the map: every hex within range",
+      len(ko.map.danger_cost) == 37
+      and set(ko.map.danger_cost.values()) == {KANE_DANGER_COST})
+ko.map.grid[20][21] = mk(_K_FOREST)
+ko._surface_rev += 1
+ko._refresh_kane_danger()
+check("cover in his reach is not priced", (21, 20) not in ko.map.danger_cost
+      and not ko.kane_exposed_at(21, 20))
+check("four hexes away is out of his reach", not ko.kane_exposed_at(18, 20))
+check("no question yet, nothing pending", not ko.kane_call_pending)
+kane_called(ko, camp=1)
+check("his question at the fire is harmless", not ko.kane_call_pending)
+kane_called(ko)
+check("a road question is pending", ko.kane_call_pending)
+check("and leaving cover now costs most of a day",
+      set(ko.map.danger_cost.values()) == {KANE_CALLED_COST})
+ko.apply({"t": "ev", "k": "kane_fire", "pid": 2, "q": 22, "r": 20, "hits": 2,
+          "llLost": 2, "ll": 5})
+check("the burst answers it, and LL follows", not ko.kane_call_pending and ko.me.ll == 5)
+kane_called(ko)
+ko.kane_call["t"] -= KANE_CALL_TTL_S + 1
+check("a question older than a world tick lapses", not ko.kane_call_pending)
+check("at his fire there is no reach at all",
+      not kane_obs(mode=KANE_CAMP).map.danger_cost and not kane_obs(mode=KANE_CAMP).kane_exposed())
+check("a retired jeep has none either", not kane_obs(mode=KANE_GONE, e=1).kane_exposed())
+ko2 = kane_obs()
+ko2.apply({"t": "ev", "k": "kane_arc", "pid": 0, "stage": 5, "ending": "truth"})
+check("the ending retires him on the spot",
+      ko2.world.kane_ending == 1 and not ko2.world.kane_driving)
+
+# -- taking cover ---------------------------------------------------------
+kp = make_policy("scoremax", random.Random(4))
+kp.set_pid(2)
+# One hex from the jeep, scrub everywhere but a forest due north: cover is the
+# cheapest answer (out of range is three steps away).
+kc = kane_obs(me_at=(21, 20), kane_at=(22, 20))
+kc.map.grid[19][21] = mk(_K_FOREST)
+kc._surface_rev += 1
+check("no question, no running", kp.kane_cover_action(kc) is None)
+kane_called(kc)
+_a = kp.kane_cover_action(kc)
+check("asked in the open, it heads for cover", _a is not None and _a.kind == "move" and _a.d == 2)
+_a = kp.decide(kc)
+check("and that outranks everything else decide() could do",
+      _a.kind == "move" and _a.d == 2 and "KANE" in _a.why)
+kc.players[2].ap = 0
+check("with no AP there is nothing to send", kp.kane_cover_action(kc) is None)
+kc.players[2].ap = 9
+kc.players[2].q, kc.players[2].r = 21, 19
+check("in cover already: nothing to do", kp.kane_cover_action(kc) is None)
+check("and that question counts as dodged", kp.stats["kane_dodged"] == 1)
+# Holding cover: a step back into the open is refused while he waits.
+_out = kp.kane_hold(kc, Action("move", d=5, why="pile"))      # back south, onto scrub
+check("it will not step back into the open while asked",
+      _out.kind == "noop" and "holding cover" in _out.why)
+kc.map.grid[19][20] = mk(_K_FOREST)
+check("cover to cover is fine", kp.kane_hold(kc, Action("move", d=3)).kind == "move")
+kc.kane_call = None
+check("once answered it moves freely again", kp.kane_hold(kc, Action("move", d=5)).kind == "move")
+kc2 = kane_obs(me_at=(21, 20), kane_at=(22, 20))
+kane_called(kc2)
+kc2.map.grid[20][21] = mk(poi=True)                       # stood on a POI, all scrub
+kc2.players[2].ap = 1
+check("no cover in reach, a scene is cover: it opens the POI underfoot",
+      (lambda a: a is not None and a.kind == "enc_start")(kp.kane_cover_action(kc2)))
+
+# -- walking to his story ---------------------------------------------------
+kq = kane_obs(me_at=(20, 20), kane_at=(40, 40), camp=(20, 22))
+_a = kp.kane_quest_action(kq)
+check("a camp two hexes south: it walks there", _a is not None and _a.d == 5 and "chapter 1" in _a.why)
+check("the camp is not the urgent kind", kp.kane_quest_action(kq, urgent=True) is None)
+check("the coward never goes looking",
+      make_policy("coward", random.Random(1)).kane_quest_action(kq) is None)
+kq.players[2].ll = 3
+check("hurt, the story waits", kp.kane_quest_action(kq) is None)
+kq.players[2].ll = 7
+kfar = kane_obs(me_at=(20, 20), kane_at=(40, 40), camp=(20, 40))
+check("a camp twenty hexes off is past today's AP", kp.kane_quest_action(kfar) is None)
+kcm = make_policy("contentmax", random.Random(2))
+kcm.set_pid(2)
+check("contentmax walks that far for it", kcm.kane_quest_action(kfar) is not None)
+ks = kane_obs(me_at=(20, 20), kane_at=(40, 40), st=3, site=(20, 23))
+check("chapter 4 is the house in the glass",
+      (lambda a: a is not None and "chapter 4" in a.why)(kp.kane_quest_action(ks)))
+kf = kane_obs(me_at=(20, 20), kane_at=(20, 22), mode=KANE_CAMP, st=4)
+_a = kp.kane_quest_action(kf, urgent=True)
+check("chapter 5 is his own hex while he sits at his fire, and it is urgent",
+      _a is not None and _a.d == 5 and "chapter 5" in _a.why)
+kd = kane_obs(me_at=(20, 20), kane_at=(20, 22), mode=KANE_DRIVE, st=4)
+check("before dark there is no fire to walk to", kp.kane_quest_action(kd, urgent=True) is None)
+kd2 = kane_obs(me_at=(20, 20), kane_at=(20, 34), mode=KANE_DRIVE, st=4)
+_a = kcm.kane_quest_action(kd2)
+check("contentmax closes in on the jeep before the last chapter",
+      _a is not None and "keeping near" in _a.why)
+kd3 = kane_obs(me_at=(20, 20), kane_at=(20, 25), mode=KANE_DRIVE, st=4)
+check("but not inside its reach, and not when already close", kcm.kane_quest_action(kd3) is None)
+check("the others do not shadow him", kp.kane_quest_action(kd2) is None)
+check("a retired jeep has no story left",
+      kp.kane_quest_action(kane_obs(mode=KANE_GONE, st=5, e=2)) is None)
+kon = kane_obs(me_at=(20, 22), kane_at=(40, 40), camp=(20, 22))
+check("stood on the camp with no scene: it lets it be for a while",
+      kp.kane_quest_action(kon) is None and kp.throttle.holding())
+
+# -- reading a chapter ------------------------------------------------------
+_klib = _KLib()
+check("all five chapters load", all(_klib.get("kane", n) for n in range(1, 6)))
+kr = _KRun(_klib, "kane", 1)
+kr.kane = 1
+ke = kane_obs()
+_a = kp.decide_kane_chapter(ke, kr)
+check("it picks the likelier way in", _a.kind == "enc_choice" and _a.ci == 0)
+kr.sent_at = None
+kr.node_key = "the_board"
+_a = kp.decide_kane_chapter(ke, kr)
+check("a bankable middle node is pushed past -- the chapter counts only at the end",
+      _a.kind == "enc_choice")
+kr.sent_at = None
+kr.node_key = "the_catalog"
+check("the last node is banked: read", kp.decide_kane_chapter(ke, kr).kind == "enc_bank")
+kr.node_key = "the_board"
+ke.players[2].ll = 3
+check("too hurt to risk a check, it walks away and leaves the chapter",
+      kp.decide_kane_chapter(ke, kr).kind in ("enc_bank", "enc_abort"))
+ke.players[2].ll = 7
+k5 = _KRun(_klib, "kane", 5)
+k5.kane = 5
+_a = kp.decide_kane_chapter(ke, k5)
+check("into his firelight: never the back-out", _a.kind == "enc_choice" and _a.ci != 0)
+k5.sent_at = None
+k5.node_key = "the_question"
+_a = kp.decide_kane_chapter(ke, k5)
+check("the truth, when its odds clear the nerve", _a.ci == 1)
+k5.sent_at = None
+ke.players[2].ll = 4
+_a = kp.decide_kane_chapter(ke, k5)
+check("the lie, when they do not", _a.ci == 2)
+ke.players[2].ll = 7
+ke.encounter = {"t": "enc_path", "biome": "kane", "id": 1, "kane": 1}
+kp.run = None
+_a = kp.decide(ke)
+check("an enc_path naming a chapter is played as one",
+      _a.kind == "enc_choice" and kp.run.kane == 1 and kp.stats["kane_scenes"] == 1)
+
+# -- what the wire says about him, after the fact ----------------------------
+kl = DamageLedger([
+    _ev(1.0, {"k": "kane_fire", "pid": 1, "q": 3, "r": 4, "hits": 2, "llLost": 2, "ll": 1, "sq": 40}),
+    _ev(1.0, {"k": "kane_fire", "pid": 1, "q": 3, "r": 4, "hits": 2, "llLost": 2, "ll": 1, "sq": 40}, arch=2),
+    _ev(16.0, {"k": "kane_fire", "pid": 1, "q": 3, "r": 4, "hits": 1, "llLost": 1, "ll": 0, "sq": 41}),
+    {"ts": 16.01, "ch": "rx", "arch": 1,
+     "d": {"t": "ev", "k": "downed", "pid": 1, "cause": "machine gun kane", "sq": 42}},
+])
+check("bursts are a cause in the loss ledger, counted once",
+      kl.loss_ledger().get("machine gun kane") == 3)
+check("and a wire death names him", [d["cause"] for d in kl.deaths()] == ["machine gun kane"])
+kwo = WireOracle(FindingLog(), "kane")
+kwo.proto = 8
+_kobs = Observation()
+_kobs.pid = 1
+kwo.on_rx({"t": "ev", "k": "kane_call", "pid": 1, "camp": 0}, _kobs)
+kwo.on_rx({"t": "ev", "k": "kane_fire", "pid": 1, "hits": 1, "llLost": 1, "ll": 6}, _kobs)
+check("a burst after a question is fine", not len(kwo.findings))
+kwo.on_rx({"t": "ev", "k": "kane_fire", "pid": 1, "hits": 0, "llLost": 0, "ll": 6}, _kobs)
+check("a second burst without a new question is a finding",
+      any(f.check == "kane_fired_unasked" for f in kwo.findings.first.values()))
+kwo.on_rx({"t": "ev", "k": "kane_fire", "pid": 3, "hits": 1, "llLost": 2, "ll": 4}, _kobs)
+check("a burst taking more than it hit is a finding",
+      any(f.check == "kane_burst_out_of_range" for f in kwo.findings.first.values()))
+kwo.on_rx({"t": "ev", "k": "kane_arc", "pid": 1, "stage": 3, "ending": "none"}, _kobs)
+kwo.on_rx({"t": "ev", "k": "kane_arc", "pid": 1, "stage": 2, "ending": "none"}, _kobs)
+check("the arc going back a chapter is a finding",
+      any(f.check == "kane_stage_backwards" for f in kwo.findings.first.values()))
+import metrics as _kmet
+with tempfile.TemporaryDirectory() as _ktd:
+    _kp = Path(_ktd) / "k.jsonl"
+    with Recorder(_kp, {"synthetic": True}) as _krec:
+        _krec.write("rx", 1, {"t": "ev", "k": "kane_call", "pid": 1, "camp": 0, "idx": 1, "sq": 1})
+        _krec.write("rx", 2, {"t": "ev", "k": "kane_call", "pid": 2, "camp": 0, "idx": 2, "sq": 2})
+        _krec.write("rx", 3, {"t": "ev", "k": "kane_call", "pid": 3, "camp": 1, "idx": 3, "sq": 3})
+        for _arch in (1, 2):
+            _krec.write("rx", _arch, {"t": "ev", "k": "kane_fire", "pid": 1, "hits": 1,
+                                      "llLost": 1, "ll": 6, "sq": 4})
+            _krec.write("rx", _arch, {"t": "ev", "k": "kane_arc", "pid": 2, "stage": 1,
+                                      "ending": "none", "sq": 5})
+    _kr = _kmet.RunReport(_kp).kane()
+check("metrics: two road questions, one dodged, one burst counted once",
+      _kr["calls"] == 2 and _kr["dodged"] == 1 and _kr["bursts"] == 1 and _kr["ll_lost"] == 1)
+check("metrics: who read which chapter", _kr["read"] == [(1, 2)] and _kr["stage"] == 1)
+
 print("config drift (firmware source is the authority)")
 _fw_src = _ino + "".join((_FW / f).read_text(encoding="utf-8")
-                         for f in ("tunnels.hpp",))
+                         for f in ("tunnels.hpp", "kane.hpp", "world-system.hpp"))
 
 
 def _fw_value(name):
@@ -2011,7 +2278,10 @@ _mirrored = ["MAP_COLS", "MAP_ROWS", "MAX_PLAYERS", "MAX_SEATED", "TICK_MS", "DA
              "ACT_FORAGE", "ACT_WATER", "ACT_TREAT", "ACT_SCAV", "ACT_SHELTER",
              "ACT_CRAFT", "ACT_SURVEY", "ACT_REST",
              "WEATHER_CLEAR", "WEATHER_RAIN", "WEATHER_STORM", "WEATHER_CHEM",
-             "WEATHER_FOG", "WEATHER_MIST"]
+             "WEATHER_FOG", "WEATHER_MIST",
+             "KANE_RANGE", "KANE_ROUNDS", "KANE_HIT_PCT", "KANE_BURST_CAP",
+             "KANE_BREAK_TICKS", "KANE_CHAPTERS", "KANE_DRIVE", "KANE_CAMP",
+             "KANE_GONE", "KT_SCRUB", "KT_DUNES", "KT_MARSH", "WORLD_TICK_INTERVAL"]
 _drift = []
 for _n in _mirrored:
     _fv = _fw_value(_n)
@@ -2255,6 +2525,8 @@ _c5 = pmod.make("coward", random.Random(1)); _c5.set_pid(2)
 _o = canteen_obs()
 _c5.decide(_o)                               # sends the CRAFT
 _o.me.inv_type[0] = config.CANTEEN_ITEM      # ...and the item_result lands
+_o.last_item_result = {"t": "item_result", "ok": True, "act": "craft",
+                       "recipe": config.CANTEEN_RECIPE}
 a = _c5.decide(_o)
 check("a crafted canteen is equipped, not crafted again",
       a.kind == "equip_item" and a.slot == 0)
@@ -2874,5 +3146,306 @@ async def _in_enc_check():
     await bc._on_message({"t": "nack", "rid": 7777, "cmd": "m", "why": "in_enc"})
     return bc.obs.me.in_encounter
 check("an in_enc nack marks us in a scene", asyncio.run(_in_enc_check()))
+
+print("items (use, litter, caravan, trades, extras)")
+import items as IT
+import quests as QM
+from encounters import EncounterRun, plan as enc_plan
+
+check("items.cfg: the Trauma Patch heals 2", config.ITEM_FX[1]["ll"] == 2)
+check("the Net Map reveals the whole map and is never spent",
+      config.ITEM_FX[38]["reveal"] == 99 and config.ITEM_FX[38]["key"])
+check("the Cursed Device does nothing on the board", 37 not in config.ITEM_FX)
+check("Panic Juice is litter", IT.is_junk(5))
+check("a material nothing is made from is litter", IT.is_junk(49))
+check("a recipe material is not", not IT.is_junk(24))
+check("the Sticky Note is litter -- unless a quest still needs it",
+      IT.is_junk(51) and not IT.is_junk(51, {51}))
+check("equipment is never litter", not IT.is_junk(11))
+check("food 3 (fell through 4) +3 wins back 1 LL",
+      IT.track_regain(3, 3, 1, IT.FOOD_THRESHOLDS) == 1)
+check("water 1 (fell through 5, 3 and the floor) +4 wins back all 3",
+      IT.track_regain(1, 4, 1 | 2 | 4, IT.WATER_THRESHOLDS) == 3)
+check("a full track wins nothing", IT.track_regain(6, 3, 0, IT.FOOD_THRESHOLDS) == 0)
+
+
+def item_obs(items, ll=6, cap=7, food=5, water=5, inv=(5, 3, 0, 0, 0), wounds=(0, 0),
+             rad=0, ap=5, fth=0, wth=0, kr=0, terrain=0):
+    o = canteen_obs(kr=kr, terrain=terrain)
+    me = o.me
+    me.ll, me.ll_cap, me.food, me.water, me.rad, me.ap = ll, cap, food, water, rad, ap
+    me.inv, me.wounds, me.f_thresh, me.w_thresh = list(inv), list(wounds), fth, wth
+    me.inv_type = [0] * config.INV_SLOTS_MAX
+    me.inv_qty = [0] * config.INV_SLOTS_MAX
+    for s, i in enumerate(items):
+        me.inv_type[s], me.inv_qty[s] = i, 1
+    return o
+
+
+def _pick(o, **kw):
+    p = IT.choose_consumable(o.me, **kw)
+    return p[1] if p else None
+
+
+check("LL 2 with a Trauma Patch: use it", _pick(item_obs([1], ll=2)) == 1)
+check("full LL: keep it", _pick(item_obs([1], ll=7)) is None)
+check("a patch that would spill a point waits", _pick(item_obs([1], ll=6)) is None)
+check("a +1 that fits goes in", _pick(item_obs([6], ll=6)) == 6)
+check("Uranium Candy is not the answer at LL 2", _pick(item_obs([50], ll=2)) is None)
+check("...only on the last LL", _pick(item_obs([50], ll=1)) == 50)
+check("a major wound gets the Anti-Rot Kit", _pick(item_obs([9], wounds=(0, 1))) == 9)
+check("rations under a threshold the track fell through",
+      _pick(item_obs([2], food=3, fth=1, ll=5)) == 2)
+check("Panic Juice is never used", _pick(item_obs([5], food=1, inv=(5, 0, 0, 0, 0))) is None)
+check("radiation 7 gets the Glow Flush", _pick(item_obs([4], rad=7)) == 4)
+check("AP items only when there is somewhere to be",
+      _pick(item_obs([8], ap=0)) is None and _pick(item_obs([8], ap=0), want_ap=True) == 8)
+check("a protected (quest) item is never used", _pick(item_obs([1], ll=2), protected={1}) is None)
+check("threat 10: the Panic Dart drops a tier", IT.choose_threat_item(item_obs([62]).me, 10)[1] == 62)
+check("threat 12: it does not", IT.choose_threat_item(item_obs([62]).me, 12) is None)
+check("threat 11: the Bile Flare does", IT.choose_threat_item(item_obs([54]).me, 11)[1] == 54)
+
+_give = IT.pay_for(3, [0, 1, 2, 0, 1])
+check("the caravan is paid exactly when it can be",
+      sum(_give[i] * config.CARAVAN_PAY_WORTH[i] for i in range(5)) == 3)
+check("never in water (it is refused)", IT.pay_for(2, [5, 0, 0, 0, 0]) is None)
+check("fuel counts double", IT.pay_for(4, [0, 0, 2, 0, 0]) == [0, 0, 2, 0, 0])
+check("buys the patch, scrap first",
+      IT.caravan_pick(item_obs([]).me, [[1, 2, 3], [5, 3, 3]], [0, 1, 0, 0, 3]) == (1, 1, [0, 0, 0, 0, 3]))
+check("never buys Panic Juice", IT.caravan_pick(item_obs([]).me, [[5, 3, 1]], [0, 5, 0, 0, 5]) is None)
+_o = item_obs([], inv=(5, 3, 0, 0, 2))
+check("a fair offer is taken (2 water for 2 scrap)",
+      IT.offer_is_fair(_o.me, {"give": [2, 0, 0, 0, 0], "want": [0, 0, 0, 0, 2]}, [4, 2, 0, 0, 0]))
+check("a lopsided one is not",
+      not IT.offer_is_fair(_o.me, {"give": [0, 0, 0, 0, 1], "want": [2, 0, 0, 0, 0]}, [4, 2, 0, 0, 0]))
+check("nor one that sells the food floor",
+      not IT.offer_is_fair(_o.me, {"give": [0, 0, 0, 0, 9], "want": [0, 2, 0, 0, 0]}, [4, 2, 0, 0, 0]))
+
+check("car_buy renders", Action("car_buy", item=1, n=1, give=[0, 0, 0, 0, 3]).to_msg()
+      == {"t": "car_buy", "item": 1, "n": 1, "give": [0, 0, 0, 0, 3]})
+check("trade_accept names the offerer", Action("trade_accept", frm=3).to_msg()
+      == {"t": "trade_accept", "from": 3})
+check("drop_item renders", Action("drop_item", slot=4, qty=2).to_msg()
+      == {"t": "drop_item", "slot": 4, "qty": 2})
+try:
+    Action("car_buy", item=1, n=1, give=[1, 0, 0, 0, 0]).to_msg()
+    check("car_buy refuses to offer water", False)
+except ValueError:
+    check("car_buy refuses to offer water", True)
+
+_p = pmod.make("coward", random.Random(1)); _p.set_pid(2)
+_o = item_obs([1], ll=3)
+a = _p.decide(_o)
+check("a policy uses the patch (use_item slot 0)", a.to_msg() == {"t": "use_item", "slot": 0})
+check("and waits for the result before sending another", _p.decide(_o).kind != "use_item")
+_p = pmod.make("scoremax", random.Random(1)); _p.set_pid(2)
+_o = item_obs([49] * 8)
+check("a full pack drops its litter", _p.decide(_o).kind == "drop_item")
+_p = pmod.make("scoremax", random.Random(1)); _p.set_pid(2)
+_o = item_obs([24], inv=(5, 3, 0, 2, 0), kr=1, terrain=config.TERR_SETTLEMENT)
+a = _p.decide(_o)
+check("at a Settlement it crafts a learned recipe it will use (Trauma Patch)",
+      a.kind == "act" and a.to_msg().get("r") == 1)
+_p = pmod.make("scoremax", random.Random(1)); _p.set_pid(2)
+_o = item_obs([], inv=(5, 3, 0, 0, 2))
+_o.trade_offers[3] = {"give": [2, 0, 0, 0, 0], "want": [0, 0, 0, 0, 2], "t": _time.monotonic()}
+a = _p.decide(_o)
+check("a fair offer made to it is accepted", a.kind == "trade_accept" and a.frm == 3)
+
+print("state: recipes from a bank, trade offers")
+_o = item_obs([], kr=0)
+_o.apply({"t": "ev", "k": "enc_bank", "pid": 2, "q": 10, "r": 10, "loot": [0] * 5,
+          "scoreD": 3, "recs": 0b101})
+check("enc_bank recs are learned on the spot", _o.me.known_recipes == 0b101)
+_o.apply({"t": "ev", "k": "enc_bank", "pid": 4, "q": 1, "r": 1, "loot": [0] * 5,
+          "scoreD": 3, "recs": 0b10})
+check("not someone else's", _o.me.known_recipes == 0b101)
+_o.apply({"t": "ev", "k": "trd_off", "from": 3, "to": 2, "give": [1, 0, 0, 0, 0],
+          "want": [0, 0, 0, 0, 1]})
+check("an offer to us is held", 3 in _o.trade_offers_live())
+_o.apply({"t": "ev", "k": "trd_off", "from": 3, "to": 4, "give": [1, 0, 0, 0, 0],
+          "want": [0, 0, 0, 0, 1]})
+_o.apply({"t": "ev", "k": "trd_res", "from": 3, "to": 2, "res": 2})
+check("and dropped when it resolves", 3 not in _o.trade_offers_live())
+
+print("encounter planner")
+_lib = pmod.shared_library()
+_q = pmod.make("quester", random.Random(1)); _q.set_pid(2)
+_o = item_obs([66], ll=6)
+_run = EncounterRun(_lib, "scrub", 21)
+k, ci, v = enc_plan(_run, _o, _q.worth(_o))
+check("holding the Strange Forks, the quester strikes them (gated in_tune)", (k, ci) == ("choice", 2))
+_o = item_obs([], ll=6)
+k, ci, v = enc_plan(_run, _o, _q.worth(_o))
+check("without them that choice is never planned", ci != 2)
+_run = EncounterRun(_lib, "scrub", 19)
+k, ci, v = enc_plan(_run, _o, _q.worth(_o))
+check("at Jack's Chopper the quester asks what's wrong (the quest)", (k, ci) == ("choice", 0))
+_run.node_key = "quest_accepted"
+check("and banks the terminal node rather than walking away",
+      enc_plan(_run, _o, _q.worth(_o))[0] == "bank")
+_run = EncounterRun(_lib, "scrub", 21)
+_run.enc = {"start_node": "ledge", "hazards": {"fall": {"penalty": {"ll": -2}, "ends_encounter": True}},
+            "nodes": {"ledge": {"can_bank": True, "choices": [
+                          {"success_node": "deep", "base_risk": 50, "skill": 0, "hazard_id": "fall"}]},
+                      "deep": {"loot": [{"res": 4, "qty": [1, 1]}]}}}
+_run.node_key = "ledge"
+_run.pending_items = [(66, 1)]
+_o = item_obs([], ll=1)
+check("a lethal roll with the forks pending: bank", enc_plan(_run, _o, _q.worth(_o))[0] == "bank")
+_o = item_obs([], ll=7)
+check("a survivable one that would lose the haul for a scrap: bank too",
+      enc_plan(_run, _o, _q.worth(_o))[0] == "bank")
+_run.pending_items = []
+check("with nothing to lose, it goes for the scrap",
+      enc_plan(_run, _o, _q.worth(_o))[:2] == ("choice", 0))
+
+print("quests")
+_cat = QM.build_catalog()
+_bad = []
+for _qq in _cat:
+    for _s in _qq.steps:
+        # Every goal node and gate choice is in at least one of the step's
+        # files (a Null Camp item can be paid in two different stages).
+        _seen_nodes, _seen_gates = set(), set()
+        for _b, _e in _s.files:
+            _enc = json.loads((QM.REPO_ENCOUNTERS / _b / f"{_e}.json").read_text(encoding="utf-8"))
+            _nodes = _enc.get("nodes") or {}
+            _seen_nodes |= set(_nodes)
+            _seen_gates |= {(n, c) for n, nd in _nodes.items()
+                            for c in range(len(nd.get("choices") or []))}
+        if _s.files and not _s.goal <= _seen_nodes:
+            _bad.append(f"{_s.key} goal {_s.goal - _seen_nodes} missing")
+        if not set(_s.gate) <= _seen_gates:
+            _bad.append(f"{_s.key} gate {set(_s.gate) - _seen_gates} missing")
+check("every quest step's nodes and gate choices exist in the content" +
+      (f" -- {_bad}" if _bad else ""), not _bad)
+check("step keys are unique", len({s.key for q in _cat for s in q.steps})
+      == sum(len(q.steps) for q in _cat))
+check("Kane has five chapters", len([q for q in _cat if q.key == "kane"][0].steps) == 5)
+check("the workshop teaches recipes 1-17",
+      {s.recipe for q in _cat if q.key == "workshop" for s in q.steps} == set(range(1, 18)))
+
+_fl = []
+def _jr(items=()):
+    j = QM.QuestJournal(ledger=QM.QuestLedger())
+    j.flag = lambda check, sev, summary, key=(), **d: _fl.append(check)
+    return j, item_obs(list(items))
+_fl.clear()
+_j, _o = _jr()
+_run = EncounterRun(_lib, "scrub", 20)
+_j.on_open(_run, 1)
+_run.choose(0); _j.on_choice(_run, 0, _o.me)
+_run.on_result({"out": 1, "loot": [0, 0, 2, 0, 0], "it": 26, "iq": 1})
+_j.on_result(_run, {"out": 1}, _o.me, 1)
+_j.on_bank(_run, _o.me, 1)
+check("handing Jack a mask we do not have goes through: quest_ungated", "quest_ungated" in _fl)
+check("and Jack never asked for it: quest_out_of_order", "quest_out_of_order" in _fl)
+check("the step is still booked done", "jack.deliver" in _j.done)
+_fl.clear()
+_j, _o = _jr([33])
+_j.done["jack.accept"] = _j.done["jack.mask"] = 1
+_run = EncounterRun(_lib, "scrub", 20)
+_run.choose(0); _j.on_choice(_run, 0, _o.me)
+_run.on_result({"out": 1})
+_j.on_result(_run, {"out": 1}, _o.me, 2)
+_j.on_bank(_run, _o.me, 2)
+check("with the mask, in order: no finding", not _fl and "jack.deliver" in _j.done)
+_fl.clear()
+_j, _o = _jr()
+_run = EncounterRun(_lib, "scrub", 21)
+_run.choose(2); _j.on_choice(_run, 2, _o.me)          # in_tune, without the forks
+_run.on_result({"out": 1})
+_j.on_result(_run, {"out": 1}, _o.me, 1)
+check("a requires_item choice that runs without the item: gate_bypassed", "gate_bypassed" in _fl)
+_fl.clear()
+_j, _o = _jr()
+_j.expect.append((26, _time.monotonic() - 1, 10, 10, "scrub", 20))
+_j.check_arrivals(_o)
+check("a banked item missing from pack, body and hex: banked_item_missing",
+      "banked_item_missing" in _fl)
+_fl.clear()
+_j, _o = _jr([26])
+_j.expect.append((26, _time.monotonic() - 1, 10, 10, "scrub", 20))
+_j.check_arrivals(_o)
+check("...and silent once it is in the pack", not _fl)
+_j, _o = _jr()
+_j.on_recipes(0b11, 3)
+check("a banked recipe is the workshop's learn step", "recipe.1.learn" in _j.done
+      and "recipe.2.learn" in _j.done)
+_j.on_craft(1, 4)
+check("and a craft its make step", "recipe.1.craft" in _j.done)
+_j, _o = _jr([51])
+check("an item an open step needs is protected", 51 in _j.protected_items())
+
+print("gate probe")
+QM.LEDGER.reset()
+_q = pmod.make("quester", random.Random(1)); _q.set_pid(2)
+_o = item_obs([], ll=6)
+_o.encounter = {"biome": "scrub", "id": 21}
+a = _q.decide(_o)
+check("the quester sends a gated choice it cannot take, once",
+      a.kind == "enc_choice" and a.ci in (2, 3) and "probe" in a.why)
+_q.on_reply("enc_choice", False, "no_item")
+check("and books the board's no_item as the gate holding",
+      list(QM.LEDGER.gates_probed.values()) == ["refused"])
+_o.encounter = None
+QM.LEDGER.reset()
+
+# -- Throttle: every send cooldown, on a clock a test can move --------------
+print("throttle (cooldowns)")
+from policy.base import Throttle, ONCE
+_now = [100.0]
+_th = Throttle(clock=lambda: _now[0])
+check("first send goes", _th.ok(("equip", 1, 5), 5.0))
+check("the same key is refused inside its period", not _th.ok(("equip", 1, 5), 5.0))
+check("another key is not", _th.ok(("equip", 2, 5), 5.0))
+_now[0] += 5.0
+check("and it goes again once the period has passed", _th.ok(("equip", 1, 5), 5.0))
+check("ready() records nothing", _th.ready("craft", 20.0) and _th.ready("craft", 20.0))
+_th.mark("craft")
+check("mark() does", not _th.ready("craft", 20.0))
+_th.clear("craft")
+check("clear() forgets a key", _th.ready("craft", 20.0))
+check("ONCE never comes round", _th.ok(("shelter", 3, 1, 1), ONCE)
+      and not _th.ok(("shelter", 3, 1, 1), ONCE))
+_now[0] += 1e6
+check("not even a long time later", not _th.ok(("shelter", 3, 1, 1), ONCE))
+_th.hold("kane", 20.0)
+check("hold() refuses a key for a while", _th.held("kane") and not _th.ready("kane", 0.0)
+      and _th.holding() == ["kane"])
+_now[0] += 20.0
+check("and lets go when it runs out", not _th.held("kane") and _th.ready("kane", 0.0))
+_th.reset()
+check("reset() forgets everything", _th.ready(("equip", 1, 5), 5.0) and not _th.holding())
+
+# The policies' clocks are injectable, and a cooldown moves with them.
+_tp = pmod.make("scoremax", random.Random(1)); _tp.set_pid(2)
+_tc = [1000.0]
+_tp.clock = lambda: _tc[0]
+check("a policy's throttle reads the policy's clock", _tp.throttle.clock() == 1000.0)
+check("equip is sent once", _tp._equip(0, 5, "x") is not None and _tp._equip(0, 5, "x") is None)
+_tc[0] += _surv.EQUIP_RETRY_S
+check("and again once its period passes on that clock", _tp._equip(0, 5, "x") is not None)
+
+# -- the layer list: every name resolves on every policy -------------------
+print("layers (the decision chain)")
+from policy.survivor import LAYER_METHOD
+for _name, _cls in pmod.REGISTRY.items():
+    if not issubclass(_cls, pmod.SurvivorPolicy):
+        continue
+    _p = pmod.make(_name, random.Random(1))
+    check(f"{_name}: every layer is a method",
+          all(callable(getattr(_p, LAYER_METHOD.get(n, n), None)) for n in _p.layers))
+    check(f"{_name}: the chain ends in a layer that always decides",
+          _p.layers[-1] in ("pursue", "camp_errand"))
+_lp = pmod.make("scoremax", random.Random(1)); _lp.set_pid(2)
+_lo = surface_obs()
+_la = _lp.decide(_lo)
+check("a decision names the layer that made it", _la.why.split(":")[0] in _lp.layers)
+_lp.layers = ("pursue",)
+check("a subclass can reorder the chain by name", _lp.decide(_lo).why.startswith("pursue:"))
+_lp.pursue = lambda obs: Action("noop", why="pinned")
+check("a method replaced on the instance is honoured", _lp.decide(_lo).why == "pursue: pinned")
 
 print(f"\n{ok} checks passed")

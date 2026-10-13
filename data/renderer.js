@@ -41,6 +41,10 @@ let quakeConvertedPixelsThisFrame = [];
 // Underground: pixel centres of every open cell in sight while a surface quake
 // is shaking -- where renderTunnelTremor() sifts grit down from the ceiling.
 let tunnelTremorPixelsThisFrame = [];
+// Underground: every lit tunnel cell on screen this frame (tunnel-board.js,
+// "Section lights") -- { x, y, level, op, terrain }. The darkness passes cut
+// holes for them and renderTunnelLights() hangs the fittings over them.
+let tunnelLitThisFrame = [];
 // "q_r" of every hex drawn with an atlas tile this frame. Those tiles carry
 // their own edge line (and a prop standing up from the hex in front covers
 // it, as it should), so renderGridLines() leaves them alone.
@@ -900,6 +904,8 @@ function renderHexTerrain(cam) {
   // line indexes the surface map -- so underground no per-hex jitter, just
   // a note of which open cells are in sight for the grit to fall on.
   const tunnelTremor = myDepth && quakeField ? quakeField.peakEnvelope() : 0;
+  const lightNow = performance.now();
+  if (myDepth) tunnelLightsTick(lightNow);
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq   = centreQ + dq;
@@ -919,7 +925,12 @@ function renderHexTerrain(cam) {
 
       const dist     = boardDist(meAct.q, meAct.r, mapQ, mapR);
       const cell     = boardCells()[mapR][mapQ];
-      const visible  = dist <= effectiveVR && cell !== null;
+      // A lit tunnel cell is in sight from anywhere below -- while its tube is
+      // actually giving light: a bank that has not come on yet is still dark,
+      // and a tube mid-stutter blinks the corridor in and out of view.
+      const light    = myDepth && cell?.lt ? tunnelLightLevel(mapQ, mapR, cell, lightNow) : 0;
+      const lit      = light > 0.02;
+      const visible  = (dist <= effectiveVR || lit) && cell !== null;
       // One key per hex, not one per lookup: at minimum zoom this loop runs
       // ~2000 times a frame and both sets below are keyed the same way.
       const key      = `${mapQ}_${mapR}`;
@@ -935,7 +946,9 @@ function renderHexTerrain(cam) {
       // Survey peeks sit one ring past the edge and already read as "not here
       // right now" through their 0.7 alpha, so only live sight gets the ring
       // fade — stacking both would make a surveyed hex darker than the fog.
-      const fade     = visible ? sightFadeLevel(dist, effectiveVR) : 0;
+      // Nor does the edge of sight veil a lit one: the light is not yours.
+      const fade     = visible && !lit ? sightFadeLevel(dist, effectiveVR) : 0;
+      if (lit) tunnelLitThisFrame.push({ x: cx, y: cy, level: light, op: cell.op | 0, terrain: cell.terrain });
 
       drawHexPath(ctx, cx, cy, HEX_SZ - 1);
       applyHexFill(cell, dist, visible, surveyed, effectiveVR, remembered);
@@ -1012,7 +1025,8 @@ function renderGridLines(cam) {
 
 function isPOIRenderable(mapQ, mapR, meAct) {
   const cell = boardCells()[mapR]?.[mapQ];
-  if (!cell?.poi) return false;
+  // Machine Gun Kane's next chapter (kane-jeep.js) is a quest hex too.
+  if (!cell?.poi && !(typeof kaneQuestAt === 'function' && kaneQuestAt(mapQ, mapR))) return false;
   const dist = boardDist(meAct.q, meAct.r, mapQ, mapR);
   const effectiveVR = getEffectiveVR();
   return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
@@ -1351,21 +1365,110 @@ function renderTunnelTremor() {
 // not stop just because you cannot see the sky.
 function renderUnderground() {
   if (!myDepth) return;
+  drawDarkUnderLights((c) => {
+    c.globalAlpha = 0.34;
+    c.fillStyle   = 'rgb(6,8,14)';
+    c.fillRect(0, 0, cssWidth, cssHeight);
+    // Radial falloff centred on the viewport -- the lamp only reaches so far.
+    const g = c.createRadialGradient(
+      cssWidth / 2, cssHeight / 2, HEX_SZ * 0.5,
+      cssWidth / 2, cssHeight / 2, Math.max(cssWidth, cssHeight) * 0.62);
+    g.addColorStop(0,   'rgba(0,0,0,0)');
+    g.addColorStop(0.55,'rgba(0,0,0,0.45)');
+    g.addColorStop(1,   'rgba(0,0,0,0.92)');
+    c.globalAlpha = 1;
+    c.fillStyle   = g;
+    c.fillRect(0, 0, cssWidth, cssHeight);
+  });
+}
+
+// ── Darkness the section lights cut through ───────────────────────
+// fill(c) paints a darkness layer -- the underground vignette, the night tint
+// -- onto c. With no lit tunnel cell on screen that is just ctx. With some,
+// it goes onto an offscreen canvas first, a soft hole is cut out of it under
+// every lit cell (deeper the brighter the tube), and the result goes over the
+// board: the corridors the lights reach stay as bright as the art, at any
+// distance and at any hour, and the dark closes in again between them.
+let _darkCanvas = null, _darkCtx = null;
+function drawDarkUnderLights(fill) {
+  if (!tunnelLitThisFrame.length) {
+    ctx.save();
+    fill(ctx);
+    ctx.restore();
+    return;
+  }
+  if (!_darkCanvas) {
+    _darkCanvas = document.createElement('canvas');
+    _darkCtx    = _darkCanvas.getContext('2d');
+  }
+  if (_darkCanvas.width !== canvas.width || _darkCanvas.height !== canvas.height) {
+    _darkCanvas.width  = canvas.width;
+    _darkCanvas.height = canvas.height;
+  }
+  const c = _darkCtx;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, _darkCanvas.width, _darkCanvas.height);
+  c.setTransform(ctx.getTransform());
+  c.save();
+  fill(c);
+  c.restore();
+  c.save();
+  c.globalCompositeOperation = 'destination-out';
+  const rad = HEX_SZ * 1.35;
+  for (const L of tunnelLitThisFrame) {
+    const a = 0.95 * L.level;
+    const g = c.createRadialGradient(L.x, L.y, 0, L.x, L.y, rad);
+    g.addColorStop(0,    `rgba(0,0,0,${a})`);
+    g.addColorStop(0.55, `rgba(0,0,0,${a * 0.8})`);
+    g.addColorStop(1,    'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.beginPath();
+    c.arc(L.x, L.y, rad, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.restore();
   ctx.save();
-  ctx.globalAlpha = 0.34;
-  ctx.fillStyle   = 'rgb(6,8,14)';
-  ctx.fillRect(0, 0, cssWidth, cssHeight);
-  // Radial falloff centred on the viewport -- the lamp only reaches so far.
-  const g = ctx.createRadialGradient(
-    cssWidth / 2, cssHeight / 2, HEX_SZ * 0.5,
-    cssWidth / 2, cssHeight / 2, Math.max(cssWidth, cssHeight) * 0.62);
-  g.addColorStop(0,   'rgba(0,0,0,0)');
-  g.addColorStop(0.55,'rgba(0,0,0,0.45)');
-  g.addColorStop(1,   'rgba(0,0,0,0.92)');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
-  ctx.fillStyle   = g;
-  ctx.fillRect(0, 0, cssWidth, cssHeight);
+  ctx.drawImage(_darkCanvas, 0, 0);
   ctx.restore();
+}
+
+// ── The light on the floor ────────────────────────────────────────
+// A cold fluorescent wash under each lit cell, stretched along the corridor
+// (side to side in rooms and shafts). No fitting is drawn -- the light is
+// the only sign of it. Under the survivors, which still reads as lit: the
+// darkness passes that come after cut their holes right here.
+const TUN_POOL_RGB = '150,212,172';
+function _tubeAngle(L) {
+  const op = L.op & 0x3F;
+  if ((L.op & 0x80) || L.terrain === 12 || L.terrain === 13 || !op) return 0;
+  let d = -1;
+  for (let k = 0; k < 3 && d < 0; k++)
+    if ((op >> k) & 1 && (op >> (k + 3)) & 1) d = k;   // a straight run through the cell
+  if (d < 0) for (let k = 0; k < 6 && d < 0; k++) if ((op >> k) & 1) d = k;
+  return (30 - 60 * d) * Math.PI / 180;               // side d sits at 30 - 60d degrees
+}
+function renderTunnelLights() {
+  if (!myDepth || !tunnelLitThisFrame.length) return;
+  const poolR = HEX_SZ;
+  for (const L of tunnelLitThisFrame) {
+    const lv = L.level;
+    ctx.save();
+    ctx.translate(L.x, L.y);
+    ctx.rotate(_tubeAngle(L));
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.scale(1.35, 0.85);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, poolR);
+    g.addColorStop(0,   `rgba(${TUN_POOL_RGB},${0.16 * lv})`);
+    g.addColorStop(0.6, `rgba(${TUN_POOL_RGB},${0.06 * lv})`);
+    g.addColorStop(1,   `rgba(${TUN_POOL_RGB},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, poolR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 }
 
 // ── Time-of-day tint overlay ──────────────────────────────────────
@@ -1378,10 +1481,16 @@ function renderTimeOfDay() {
   const lerpRate = stillResting ? RESTING_LERP_RATE : MOVING_LERP_RATE;
   displayAP += (apTarget - displayAP) * lerpRate;
   const phase = getTimePhase(displayAP);
+  // Underground the section lights cut through the night as well: electric
+  // light does not care where the sun is.
+  const tint = (c) => {
+    c.globalAlpha = phase.a;
+    c.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
+    c.fillRect(0, 0, cssWidth, cssHeight);
+  };
+  if (myDepth && phase.a > 0.02) { drawDarkUnderLights(tint); return; }
   ctx.save();
-  ctx.globalAlpha = phase.a;
-  ctx.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
-  ctx.fillRect(0, 0, cssWidth, cssHeight);
+  tint(ctx);
   ctx.restore();
 }
 
@@ -1418,11 +1527,19 @@ const LAYERS = [
   // The caravan's convoy sticker spans most of its hex, so it goes UNDER the
   // survivors: a pawn trading at the caravan stays on top of it.
   { name: 'caravan',      draw: (cam) => { if (!myDepth) renderCaravan(cam); } },
+  // Machine Gun Kane (kane-jeep.js): his camp, the house in the glass, the
+  // jeep and its range ring while he waits for an answer -- under the pawns
+  // like the caravan. His fire is kane_light, over the night tint.
+  { name: 'kane',         draw: (cam) => { if (!myDepth) renderKane(cam); } },
   // The dust the Motorbikes kick up (bike-dust.js), under the pawns so each
   // bike sits in front of its own cloud. Fed by renderCharacters() below, so
   // it draws what the bikes threw up to last frame.
   { name: 'bike_dust',    draw: (cam) => { if (bikeDust) { bikeDust.update(); bikeDust.render(ctx, cam.ox, cam.oy, HEX_SZ, myDepth, cssWidth, cssHeight); } } },
+  // The tunnel's section lights, under the survivors (renderTunnelLights).
+  { name: 'tunnel_lights', draw: (_)  => renderTunnelLights() },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
+  // His bursts: tracers, the muzzle flash, the brass -- over the pawns they hit.
+  { name: 'kane_fx',      draw: (cam) => { if (!myDepth) renderKaneFx(cam); } },
   { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
   // The Understory's spore flights and burst motes: in the air over the
   // ground and the entities, under the weather (eco-field.js drawAir).
@@ -1447,6 +1564,9 @@ const LAYERS = [
   // The fireballs, sparks, flashes and glowing craters go OVER the tint: they
   // are light, and a fireball at night should be the brightest thing there.
   { name: 'debris_light', draw: (cam) => { if (debrisField && !myDepth) debrisField.drawLight(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
+  // Kane's fire (kane-jeep.js): he only lights it after dusk, so it is light
+  // over the tint, the same reasoning as the fireballs above.
+  { name: 'kane_light',   draw: (cam) => { if (!myDepth) renderKaneLight(cam); } },
 ];
 
 // ── Render ──────────────────────────────────────────────────────
@@ -1460,6 +1580,7 @@ function render() {
   quakePixelsThisFrame = new Map();
   quakeConvertedPixelsThisFrame = [];
   tunnelTremorPixelsThisFrame = [];
+  tunnelLitThisFrame = [];
   fireHexesThisFrame = [];
   if (quakeField) quakeField.update(weatherNow);
   if (debrisField) debrisField.update(weatherNow);

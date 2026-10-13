@@ -29,6 +29,12 @@ This is how the hex terrain tiles are being redrawn:
     kept in `art/hex-sheets/src/`.
   - Forage animals: `art/hex-sheets/forrageAnimal.png`, 80 px cells.
   - See `docs/dev-loop.md`, "Art assets".
+- **Bunker Entrance (2026-10-12):** six props cut from the user's
+  image-gen sheet and set on Open Scrub ground. See
+  [Bunker Entrance](#bunker-entrance-2026-10-12).
+- **Vent Shaft (2026-10-12):** six vent shafts cut from the user's second
+  image-gen sheet the same way, set on Open Scrub ground. See
+  [Vent Shaft](#vent-shaft-2026-10-12).
 - **Tunnels (2026-09-27):** the bunker board is drawn from the user's
   underground sheets now: 17 overhead corridor pieces turned onto each cell's
   open sides, 18 angled rooms, and shaft and cave-in interiors. See
@@ -451,6 +457,94 @@ master is backed up as `hexBrokenUrban.bak.png` in scratchpad 2a362bec.
   and the cluttered tiles drawn in the game over a painted-in city;
   observer loads clean. Not synced, not flashed. The firmware is untouched:
   Broken Urban's count is still 10.
+
+## Bunker Entrance (2026-10-12)
+
+The user generated six bunker entrances from an image-gen prompt
+(`bunker-hexes01.png`, on their Desktop) and said "they are turned wrong so
+you will have to clip and use the open scrub background". The painting is
+pointy-top isometric hexes on slabs, so only the props are used.
+
+| Cell | Prop |
+|---|---|
+| 0 | concrete stairwell, hazard-striped steps |
+| 1 | round vault hatch, lid open, ladder |
+| 2 | blast door in a grassed earth mound |
+| 3 | concrete elevator head-house, doors pried open |
+| 4 | steel cellar doors, jerrycan, rope |
+| 5 | sandbagged trench to a riveted bunker door, barbed wire |
+
+- **Face:** the backdrop is black connected to the image border, found after
+  a 5x5 opening, because the lid's outline joins the hatch pit to it. Pad the
+  crop first: the source's black margin is only about 4 px. The slab comes
+  off column by column, from the bottom up to the ink line above it.
+- **Matte:** a hand outline per prop. Ground floods in from outside it through
+  ground-coloured pixels only (b* > 14 and L* > 55, stopped by ink). Sand
+  and the pale green patches are yellow (b* 17-25) and concrete is grey
+  (b* 8-10), so the flood never enters concrete. Colour clustering and
+  GrabCut both failed here, because the ground's tufts and cracks are the same
+  black as the pits and outlines. The mound, the embankment and the sandbags
+  are ground-coloured, so they are forced polygons that fade over 18 px where
+  the source hex edge cut them. The ink rim gets the warm ink colour at the
+  ink fraction its lightness implies.
+- **Ground:** Open Scrub master cells 0-2, dealt `i % 3`. Every surface hatch
+  sits on Open Scrub (`placeSurfaceHatches()`), so the tile melts into its
+  neighbours.
+- **Grade:** the Broken Urban recipe at 0.40 strength. The source's pure
+  black ink is lifted to the sheets' warm black (30, 28, 20).
+- **Placement:** one scale (0.60) for all six, with the source face centre
+  4 px below the hex centre. Silhouette shadow (alpha blurred 3 px, offset
+  (3, 4), 30%).
+- **No firmware or client change:** the hatch keeps its Open Scrub variant
+  and the client wraps it `% 6`. Page: q92, 106 KB, worst visible RMSE 3.40.
+  Checked in the mock: all six are drawn by the real renderer. Not synced.
+- Scripts `gcut.py` (outlines, face), `matte2.py` and `compose.py` are in
+  scratchpad `8564a390-76e9-4d95-94f4-75ac3bf1312a\scratchpad\bunk`.
+
+## Vent Shaft (2026-10-12)
+
+The user generated six surface vent shafts (`bunker-shaft-hexes01.png`, on
+their Desktop) and asked for "the same preprocessing" as the bunkers. The
+sheet differs from the bunker sheet in two ways that change the cut.
+
+| Cell | Prop |
+|---|---|
+| 0 | concrete vent stack, rusted rain cap, grille torn open, ladder |
+| 1 | louvred intake housing with fan, panel on the sand, pit and ladder |
+| 2 | open round shaft with hazard collar and ladder, grate dragged aside |
+| 3 | two gooseneck exhaust pipes on a pad, floor grate pried open |
+| 4 | storm-drain culvert, bars bent apart, in bushes and tall grass |
+| 5 | riveted rusty sheet-steel vent tower, side hatch open onto a ladder |
+
+- **White backdrop:** the face mask is the bunker one with the backdrop as
+  border-connected near-white (min channel >= 225) and the crop padded with
+  white. The slab scan now skips the slab's own bottom outline before
+  looking for the dividing ink line.
+- **Bushes round every prop:** the generator ignored "at most one small
+  bush". The bushes touching the shaft are kept as part of the prop, and
+  isolated tufts, agaves and stones are left out by the hand outline. The
+  bushes share the ground patches' hue, so the b* gate would eat them.
+  The flood gate is each tile's own two ground colours instead (k-means on
+  the face outside the outline, dE < 9 with L* weighted 0.5). Bush bodies
+  sit 14+ dE from both and concrete 13+.
+- **Enclosed pockets:** only sand-coloured ones count as ground (L* > 80,
+  dE < 7 to the sand colour). Bush highlights are patch-coloured pockets
+  and must stay; a general pocket rule punched holes in every bush.
+- **Rim fade for all:** anything within 24 px of the cut hex rim fades,
+  except NOFADE polygons round structure that overhangs the hex outline (the
+  rain cap, the pipe elbows, the tower lip). A DROP polygon removes a painted
+  dune shadow behind the culvert's grass (non-ink pixels only).
+- **Scale 0.57:** the bunkers' 0.60 times the face-width ratio of the sheets
+  (376 vs 397 px), so props keep the same size against the hex. The face
+  centre is the middle of the hex's vertical side edges, not the face bbox,
+  because tall props overhang the top vertex. Prop reach is 0.93-1.02 of the
+  hex; only faded bush tips reach the edge.
+- Ground, grade, shadow, DY: as for the bunkers. No code change: the client
+  wraps the hatch's Open Scrub variant `% 6`. Page: q95, 150 KB, worst
+  visible RMSE 3.49 (tiles.json ec31e464ef3f). Checked in the mock: all six
+  drawn by the real renderer. Not synced.
+- Scripts `shaftcut.py` (face, outlines, matte) and `compose.py` are in
+  scratchpad `8564a390-76e9-4d95-94f4-75ac3bf1312a\scratchpad\shaft`.
 
 ## Integration
 

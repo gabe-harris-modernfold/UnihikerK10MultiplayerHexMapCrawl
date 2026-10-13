@@ -1,0 +1,119 @@
+{
+  "id": "kane_4_the_ring",
+  "title": "The Ring",
+  "kane": {
+    "chapter": 4
+  },
+  "start_node": "the_trench",
+  "nodes": {
+    "the_trench": {
+      "text": "At the edge of the glass the ground has been worn into a trench: tyre tracks laid on tyre tracks until they are a foot deep and smooth as a riverbed, running round the glass field in one long loop. Where the trench comes nearest the glass it swerves away, every lap, at the same place, the way a hand jerks back from a stove. A stone's throw out on the glass stands a house, fused through, and whole.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Walk out across the glass to the house.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_door",
+          "hazard_id": "glass_burn"
+        },
+        {
+          "label": "Walk the trench first.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_door",
+          "hazard_id": "lap_after_lap"
+        }
+      ]
+    },
+    "the_door": {
+      "text": "The front door is open and a woman stands in it, set in clear green glass. She has her coat on and a small suitcase at her feet, and one hand raised, palm out, the way you wave to someone leaving, or someone coming home. Behind her the clock in the hall says 11:47. Her face is turned toward the trench. From her doorway she would see every lap of it.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        },
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Look at the suitcase.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_letter",
+          "hazard_id": "suitcase_glass"
+        },
+        {
+          "label": "Look where she is looking.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "the_letter",
+          "hazard_id": "dust_on_the_loop"
+        }
+      ]
+    },
+    "the_letter": {
+      "text": "Under the suitcase handle, fused into the glass with it, is a letter she meant to post on the way. It is addressed to a boy, care of an evacuation office, and you can read it through the glass: THEY SAY THE TRAINS ARE RUNNING AGAIN ON SATURDAY. I AM COMING TO FETCH YOU MYSELF. WAIT FOR ME WHERE THEY PUT YOU. I WILL BE THE ONE WAVING. It is dated Friday the eleventh of November. He knows. He has known for sixty years. The trench goes round and round her so that he never has to stop, because stopping would be arriving.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "loot_table": "glass_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "glass_burn": {
+      "text": "The glass is warm through your boots and gets warmer the further out you go. Whatever fused it hasn't finished with it.",
+      "penalty": {
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "lap_after_lap": {
+      "text": "You walk the trench and it doesn't end, because it doesn't, and you lose an hour going round before you notice you have passed the same rock three times.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "suitcase_glass": {
+      "text": "The suitcase is glass all the way through, and so is the edge of the handle. It takes a slice out of your fingers.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "dust_on_the_loop": {
+      "text": "You look where she is looking. Far round the loop a plume of dust is coming on along the trench. You don't wait to see whose. You run, and the glass takes the soles of your boots.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": true
+    }
+  }
+}

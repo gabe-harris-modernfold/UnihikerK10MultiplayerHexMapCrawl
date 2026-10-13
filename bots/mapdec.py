@@ -80,6 +80,12 @@ class WorldMap:
         # Keyed on wrapped (q, r).  A regen replaces the whole map, and with
         # it this.
         self.extra_cost: dict[tuple[int, int], int] = {}
+        # The same, for a hazard that moves: Machine Gun Kane's reach while
+        # he is on the road (state.py Observation._refresh_kane_danger).  Kept
+        # apart from extra_cost because the eco message replaces that one
+        # wholesale, and because a search that is looking for cover from him
+        # has to be able to leave it out (dijkstra's `danger`).
+        self.danger_cost: dict[tuple[int, int], int] = {}
 
     def in_bounds(self, q: int, r: int) -> bool:
         return self.wraps or (0 <= q < self.cols and 0 <= r < self.rows)

@@ -52,6 +52,7 @@ enum SndStoryKind : uint8_t {
   SS_SAY,           // a = vocab id, b = style: one word/line, raw
   SS_CALIBRATE,     // play the measurement sequence (GET /sndtest): see sndCalBlock()
   SS_STOP,          // silence everything now: effects, speech, the sequence (the sound desk)
+  SS_LIGHTS,        // a = banks: a section of tunnel lights clunking on, one bank after another
   SS_COUNT
 };
 // For the sound desk (GET /sndinfo), in enum order.
@@ -59,7 +60,7 @@ static const char* const SND_STORY_NAME[] = {
   "none", "boot", "dawn", "dusk", "join", "left", "downed", "threat", "weather", "enc_start",
   "enc_win", "enc_thrown", "enc_hazard", "enc_cleared", "caravan", "quake", "fire", "flood",
   "doom_taunt", "doom_band", "score_up", "score_down", "tunnel", "regen", "thunder", "sfx",
-  "geiger", "say", "calibrate", "stop" };
+  "geiger", "say", "calibrate", "stop", "lights" };
 static_assert(sizeof(SND_STORY_NAME) / sizeof(SND_STORY_NAME[0]) == SS_COUNT, "SND_STORY_NAME must match SndStoryKind");
 
 struct SndCue { uint8_t kind, a, b, c; };
@@ -266,6 +267,17 @@ static void sndHandleCue(const SndCue& c) {
     case SS_SCORE_UP:   sndFx(SFX_SCORE_UP); break;
     case SS_SCORE_DOWN: sndFx(SFX_ROTTEN_CHORD); break;
     case SS_TUNNEL:     if (sndCool(sndLastFx, SS_TUNNEL, 2500)) sndFx(SFX_SEWER_ECHO); break;
+    case SS_LIGHTS: {
+      // The relays, then the tubes: a thud per bank as the lights walk out
+      // (the client spaces its banks TUN_LIGHT_BANK_MS apart, data/tunnel-
+      // board.js), capped at two -- a delayed effect holds its player while it
+      // waits, and the mix has only SFX_PLAYERS -- then the buzz of a fitting
+      // that will not settle.
+      int thuds = c.a < 2 ? 1 : 2;
+      for (int i = 0; i < thuds; i++) sndFx(SFX_DISTANT_THUD, 420.0f * i);
+      sndFx(SFX_BROKEN_TECH, 420.0f * thuds + 200.0f);
+      break;
+    }
     case SS_REGEN:
       sndFx(SFX_POWER_DOWN);
       musWindDown(0.05f, 1.2f, 2.0f);

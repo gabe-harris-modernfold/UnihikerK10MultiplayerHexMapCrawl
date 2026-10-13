@@ -46,6 +46,16 @@ class ContentMaxPolicy(SurvivorPolicy):
     min_success = 0.30
     bank_greed = 0.40
     rest_below_ll = 3
+    # Machine Gun Kane's five chapters are the most authored content on the
+    # map, so this is the bot that goes after them: a long walk to a camp or
+    # the house, and before the last chapter it keeps near the jeep (outside
+    # his reach) so his fire is a short walk when it is lit at dusk.
+    kane_quest_reach = 60
+    kane_shadow = True
+    # In a scene: a node it has never reached is worth a token or two on top
+    # of its loot, and a failed roll a little less than to a survival bot.
+    novelty_bonus = 3.0
+    encounter_risk = 0.8
 
     def pursue(self, obs) -> Action:
         me = obs.me

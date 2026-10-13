@@ -90,7 +90,7 @@ function buildMap() {
         resources[`${c}_${r}`] = { res: rType, amt: 2 + (idx % 2), respawnTimer: 0 };
       }
       if (idx % 31 === 7) dd |= 0x80;                    // POI
-      if (idx % 23 === 3) dd |= 0x40;                    // shelter
+      if (idx % 23 === 3 && tt !== 9) dd |= 0x40;        // shelter (never on a Settlement)
       s += hex2(tt) + hex2(dd) + hex2(vv);
     }
   }
@@ -479,7 +479,7 @@ function buildTunnels() {
   for (let r = 0; r < TUN_ROWS; r++) {
     tunnel.push([]);
     for (let q = 0; q < TUN_COLS; q++)
-      tunnel[r].push({ tt: 15, res: 0, amt: 0, variant: 0, poi: 0, footprints: 0, op: 0 });
+      tunnel[r].push({ tt: 15, res: 0, amt: 0, variant: 0, poi: 0, footprints: 0, op: 0, sec: TUN_SEC_NONE, lit: 0 });
   }
 
   // Shafts: one per column band, never touching another shaft.
@@ -574,6 +574,141 @@ function buildTunnels() {
   console.log(`[tunnels] ${TUN_COLS}x${TUN_ROWS} hatches=${n} floor=${floor} rooms=${rooms.length} ` +
     `caves=${caves} artless=${artless} shaftFreePaths=${shaftFree ? 'ok' : 'FAILED'} ` +
     bunkerHatches.map((h, i) => `#${i}(${h.sq},${h.sr})->(${h.tq},${h.tr})`).join(' '));
+  // The control-panel scenes, one in a room of every lighting section.
+  placeTunnelSections();
+}
+
+// ── Section lights -- mirrors "Section lights" in tunnels.hpp ─────────────────
+// The board is cut into sections, each with a control-panel scene (the tunnel
+// pool, data/encounters/tunnel) in one of its rooms. Reach a node marked
+// "lights": true and the section's lights come on for everyone: every cell
+// gets c.lit = its bank (corridor steps from the panel + 1) | TLIT_FLICKER for
+// a tube that never settles. A lit cell is in sight from anywhere below.
+const TUN_SEC_NONE = 0xFF, TUN_SECTIONS_MAX = 6, TUN_SECTION_CELLS = 11;
+const TLIT_BANK = 0x3F, TLIT_FLICKER = 0x40, TLIT_FLICKER_PCT = 10;
+
+function tunLightable(q, r) { const t = tunnel[r][q].tt; return t === 12 || t === 13 || t === 14; }
+
+// tunSteps(): corridor steps over open sides, null where it does not reach.
+function tunSteps(q0, r0, sec = TUN_SEC_NONE) {
+  const steps = Array.from({ length: TUN_ROWS }, () => new Array(TUN_COLS).fill(null));
+  steps[r0][q0] = 0;
+  const queue = [[q0, r0]];
+  for (let h = 0; h < queue.length; h++) {
+    const [cq, cr] = queue[h];
+    for (let d = 0; d < 6; d++) {
+      if (!tunOpen(cq, cr, d)) continue;
+      const nq = cq + TUN_DQ[d], nr = cr + TUN_DR[d];
+      if (!tunIn(nq, nr) || steps[nr][nq] !== null || !tunLightable(nq, nr)) continue;
+      if (sec !== TUN_SEC_NONE && tunnel[nr][nq].sec !== sec) continue;
+      steps[nr][nq] = steps[cr][cq] + 1;
+      queue.push([nq, nr]);
+    }
+  }
+  return steps;
+}
+
+// tunnelPlaceSections(): farthest-point panels over the rooms, then a
+// multi-source flood. Clears every tunnel POI first, as the firmware does.
+function placeTunnelSections() {
+  let floor = 0;
+  const rooms = [], anyFloor = [];
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++) {
+      const c = tunnel[r][q];
+      c.sec = TUN_SEC_NONE; c.lit = 0; c.poi = 0;
+      if (c.tt !== 14) continue;
+      floor++;
+      if (traps.has(trapKey(1, q, r))) continue;
+      anyFloor.push([q, r]);
+      if (c.op & TOP_ROOM) rooms.push([q, r]);
+    }
+  const cand = rooms.length ? rooms : anyFloor;
+  if (!cand.length) return 0;
+  const want = Math.min(cand.length, Math.max(3, Math.min(TUN_SECTIONS_MAX, Math.floor((floor + (TUN_SECTION_CELLS >> 1)) / TUN_SECTION_CELLS))));
+  const nearest = Array.from({ length: TUN_ROWS }, () => new Array(TUN_COLS).fill(Infinity));
+  const panels = [];
+  let pick = randInt(cand.length);
+  while (panels.length < want && pick >= 0) {
+    const [pq, pr] = cand[pick];
+    panels.push([pq, pr]);
+    const st = tunSteps(pq, pr);
+    for (let r = 0; r < TUN_ROWS; r++)
+      for (let q = 0; q < TUN_COLS; q++) if (st[r][q] !== null) nearest[r][q] = Math.min(nearest[r][q], st[r][q]);
+    pick = -1;
+    let best = -1;
+    cand.forEach(([q, r], i) => {
+      const d = nearest[r][q];
+      if (d === 0 || d === Infinity) return;
+      const score = d * 8 + randInt(8);
+      if (score > best) { best = score; pick = i; }
+    });
+  }
+  const queue = panels.map(([q, r], s) => { tunnel[r][q].sec = s; return [q, r]; });
+  for (let h = 0; h < queue.length; h++) {
+    const [cq, cr] = queue[h];
+    for (let d = 0; d < 6; d++) {
+      if (!tunOpen(cq, cr, d)) continue;
+      const nq = cq + TUN_DQ[d], nr = cr + TUN_DR[d];
+      if (!tunIn(nq, nr) || tunnel[nr][nq].sec !== TUN_SEC_NONE || !tunLightable(nq, nr)) continue;
+      tunnel[nr][nq].sec = tunnel[cr][cq].sec;
+      queue.push([nq, nr]);
+    }
+  }
+  const scenes = ENC_INDEX['14']?.count | 0;
+  if (scenes > 0) {
+    const deck = Array.from({ length: Math.min(scenes, 32) }, (_, i) => i + 1);
+    for (let i = deck.length - 1; i > 0; i--) { const j = randInt(i + 1); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    panels.forEach(([q, r], s) => { tunnel[r][q].poi = deck[s % deck.length]; });
+  }
+  tunnelPanels = panels.map(([q, r]) => [q, r, tunnel[r][q].poi]);
+  console.log(`[tunnels] sections=${panels.length} floor=${floor} scenes=${scenes} panels ` +
+    panels.map(([q, r], s) => `s${s}(${q},${r})=${tunnel[r][q].poi}`).join(' '));
+  return panels.length;
+}
+let tunnelPanels = [];   // [[q, r, scene], ...] by section -- dbg_lights / dbg_panel only
+
+function tunnelSectionCounts() {
+  const seen = new Set(), lit = new Set();
+  for (const row of tunnel) for (const c of row) {
+    if (c.sec === TUN_SEC_NONE) continue;
+    seen.add(c.sec);
+    if (c.lit) lit.add(c.sec);
+  }
+  return { total: seen.size, lit: lit.size };
+}
+
+function tunnelPanelDark(q, r) {
+  return tunIn(q, r) && tunnel[r][q].sec !== TUN_SEC_NONE && !tunnel[r][q].lit;
+}
+
+// tunnelLightSection() + the EVT_TUNNEL_LIGHTS broadcast + pushLitVisDisks().
+// Returns the number of banks, 0 if there was nothing dark to light here.
+function tunnelLightSection(id, q0, r0) {
+  if (!tunIn(q0, r0)) return 0;
+  const sec = tunnel[r0][q0].sec;
+  if (sec === TUN_SEC_NONE || tunnel[r0][q0].lit) return 0;
+  const st = tunSteps(q0, r0, sec);
+  let banks = 0, cells = 0, flick = 0;
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++) {
+      if (st[r][q] === null) continue;
+      const bank = Math.min(TLIT_BANK, st[r][q] + 1);
+      let b = bank;
+      if (bank > 1 && Math.random() * 100 < TLIT_FLICKER_PCT) { b |= TLIT_FLICKER; flick++; }
+      tunnel[r][q].lit = b;
+      banks = Math.max(banks, bank);
+      cells++;
+    }
+  const { total, lit } = tunnelSectionCounts();
+  broadcast({ t: 'ev', k: 'tun_lit', pid: id, sec, q: q0, r: r0, banks, lit, of: total });
+  console.log(`[tunnels] lights pid=${id} section=${sec} panel=(${q0},${r0}) cells=${cells} banks=${banks} flicker=${flick} lit=${lit}/${total}`);
+  // pushLitVisDisks(): everyone below gets a disk that now carries the lit cells.
+  for (const [w, pid] of sockets) {
+    const pl = players[pid];
+    if (pl && pl.dp) send(w, tunnelVisMsg(pl, pid));
+  }
+  return banks;
 }
 
 // Valid-move bitmask for a player underground — mirrors computeValidMoves()
@@ -636,7 +771,7 @@ function tunnelMapHex(pq, pr, vr, pid) {
   let s = '';
   for (let r = 0; r < TUN_ROWS; r++)
     for (let q = 0; q < TUN_COLS; q++)
-      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid)) ? tunCellHex(q, r, pid) : 'FF0000';
+      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid) || tunnel[r][q].lit) ? tunCellHex(q, r, pid) : 'FF0000';
   return s;
 }
 
@@ -646,7 +781,15 @@ function tunnelMapOps(pq, pr, vr, pid) {
   let s = '';
   for (let r = 0; r < TUN_ROWS; r++)
     for (let q = 0; q < TUN_COLS; q++)
-      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid)) ? hex2(tunnel[r][q].op) : '00';
+      s += (tunDist(q, r, pq, pr) <= vr || trapKnownBy(1, q, r, pid) || tunnel[r][q].lit) ? hex2(tunnel[r][q].op) : '00';
+  return s;
+}
+
+// Every cell's light, 2 hex chars each -- tsync "lt", as encodeTunnelLights().
+function tunnelMapLights() {
+  let s = '';
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++) s += hex2(tunnel[r][q].lit | 0);
   return s;
 }
 
@@ -668,10 +811,7 @@ function stepDownIfHatch(ws, id, p) {
   tunnelTauntTicks[id] = 0;  // a moment's peace before the doubt starts
   broadcast({ t: 'ev', k: 'tun_in', pid: id, q: p.q, r: p.r, hatch: h, ap: p.ap });
   sendTunnelSync(ws, p);      // the client has never seen the tunnel board
-  const tvr = tunnelVis(p);
-  send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-             cells: buildTunnelVisDisk(p.tq, p.tr, tvr, id),
-             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
+  send(ws, tunnelVisMsg(p, id));
   return true;
 }
 
@@ -691,38 +831,50 @@ function stepUpIfShaft(ws, id, p) {
   return true;
 }
 
-function buildTunnelVisDisk(pq, pr, vr, pid) {
-  let cells = '';
+// The cells an underground vis disk lists, in order: the disk, then every lit
+// cell on the board outside it (buildVisDisk() in hex-map.hpp).
+function tunnelVisCells(pq, pr, vr) {
+  const out = [];
   for (let dr = -vr; dr <= vr; dr++)
     for (let dq = -vr; dq <= vr; dq++) {
       const s = -(dq + dr);
       if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * vr) continue;
       const cq = pq + dq, cr = pr + dr;
-      if (!tunIn(cq, cr)) continue;       // walled, not toroidal
-      cells += hex2(cq) + hex2(cr) + tunCellHex(cq, cr, pid);
+      if (tunIn(cq, cr)) out.push([cq, cr]);   // walled, not toroidal
     }
-  return cells;
+  for (let r = 0; r < TUN_ROWS; r++)
+    for (let q = 0; q < TUN_COLS; q++)
+      if (tunnel[r][q].lit && tunDist(q, r, pq, pr) > vr) out.push([q, r]);
+  return out;
 }
 
-// A tunnel vis disk's "op": each cell's open sides in the order
-// buildTunnelVisDisk() lists them (buildVisDisk() in hex-map.hpp).
+function buildTunnelVisDisk(pq, pr, vr, pid) {
+  return tunnelVisCells(pq, pr, vr).map(([q, r]) => hex2(q) + hex2(r) + tunCellHex(q, r, pid)).join('');
+}
+
+// A tunnel vis disk's "op" and "lt": each cell's open sides / light, in the
+// order buildTunnelVisDisk() lists them.
 function buildTunnelVisOps(pq, pr, vr) {
-  let ops = '';
-  for (let dr = -vr; dr <= vr; dr++)
-    for (let dq = -vr; dq <= vr; dq++) {
-      const s = -(dq + dr);
-      if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * vr) continue;
-      const cq = pq + dq, cr = pr + dr;
-      if (!tunIn(cq, cr)) continue;
-      ops += hex2(tunnel[cr][cq].op);
-    }
-  return ops;
+  return tunnelVisCells(pq, pr, vr).map(([q, r]) => hex2(tunnel[r][q].op)).join('');
+}
+function buildTunnelVisLights(pq, pr, vr) {
+  return tunnelVisCells(pq, pr, vr).map(([q, r]) => hex2(tunnel[r][q].lit | 0)).join('');
+}
+
+// The whole underground vis message for p.
+function tunnelVisMsg(p, pid) {
+  const vr = tunnelVis(p);
+  return { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr,
+           cells: buildTunnelVisDisk(p.tq, p.tr, vr, pid),
+           op: buildTunnelVisOps(p.tq, p.tr, vr),
+           lt: buildTunnelVisLights(p.tq, p.tr, vr) };
 }
 
 function sendTunnelSync(ws, p) {
   const vr = tunnelVis(p);
   send(ws, { t: 'tsync', cols: TUN_COLS, rows: TUN_ROWS, vr, q: p.tq, r: p.tr,
-             map: tunnelMapHex(p.tq, p.tr, vr, p.id), op: tunnelMapOps(p.tq, p.tr, vr, p.id) });
+             map: tunnelMapHex(p.tq, p.tr, vr, p.id), op: tunnelMapOps(p.tq, p.tr, vr, p.id),
+             lt: tunnelMapLights() });
 }
 
 // ── Player factory ──────────────────────────────────────────────────────────
@@ -1407,7 +1559,7 @@ function resolveChoice(json, nodeKey, ci) {
     reqItem:  Math.max(0, Math.min(255, ch.requires_item | 0)),
     cost:     { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
                 water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0 },
-    nextKey, nextCanBank: true, nextTerminal: true, nextEscape: false,
+    nextKey, nextCanBank: true, nextTerminal: true, nextEscape: false, nextLights: false,
     loot: [0, 0, 0, 0, 0], items: [], lootTable: '', recipeId: 0,
     hazLL: 0, hazRad: 0, hazRes: [0, 0, 0, 0, 0], hazWMin: 0, hazWMaj: 0, hazEnds: false,
   };
@@ -1415,6 +1567,7 @@ function resolveChoice(json, nodeKey, ci) {
     out.nextCanBank  = !!next.can_bank;
     out.nextTerminal = !(Array.isArray(next.choices) && next.choices.length);
     out.nextEscape   = !!next.escape;
+    out.nextLights   = !!next.lights;
     out.lootTable    = next.loot_table ?? '';
     for (const e of next.loot ?? []) {
       const mn = e.qty?.[0] ?? 1, mx = e.qty?.[1] ?? mn;
@@ -1449,19 +1602,25 @@ function resolveChoice(json, nodeKey, ci) {
 // clock tick, "trap" on the enc_path and the enc_start, and q/r on board dp.
 function openEncounter(ws, id, p, q, r, biome, encId, consumePoi, opts) {
   const trap = !!(opts && opts.trap), dp = opts && opts.dp ? 1 : 0;
+  const kaneCh = (opts && opts.kane) | 0;   // a Machine Gun Kane chapter, opened on arrival (kaneOpen)
   const json = loadEncounterJson(biome, encId);
   if (!json) { if (!trap) send(ws, { t: 'err', msg: 'The way in is blocked' }); return false; }
   if (consumePoi) consumedPoi.add(`${q}_${r}`);
-  if (!trap && threatClock < 20) threatClock++;
+  if (!trap && !kaneCh && threatClock < 20) threatClock++;
   const startKey = json.nodes?.[json.start_node] ? json.start_node : Object.keys(json.nodes ?? {})[0];
   const start = json.nodes?.[startKey];
-  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws,
+  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws, kane: kaneCh,
                      canBank: !!start?.can_bank, escape: !!start?.escape,
                      pendingLoot: [0, 0, 0, 0, 0], pendingItems: [], pendingRecipes: 0,
                      fullClear: !(Array.isArray(start?.choices) && start.choices.length) };
   p.enc = true;
-  send(ws, trap ? { t: 'enc_path', biome, id: encId, trap: 1 } : { t: 'enc_path', biome, id: encId });
-  broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 } : { t: 'ev', k: 'enc_start', pid: id, q, r });
+  if (kaneCh) {
+    send(ws, { t: 'enc_path', biome, id: encId, kane: kaneCh });
+    broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, kane: kaneCh });
+  } else {
+    send(ws, trap ? { t: 'enc_path', biome, id: encId, trap: 1 } : { t: 'enc_path', biome, id: encId });
+    broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 } : { t: 'ev', k: 'enc_start', pid: id, q, r });
+  }
   console.log(`[enc] start pid=${id} ${biome}/${encId}.json node=${startKey}`);
   return true;
 }
@@ -2039,6 +2198,7 @@ setInterval(() => {
     spreadFlood(surface);
     tickCaravan(surface);
     resolveCaravanProximity(surface);
+    tickKane(surface);   // asks, fires, drives on, camps at dusk -- after the caravan, as tickGame() does
     // Firmware's broadcastState() runs unconditionally every game tick (see
     // game-server.hpp), so caravan movement is never stale there. This mock
     // only broadcasts opportunistically (from message handlers) otherwise,
@@ -2067,6 +2227,21 @@ function encStart(ws, id, msg) {
   const q = msg.q | 0, r = msg.r | 0;
   if (encounters[id])            { send(ws, { t: 'err', msg: 'Already in an encounter — abort first' }); return; }
   if (p.ll === 0)                { send(ws, { t: 'err', msg: 'Cannot enter — you are downed' }); return; }
+  if (p.dp) {
+    // Underground: tunnel coordinates, the tunnel board's POI, and the file
+    // is the POI's own id (handleMsg_enc_start: cell.poi is the file index).
+    if (p.tq !== q || p.tr !== r) { send(ws, { t: 'err', msg: 'Not at that hex' }); return; }
+    const c = tunIn(q, r) ? tunnel[r][q] : null;
+    if (!c || !c.poi)            { send(ws, { t: 'err', msg: 'Already looted' }); return; }
+    if (Object.entries(encounters).some(([k, e]) => +k !== id && e.dp && e.q === q && e.r === r)) {
+      send(ws, { t: 'err', msg: 'Another survivor is already inside' }); return;
+    }
+    const tpool = ENC_INDEX[String(c.tt)];
+    if (!tpool || !tpool.count)  { send(ws, { t: 'err', msg: 'No encounters here' }); return; }
+    const encId = c.poi;
+    if (openEncounter(ws, id, p, q, r, tpool.path, encId, false, { dp: 1 })) c.poi = 0;
+    return;
+  }
   if (p.q !== q || p.r !== r)    { send(ws, { t: 'err', msg: 'Not at that hex' }); return; }
   if (!hasPoi(q, r))             { send(ws, { t: 'err', msg: 'Already looted' }); return; }
   const pool = ENC_INDEX[String(terrainAt(q, r))];
@@ -2088,7 +2263,11 @@ function encEnd(id, reason) {
   if (e.trap) {
     if (reason === 'dawn' || reason === 'disconnect') trapSettle(e.ws, id, 'rearm');
     else if (reason === 'hazard' || reason === 'downed') trapSettle(e.ws, id, 'sprung');
-  } else if (reason === 'dawn' || reason === 'disconnect') consumedPoi.delete(`${e.q}_${e.r}`);
+  } else if (e.dp) {
+    // A tunnel control panel is a fixture: it stays until its section is lit,
+    // however the scene ended (endEncounter()).
+    if (reason !== 'regen' && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
+  } else if (!e.kane && (reason === 'dawn' || reason === 'disconnect')) consumedPoi.delete(`${e.q}_${e.r}`);
   delete encounters[id];
   const p = players[id];
   if (p) p.enc = false;
@@ -2163,10 +2342,14 @@ function encChoice(ws, id, m) {
     // Bounded like the firmware (1 << 32+ silently wraps in JS): a hand-authored
     // id past MAX_RECIPES must not light up some other recipe's bit.
     if (ch.recipeId && ch.recipeId <= 32) { e.pendingRecipes |= (1 << (ch.recipeId - 1)); ev.rec = ch.recipeId; }
+    // A tunnel control panel's switch: the section comes on now.
+    if (ch.nextLights && e.dp) tunnelLightSection(id, e.q, e.r);
     e.nodeKey = ch.nextKey;
     e.canBank = ch.nextCanBank;
     e.escape  = ch.nextEscape;
     if (ch.nextTerminal) e.fullClear = true;
+    // The last node of a Kane chapter: it is read, whatever gets banked.
+    if (e.kane && ch.nextTerminal && !ch.nextEscape) kaneChapterRead(id, e, ch.nextKey);
     if (p.ll === 0) ended = true;
   } else {
     // A sprung trap is a spent trap: every trap hazard ends it, and it never
@@ -2243,6 +2426,8 @@ function encBank(ws, id, m) {
   // network-msg-encounter.hpp).
   if (hadItems) send(ws, { t: 'item_result', ok: true, act: 'enc_bank', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
   if (e.trap) trapSettle(ws, id, 'spent');   // taking the bait is what disarms it
+  // A panel banked short of its switch is still a panel (handleMsg_enc_bank).
+  if (e.dp && !e.trap && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
   delete encounters[id];
   p.enc = false;
   broadcast(stateMsg());
@@ -2264,7 +2449,7 @@ function encAbort(id, ws) {
     broadcast(stateMsg());
     return;
   }
-  if (threatClock < 20) threatClock++;
+  if (!e.kane && threatClock < 20) threatClock++;   // nobody chose to walk into Kane's story
   encEnd(id, 'abort');
   broadcast(stateMsg());
 }
@@ -2447,6 +2632,8 @@ function handleState(req, res) {
       broadcastPartial: 0, assetReqActive: 0, assetReqRejects: 0,
     },
     rtc: { synced: false },
+    // Machine Gun Kane: the same object sync and the tick broadcast carry (game-server.hpp).
+    kane: kaneWire(),
     map: {
       cells: MAP_ROWS * MAP_COLS,
       shelters, impShelters, pois: poiCount,
@@ -2561,14 +2748,16 @@ const sendToPid = (id, obj) => {
 // "downed" path. The seat is freed a turn later so a caller still looping over
 // `players` (dawn upkeep, the world tick) never sees the map change under it.
 const downedCarry = {};   // id -> { sc, sp } for the next pick of that seat
-function downPlayer(p) {
+function downPlayer(p, cause) {
   if (!p || p.downed) return;        // a second hit on a body already falling
   p.downed = true;
   const id = p.id;
   const left = dropRemains(p);
   // Same order as the firmware: downed, left, then what they left behind.
-  sendToPid(id, { t: 'ev', k: 'downed', pid: id });
-  broadcast({ t: 'ev', k: 'left', pid: id });
+  // "cause" only where a caller knows it (the firmware always sends one).
+  const why = cause ? { cause } : {};
+  sendToPid(id, { t: 'ev', k: 'downed', pid: id, ...why });
+  broadcast({ t: 'ev', k: 'left', pid: id, ...why });
   if (left) broadcast(groundUpdateMsg(p.q, p.r, 'fell', id));
   setImmediate(() => {
     if (players[id] !== p) return;
@@ -3211,6 +3400,240 @@ function resolveCaravanProximity(connected) {
   }
 }
 
+// ── Machine Gun Kane (kane.hpp, docs/machine-gun-kane.md) ────────────────────
+// Mirrors the firmware's rules, not just its look -- the Doom's mock acquired
+// on plain proximity while the board needed scent, and that divergence hid a
+// dead feature for weeks. Same constants, same order of events:
+//   * drives KANE_STEPS (1) a world tick on open road (every other tick in a Settlement),
+//     over this mock's DIR_DELTA neighbours like the caravan;
+//   * the first tick he sees you exposed (open ground within KANE_RANGE) he
+//     calls out and stops the jeep; still exposed next tick = the burst, and
+//     the next burst needs a new question;
+//   * never into a Settlement or the glass, never underground, never inside an
+//     encounter, never at the downed, never after dark;
+//   * dusk: he sits awake at his fire; KANE_BREAK_TICKS after dawn he drives
+//     on and leaves the next unread chapter (1-3) where he sat;
+//   * chapter 3 places the house in the glass (chapter 4) and stamps the ring;
+//     chapter 5 is his hex at night; an ending retires the jeep.
+// No persistence (the mock saves nothing). dbg_kane drives it for UI work.
+const KANE_STEPS = 1, KANE_RANGE = 3, KANE_ROUNDS = 3, KANE_HIT_PCT = 35, KANE_BURST_CAP = 2;
+const KANE_BREAK_TICKS = 2, KANE_STUCK_LIMIT = 6, KANE_WAYPOINT_MIN = 5, KANE_WAYPOINT_MAX = 25;
+const KANE_DUSK_TICK = Math.floor(DAY_TICKS * 78 / 100);      // = SS_DUSK's 0.78
+const KANE_DRIVE = 0, KANE_CAMP = 1, KANE_GONE = 2;
+const KANE_END_NONE = 0, KANE_END_TRUTH = 1, KANE_END_LIE = 2;
+const KANE_CHAPTERS = 5;
+const KANE_POOL = ENC_INDEX.kane || null;
+const KT_URBAN = 4, KT_GLASS = 6, KT_CRATER = 10;
+const kaneDrivable  = (t) => t === 0 || t === 1 || t === KT_URBAN || t === TERRAIN_SETTLEMENT;
+const kaneOpenGround = (t) => t === 0 || t === 1 || t === 3;   // scrub, dunes, marsh
+const kaneWrap = (q, r) => [((q % MAP_COLS) + MAP_COLS) % MAP_COLS, ((r % MAP_ROWS) + MAP_ROWS) % MAP_ROWS];
+const kane = {
+  q: 0, r: 0, wq: 0, wr: 0, pq: -1, pr: -1,
+  mode: KANE_DRIVE, facing: -1, stuck: 0, breakTicks: 0,
+  stage: 0, ending: KANE_END_NONE, campQ: -1, campR: -1, siteQ: -1, siteR: -1,
+  called: {}, visited: {},   // runtime: asked last tick / heard his question at the fire tonight
+  pinned: false,             // dbg_kane mode: the day clock does not move him off it
+};
+function kaneIsNight() { return dayTick >= KANE_DUSK_TICK; }
+function kaneExposed(p) {
+  return hexDistWrap(kane.q, kane.r, p.q, p.r) <= KANE_RANGE && kaneOpenGround(terrainAt(p.q, p.r));
+}
+function kanePickDrivable() {
+  for (let i = 0; i < 400; i++) {
+    const q = Math.floor(Math.random() * MAP_COLS), r = Math.floor(Math.random() * MAP_ROWS);
+    if (kaneDrivable(terrainAt(q, r))) return [q, r];
+  }
+  return [Math.floor(Math.random() * MAP_COLS), Math.floor(Math.random() * MAP_ROWS)];
+}
+// A Settlement or Broken Urban hex in the distance band, reservoir-sampled;
+// the last one reached is left out (kanePickWaypoint()).
+function kanePickWaypoint() {
+  let n = 0;
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let q = 0; q < MAP_COLS; q++) {
+      const t = terrainAt(q, r);
+      if (t !== TERRAIN_SETTLEMENT && t !== KT_URBAN) continue;
+      if (q === kane.pq && r === kane.pr) continue;
+      const d = hexDistWrap(kane.q, kane.r, q, r);
+      if (d < KANE_WAYPOINT_MIN || d > KANE_WAYPOINT_MAX) continue;
+      if (Math.floor(Math.random() * (++n)) === 0) { kane.wq = q; kane.wr = r; }
+    }
+  }
+  if (!n) [kane.wq, kane.wr] = kanePickDrivable();
+  kane.stuck = 0;
+}
+// One step toward the waypoint over drivable ground; equal-distance sidesteps
+// reservoir-sampled, as kaneStep() does. His ruts are the caravan's.
+function kaneStep() {
+  let best = hexDistWrap(kane.q, kane.r, kane.wq, kane.wr), pick = null, side = null, sideN = 0;
+  for (const dir of Object.keys(DIR_DELTA)) {
+    const [dq, dr] = DIR_DELTA[dir];
+    const [nq, nr] = kaneWrap(kane.q + dq, kane.r + dr);
+    if (!kaneDrivable(terrainAt(nq, nr))) continue;
+    const d = hexDistWrap(nq, nr, kane.wq, kane.wr);
+    if (d < best) { best = d; pick = [nq, nr, dq]; }
+    else if (d === best && !pick && Math.floor(Math.random() * (++sideN)) === 0) side = [nq, nr, dq];
+  }
+  const to = pick || side;
+  if (!to) return false;
+  const fq = kane.q, fr = kane.r;
+  [kane.q, kane.r] = to;
+  if (to[2] > 0) kane.facing = 1; else if (to[2] < 0) kane.facing = -1;
+  caravanTracks.add(`${kane.q}_${kane.r}`);
+  trailMove(TRAIL_CARAVAN, fq, fr, kane.q, kane.r, true);
+  return true;
+}
+function kaneDrive() {
+  // In town: half his road speed, a step every other tick (kaneDrive()).
+  if (terrainAt(kane.q, kane.r) === TERRAIN_SETTLEMENT) { kane.townSkip = !kane.townSkip; if (kane.townSkip) return; }
+  else kane.townSkip = false;
+  let before = hexDistWrap(kane.q, kane.r, kane.wq, kane.wr);
+  for (let s = 0; s < KANE_STEPS; s++) {
+    if (kane.q === kane.wq && kane.r === kane.wr) {
+      kane.pq = kane.wq; kane.pr = kane.wr;
+      kanePickWaypoint();
+      before = hexDistWrap(kane.q, kane.r, kane.wq, kane.wr);
+    }
+    if (!kaneStep()) break;
+    if (terrainAt(kane.q, kane.r) === TERRAIN_SETTLEMENT) break;   // into town: slow down and ask
+  }
+  const after = hexDistWrap(kane.q, kane.r, kane.wq, kane.wr);
+  if (after < before) kane.stuck = 0;
+  else if (++kane.stuck >= KANE_STUCK_LIMIT) kanePickWaypoint();
+}
+// Chapter 4's site and the ring of his tracks round its glass region.
+function kaneStampRing(sq, sr) {
+  const kind = terrainAt(sq, sr), seen = new Set([`${sq}_${sr}`]), todo = [[sq, sr]];
+  while (todo.length && seen.size < 160) {
+    const [q, r] = todo.shift();
+    for (const dir of Object.keys(DIR_DELTA)) {
+      const [nq, nr] = kaneWrap(q + DIR_DELTA[dir][0], r + DIR_DELTA[dir][1]);
+      const t = terrainAt(nq, nr);
+      if (t === kind) { if (!seen.has(`${nq}_${nr}`)) { seen.add(`${nq}_${nr}`); todo.push([nq, nr]); } }
+      else if (kaneDrivable(t)) caravanTracks.add(`${nq}_${nr}`);   // sixty years of laps
+    }
+  }
+}
+function kanePlaceSite() {
+  for (const pass of [0, 1]) {
+    let n = 0;
+    for (let r = 0; r < MAP_ROWS; r++) {
+      for (let q = 0; q < MAP_COLS; q++) {
+        const t = terrainAt(q, r);
+        const near = (want) => Object.values(DIR_DELTA).some(([dq, dr]) => want(terrainAt(...kaneWrap(q + dq, r + dr))));
+        const cand = pass === 0 ? (t === KT_GLASS && near(kaneDrivable))
+                                : (!kaneDrivable(t) && t !== KT_CRATER && t !== 11 && near((x) => x === KT_CRATER));
+        if (cand && Math.floor(Math.random() * (++n)) === 0) { kane.siteQ = q; kane.siteR = r; }
+      }
+    }
+    if (n) { console.log(`[kane] site (${kane.siteQ},${kane.siteR}) ${pass ? 'crater rim (no glass)' : 'glass'}`); break; }
+  }
+  if (kane.siteQ < 0) [kane.siteQ, kane.siteR] = kanePickDrivable();
+  kaneStampRing(kane.siteQ, kane.siteR);
+}
+function kaneParkAtSite() {
+  if (kane.siteQ < 0) return;
+  for (const [dq, dr] of Object.values(DIR_DELTA)) {
+    const [nq, nr] = kaneWrap(kane.siteQ + dq, kane.siteR + dr);
+    if (kaneDrivable(terrainAt(nq, nr))) { kane.q = nq; kane.r = nr; return; }
+  }
+}
+function kaneInit() {
+  Object.assign(kane, { pq: -1, pr: -1, mode: KANE_DRIVE, facing: -1, stuck: 0, breakTicks: 0,
+                        stage: 0, ending: KANE_END_NONE, campQ: -1, campR: -1, siteQ: -1, siteR: -1,
+                        called: {}, visited: {}, pinned: false });
+  [kane.q, kane.r] = kanePickDrivable();
+  kanePickWaypoint();
+}
+function kaneCall(id, camp) {
+  // Unicast, like EVT_KANE_CALL; idx is reduced mod the client's line table.
+  sendToPid(id, { t: 'ev', k: 'kane_call', pid: id, q: kane.q, r: kane.r, camp: camp ? 1 : 0,
+                  idx: Math.floor(Math.random() * 256) });
+}
+// Calls and bursts for this tick; true while someone has just been asked.
+function kaneFire(connected) {
+  let asked = false;
+  for (const p of connected) {
+    const id = p.id;
+    if (!p || p.downed || p.ll === 0 || p.dp || encounters[id] || !kaneExposed(p)) { kane.called[id] = 0; continue; }
+    if (!kane.called[id]) { kane.called[id] = 1; asked = true; kaneCall(id, 0); continue; }
+    kane.called[id] = 0;   // ALWAYS ASK FIRST: the next burst needs a new question
+    let hits = 0;
+    for (let k = 0; k < KANE_ROUNDS; k++) if (Math.random() * 100 < KANE_HIT_PCT) hits++;
+    const lost = Math.min(hits, KANE_BURST_CAP, p.ll);
+    p.ll -= lost;
+    if (lost) eco.noteHurt(p.q, p.r);   // an injury: the daisies seed here (ecoIsInjury has DC_KANE)
+    broadcast({ t: 'ev', k: 'kane_fire', pid: id, q: kane.q, r: kane.r, hits, llLost: lost, ll: p.ll });
+    console.log(`[kane] burst pid=${id} from (${kane.q},${kane.r}) hits=${hits} lost=${lost} ll=${p.ll}`);
+    if (p.ll === 0) { p.ap = 0; downPlayer(p, 'machine gun kane'); }
+  }
+  return asked;
+}
+function kaneBreakCamp() {
+  kane.mode = KANE_DRIVE;
+  kane.breakTicks = 0;
+  kane.visited = {};
+  if (kane.stage < 3 && kane.campQ < 0) {
+    kane.campQ = kane.q; kane.campR = kane.r;
+    console.log(`[kane] camp left at (${kane.q},${kane.r}): chapter ${kane.stage + 1}`);
+  }
+  kanePickWaypoint();
+}
+function tickKane(connected, forced = false) {
+  if (kane.mode === KANE_GONE || (kane.held && !forced)) return;
+  if (kane.mode === KANE_CAMP) {
+    if (kane.pinned || kaneIsNight()) { kane.breakTicks = 0; return; }
+    if (++kane.breakTicks >= KANE_BREAK_TICKS) kaneBreakCamp();
+    return;
+  }
+  if (!kane.pinned && kaneIsNight()) {
+    kane.mode = KANE_CAMP; kane.breakTicks = 0; kane.called = {};
+    console.log(`[kane] camps at (${kane.q},${kane.r})`);
+    return;
+  }
+  if (!kaneFire(connected)) kaneDrive();
+}
+function kaneChapterBusy(ch) { return Object.values(encounters).some((e) => e.kane === ch); }
+function kaneOpen(ws, id, p, ch) {
+  if (!KANE_POOL || kaneChapterBusy(ch)) return false;
+  return openEncounter(ws, id, p, p.q, p.r, KANE_POOL.path, ch, false, { kane: ch });
+}
+// The surface step, after the trap check (kaneOnArrival()).
+function kaneOnArrival(ws, id, p) {
+  if (!p || p.ll === 0 || p.dp || encounters[id] || kane.ending !== KANE_END_NONE) return false;
+  if (kane.stage < 3 && kane.campQ >= 0 && p.q === kane.campQ && p.r === kane.campR) return kaneOpen(ws, id, p, kane.stage + 1);
+  if (kane.stage === 3 && kane.siteQ >= 0 && p.q === kane.siteQ && p.r === kane.siteR) return kaneOpen(ws, id, p, 4);
+  if (kane.mode === KANE_CAMP && p.q === kane.q && p.r === kane.r) {
+    if (kane.stage === 4) return kaneOpen(ws, id, p, 5);
+    if (!kane.visited[id]) { kane.visited[id] = 1; kaneCall(id, 1); }   // his question, a long look, nothing else
+  }
+  return false;
+}
+// encChoice reached a terminal, non-escape node of a Kane scene (kaneChapterRead()).
+function kaneChapterRead(id, e, nodeKey) {
+  const ch = e.kane | 0;
+  if (!ch || ch > KANE_CHAPTERS || ch <= kane.stage) return;
+  let ending = KANE_END_NONE;
+  if (ch === KANE_CHAPTERS) {
+    const k = e.json.nodes?.[nodeKey]?.kane_ending;
+    ending = k === 'truth' ? KANE_END_TRUTH : k === 'lie' ? KANE_END_LIE : KANE_END_NONE;
+    if (!ending) { console.warn(`[kane] chapter 5 node ${nodeKey} has no kane_ending -- not an ending`); return; }
+  }
+  kane.stage = ch;
+  if (ch <= 3) { kane.campQ = -1; kane.campR = -1; }
+  if (ch === 3) kanePlaceSite();
+  if (ending) { kane.ending = ending; kane.mode = KANE_GONE; if (ending === KANE_END_LIE) kaneParkAtSite(); }
+  broadcast({ t: 'ev', k: 'kane_arc', pid: id, stage: kane.stage, ending: ['none', 'truth', 'lie'][kane.ending] });
+  console.log(`[kane] chapter ${ch} read by pid=${id} stage=${kane.stage} ending=${kane.ending}`);
+}
+// The "kane" object: sync, the tick broadcast's world, and /state (appendKaneJson()).
+function kaneWire() {
+  const site = kane.stage === 3;
+  return { q: kane.q, r: kane.r, m: kane.mode, f: kane.facing, st: kane.stage, e: kane.ending,
+           cq: kane.campQ, cr: kane.campR, gq: site ? kane.siteQ : -1, gr: site ? kane.siteR : -1 };
+}
+kaneInit();
+
 function worldStateMsg() {
   return {
     caravan: {
@@ -3219,6 +3642,7 @@ function worldStateMsg() {
       stock: caravan.stock.filter(s => s.id && s.qty).map(s => [s.id, s.qty, caravanPrice(s.id)]),
     },
     doom: { q: doom.q, r: doom.r, awareness: doom.awareness },
+    kane: kaneWire(),   // Machine Gun Kane (kane.hpp)
     fire: fireArray(),
     flood: floodArray(),
   };
@@ -3937,10 +4361,7 @@ wss.on('connection', (ws) => {
           // Landing on a shaft climbs out. After the pickup, so the last thing
           // you grab on the way past still lands in the pack.
           if (stepUpIfShaft(ws, id, p)) { scoopOnArrival(ws, p); broadcast(stateMsg()); break; }
-          const tvr = tunnelVis(p);
-          send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr, id),
-             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
+          send(ws, tunnelVisMsg(p, id));
           trapOnArrival(ws, id, p);   // after the vis disk, so the board under it is fresh
           broadcast(stateMsg());
           break;
@@ -3975,6 +4396,8 @@ wss.on('connection', (ws) => {
         // A booby trap under this hex fires now (traps.hpp trapOnArrival):
         // after the pickup, as on the board, and after the vis disk.
         trapOnArrival(ws, id, p);
+        // Machine Gun Kane: his camp, the house in the glass, or his fire at night.
+        kaneOnArrival(ws, id, p);
         // Whatever lies here comes with you. After the trap, as on the board:
         // handleMsg_move scoops once movePlayer() (trap included) returns.
         scoopOnArrival(ws, p);
@@ -4094,6 +4517,12 @@ wss.on('connection', (ws) => {
           // Mirrors handleAction(): SHELTER, CRAFT and SURVEY are refused
           // outright at depth 1, silently. SURVEY is the one that matters --
           // doSurvey() writes a buffer sized for the 75x57 surface map.
+          break;
+        } else if ((msg.a | 0) === 4 && terrainAt(p.q, p.r) === 9) {
+          // Mirrors doShelter(): a Settlement is already cover, so SHELTER is
+          // refused there (ABW_TERRAIN = 2), AP untouched.
+          broadcast({ t: 'ev', k: 'act', pid: id, a: 4, out: 0,
+                      bw: 2, ap: p.ap, ll: p.ll });
           break;
         } else if (p.dp && (msg.a | 0) === 0) {
           // FORAGE self-blocks underground: TERRAIN_FORAGE_DN[14] is 0.
@@ -4448,6 +4877,55 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'dbg_kane': {
+        // Test-only: Machine Gun Kane (kane.hpp). Fields combine:
+        //   {"t":"dbg_kane"}                      the jeep 2 hexes from you, driving
+        //   {"t":"dbg_kane","here":1}             the jeep onto your hex
+        //   {"t":"dbg_kane","mode":1}             at his fire (0 driving, 2 gone) -- pinned: the
+        //                                         day clock leaves it alone until {"pin":0}
+        //   {"t":"dbg_kane","stage":2,"camp":1}   two chapters read; chapter 3's camp under you
+        //   {"t":"dbg_kane","stage":3,"site":1}   the house in the glass under you
+        //   {"t":"dbg_kane","camp":[q,r]}         ...or on any hex ("site":[q,r] likewise) --
+        //                                         bots/kane_check.py stages chapters next to a bot
+        //   {"t":"dbg_kane","tick":1}             run one Kane world tick now
+        //   {"t":"dbg_kane","at":[q,r],"to":[q,r]} put the jeep at a hex (facing the move) / send him toward one
+        //   {"t":"dbg_kane","hold":1}             the world tick skips him; only {"tick":1} moves him
+        //   {"t":"dbg_kane","reset":1}            a fresh jeep, the arc unread
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.reset) kaneInit();
+        if (Array.isArray(msg.at)) {
+          const [nq, nr] = kaneWrap(msg.at[0] | 0, msg.at[1] | 0);
+          let dq = nq - kane.q;                     // face the way he went, across the seam too
+          if (dq > MAP_COLS / 2) dq -= MAP_COLS; else if (dq < -MAP_COLS / 2) dq += MAP_COLS;
+          if (dq) kane.facing = Math.sign(dq);
+          kane.q = nq; kane.r = nr; kane.mode = KANE_DRIVE;
+        }
+        if (msg.hold !== undefined) kane.held = !!msg.hold;   // the 15 s world tick leaves him alone
+        if (Array.isArray(msg.to)) { [kane.wq, kane.wr] = kaneWrap(msg.to[0] | 0, msg.to[1] | 0); kane.stuck = 0; }
+        if (msg.here) { kane.q = p.q; kane.r = p.r; }
+        else if (!msg.reset && !msg.at && !msg.to && msg.hold === undefined && msg.mode === undefined && msg.stage === undefined && !msg.tick && !msg.camp && !msg.site && msg.pin === undefined) {
+          const [dq, dr] = DIR_DELTA[1];
+          [kane.q, kane.r] = kaneWrap(p.q + 2 * dq, p.r + 2 * dr);
+          kane.mode = KANE_DRIVE; kane.called = {};
+        }
+        if (msg.stage !== undefined) {
+          kane.stage = Math.max(0, Math.min(KANE_CHAPTERS, msg.stage | 0));
+          kane.ending = KANE_END_NONE;
+          if (kane.stage >= 3) { kane.campQ = kane.campR = -1; if (kane.siteQ < 0) kanePlaceSite(); }
+        }
+        const kaneHexOr = (v) => (Array.isArray(v) ? kaneWrap(v[0] | 0, v[1] | 0) : [p.q, p.r]);
+        if (msg.camp && kane.stage < 3) [kane.campQ, kane.campR] = kaneHexOr(msg.camp);
+        if (msg.site) { [kane.siteQ, kane.siteR] = kaneHexOr(msg.site); kaneStampRing(kane.siteQ, kane.siteR); }
+        if (msg.mode !== undefined) { kane.mode = Math.max(0, Math.min(2, msg.mode | 0)); kane.pinned = true; kane.visited = {}; }
+        if (msg.pin !== undefined) kane.pinned = !!msg.pin;
+        if (msg.tick) tickKane(Object.values(players).filter((x) => !x.dp), true);
+        broadcast(stateMsg());
+        console.log(`[kane] dbg by pid=${id}: ${JSON.stringify(kaneWire())}`);
+        break;
+      }
+
       case 'dbg_caravan': {
         // Test-only: teleport the caravan onto the sender's hex so the trade
         // panel can be exercised without waiting for it to path over.
@@ -4496,10 +4974,7 @@ wss.on('connection', (ws) => {
           p.q  = bunkerHatches[h].sq;
           p.r  = bunkerHatches[h].sr;
           sendTunnelSync(ws, p);
-          const tvr = tunnelVis(p);
-          send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                     cells: buildTunnelVisDisk(p.tq, p.tr, tvr, p.id),
-             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
+          send(ws, tunnelVisMsg(p, p.id));
         } else {
           p.dp = 0;
           p.q = bunkerHatches[h].sq;
@@ -4516,6 +4991,55 @@ wss.on('connection', (ws) => {
       // Test-only: collapse the tunnel hex in front of the sender (direction d,
       // default 0), so the blocked-route behaviour can be exercised.
       // {"t":"dbg_collapse"} or {"t":"dbg_collapse","d":2}
+      // Test-only: tunnel section lights. {"t":"dbg_lights"} lights the
+      // section you stand in (or the one at the nearest panel), "sec":N a
+      // given section, "all":1 every one, "off":1 puts them all out again
+      // (and restores every panel's scene). {"t":"dbg_panel","sec":N} puts
+      // you underground on that section's panel, one step short of it.
+      case 'dbg_lights': {
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.off) {
+          for (const row of tunnel) for (const c of row) c.lit = 0;
+          for (const [q, r, scene] of tunnelPanels) tunnel[r][q].poi = scene;
+          for (const [w, pid] of sockets) { const pl = players[pid]; if (pl && pl.dp) { sendTunnelSync(w, pl); send(w, tunnelVisMsg(pl, pid)); } }
+          console.log('[dbg_lights] all off');
+          break;
+        }
+        const secs = msg.all ? tunnelPanels.map((_, s) => s)
+                   : msg.sec !== undefined ? [msg.sec | 0]
+                   : [p.dp && tunIn(p.tq, p.tr) && tunnel[p.tr][p.tq].sec !== TUN_SEC_NONE ? tunnel[p.tr][p.tq].sec : 0];
+        for (const s of secs) {
+          const pan = tunnelPanels[s];
+          if (!pan) continue;
+          tunnelLightSection(id, pan[0], pan[1]);
+          tunnel[pan[1]][pan[0]].poi = 0;
+        }
+        break;
+      }
+      case 'dbg_panel': {
+        const id = sockets.get(ws);
+        const p  = players[id];
+        const pan = tunnelPanels[msg.sec | 0];
+        if (!p || !pan) break;
+        // The open side of the panel room leads to the corridor it hangs off.
+        let at = pan;
+        for (let d = 0; d < 6; d++) {
+          if (!tunOpen(pan[0], pan[1], d)) continue;
+          const nq = pan[0] + TUN_DQ[d], nr = pan[1] + TUN_DR[d];
+          if (tunIn(nq, nr) && tunnel[nr][nq].tt === 14) { at = [nq, nr]; break; }
+        }
+        p.dp = 1; p.hatchIdx = 0; p.ap = Math.max(p.ap, 12);
+        p.q = bunkerHatches[0].sq; p.r = bunkerHatches[0].sr;
+        p.tq = at[0]; p.tr = at[1];
+        sendTunnelSync(ws, p);
+        send(ws, tunnelVisMsg(p, id));
+        broadcast(stateMsg());
+        console.log(`[dbg_panel] pid=${id} -> section ${msg.sec | 0} panel (${pan[0]},${pan[1]}) from (${at[0]},${at[1]})`);
+        break;
+      }
+
       case 'dbg_collapse': {
         const id = sockets.get(ws);
         const p  = players[id];
@@ -4524,10 +5048,8 @@ wss.on('connection', (ws) => {
         if (!tunIn(nq, nr)) break;
         tunnel[nr][nq].tt = 15;
         broadcast({ t: 'ev', k: 'tun_collapse', q: nq, r: nr, amt: 15 });
-        const tvr = tunnelVis(p);
-        send(ws, { t: 'vis', dp: 1, q: p.tq, r: p.tr, vr: tvr,
-                   cells: buildTunnelVisDisk(p.tq, p.tr, tvr, p.id),
-             op: buildTunnelVisOps(p.tq, p.tr, tvr) });
+        tunnel[nr][nq].sec = TUN_SEC_NONE; tunnel[nr][nq].lit = 0;   // rock has no light
+        send(ws, tunnelVisMsg(p, p.id));
         broadcast(stateMsg());
         console.log(`[dbg_collapse] (${nq},${nr}) -> rock`);
         break;

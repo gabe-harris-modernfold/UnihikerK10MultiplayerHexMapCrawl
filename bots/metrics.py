@@ -32,9 +32,12 @@ import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from causes import CAUSE_ORDER, DamageLedger
+from causes import CAUSE_ORDER, DamageLedger, _dedupe as _dedupe_exact
+from config import KANE_CHAPTERS
+from state import KANE_CALL_TTL_S
 import findings as findings_mod
 from config import ACT_NAME, ARCHETYPE_NAME, RES_NAME, SK_NAME, WEATHER_NAME
+from config import ACT_CRAFT, ITEM_NAME
 from navigate import hex_distance
 from record import read as read_run
 
@@ -266,6 +269,70 @@ class RunReport:
                 "spent": outs.get("spent", 0), "escaped": outs.get("known", 0),
                 "ll_lost": -sum(min(0, d.get("penLL", 0)) for d in sprung),
                 "by_bot": dict(sorted(by_pid.items(), key=lambda kv: (kv[0] is None, kv[0])))}
+
+    def kane(self):
+        """Machine Gun Kane (kane.hpp): did the survivors keep out of his
+        gun, and did anyone finish his story?
+
+        `calls` are road questions (`kane_call` camp 0, unicast to the one he
+        asked); `dodged` the ones with no burst at that survivor within a
+        world tick and slack (KANE_CALL_TTL_S) -- they got out of the open, or
+        night fell. `bursts` and `ll_lost` are what the rest cost. `read` is
+        every chapter in order with whoever read it, `stage` how far the arc
+        got and `ending` how it ended. Deduped on `sq` (the bursts and the arc
+        are broadcast to every bot)."""
+        evs = _dedupe_exact(self.rows, {"kane_call", "kane_fire", "kane_arc"})
+        calls = [(t, d) for t, d in evs if d.get("k") == "kane_call" and not d.get("camp")]
+        bursts = [(t, d) for t, d in evs if d.get("k") == "kane_fire"]
+        arcs = [d for _t, d in evs if d.get("k") == "kane_arc"]
+        dodged = sum(1 for t, c in calls
+                     if not any(b.get("pid") == c.get("pid") and 0 <= bt - t <= KANE_CALL_TTL_S
+                                for bt, b in bursts))
+        by_bot = {}
+        for _t, d in calls:
+            by_bot.setdefault(d.get("pid"), [0, 0, 0])[0] += 1
+        for _t, d in bursts:
+            row = by_bot.setdefault(d.get("pid"), [0, 0, 0])
+            row[1] += 1
+            row[2] += d.get("llLost", 0) or 0
+        ending = next((d.get("ending") for d in reversed(arcs)
+                       if d.get("ending") in ("truth", "lie")), None)
+        return {"calls": len(calls), "dodged": dodged, "bursts": len(bursts),
+                "hits": sum(d.get("hits", 0) or 0 for _t, d in bursts),
+                "ll_lost": sum(d.get("llLost", 0) or 0 for _t, d in bursts),
+                "by_bot": dict(sorted(by_bot.items(), key=lambda kv: (kv[0] is None, kv[0]))),
+                "read": [(d.get("stage"), d.get("pid")) for d in arcs],
+                "stage": max((d.get("stage", 0) or 0 for d in arcs), default=0),
+                "ending": ending}
+
+    def items(self):
+        """What the survivors did with their packs (docs/bot-testing.md,
+        "Items"): every item message sent, off the tx channel; consumables
+        used by name, from the bots' own summaries; recipes crafted; and the
+        item_result acts the board confirmed (rx -- unicast, so no dedupe)."""
+        sent, crafts, confirmed, used = Counter(), Counter(), Counter(), Counter()
+        for r in self.rows:
+            d = r["d"] if isinstance(r.get("d"), dict) else {}
+            if r["ch"] == "tx":
+                t = d.get("t")
+                if t in ("use_item", "car_buy", "drop_item", "trade_accept",
+                         "trade_decline", "trade_offer", "equip_item", "pickup_item"):
+                    sent[t] += 1
+                elif t == "act" and d.get("a") == ACT_CRAFT:
+                    crafts[d.get("r")] += 1
+            elif r["ch"] == "rx" and d.get("t") == "item_result" and d.get("ok"):
+                confirmed[d.get("act")] += 1
+        for b in self.bots.values():
+            for iid, n in ((b.get("content") or {}).get("items_used") or {}).items():
+                used[int(iid)] += n
+        return {"sent": dict(sent), "used": dict(used), "crafts": dict(crafts),
+                "confirmed": dict(confirmed)}
+
+    def quests(self):
+        """The fleet's quest ledger (quests.py), as arena.py saved it in the
+        run summary: every step reached or finished, by whom and on what day,
+        the ordering problems, and the gate probes' verdicts."""
+        return self.summary.get("quests") or {}
 
     def tunnels(self):
         """Who used the bunker network, and what it bought them.
@@ -614,6 +681,8 @@ class RunReport:
                 "check_margins": self.check_margins(), "action_mix": self.action_mix(),
                 "resource_slack": self.resource_slack(), "crises": self.crises(),
                 "poi_reach": self.poi_reach(), "traps": self.traps(), "deaths": self.deaths(),
+                "kane": self.kane(),
+                "items": self.items(), "quests": self.quests(),
                 "tunnels": self.tunnels(),
                 "tension": self.tension(), "death_causes": self.death_causes(),
                 "outsiders": self.outsiders(),
@@ -697,6 +766,41 @@ class RunReport:
             L.append(f"\n-- booby traps: {tr['opened']} forced scenes -- {tr['escaped']} escaped, "
                      f"{tr['spent']} disarmed, {tr['sprung']} sprung, {tr['ll_lost']} LL lost")
             L.append(f"   by bot: {tr['by_bot']}")
+
+        ka = m.get("kane") or {}
+        if ka.get("calls") or ka.get("bursts") or ka.get("read"):
+            L.append(f"\n-- machine gun kane: {ka['calls']} questions, {ka['dodged']} dodged, "
+                     f"{ka['bursts']} bursts ({ka['hits']} rounds hit, {ka['ll_lost']} LL)")
+            L.append(f"   by bot [asked, shot at, LL]: {ka['by_bot']}")
+            if ka["read"]:
+                L.append(f"   story: chapter {ka['stage']}/{KANE_CHAPTERS}"
+                         + (f", ended with the {ka['ending']}" if ka["ending"] else "")
+                         + " -- read (chapter, pid): " + str(ka["read"]))
+
+        it = m.get("items") or {}
+        if it.get("sent") or it.get("crafts"):
+            used = ", ".join(f"{ITEM_NAME.get(i, i)} x{n}" for i, n in
+                             sorted(it["used"].items(), key=lambda kv: -kv[1]))
+            L.append(f"\n-- items: sent {it['sent']}")
+            L.append(f"   used: {used or 'nothing'}")
+            L.append(f"   crafted (recipe: n): {dict(sorted(it['crafts'].items(), key=str))}"
+                     f"   board confirmed: {it['confirmed']}")
+
+        qd = m.get("quests") or {}
+        if qd.get("steps") or qd.get("problems"):
+            from quests import catalog as quest_catalog
+            L.append("\n-- quests")
+            for q in quest_catalog():
+                done = [s.key for s in q.steps
+                        if (qd["steps"].get(s.key) or {}).get("status") == "done"]
+                seen = [s.key for s in q.steps if s.key in qd["steps"] and s.key not in done]
+                L.append(f"   {q.title}: {len(done)}/{len(q.steps)} done"
+                         + ("" if q.reachable else " [UNREACHABLE]")
+                         + (f", reached/opened {seen}" if seen else ""))
+            for pr in qd.get("problems", []):
+                L.append(f"   !! {pr['check']}: {pr['summary']} ({pr['by']}, day {pr['day']})")
+            for k, v in sorted((qd.get("gates_probed") or {}).items()):
+                L.append(f"   gate probe {k}: {v}")
 
         tu = m["tunnels"]
         if tu["descents"] or tu["ascents"]:

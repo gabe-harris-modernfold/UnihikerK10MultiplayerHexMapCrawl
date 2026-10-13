@@ -1,0 +1,105 @@
+{
+  "id": "kane_3_the_rules",
+  "title": "The Rules",
+  "kane": {
+    "chapter": 3
+  },
+  "start_node": "the_third_camp",
+  "nodes": {
+    "the_third_camp": {
+      "text": "This camp is tidier than the others, as if he stayed longer. The brass isn't in a ring. It stands in rows, every case upright, like a crowd waiting for a train. By the dead fire lies an ammo-can lid, scratched deep with a nail and gone over and over until the letters are rounded with years of going back. It is a list.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Read the lid.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 0,
+          "success_node": "the_rules",
+          "hazard_id": "rows_fall"
+        },
+        {
+          "label": "Count the rows of brass first.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_rules",
+          "hazard_id": "the_count"
+        }
+      ]
+    },
+    "the_rules": {
+      "text": "THE RULES. ONE: ASK FIRST. ALWAYS ASK FIRST. TWO: NEVER GET ON A TRAIN. THREE: SHOOT BEFORE THEY CAN PUT YOU ON ONE. FOUR: MAKE IT LOUD. A VOICE DOESN'T CARRY. SHE WILL HEAR THE GUN. FIVE: NEVER SHOOT AT A DOOR. SHE COULD BE BEHIND ANY DOOR. SIX: NEVER LOOK AT THE GLASS. SEVEN: KEEP THE FIRE LIT AND DON'T SHOOT AFTER DARK, SHE MIGHT BE THE ONE WALKING IN. EIGHT: DON'T SLEEP. Under the eighth, scratched later and much lighter: YOU DON'T HAVE TO ANYMORE.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Turn the lid over.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_tally",
+          "hazard_id": "lid_edge"
+        },
+        {
+          "label": "Look for a ninth rule.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "the_tally",
+          "hazard_id": "the_count"
+        }
+      ]
+    },
+    "the_tally": {
+      "text": "On the back of the lid is a tally. Fives crossed through, in rows, in blocks of rows, edge to edge and then over the top of themselves where he ran out of room. Above them, one word: CALLS. Every burst he has ever fired was him calling her the only way that carries out here. Sixty years of calling, and he counted every one. Down in the corner, where there is barely room, a ninth rule has been started and given up on. NINE: IF SHE",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 4,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "scrub_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "rows_fall": {
+      "text": "Your boot catches one case and it tips the next, and the whole crowd of brass goes down in one long bright ripple you are sure can be heard for miles. Far off, an engine answers. You go.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": true
+    },
+    "the_count": {
+      "text": "You start counting and can't stop. Row on row, upright, and the counting takes on a rhythm like an engine idling, and when you come out of it the light has gone long and you have lost the number.",
+      "penalty": {
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "lid_edge": {
+      "text": "The lid's edge has been filed to a blade by years of scratching. It opens your palm.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  }
+}

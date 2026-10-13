@@ -180,12 +180,27 @@ class EncounterRun:
         # A booby trap (enc_path "trap": 1, traps.hpp): opened by a step, not
         # chosen, and it cannot be walked away from at the start.
         self.trap = False
+        # One of Machine Gun Kane's chapters (enc_path "kane": n, kane.hpp):
+        # the chapter number, 0 for anything else. Also opened by arriving,
+        # and read only once its last node is reached.
+        self.kane = 0
         self.pushed = 0          # caches pressed on from, in a trap
         self.last_ci = None      # the choice last sent
+        self.last_from = None    # ...and the node it was sent from
         self.sent_at = None      # when it was sent; cleared by its enc_res
         # (node, ci) pairs the board refused outright.  A refusal changes
         # nothing, so the same pick comes straight back; this is what stops it.
         self.refused: set[tuple[str, int]] = set()
+        # What has been won so far and waits for the bank (encRunChoice adds
+        # each success's loot to pendingLoot/Items/Recipes; a hazard that ends
+        # the scene loses the lot).  From the enc_res events themselves, so it
+        # is what the board rolled, not what the file says it might.
+        self.pending_tokens = [0] * 5
+        self.pending_items: list[tuple[int, int]] = []
+        self.pending_recipes: set[int] = set()
+        # (node, ci, item) for every requires_item choice this scene took,
+        # and whether we held the item when we sent it (the quest oracle).
+        self.gates_sent: list[tuple[str, int, int, bool]] = []
 
     @property
     def node(self) -> dict:
@@ -255,6 +270,7 @@ class EncounterRun:
         """Record that we sent choice ci, so on success we know where we land."""
         self.rolls += 1
         self.last_ci = ci
+        self.last_from = self.node_key
         self.sent_at = time.monotonic()
         chs = self.choices
         self.pending_next = chs[ci].get("success_node") if 0 <= ci < len(chs) else None
@@ -266,6 +282,14 @@ class EncounterRun:
         if ev.get("out") and self.pending_next:
             self.node_key = self.pending_next
             self.visited.append(self.node_key)
+        if ev.get("out"):
+            for i, n in enumerate((ev.get("loot") or [])[:5]):
+                self.pending_tokens[i] += max(0, int(n or 0))
+            for tk, qk in (("it", "iq"), ("it2", "iq2")):
+                if ev.get(tk):
+                    self.pending_items.append((int(ev[tk]), int(ev.get(qk) or 1)))
+            if ev.get("rec"):
+                self.pending_recipes.add(int(ev["rec"]))
         self.pending_next = None
         self.sent_at = None
 
@@ -273,7 +297,172 @@ class EncounterRun:
         return {"biome": self.biome, "id": self.eid,
                 "title": self.enc.get("title", ""), "node": self.node_key,
                 "rolls": self.rolls, "visited": self.visited,
-                "banked": self.banked, "trap": self.trap}
+                "banked": self.banked, "trap": self.trap, "kane": self.kane}
+
+
+# -- planning a scene ----------------------------------------------------------
+# A full clear (banking at a terminal node) pays SCORE_ENC_FULL_CLEAR on top.
+CLEAR_BONUS = 2.0
+# What going down costs, in the same loot units: a fresh survivor, the pack on
+# the ground, and the walk back for it.
+DOWNED_COST = 60.0
+# Walking away from a scene that cannot be banked: the threat clock ticks and
+# the POI is gone for good.
+ABORT_COST = 1.0
+PLAN_DEPTH = 6
+
+_LOOT_TABLES = None
+
+
+def loot_tables(root: Path | None = None) -> dict:
+    global _LOOT_TABLES
+    if _LOOT_TABLES is None or root is not None:
+        try:
+            p = (Path(root) if root else REPO_ENCOUNTERS) / "loot_tables.json"
+            _LOOT_TABLES = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            _LOOT_TABLES = {}
+    return _LOOT_TABLES
+
+
+def _mean(q) -> float:
+    if isinstance(q, (list, tuple)) and q:
+        return (float(q[0]) + float(q[-1])) / 2.0
+    try:
+        return float(q)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def node_gain(enc: dict, key: str, worth, biome=None, eid=None) -> float:
+    """Expected worth of arriving at node `key`: its literal loot rows, its
+    loot table's weighted roll, any recipe, and the policy's own bonus for
+    the node itself (quest goals, unseen content)."""
+    node = (enc.get("nodes") or {}).get(key) or {}
+    v = 0.0
+    for row in node.get("loot") or []:
+        if not isinstance(row, dict):
+            continue
+        if "res" in row and 0 <= int(row["res"]) < 5:
+            v += worth.token(int(row["res"])) * _mean(row.get("qty", 1))
+        elif row.get("item"):
+            v += worth.item(int(row["item"])) * max(1.0, _mean(row.get("qty", 1)))
+        elif row.get("recipe"):
+            v += worth.recipe(int(row["recipe"]))
+    table = loot_tables().get(node.get("loot_table") or "")
+    if isinstance(table, list) and table:
+        tot = sum(max(0, int(r.get("weight", 0) or 0)) for r in table if isinstance(r, dict))
+        if tot > 0:
+            v += sum(max(0, int(r.get("weight", 0) or 0)) / tot
+                     * worth.item(int(r.get("item", 0) or 0)) * max(1.0, _mean(r.get("qty", 1)))
+                     for r in table if isinstance(r, dict) and r.get("item"))
+    v += worth.node(biome, eid, key)
+    return v
+
+
+def hazard_cost(enc: dict, ch: dict, me, risk: float = 1.0) -> tuple[float, bool]:
+    """(cost, ends) of failing choice `ch`: the hazard's LL, radiation,
+    wounds and tokens priced against the survivor, and whether it ends the
+    scene (and so loses everything still pending)."""
+    hz = (enc.get("hazards") or {}).get(ch.get("hazard_id") or "") or {}
+    pen = hz.get("penalty") or {}
+    ends = bool(hz.get("ends_encounter"))
+    cost = 0.0
+    ll_loss = -int(pen.get("ll", 0) or 0)
+    if ll_loss > 0:
+        left = me.ll - ll_loss
+        if left <= 0:
+            cost += DOWNED_COST
+        else:
+            # A point of LL is worth more the fewer are left: AP is ll + 3 and
+            # the last ones are the difference between walking home and not.
+            cost += ll_loss * (3.0 + max(0, 4 - left) * 2.0)
+    cost += 0.7 * max(0, int(pen.get("radiation", 0) or 0)) * (2.0 if me.rad >= 5 else 1.0)
+    w = hz.get("wound") or [0, 0]
+    if isinstance(w, (list, tuple)):
+        cost += 1.5 * (w[0] if len(w) > 0 else 0) + 4.0 * (w[1] if len(w) > 1 else 0)
+    for i, k in enumerate(("water", "food", "fuel", "med", "scrap")):
+        cost += 1.0 * max(0, int(pen.get(k, 0) or 0)) * (2.0 if i < 2 else 1.0)
+    return cost * risk, ends
+
+
+def pending_worth(run, worth) -> float:
+    v = sum(worth.token(i) * n for i, n in enumerate(run.pending_tokens))
+    v += sum(worth.item(i) * q for i, q in run.pending_items)
+    v += sum(worth.recipe(r) for r in run.pending_recipes)
+    return v
+
+
+def plan(run, obs, worth, risk: float = 1.0, min_p: float = 0.0, depth: int = PLAN_DEPTH):
+    """The best thing to do at the current node: ("bank", None, value),
+    ("choice", ci, value) or ("abort", None, value).
+
+    Expected value over the node graph: a choice is worth p * (what the node
+    it leads to holds, plus the best of what follows) + (1 - p) * (its
+    hazard, and everything pending if the hazard ends the scene).  Banking
+    is worth what is pending (plus the clear bonus at a terminal node).  A
+    gated choice is only considered when we may take it (has_for_choice), and
+    one the board refused here never again.  Cycles (a choice back to an
+    earlier node) are cut, and the search stops after `depth` nodes -- what
+    lies beyond is counted as bankable as it stands.
+
+    `min_p` drops choices whose odds are below it, unless nothing else is
+    left.  `risk` scales every hazard (a coward prices them higher)."""
+    enc = run.enc or {}
+    nodes = enc.get("nodes") or {}
+    me = obs.me
+    biome, eid = run.biome, run.eid
+    memo = {}
+
+    def options(key, pending, d, path):
+        node = nodes.get(key) or {}
+        chs = node.get("choices") or []
+        terminal = not chs
+        bankable = bool(node.get("can_bank")) or terminal
+        out = []
+        if bankable:
+            bonus = CLEAR_BONUS if terminal and not node.get("escape") else 0.0
+            out.append(("bank", None, pending + bonus))
+        if terminal or d <= 0:
+            if not bankable:
+                out.append(("bank", None, pending))   # depth cut: count it as is
+            return out
+        here = []
+        for ci, ch in enumerate(chs):
+            if key == run.node_key and run.is_refused(ci):
+                continue
+            if not has_for_choice(ch, me) or not can_pay(ch, me):
+                continue
+            nxt = ch.get("success_node", "")
+            if nxt not in nodes or nxt in path:
+                continue
+            p = success_chance(ch, obs)
+            gain = node_gain(enc, nxt, worth, biome, eid)
+            succ = best(nxt, pending + gain, d - 1, path | {nxt})
+            cost, ends = hazard_cost(enc, ch, me, risk)
+            stay = pending if bankable else 0.5 * pending
+            fail = -cost if ends else -cost + stay
+            here.append((p, ("choice", ci, p * succ + (1 - p) * fail)))
+        if min_p > 0 and any(p >= min_p for p, _ in here):
+            here = [h for h in here if h[0] >= min_p]
+        out.extend(o for _p, o in here)
+        if not bankable:
+            out.append(("abort", None, -ABORT_COST))
+        return out
+
+    def best(key, pending, d, path):
+        mk = (key, round(pending, 2), d)
+        if mk not in memo:
+            memo[mk] = max(o[2] for o in options(key, pending, d, path))
+        return memo[mk]
+
+    pend = pending_worth(run, worth)
+    opts = options(run.node_key, pend, depth, frozenset({run.node_key}))
+    if not opts:
+        return ("abort", None, -ABORT_COST)
+    # Ties go to the choice (it reads more of the scene), then to the bank.
+    rank = {"choice": 2, "bank": 1, "abort": 0}
+    return max(opts, key=lambda o: (round(o[2], 3), rank[o[0]]))
 
 
 def item_drop_terrains(item_id: int, root: Path | None = None) -> dict[int, float]:

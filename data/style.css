@@ -805,23 +805,23 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 .toast-item.dying{animation:toast-out 0.3s ease-in forwards}
 /* Creeping Doom's taunts. Deliberately not uppercase and not gold: the
    default toast is the UI telling you something, this is something in the
-   wasteland talking. Blood-tinted to match the Doom's map aura/ring in
-   world-entities.js, with a slow breath so it reads as a presence. */
+   wasteland talking. Its own sick green, the gas it is made of on the map
+   (DoomGas, world-entities.js), with a slow breath so it reads as a presence. */
 .toast-item.toast-doom{
-  background:rgba(14,3,8,0.92);border-color:#5e1024;
-  color:#d8677f;text-transform:none;font-style:italic;
+  background:rgba(7,11,3,0.92);border-color:#3f5414;
+  color:#b2cf62;text-transform:none;font-style:italic;
   letter-spacing:normal;text-shadow:none;
   animation:toast-in 0.22s ease-out forwards, toast-doom-breathe 3.1s ease-in-out 0.22s infinite
 }
 .toast-item.toast-doom.dying{animation:toast-out 0.3s ease-in forwards}
 @keyframes toast-doom-breathe{
-  0%,100%{box-shadow:0 0 0 0 rgba(160,20,60,0)}
-  50%    {box-shadow:0 0 14px 1px rgba(160,20,60,0.35)}
+  0%,100%{box-shadow:0 0 0 0 rgba(130,170,40,0)}
+  50%    {box-shadow:0 0 14px 1px rgba(130,170,40,0.35)}
 }
 
 /* The corridor talking to itself. Italic and lower-case like the Doom's
    voice, because it is a voice and not a system notice -- but cold concrete
-   rather than arterial red, and no breathing glow: the Doom is a thing
+   rather than the Doom's sick green, and no breathing glow: the Doom is a thing
    approaching, this is only a mood, and it should never pull the eye the way
    a real threat does.
 
@@ -836,6 +836,18 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
   letter-spacing:normal;text-shadow:none;box-shadow:none;
 }
 .toast-item.toast-tunnel.dying{animation:toast-out 0.3s ease-in forwards}
+
+/* Machine Gun Kane asking his question (kane-jeep.js). A voice, so italic
+   and lower-case like the Doom and the corridor -- but rust and gun-oil, the
+   jeep's own colours, and no breathing: he is not a presence, he is a man in
+   a jeep with a question, and a burst follows it in fifteen seconds. */
+.toast-item.toast-kane{
+  background:rgba(18,9,4,0.94);border-color:#8a3d18;
+  color:#f0b36a;text-transform:none;font-style:italic;
+  letter-spacing:normal;text-shadow:none;
+  box-shadow:0 0 12px rgba(200,80,30,0.25),0 4px 18px rgba(0,0,0,0.7);
+}
+.toast-item.toast-kane.dying{animation:toast-out 0.3s ease-in forwards}
 
 /* Stepping over one of the admired (ADMIRED in game-data.js). This one IS
    the UI talking -- the board being updated -- so it keeps the gold, but it
@@ -897,6 +909,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
    other log colour on purpose: it is the only line in the book that reports
    nothing that happened. */
 .log-tunnel-taunt{color:#7E8798;font-style:italic}
+.log-tunnel-lit{color:#A9D8B6}
 
 /*──────────────────────────── Menu System ──────────────────────*/
 #menu-overlay{

@@ -105,8 +105,8 @@ automatically when `.arduino\pinned.txt` doesn't match. To bump one: edit
 
 | Library | Pinned | Notes |
 |---|---|---|
-| `ESP Async WebServer` (ESP32Async) | `3.10.3` | Provides `beginResponse(int, contentType, const uint8_t*, len)` (used for every PSRAM-served asset) — `beginResponse_P` still compiles but is deprecated. Adds `Connection: close` to every response; there is no keep-alive, so every asset the browser fetches is a new TCP connection. Per-client WS queue capped at 8 via `build_opt.h` (below). |
-| `Async TCP` (ESP32Async) | `3.4.10` | Event queue `CONFIG_ASYNC_TCP_QUEUE_SIZE=64`; when the queue is ≥¾ full it starts *discarding poll events* and throttling — that is where `ERR_CONNECTION_RESET` under a request burst comes from. Priority 10, 16 KB stack. |
+| `ESP Async WebServer` (ESP32Async) | `3.12.1` | **Not below 3.12.0**: 3.10/3.11 tear the WebSocket stream under send-buffer pressure (upstream issue #453, fixed by PR #462). A failed `add()`/`send()` left a frame header in the TCP stream and the frame was then resent, so clients dropped with 1002 "expected a continuation frame" and saw messages duplicated. On 2026-10-12 a 5-bot run dropped all five sockets at once every 30–100 s and one `enc_start` arrived 7 times. Provides `beginResponse(int, contentType, const uint8_t*, len)` (used for every PSRAM-served asset) — `beginResponse_P` still compiles but is deprecated. Adds `Connection: close` to every response; there is no keep-alive, so every asset the browser fetches is a new TCP connection. Per-client WS queue capped at 8 via `build_opt.h` (below). |
+| `Async TCP` (ESP32Async) | `3.5.0` | WebServer 3.12 requires ≥ 3.5.0. Event queue `CONFIG_ASYNC_TCP_QUEUE_SIZE=64`; when the queue is ≥¾ full it starts *discarding poll events* and throttling — that is where `ERR_CONNECTION_RESET` under a request burst comes from. Priority 10, 16 KB stack. |
 | `ArduinoLog` | `1.1.1` | Required transitively. |
 | `LovyanGFX` | `1.1.16` | **Not 1.2.x**: 1.2.x adds `src/lgfx/v1/lv_font/font_fmt_txt.c`, whose `lv_font_*_fmt_txt` symbols collide with the core's `liblvgl.a` at link time (`multiple definition of lv_font_get_bitmap_fmt_txt`). `setup_libs.ps1` also renames `Bus_RGB.cpp` / `Panel_RGB.cpp` under `src/lgfx/v1/platforms/esp32s3/` to `*.cpp.disabled` — unused (K10 is SPI ILI9341), and their `<hal/gdma_ll.h>` collides with the SDK's `esp_private/gdma.h`. |
 | `unihiker_k10`, `lv_lib_qrcode`, `TFT_eSPI` | bundled with `UNIHIKER:esp32 0.0.3` (arduino-esp32 2.0.x core) | No action. `unihiker_k10.h` drags in TFT_eSPI (~25 KB flash; ~25% of the sketch's preprocessed lines) and LVGL headers, though only `begin()`, the buttons and `rgb` are used. |
@@ -128,7 +128,15 @@ overridden consistently. It is a gcc response file: flags only, no comments.
   (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` is 4096 in the linked IDF), so one
   stalled client could pin ~100 KB of internal heap — the HTTP-wedge failure
   mode. With `setCloseClientOnQueueFull(false)` a full queue drops the
-  message; broadcasts are superseded 100 ms later anyway.
+  message; broadcasts are superseded 100 ms later anyway. **So the `s` tick
+  never takes more than `WS_STATE_MAX_QUEUED` (2) of the 8 slots**
+  (`broadcastState()`, network-sync.hpp): a backlogged client skips ticks and
+  the other six stay free for acks, events and unicasts, which are not
+  resent. Before 2026-10-12 a Wi-Fi stall filled all eight with stale ticks
+  and every reply behind them was lost (an 8 s stall cost one bot 15 in a
+  row). Same 5-bot run, before/after: unanswered requests 38 → 7, connection
+  errors 14 → 0. The walk holds AsyncWebSocket's private client-list lock
+  (`wsClientsLock()`), exactly as `textAll()` does.
 - Optional `-DLOG_STRIP_VERBOSE` — compiles out every `LOG_VERBOSE` /
   `LOG_FN` call (see [logging.hpp](../logging.hpp)). Off by default because
   this doc and the bots rely on verbose lines such as `gameLoop wm:`.

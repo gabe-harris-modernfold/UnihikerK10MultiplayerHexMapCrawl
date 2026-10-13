@@ -712,6 +712,9 @@ static const char* movePlayer(int pid, int dir) {
   // the bottle on your way into the punji pit. Hatches never carry a trap,
   // so this and the descent below cannot both happen on one step.
   trapOnArrival(pid);
+  // Machine Gun Kane (kane.hpp): his camp, the house in the glass, or his
+  // fire at night opens a chapter. Never on a hatch -- his road avoids them.
+  kaneOnArrival(pid);
   // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels
   // (tunnels.hpp).  Last, so the surface EVT_MOVE reaches clients before the
   // EVT_TUNNEL_ENTER that follows it.

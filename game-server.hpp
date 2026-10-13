@@ -894,6 +894,15 @@ static void setupWiFiAndServer() {
         j += "}";
       }
 
+      // Machine Gun Kane (kane.hpp): the jeep (m 0 driving / 1 at his fire /
+      // 2 gone), the arc (st chapters read, e ending), the live camp and the
+      // house in the glass. The same object sync and the tick broadcast carry.
+      {
+        char kb[192];
+        int kn = appendKaneJson(kb, sizeof(kb));
+        if (kn) { j += ","; j += kb; }
+      }
+
       int shelters = 0, impShelters = 0, poiCount = 0, trapCount = 0, trapKnown = 0;
       int resCnt[6] = {0,0,0,0,0,0};
       int terrCnt[NUM_TERRAIN] = {};

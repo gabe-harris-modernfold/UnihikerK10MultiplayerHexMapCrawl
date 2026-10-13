@@ -8,6 +8,7 @@
 // These draw straight into the canvas's pixel buffer with the primitives in
 // ui-fx.hpp (spans, strokes, halftone, the two screen faces), in its sixteen
 // amber rungs, so a scene and a cut-in over it are one palette and one hand.
+// The one thing on them that is not amber is the Creeping Doom's green gas.
 // They animate: the board repaints a scene screen every scenePeriod() ms
 // instead of every SCREEN_MS, and the compositor goes on doing everything it
 // always did on top.
@@ -96,8 +97,10 @@ struct SceneSnap {
   const uint8_t* terr;
   const uint8_t* eco;
   int16_t   cols, rows;
-  int16_t   caravanQ, caravanR, doomQ, doomR, doomRadius;
+  int16_t   caravanQ, caravanR, doomQ, doomR;
   bool      caravanOn;
+  int16_t   kaneQ, kaneR;   // Machine Gun Kane's jeep (kane.hpp)
+  uint8_t   kaneMode;       // 0 driving, 1 at his fire, 2 gone (parked for good)
   uint8_t   hatchN;
   int16_t   hatchQ[8], hatchR[8];
 };
@@ -218,6 +221,9 @@ static const uint8_t SC_CAN[7]    = { 0x70, 0xF8, 0x88, 0xF8, 0xF8, 0x88, 0x70 }
 static const uint8_t SC_DROP[7]   = { 0x20, 0x20, 0x70, 0x70, 0xF8, 0xF8, 0x70 };
 static const uint8_t SC_TREF[7]   = { 0x44, 0xEE, 0xEE, 0x10, 0x00, 0x38, 0x38 };   // the trefoil
 static const uint8_t SC_SKULL[7]  = { 0x70, 0xF8, 0xA8, 0xF8, 0x70, 0x50, 0x00 };
+// The Creeping Doom on the map, where the gas is too small to hold a face
+// (fxGasSkull gives up under R 7): a skull set by hand, seven by seven.
+static const uint8_t SC_DOOM_MARK[7] = { 0x7C, 0xFE, 0x92, 0x92, 0xEE, 0x7C, 0x54 };
 
 // ── 3. The road: sky, weather, the ruins going by ────────────────────────────
 // Keyframes of the sky over the day, top of the sky and the horizon, in rungs.
@@ -446,34 +452,24 @@ static void scWreck(float scroll, uint8_t rimLv, bool night) {
   }
 }
 
-// The Creeping Doom on the horizon: a mound of dark with arms that do not
-// hang still, rising higher the closer it is. Once it cares, it has eyes.
+// The Creeping Doom over the skyline: a skull of sick green gas, hanging
+// bigger and higher the closer it is, its gas going up off it like smoke off a
+// fire. How well the gas holds the face is how much it cares, on the same
+// tiers the web map draws (DoomGas, data/world-entities.js): a scowl once it
+// has a scent, embers for eyes once it is unmaking things, the jaw going at
+// 100. It looks toward the party -- they are always to its left.
 static void scDoomAt(float cx, float base, float s, uint8_t aware, uint32_t now) {
-  float H = 10 + s * 78;
-  float tt = now * 0.00055f;
-  // the mass
-  fxBlob(cx, base, 1, 0, 26 + s * 26, H * 0.42f, 404, FX_PAL[FXP_BLOOD]);
-  fxBlob(cx + 1, base + 1, 1, 0, 25 + s * 25, H * 0.40f, 404, FX_PAL[FXP_INK]);
-  // the arms, tapering, wandering on value noise so they sway rather than wave
-  for (int i = 0; i < 9; i++) {
-    float u = (i - 4) / 4.0f, x = cx + u * (18 + s * 22), y = base - H * 0.25f;
-    float a = -1.5708f + u * 0.5f, w = 5.5f + s * 2;
-    float len = H * (0.42f + 0.35f * fxU(fxHash(i + 1)));
-    for (int seg = 0; seg < 6; seg++) {
-      a += (fxNoise1(tt + i * 3.1f + seg * 0.7f, 71) - 0.5f) * 0.9f;
-      float nx = x + cosf(a) * len / 6, ny = y + sinf(a) * len / 6, nw = w * 0.72f;
-      fxStroke(x - 0.8f, y - 0.8f, nx - 0.8f, ny - 0.8f, w + 1.2f, nw + 1.0f, FX_PAL[FXP_BLOOD]);
-      fxStroke(x, y, nx, ny, w, nw, FX_PAL[FXP_INK]);
-      x = nx; y = ny; w = nw;
-    }
-  }
-  if (aware >= 76 && s > 0.3f) {
-    float open = aware >= 100 ? 1.0f : 0.35f + 0.25f * fxNoise1(tt * 3, 5);
-    // Blinks, now and then. It is not in a hurry.
-    if (((now / 180) % 37) == 0) open = 0.0f;
-    fxEyePair(cx - 4, base - H * 0.55f, 9 + s * 5, 2.2f + s * 1.5f, 6, open, 0.5f * fxS(fxHash(now / 1500)),
-              33, FXP_GLOW, FXP_CRIT, FXP_INK);
-  }
+  const float t = now * 0.001f;
+  const float R = 6.0f + s * 26.0f;
+  const float cy = base - R * 1.25f - s * 18.0f + sinf(t * 1.4f) * R * 0.08f;
+  const float coh = aware >= 100 ? 1.0f : aware >= 76 ? 0.86f : aware >= 51 ? 0.70f + 0.04f * sinf(t * 1.3f) : 0.45f;
+  const float jaw = aware >= 100 ? 0.26f + 0.08f * fabsf(sinf(t * 7.5f))
+                  : aware >= 51 ? 0.03f + 0.05f * (0.5f + 0.5f * sinf(t * 1.6f)) : 0.0f;
+  const float ember = aware >= 100 ? 1.0f : aware >= 76 ? 0.6f : 0.0f;
+  const float len = aware >= 100 ? 3.0f : aware >= 76 ? 2.5f : 1.9f;
+  const float bx = 0.42f, by = -0.91f;              // up, and off downwind
+  fxGasPlume(cx, cy, R, bx, by, len, coh, t, 404);
+  fxGasSkull(cx, cy, R, coh, -0.45f, jaw, ember, bx, by, t, 404);
 }
 
 static void scDoom(uint8_t close, uint8_t aware, uint32_t now) {
@@ -3176,27 +3172,31 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
     return d < 64 ? 1.0f - d / 64.0f : 0.0f;
   };
 
-  // -- the Doom: its ring, then it --
+  // -- the Doom: a small skull of its gas, a wisp going up off it, and ember
+  // eyes once it is unmaking things. No ring: the web map dropped its scent
+  // ring too, and the mood meter below says how much it cares. --
   bool doomOn = S.doomQ >= 0 && S.doomQ < cols && S.doomR >= 0 && S.doomR < rows;
   if (doomOn) {
     int dx, dy;
     cell(S.doomQ, S.doomR, &dx, &dy);
-    float cx = dx + XS * 0.5f, cy = dy + YS * 0.5f;
-    if (S.doomRadius > 0) {
-      float rx = S.doomRadius * XS, ry = S.doomRadius * YS, spin = now * 0.0004f;
-      int n = fxMaxI(16, (int)(rx * 0.9f));
-      for (int i = 0; i < n; i++) {
-        float a = spin + i * (FX_TAU / n), wob = 1.0f + 0.06f * (fxNoise1(i * 0.7f + now * 0.001f, 3) - 0.5f);
-        int ex = (int)(cx + cosf(a) * rx * wob), ey = (int)(cy + sinf(a) * ry * wob);
-        if (i & 1) continue;                                   // dashes, not a line: it is a guess
-        fxRect(ex - 1, ey - 1, ex + 2, ey + 2, FX_PAL[FXP_INK]);
-        fxRect(ex, ey, ex + 1, ey + 1, FX_PAL[FXP_CRIT]);
+    const float t = now * 0.001f, cx = dx + XS * 0.5f, cy = dy + YS * 0.5f - 1.0f;
+    fxGasPlume(cx, cy - 2.0f, 4.0f, 0.35f, -0.94f, 2.4f, 0.8f, t, 77);
+    // Inked round, the cranium catching the light, and the sockets lit once
+    // it is unmaking things -- guttering now and then.
+    const int mx = (int)cx - 3, my = (int)(cy + sinf(t * 1.4f) * 0.7f) - 4;
+    for (int r = 0; r < 7; r++)
+      for (int c = 0; c < 7; c++)
+        if (SC_DOOM_MARK[r] & (0x80 >> c)) fxRect(mx + c - 1, my + r - 1, mx + c + 2, my + r + 2, FX_PAL[FXP_INK]);
+    scBits(SC_DOOM_MARK, 2, 7, mx, my, FX_PAL[FXP_GAS_L]);
+    scBits(SC_DOOM_MARK + 2, 5, 7, mx, my + 2, FX_PAL[FXP_GAS]);
+    if (S.doomAware >= 76) {
+      const bool hot = (now / 140) % 7 != 0;
+      for (int sd = 0; sd < 2; sd++) {
+        const int sx = mx + 1 + sd * 3;
+        fxRect(sx, my + 2, sx + 2, my + 4, FX_PAL[FXP_FLAME]);
+        scPx(sx + 1 - sd, my + 2, FX_PAL[hot ? FXP_GLOW : FXP_HOT]);
       }
     }
-    float br = 3.5f + 1.2f * sinf(now * 0.004f) + S.doomAware * 0.02f;
-    fxBlob(cx, cy, 1, 0, br + 1.5f, br + 1.0f, 404, FX_PAL[FXP_BLOOD]);
-    fxBlob(cx, cy, 1, 0, br, br * 0.8f, 404, FX_PAL[FXP_INK]);
-    if (S.doomAware >= 76) { scPx((int)cx - 1, (int)cy - 1, FX_PAL[FXP_GLOW]); scPx((int)cx + 1, (int)cy - 1, FX_PAL[FXP_GLOW]); }
   }
   // -- the caravan's wagon --
   if (S.caravanOn && S.caravanQ >= 0 && S.caravanQ < cols && S.caravanR >= 0 && S.caravanR < rows) {
@@ -3206,6 +3206,16 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
     fxRect(x - 3, y - 2, x + 5, y + 3, FX_PAL[FXP_INK]);
     fxRect(x - 2, y - 1, x + 4, y + 1, FX_PAL[g > 0.5f ? FXP_WHITE : FXP_HOT]);
     scPx(x - 1, y + 2, FX_PAL[FXP_HOT]); scPx(x + 3, y + 2, FX_PAL[FXP_HOT]);
+  }
+  // -- Kane's jeep: a rust-red box with the gun over the hood; a glow beside it at his fire --
+  if (S.kaneQ >= 0 && S.kaneQ < cols && S.kaneR >= 0 && S.kaneR < rows) {
+    int x, y;
+    cell(S.kaneQ, S.kaneR, &x, &y);
+    const uint16_t body = FX_PAL[S.kaneMode == 2 ? FXP_INK : FXP_BLOOD];
+    fxRect(x - 3, y - 2, x + 4, y + 3, FX_PAL[FXP_INK]);
+    fxRect(x - 2, y - 1, x + 3, y + 2, body);
+    fxRect(x - 5, y - 3, x - 1, y - 2, FX_PAL[FXP_INK]);   // the barrel
+    if (S.kaneMode == 1 && (now / 300) % 2) scPx(x + 5, y + 1, FX_PAL[FXP_GLOW]);
   }
   // -- the party --
   for (int i = 0; i < SC_SEATS; i++) {
@@ -3237,7 +3247,7 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
     fxRect(x, ky + 2, x + 7, ky + 5, FX_PAL[FXP_HOT]); fxGlcd(S.caravanOn ? "TRADER" : "TRADER?", x + 10, ky, 1, FX_PAL[FXP_HDR]); x += 58;
     fxRect(x, ky + 1, x + 6, ky + 7, FX_PAL[FXP_GLOW]); fxRect(x + 1, ky + 2, x + 5, ky + 6, FX_PAL[FXP_INK]);
     fxGlcd("HATCH", x + 9, ky, 1, FX_PAL[FXP_HDR]); x += 44;
-    fxBlob((float)x + 3, ky + 4.0f, 1, 0, 3.5f, 3, 404, FX_PAL[FXP_BLOOD]); fxGlcd("IT", x + 9, ky, 1, FX_PAL[FXP_HDR]);
+    scBits(SC_SKULL, 6, 5, x + 1, ky + 1, FX_PAL[FXP_GAS]); fxGlcd("IT", x + 9, ky, 1, FX_PAL[FXP_HDR]);
   }
   {
     static const char* const MOOD[5] = { "NAPPING", "SNIFFING", "INTERESTED", "PECKISH", "HUNTING" };
@@ -3247,7 +3257,7 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
     for (int i = 0; i < 5; i++) {
       bool on = i <= m;
       bool pulse = on && i == m && m >= 3 && ((now / 250) & 1);
-      scBits(SC_SKULL, 6, 5, 64 + i * 9, y + 2, FX_PAL[pulse ? FXP_WHITE : on ? FXP_CRIT : FXP_TRACK]);
+      scBits(SC_SKULL, 6, 5, 64 + i * 9, y + 2, FX_PAL[pulse ? FXP_GAS_L : on ? FXP_GAS : FXP_TRACK]);
     }
     fxF2(MOOD[m], 112, y - 2, FX_PAL[m >= 3 ? FXP_CRIT : FXP_HDR]);
     char b[8];

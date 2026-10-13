@@ -1,0 +1,117 @@
+{
+  "id": "tunnel_night_operator",
+  "title": "The Night Operator",
+  "start_node": "switchboard",
+  "nodes": {
+    "switchboard": {
+      "text": "The room off the corridor is a switchboard: a wall of jacks and cords, a desk, a wheeled chair. Someone is in the chair. Has been for a long time — the headset has sunk into what is left of the ears. One grey hand rests on a fat red lever stencilled {{section}} — LIGHTING. Every jack on the board is patched, and every cord, when you follow it with your eye, runs back into the same socket. While you are taking this in a lamp on the board winks on, and somewhere inside the desk a bell begins, very quietly, to ring.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Lift the operator's hand off the lever",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 4,
+          "success_node": "lever",
+          "hazard_id": "the_grip"
+        },
+        {
+          "label": "Pick up the receiver",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_call",
+          "hazard_id": "the_line"
+        }
+      ]
+    },
+    "the_call": {
+      "text": "No dial tone. Breathing, and then a voice — patient, tired, a voice that has been on hold for decades. 'Night desk. Which section?' You hear yourself say {{section}}. A long pause. 'They're still down there in {{section}}, you know. They've been waiting for the lights.' The line clicks dead. On the board, the red lever has moved a quarter of an inch by itself, as if somebody had tried it and lost their nerve.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Throw the lever while the line is quiet",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "arc"
+        },
+        {
+          "label": "Unpatch every cord before you touch it",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 2,
+          "success_node": "lights_on",
+          "hazard_id": "cord_whip"
+        }
+      ]
+    },
+    "lever": {
+      "text": "The hand comes away like a dry leaf and settles in the operator's lap. The bell stops the moment your own hand closes on the lever. That is worse than the ringing. The lever is stiff and cold and very slightly greasy, and the fuse window beside it shows one cartridge seated and one gap where its partner should be.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Throw it as it is",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "lights_on",
+          "hazard_id": "arc"
+        },
+        {
+          "label": "Find the missing fuse first",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "lights_on",
+          "hazard_id": "wrong_fuse"
+        }
+      ]
+    },
+    "lights_on": {
+      "text": "You lean on the lever until something inside the wall gives with a heavy CLUNK. Out in the corridor a tube stutters and catches. Then the next one. Then the next — clunk, clunk, clunk — the light walking away from you down {{section}} one fitting at a time, like something being let out. One of them never settles. It flickers and buzzes and will not make up its mind. Behind you the chair creaks. You do not turn around. In the desk drawer, wrapped in a duty roster, are a few things the night desk won't be needing.",
+      "lights": true,
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [1, 2] }
+      ],
+      "loot_table": "tunnel_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_grip": {
+      "text": "The fingers close. Not much — they have not got the strength — but enough that you feel the tendons go taut across your wrist before they crumble. You wrench free and leave skin behind.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "the_line": {
+      "text": "The breathing on the line stops. In the silence you hear it again — the same breathing — behind you, in the room. You drop the receiver and run, and you do not stop until the corridor has gone quiet. The lever is still back there in the dark. You will have to go back for it.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": true
+    },
+    "arc": {
+      "text": "The lever has been live for fifty years and wants you to know it. A fat blue arc jumps to your knuckles and throws you across the room into the operator, who comes apart around you like a wet paper bag.",
+      "penalty": { "ll": -2 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "cord_whip": {
+      "text": "One cord will not come. You pull harder and it comes all at once, whipping back out of the board like a snake, and the brass plug catches you across the brow.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    },
+    "wrong_fuse": {
+      "text": "The fuse you seat is the wrong rating. It bursts in a puff of green glass, and your palm is full of it.",
+      "penalty": { "ll": -1 },
+      "wound": [1, 0],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "section": ["SECTION C", "RING FOUR", "SUBLEVEL B", "THE EAST GALLERY", "SPUR NINE", "BLOCK D"]
+  }
+}

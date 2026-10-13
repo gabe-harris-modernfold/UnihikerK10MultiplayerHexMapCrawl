@@ -1038,6 +1038,7 @@ static void wInit() {
   pickCaravanWaypoint();
   W.caravan.active = true;
   restockCaravan();
+  kaneInit();   // Machine Gun Kane's jeep, and his arc unread (kane.hpp)
 }
 
 // ── Minimap markers ────────────────────────────────────────────────────────
@@ -1050,5 +1051,5 @@ static void snapshotWorldMarkers(WorldMarkers& out) {
   out.doomQ         = W.creepingDoom.q;
   out.doomR         = W.creepingDoom.r;
   out.doomAwareness = W.creepingDoom.awareness;
-  out.doomRadius    = (int16_t)doomDetectionRadius();
+  kaneSnapshot(out.kaneQ, out.kaneR, out.kaneMode);
 }

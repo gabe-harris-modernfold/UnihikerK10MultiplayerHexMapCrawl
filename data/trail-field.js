@@ -72,7 +72,7 @@ const TRAIL_DETAIL_PX    = 7;
 const TRAIL_WHEEL_DETAIL = 40;      // HEX_SZ from which tyre tread is drawn
 // Ruts are wide and continuous, so at a print's opacity they read far darker
 // than a line of prints does: drawn at this share of it.
-const TRAIL_WHEEL_ALPHA  = 0.75;
+const TRAIL_WHEEL_ALPHA  = 0.525;
 
 // Age buckets (ms): fresh, recent, old, stale. Every inferred pass is stale --
 // it was laid before this browser was watching.
@@ -599,11 +599,15 @@ class TrailField {
     if (!fp && !tt) return;
     const segs = this._segments(cell, q, r, fp, tt);
     if (!segs.length) return;
+    // Machine Gun Kane's step still being driven (kane-jeep.js): its ruts stop
+    // under the jeep.
+    const cut = tt && typeof kaneTrackCut === 'function' ? kaneTrackCut(q, r) : null;
     let sig = `${myDepth}_${q}_${r}_${cell.terrain}_${Math.round(S * 4)}`;
     for (const g of segs) sig += `|${g.k}${g.id}.${g.i}.${g.o}.${g.n}.${g.age}`;
+    if (cut) sig += `@${cut.x}_${cut.y}_${cut.i}_${cut.o}`;
     let geo = this.geo.get(sig);
     if (!geo) {
-      geo = this._build(segs, cell.terrain, S);
+      geo = this._build(segs, cell.terrain, S, cut);
       this.geo.set(sig, geo);
       if (this.geo.size > TRAIL_CACHE_MAX) this.geo.delete(this.geo.keys().next().value);
     }
@@ -631,8 +635,10 @@ class TrailField {
     ctx.restore();
   }
 
-  _build(segs, terrain, S) {
+  // cut: kaneTrackCut's answer for this hex, or null.
+  _build(segs, terrain, S, cut = null) {
     const ground = TRAIL_GROUND[terrain] || TRAIL_GROUND[0];
+    const driving = (sg) => cut && sg.k === 'v' && ((cut.o >= 0 && sg.o === cut.o) || (cut.i >= 0 && sg.i === cut.i));
     const groups = new Map();   // age bucket + feet/wheels -> paths
     for (const sg of segs) {
       const wheel = sg.k !== 'f', key = sg.age * 2 + (wheel ? 1 : 0);
@@ -643,7 +649,7 @@ class TrailField {
       }
       const rng = _trailRng(sg.s);
       if (sg.k === 'f') this._feet(g, sg, rng, ground, S);
-      else              this._wheels(g, sg, rng, ground, S);
+      else              this._wheels(g, sg, rng, ground, S, driving(sg) ? cut : null);
     }
     return { ground, groups: [...groups.values()] };
   }
@@ -792,7 +798,9 @@ class TrailField {
   // on top of each other, at different depths, so the ruts have doubled
   // edges. A bike is one narrow knobbly rut. Everyone's tread points the way
   // they were going.
-  _wheels(g, sg, rng, G, S) {
+  // cut: the jeep's position on this hex when this segment is a step Kane is
+  // still driving -- the ruts are laid only as far along it as he has got.
+  _wheels(g, sg, rng, G, S, cut = null) {
     let cv = this._curve(sg, rng);
     if (!cv) {
       // Parked and never seen moving: a short stretch of rut through the middle.
@@ -802,21 +810,31 @@ class TrailField {
     const pts    = _trailSample(cv, 40);
     const detail = S >= TRAIL_WHEEL_DETAIL;
     const px     = 1 / S;
+    let lim = Infinity;
+    if (cut) {
+      let best = Infinity;
+      for (const p of pts) {
+        const dd = (p.x - cut.x) ** 2 + (p.y - cut.y) ** 2;
+        if (dd < best) { best = dd; lim = p.s; }
+      }
+    }
     if (sg.k === 'b') {
-      this._rut(g, pts, 0, Math.max(0.03, 1.5 * px), 1, 'knobs', rng, G, detail, px);
+      this._rut(g, pts, 0, Math.max(0.03, 1.5 * px), 1, 'knobs', rng, G, detail, px, lim);
       return;
     }
     const drift = (rng() - 0.5) * 0.05;
     for (const side of [-1, 1]) {
-      this._rut(g, pts, side * 0.15,                 Math.max(0.066, 2.2 * px), 1, 'chevron', rng, G, detail, px);   // APC
-      this._rut(g, pts, side * 0.165 + drift,        Math.max(0.085, 2.6 * px), 0, 'bars',    rng, G, detail, px);   // truck
+      this._rut(g, pts, side * 0.15,                 Math.max(0.066, 2.2 * px), 1, 'chevron', rng, G, detail, px, lim);   // APC
+      this._rut(g, pts, side * 0.165 + drift,        Math.max(0.085, 2.6 * px), 0, 'bars',    rng, G, detail, px, lim);   // truck
     }
   }
 
   // One rut along pts, off to the right of the line by `off`, W wide. Broken
   // into lengths the ground did or did not hold, with a lip of thrown soil
-  // either side and its tread pressed into the bed.
-  _rut(g, pts, off, W, depth, tread, rng, G, detail, px) {
+  // either side and its tread pressed into the bed. Nothing past arc length
+  // lim is laid, but the rng is drawn exactly as if it were, so the part that
+  // is laid does not change as lim grows.
+  _rut(g, pts, off, W, depth, tread, rng, G, detail, px, lim = Infinity) {
     const total = pts[pts.length - 1].s;
     // A driver's slow drift across the line, not a wobble.
     const ph1 = rng() * 6.283, ph2 = rng() * 6.283, amp = 0.003 + rng() * 0.004;
@@ -833,42 +851,47 @@ class TrailField {
         const left = [], right = [], lipL = [], lipR = [];
         const n = Math.max(2, Math.ceil((s1 - s0) / 0.03));
         for (let j = 0; j <= n; j++) {
-          const p = at(s0 + (s1 - s0) * j / n);
+          const s = s0 + (s1 - s0) * j / n;
+          const p = at(s);
           const w = W * (0.95 + rng() * 0.08) / 2;   // the bed is never a ruled line
+          if (s > lim) continue;
           const nx = -p.ty, ny = p.tx;
           left.push({ x: p.x + nx * w, y: p.y + ny * w });
           right.push({ x: p.x - nx * w, y: p.y - ny * w });
           lipL.push({ x: p.x + nx * (w + lip), y: p.y + ny * (w + lip) });
           lipR.push({ x: p.x - nx * (w + lip), y: p.y - ny * (w + lip) });
         }
-        const leftBack = left.slice().reverse(), rightBack = right.slice().reverse();
-        _trailPoly(g.dark[depth], left.concat(rightBack));
-        _trailPoly(g.rim, lipL.concat(leftBack));
-        _trailPoly(g.rim, lipR.concat(rightBack));
-        g.used[depth] = 1;
-        if (detail) this._tread(g, at, s0, s1, W, tread, rng);
+        if (left.length > 1) {
+          const leftBack = left.slice().reverse(), rightBack = right.slice().reverse();
+          _trailPoly(g.dark[depth], left.concat(rightBack));
+          _trailPoly(g.rim, lipL.concat(leftBack));
+          _trailPoly(g.rim, lipR.concat(rightBack));
+          g.used[depth] = 1;
+        }
+        if (detail) this._tread(g, at, s0, s1, W, tread, rng, lim);
       }
       s0 = s1;
     }
   }
 
-  _tread(g, at, s0, s1, W, tread, rng) {
+  _tread(g, at, s0, s1, W, tread, rng, lim = Infinity) {
     const gap = tread === 'knobs' ? 0.026 : tread === 'bars' ? 0.04 : 0.05;
     for (let s = s0 + gap * rng(); s < s1; s += gap) {
       if (rng() < 0.2) continue;   // worn, or the soil slumped back in
       const p = at(s);
       const tx = p.tx, ty = p.ty, nx = -ty, ny = tx;
       const P = (f, l) => ({ x: p.x + tx * f + nx * l, y: p.y + ty * f + ny * l });
+      const laid = s <= lim;
       if (tread === 'chevron') {
         // A V whose point leads: tip forward, arms trailing back to the edges.
         const a = W * 0.42, k = 0.016, t = 0.012;
-        _trailPoly(g.deep, [P(-k, a), P(k, 0), P(-k, -a), P(-k - t, -a), P(k - t, 0), P(-k - t, a)]);
+        if (laid) _trailPoly(g.deep, [P(-k, a), P(k, 0), P(-k, -a), P(-k - t, -a), P(k - t, 0), P(-k - t, a)]);
       } else if (tread === 'bars') {
         const a = W * 0.4, t = 0.007;
-        _trailPoly(g.deep, [P(-t, a), P(t, a), P(t, -a), P(-t, -a)]);
+        if (laid) _trailPoly(g.deep, [P(-t, a), P(t, a), P(t, -a), P(-t, -a)]);
       } else {
         const side = rng() < 0.5 ? 1 : -1, c = W * 0.22 * side, h = Math.max(0.006, W * 0.18);
-        _trailPoly(g.deep, [P(-h, c - h), P(h, c - h), P(h, c + h), P(-h, c + h)]);
+        if (laid) _trailPoly(g.deep, [P(-h, c - h), P(h, c - h), P(h, c + h), P(-h, c + h)]);
       }
     }
     g.used[3] = 1;

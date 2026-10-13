@@ -1,0 +1,116 @@
+{
+  "id": "kane_2_the_tag",
+  "title": "The Tag",
+  "kane": {
+    "chapter": 2
+  },
+  "start_node": "the_second_camp",
+  "nodes": {
+    "the_second_camp": {
+      "text": "Another of his camps, another ring of brass, laid out with the same care. This time he left something on purpose: a jerrycan stood upright on a flat stone like a headstone, and folded on top of it a child's wool coat. It is too small for anyone. The elbows are worn through from the inside, the way they would be if a grown man had been wearing it for a very long time.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Unfold the coat.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 3,
+          "success_node": "the_tag",
+          "hazard_id": "moth_cloud"
+        },
+        {
+          "label": "Lift the jerrycan off its stone.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_tag",
+          "hazard_id": "under_the_stone"
+        }
+      ]
+    },
+    "the_tag": {
+      "text": "A paper tag is pinned to the collar with a safety pin gone brown. The printing is the same as on the coats on the train in the trees: NAME, SCHOOL, DESTINATION. KANE. AGE 9. MERIDIAN COUNTY. On the back, in a woman's hand, in ink that has held up better than anything else out here: BE GOOD. DON'T LOOK BACK AT THE TRAIN, IT MAKES IT WORSE. I WILL COME AND GET YOU. MAMA.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "label": "Open the jerrycan.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_escort_log",
+          "hazard_id": "fumes"
+        },
+        {
+          "label": "Search the camp for whatever else he keeps.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 1,
+          "success_node": "the_escort_log",
+          "hazard_id": "brass_slide"
+        }
+      ]
+    },
+    "the_escort_log": {
+      "text": "The can is stencilled EVAC ESCORT 3, and it hasn't held fuel in a lifetime. Rolled up inside is the escort's logbook, in pencil and army shorthand. SEPT 14. TRAIN STOPPED AT SIDING, TREES ACROSS LINE. ONE BOY OFF, WILL NOT GET BACK ON. SAYS HIS MOTHER WON'T FIND HIM IF HE IS ON IT. SEPT 15. TRAIN GONE. DID NOT SEE IT GO. KEPT THE BOY. TEACHING HIM TO DRIVE, HE IS A NATURAL. HE ASKS ABOUT HIS MOTHER EVERY MILE. The entries thin out over the weeks. The last one reads: TOLD HIM THE TRAIN WILL COME BACK FOR US. TOLD HIM I WOULD PUT HIM ON IT MYSELF. HE HAS GONE QUIET. HE HAS FOUND WHERE I KEEP THE. There is no more book.",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 2,
+          "qty": [
+            1,
+            2
+          ]
+        }
+      ],
+      "loot_table": "scrub_common",
+      "choices": []
+    }
+  },
+  "hazards": {
+    "moth_cloud": {
+      "text": "The coat comes apart in your hands into a cloud of moth and dust that gets into your eyes and throat. You cough until the camp swims.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "under_the_stone": {
+      "text": "Something has made a nest under the stone, something with too many legs, and it does not want to be disturbed.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "fumes": {
+      "text": "It was a fuel can once. What is left of the fuel has gone to something worse, and the first breath of it puts you on your knees.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "brass_slide": {
+      "text": "You kneel on the brass and the brass moves, every case at once, and you go down hard among them.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  }
+}
