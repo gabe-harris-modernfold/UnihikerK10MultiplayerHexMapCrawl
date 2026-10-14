@@ -1,0 +1,43 @@
+{
+ "_source": "Rolling Hills (terrain 7). The user's image-gen sheets hex-hills01.png (common) and hex-hills-rare01.png, then hex-hills02.png (nature, cells 12-17; pink sky, despilled) (OneDrive Desktop, 2026-10-14): flat-top hexes on magenta, painted sky replaced by a hazed far range cut from common tiles 1-3, vertex-fan fit, no grade. The old painted cell 0 is retired. See docs/hex-tile-art.md \"Rolling Hills\". Rare cell 9 (glass observation gallery) removed at the user's request; later cells moved down one",
+ "cells": [
+  "hills01 cell 1, rolling hills + footpath",
+  "hills-rare01 cell 1, rusted fire tower + lockbox",
+  "hills01 cell 2, scree ridgeline",
+  "hills01 cell 3, knolls + stony gully",
+  "hills01 cell 4, hilltop cairn + rag flag",
+  "hills01 cell 5, scorched outcrop + split dead tree",
+  "hills01 cell 6, tumbled dry-stone walls",
+  "hills-rare01 cell 2, bluff ledge + wedged pack",
+  "hills-rare01 cell 3, flatbed truck + tuning fork",
+  "hills-rare01 cell 5, concrete survey pillar",
+  "hills-rare01 cell 6, toppled wind turbine",
+  "hills02 cell 1, heather + bracken",
+  "hills02 cell 2, birch/hawthorn copse in a fold",
+  "hills02 cell 3, lichen-crusted boulder tor",
+  "hills02 cell 4, seeding grass, yarrow + ragwort",
+  "hills02 cell 5, gorse thickets + animal trail",
+  "hills02 cell 6, lone wind-sculpted tree on rock"
+ ],
+ "alts": {
+  "0": [
+   2,
+   3,
+   4,
+   5,
+   6,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16
+  ],
+  "1": [
+   7,
+   8,
+   9,
+   10
+  ]
+ }
+}

@@ -24,6 +24,15 @@ static constexpr uint8_t  TRACK_AP_SCALE        = 2;    // heat added = apSpent 
 static constexpr uint8_t  TRACK_DECAY_RATE      = 1;    // track intensity lost per world tick (a 2 AP action stays smellable ~4 ticks / 60 s)
 static constexpr uint8_t  FIRE_SPREAD_CHANCE    = 20;   // % chance a burning hex (intensity >=2) ignites each flammable neighbour per world tick
 static constexpr uint8_t  FIRE_CAP              = 20;   // max simultaneously burning hexes
+// Fire runs downwind (wind.hpp). Each neighbour's FIRE_SPREAD_CHANCE is scaled
+// by 1 + FIRE_WIND_K * s * along (along: +1 straight downwind, -1 straight
+// upwind), clamped. In clear air (s ~0.55) a downwind neighbour catches at
+// ~x1.7 and an upwind one at ~x0.3; in a storm x2.25 / x0.25. The six factors
+// average 1 before the clamp, so a fire burns about as much ground as it
+// always did -- it just runs one way, the way its smoke is leaning.
+static constexpr float    FIRE_WIND_K   = 1.25f;
+static constexpr float    FIRE_WIND_MIN = 0.25f;
+static constexpr float    FIRE_WIND_MAX = 2.25f;
 // Not in the original spec: lightning during a storm is an additional
 // ignition source alongside Creeping Doom, which can also set fires deliberately.
 static constexpr uint8_t  LIGHTNING_IGNITE_CHANCE = 17; // % per world tick while WEATHER_STORM is active (was 15: +15% relative)
@@ -47,6 +56,13 @@ static constexpr uint8_t  FLOOD_SEARCH_RADIUS = 4;   // jitter box (± radius) s
 
 static constexpr uint8_t  SCENT_THRESHOLD = 4;   // min track intensity Doom will pursue (one 2 AP action, or one 2 AP move, clears it)
 static constexpr uint8_t  DOOM_BASE_RADIUS = 6;  // scent radius at awareness 0 (see doomDetectionRadius)
+// Scent carries on the wind (wind.hpp). A trail d hexes off reads as
+// d * (1 - k * along) away, along = how squarely the wind blows from the trail
+// to the Doom, k = DOOM_WIND_K * s capped at DOOM_WIND_MAX. In clear air its
+// nose reaches ~28% further for a trail upwind of it and ~18% less for one
+// downwind; in a storm +54% / -26%. Stay downwind of it.
+static constexpr float    DOOM_WIND_K   = 0.4f;
+static constexpr float    DOOM_WIND_MAX = 0.35f;
 static constexpr uint8_t  AWARENESS_GAIN  = 12;  // per world tick when following scent
 static constexpr uint8_t  AWARENESS_DECAY = 5;   // per world tick when cold
 // Gathering draws it (docs/team-play.md). Survivors who share a surface hex
@@ -395,6 +411,13 @@ static void spreadFire() {
 
   PSRAM_STATIC(HexDynamic, next, [MAP_ROWS][MAP_COLS]);  // static + PSRAM: off the task stack and internal .bss
   memcpy(next, W_hex, W_HEX_BYTES);
+  // One wind for the whole pass; the chance per direction follows from it.
+  const WindNow wn = windNow();
+  int chance[6];
+  for (int d = 0; d < 6; d++) {
+    const float f = constrain(1.0f + FIRE_WIND_K * wn.s * windAlong(wn, DQ[d], DR[d]), FIRE_WIND_MIN, FIRE_WIND_MAX);
+    chance[d] = (int)(FIRE_SPREAD_CHANCE * f + 0.5f);
+  }
 
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int q = 0; q < MAP_COLS; q++) {
@@ -407,7 +430,7 @@ static void spreadFire() {
           int nr = wrapR(r + DR[d]);
           if (next[nr][nq].fire > 0) continue;              // already burning this tick
           if (!isFlammable(G.map[nr][nq].terrain)) continue; // immune terrain
-          if ((int)(esp_random() % 100) >= FIRE_SPREAD_CHANCE) continue;
+          if ((int)(esp_random() % 100) >= chance[d]) continue;   // downwind catches, upwind mostly doesn't
           if (fireCount >= FIRE_CAP) continue;
           next[nr][nq].fire = 1;
           fireCount++;
@@ -527,18 +550,28 @@ static int doomDetectionRadius() {
   return DOOM_BASE_RADIUS + (W.creepingDoom.awareness / 25);
 }
 
-// Greedy scan of every hex within hexDistWrap <= radius (bounding box first,
-// filtered by hexDistWrap — same result as scanning the whole map per the
+// Greedy scan of every hex the Doom can smell from (q,r) (bounding box first,
+// filtered by distance — same result as scanning the whole map per the
 // spec, just without wasting cycles on hexes no radius could ever include).
 // No A* — this is deliberately not pathfinding.
+//
+// "Can smell" is radius stretched by the wind (DOOM_WIND_K): a trail upwind
+// of the Doom, whose scent the wind is carrying its way, counts from further
+// out than one downwind. The track vector runs from the trail to the Doom,
+// (-dq, -dr), and the scan box grows to the furthest a trail can still count.
 static void hottestTrackWithin(int16_t q, int16_t r, int radius, int16_t* outQ, int16_t* outR) {
   int16_t bestQ = q, bestR = r;
   int     bestTrack = -1;
-  for (int dr = -radius; dr <= radius; dr++) {
-    for (int dq = -radius; dq <= radius; dq++) {
+  const WindNow wn = windNow();
+  const float   k  = fminf(DOOM_WIND_MAX, DOOM_WIND_K * wn.s);
+  const int     reach = (int)ceilf(radius / (1.0f - k));
+  for (int dr = -reach; dr <= reach; dr++) {
+    for (int dq = -reach; dq <= reach; dq++) {
       int nq = wrapQ((int)q + dq);
       int nr = wrapR((int)r + dr);
-      if (hexDistWrap(q, r, nq, nr) > radius) continue;
+      int d  = hexDistWrap(q, r, nq, nr);
+      if (d > reach) continue;
+      if (d > 0 && d * (1.0f - k * windAlong(wn, -dq, -dr)) > radius) continue;
       int track = W_hex[nr][nq].track;
       if (track > bestTrack) { bestTrack = track; bestQ = (int16_t)nq; bestR = (int16_t)nr; }
     }

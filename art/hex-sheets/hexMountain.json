@@ -1,0 +1,62 @@
+{
+ "_source": "Mountain (terrain 8). Slot 0 bare peaks and slot 1 landmarks: the user's image-gen sheets hex-mountians01..04.png (OneDrive Desktop, 2026-10-14; 01 pointy-top, radially fitted), sky replaced by a hazed far range cut from another sheet's dense-peaks tile, light grade to the rare tiles. Slot 2 (rare structures): hex-mountians-rare01.png. The old painted cell 0 is retired; the cave mouths (candidates 6, 12, 18, 24) are held back in art/hex-sheets/mountain-candidates. See docs/hex-tile-art.md \"Mountain\"",
+ "cells": [
+  "common02 cell 1, dense peaks (candidate 7)",
+  "common02 cell 4, rockslide (candidate 10)",
+  "rare01 cell 1, mine adit + ore cart",
+  "common01 cell 1, dense peaks (candidate 1)",
+  "common01 cell 2, broken peak (candidate 2)",
+  "common01 cell 3, twin peaks + pass (candidate 3)",
+  "common02 cell 2, broken peak (candidate 8)",
+  "common02 cell 3, twin peaks + pass (candidate 9)",
+  "common03 cell 1, dense peaks (candidate 13)",
+  "common03 cell 2, broken peak (candidate 14)",
+  "common03 cell 3, twin peaks + pass (candidate 15)",
+  "common04 cell 1, dense peaks (candidate 19)",
+  "common04 cell 2, broken peak (candidate 20)",
+  "common04 cell 3, twin peaks + pass (candidate 21)",
+  "common01 cell 4, rockslide (candidate 4)",
+  "common01 cell 5, saddle cairn + rag flag (candidate 5)",
+  "common02 cell 5, saddle cairn + rag flag (candidate 11)",
+  "common03 cell 4, rockslide (candidate 16)",
+  "common03 cell 5, saddle cairn + rag flag (candidate 17)",
+  "common04 cell 4, rockslide (candidate 22)",
+  "common04 cell 5, saddle cairn + rag flag (candidate 23)",
+  "rare01 cell 2, quarry terraces + crane",
+  "rare01 cell 3, chairlift pylons",
+  "rare01 cell 4, relay mast + dish",
+  "rare01 cell 5, observatory dome",
+  "rare01 cell 6, cliff-ledge base camp"
+ ],
+ "alts": {
+  "0": [
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13
+  ],
+  "1": [
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  "2": [
+   21,
+   22,
+   23,
+   24,
+   25
+  ]
+ }
+}

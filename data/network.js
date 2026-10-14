@@ -265,6 +265,9 @@ function _checkDownedState() {
 function _applyGameState(gs) {
   Object.assign(gameState, gs);
   if (gs.wp !== undefined) { weatherPhase = gs.wp; updateWeatherHUD(); }
+  // The board's clock: the wind it spreads fire and carries scent on is a
+  // function of it, so the wind drawn here has to be too (wind.js).
+  if (gs.wt !== undefined && typeof Wind !== 'undefined') Wind.serverClock(gs.wt);
 }
 
 // Merges the "world" sync/state key into worldState. A partial payload (e.g.

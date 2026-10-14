@@ -1518,18 +1518,23 @@ class EcoField {
     }
 
     // Pass 2: stems and heads.
+    // The wind (wind.js): every stem in the patch bows the same way, harder
+    // and with a flutter while a gust patch runs over the hex.
+    const wGust = typeof Wind !== 'undefined' ? Wind.gustAt(1.5 * q, SQRT3 / 2 * q + SQRT3 * r) : 0;
+    const wLean = typeof Wind !== 'undefined' ? Wind.x * (0.1 * Wind.s + 0.3 * wGust) : 0;
     for (let o = 0; o < n; o++) {
       const k = ord[o];
       const h3 = ecoHash(seed, k, 3);
       const ph = h3 * ECO_TAU;
       const big = bg[k];
       const sway = Math.sin(now * 0.0016 + ph) * (stage >= 2 ? 1 : 0.4)
+                 + Math.sin(now * 0.0075 + ph * 1.3) * wGust * 0.4
                  + (snapping ? Math.sin(now * 0.09 + ph) * 0.6 * (1 - snapT) : 0);
       const H = ps * (stage === 1 ? 0.09 : stage === 2 ? 0.18 : 0.22) * big * grow;
       if (H < 1) continue;
       const x0 = bx[k], y0 = by[k];
       // Blooms bend toward whoever is near, as well as swaying.
-      let lean = sway * H * 0.22;
+      let lean = sway * H * 0.22 + wLean * H;
       if (has && stage === 3) lean += Math.max(-1, Math.min(1, (tx - (x0 - cx)) / ps)) * H * 0.2;
       const topX = x0 + lean, topY = y0 - H;
       const cxs = x0 + lean * 0.15, cys = y0 - H * 0.6;
@@ -1742,6 +1747,10 @@ class EcoField {
     const pale = [214, 196, 196];
     const tints = [ecoRgb(this.cRim, 1), ecoRgb(ecoMix(this.cBlood, this.cRim, 0.3), 1), ecoRgb(ecoMix(this.cSkin, this.cRim, 0.4), 1),
                    ecoRgb(ecoMix(this.cSkin, pale, 0.6), 1)];
+    // The wind's push on anything airborne here, px: flights bow with it,
+    // a burst's cloud is carried off on it as it hangs.
+    const windX = typeof Wind !== 'undefined' ? Wind.x * Wind.s * sz * 0.4 : 0;
+    const windY = typeof Wind !== 'undefined' ? Wind.y * Wind.s * sz * 0.25 : 0;
     ctx.save();
     if (this.flights.length) {
       this.flights = this.flights.filter((f) => now - f.t0 < 3800);
@@ -1755,9 +1764,11 @@ class EcoField {
         if ((x0 < -margin && x1 < -margin) || (x0 > w + margin && x1 > w + margin)) continue;
         if ((y0 < -margin && y1 < -margin) || (y0 > h + margin && y1 > h + margin)) continue;
         const fs = (f.tq * 31 + f.tr * 17) | 0;
+        // Bowed downwind on the way (wind.js) -- it still lands where it lands.
         const at = (tt) => {
-          const e = ease(tt);
-          return [x0 + (x1 - x0) * e + Math.sin(tt * 9 + fs) * sz * 0.06, y0 + (y1 - y0) * e - Math.sin(tt * Math.PI) * sz * 1.1];
+          const e = ease(tt), bow = Math.sin(tt * Math.PI);
+          return [x0 + (x1 - x0) * e + Math.sin(tt * 9 + fs) * sz * 0.06 + bow * windX,
+                  y0 + (y1 - y0) * e - bow * sz * 1.1 + bow * windY];
         };
         if (t < 1) {
           // Trail: a thread of specks falling behind and thinning out.
@@ -1798,7 +1809,7 @@ class EcoField {
         const rise = sz * 0.4 * t;
         for (let c = 0; c < clumps.length; c++) {
           const cl = clumps[c];
-          const px = hx + cl.x, py = hy + cl.y - sz * 0.12 * cl.s;
+          const px = hx + cl.x + windX * 1.5 * t, py = hy + cl.y - sz * 0.12 * cl.s + windY * 1.5 * t;
           // The haze the specks hang in.
           const hr = sz * (0.12 + 0.42 * e) * cl.s;
           const gr = ctx.createRadialGradient(px, py - rise, 0, px, py - rise, hr);

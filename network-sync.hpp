@@ -294,10 +294,12 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],");
   pos = appendGroundArrays(buf, sizeof(buf), pos);
   // Shared game-state object + variant counts
+  // wt: the board's clock, ms -- the wind (wind.hpp) is a function of it, so
+  // the clients draw the wind the fire and the Doom's nose are using.
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    ",\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
+    ",\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d,\"wt\":%lu},"
     "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d],\"stock\":[",
-    G.threatClock, G.dayCount, (int)G.weatherPhase,
+    G.threatClock, G.dayCount, (int)G.weatherPhase, (unsigned long)millis(),
     (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
   pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);
@@ -415,9 +417,9 @@ static void broadcastState() {
       (int)p.depth, (int)p.tq, (int)p.tr);
   }
   pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d},"
+    "],\"gs\":{\"tc\":%d,\"dc\":%d,\"wp\":%d,\"wt\":%lu},"
     "\"world\":{\"caravan\":{\"q\":%d,\"r\":%d,\"active\":%d,\"inv\":[%d,%d,%d,%d,%d],\"stock\":[",
-    G.threatClock, G.dayCount, (int)G.weatherPhase,
+    G.threatClock, G.dayCount, (int)G.weatherPhase, (unsigned long)millis(),
     (int)W.caravan.q, (int)W.caravan.r, W.caravan.active ? 1 : 0,
     W.caravan.inv[0], W.caravan.inv[1], W.caravan.inv[2], W.caravan.inv[3], W.caravan.inv[4]);
   pos += appendCaravanStock(buf + pos, sizeof(buf) - pos);

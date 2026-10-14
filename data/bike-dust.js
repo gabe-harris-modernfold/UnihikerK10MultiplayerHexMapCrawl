@@ -108,10 +108,14 @@ class BikeDust {
   // out. Riders not fed this frame are forgotten after a moment.
   update() {
     this.frame++;
+    // Once the throw dies the cloud is the wind's (wind.js): it drifts off
+    // downwind instead of hanging where the bike left it. Hex units a frame.
+    const wx = typeof Wind !== 'undefined' ? Wind.x * Wind.s * 0.0035 : 0;
+    const wy = typeof Wind !== 'undefined' ? Wind.y * Wind.s * 0.0021 : 0;
     for (const p of this.parts) {
       p.age++;
-      p.x  += p.vx;
-      p.y  += p.vy;
+      p.x  += p.vx + wx;
+      p.y  += p.vy + wy;
       p.vx *= 0.93;
       p.vy  = p.vy * 0.93 - 0.00035;
       p.rot += p.spin;

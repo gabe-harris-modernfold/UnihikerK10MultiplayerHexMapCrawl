@@ -316,7 +316,12 @@ const DoomGas = (() => {
     const sp = Math.hypot(vx, vy), m = Math.min(1, sp);
     const hx = sp > 1e-3 ? vx / sp : 0, hy = sp > 1e-3 ? vy / sp : 0;
     // The tail streams behind it and rises: still, the gas just goes up.
-    let bx = -hx * m, by = -hy * m - 0.55;
+    // And the wind takes it (wind.js). That is the board's wind, the one its
+    // nose works on (world-system.hpp DOOM_WIND_K), so the gas is the tell:
+    // if its reek is blowing at you, you are downwind and it can't smell you.
+    const wx = typeof Wind !== 'undefined' ? Wind.x * Wind.s : 0;
+    const wy = typeof Wind !== 'undefined' ? Wind.y * Wind.s : 0;
+    let bx = -hx * m + wx * 0.9, by = -hy * m - 0.55 + wy * 0.6;
     const bl = Math.hypot(bx, by); bx /= bl; by /= bl;
     const turn = hx * m * 0.9, tilt = hx * m * 0.14;
     const jaw = aw >= 100 ? 0.26 + 0.08 * Math.abs(Math.sin(t * 7.5))

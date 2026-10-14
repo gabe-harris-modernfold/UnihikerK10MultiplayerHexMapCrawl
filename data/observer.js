@@ -1364,7 +1364,7 @@
 
       // The stage. Everything the audience is meant to look at is here, big.
       +   '<main id="stage">'
-      +     '<div id="disk-bg"><canvas id="s-disk"></canvas></div>'
+      +     '<div id="disk-bg"><canvas id="s-disk"></canvas><canvas id="s-air"></canvas></div>'
       +     '<div id="who">'
       +       '<h1 id="w-name">—</h1>'
       +       '<div id="w-bar"><i></i></div>'
@@ -1392,7 +1392,7 @@
       +   '<div id="takeover"><div class="to-kicker"></div><div class="to-name"></div><div class="to-line"></div></div>'
       + '</div>';
     for (const id of ['strip', 'w-day', 'w-weather', 'w-alive', 'w-threat', 'w-status',
-      'stage', 'disk-bg', 's-disk', 'who', 'w-name', 'w-bar', 'w-cond', 'adm-next',
+      'stage', 'disk-bg', 's-disk', 's-air', 'who', 'w-name', 'w-bar', 'w-cond', 'adm-next',
       'place', 'w-place', 'greed', 'g-bank', 'g-haul', 'doors', 'admired', 'adm-rows',
       'voice', 'line', 'cast', 'takeover']) {
       EL[id] = D.getElementById(id);
@@ -1417,9 +1417,8 @@
     EL['w-threat'].firstChild.style.width = clamp(snap.tc / TC_MAX, 0, 1) * 100 + '%';
     EL['w-threat'].className = snap.tc >= 13 ? 'hot' : snap.tc >= 5 ? 'warm' : '';
     // dayTick is a real time-of-day arc, so the whole page gets colder and
-    // dimmer at night and comes back at dawn.
-    const light = clamp((Math.cos((snap.dayTick / DAY_TICKS) * Math.PI * 2) + 1) / 2, 0, 1);
-    D.documentElement.style.setProperty('--night', light.toFixed(3));
+    // dimmer at night and comes back at dawn (worldSun).
+    D.documentElement.style.setProperty('--night', worldSun(snap.dayTick).light.toFixed(3));
 
     // ── The stage ────────────────────────────────────────────
     const entry = Director.subject ? Roster.byKey(Director.subject) : null;
@@ -1433,6 +1432,7 @@
       EL['w-place'].textContent = '';
       EL.doors.innerHTML = '';
       EL['s-disk'].innerHTML = '';
+      Air.setDisk(null);
       EL.greed.className = '';
     } else {
       EL['w-name'].textContent = p.name.toUpperCase();
@@ -1514,13 +1514,13 @@
   function renderDisk(snap, p) {
     const view = snap.view && snap.view.pid === p.pid ? snap.view : null;
     const cv = EL['s-disk'];
-    if (!view) { diskSig = ''; const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); return; }
+    if (!view) { diskSig = ''; Air.setDisk(null); const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); return; }
     const box = EL['disk-bg'].getBoundingClientRect();
     const sig = view.pid + ':' + view.q + ',' + view.r + ':' + view.visR + ':'
       + Math.round(box.width) + 'x' + Math.round(box.height) + ':'
       + view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('')
       + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm : '');
-    if (sig === diskSig) return;
+    if (sig === diskSig) { Air.kick(); return; }
     diskSig = sig;
     Art.onload = () => { diskSig = ''; };   // a late decode redraws on the next poll
 
@@ -1546,33 +1546,36 @@
     // stand up into the hex behind, so a row has to land on top of the row
     // behind it. (Flat sheet tiles don't care.)
     const cells = view.cells.slice().sort((a, b) => (a.dr - b.dr) || (a.dq - b.dq));
+    const airCells = [];
     for (const c of cells) {
       const x = size * 1.5 * c.dq;
       const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
       const tile = Art.tile(host, c.terrain, c.variant, snap.vc, c.q, c.r);
+      airCells.push({ cx: W / 2 + x, cy: H / 2 + y, q: c.q, r: c.r, terrain: c.terrain, tile });
+      // Masked to the hex, as renderHexContent() does it (drawTileInHex): the
+      // sheet tiles carry bleed past the rim, and unmasked it spilled onto the
+      // neighbours. Only a diorama atlas (not flat) stands up into the hex
+      // behind, so only it goes unclipped.
+      const masked = tile && !(tile.m && !tile.m.flat);
+      if (masked) { ctx.save(); hexPath(ctx, x, y, size); ctx.clip(); }
       if (tile && tile.m) {
-        // An atlas cell, anchored at the hex centre: unclipped, so a
-        // diorama's peaks overlap the hex behind. A flat sheet cell (anchor =
-        // centre of a square cell) lands on the same 2*size square as below.
+        // An atlas cell, anchored at the hex centre. A flat sheet cell (anchor
+        // = centre of a square cell) lands on the same 2*size square as below.
         const m = tile.m, k = size / m.radius;
         ctx.drawImage(tile.img, tile.sx, tile.sy, m.cell[0], m.cell[1],
           x - m.anchor[0] * k, y - m.anchor[1] * k, m.cell[0] * k, m.cell[1] * k);
       } else if (tile) {
-        // Drawn exactly as renderHexContent() does it: a 2*size SQUARE centred
-        // on the hex, unclipped and unstroked. The PNGs are hex-shaped with
-        // transparent corners and are authored to butt against their
-        // neighbours -- clipping them to the hex path and stroking an outline
-        // put a dark seam around every tile and made a continuous map look
-        // like a board game.
+        // A per-file tile: a 2*size square centred on the hex, as ever.
         ctx.drawImage(tile.img, x - size, y - size, size * 2, size * 2);
       } else {
         // No art for this terrain, or it has not decoded yet. TERRAIN[]'s own
         // fill is the fallback, and it is also all an older board can give.
-        const T = terrainOf(c.terrain) || { fill: '#161008', stroke: '#332211' };
+        // The divider pass below outlines it like any other hex.
+        const T = terrainOf(c.terrain) || { fill: '#161008' };
         hexPath(ctx, x, y, size);
         ctx.fillStyle = T.fill; ctx.fill();
-        ctx.strokeStyle = T.stroke; ctx.lineWidth = Math.max(1, size * 0.02); ctx.stroke();
       }
+      if (masked) ctx.restore();
 
       if (c.shelter) {
         const sh = Art.shelter(host, c.shelter, c.q, c.r, snap.sv);
@@ -1583,6 +1586,22 @@
       if (c.poi) { ctx.fillStyle = '#E8A828'; dot(ctx, x, y, size * 0.17); }
       else if (c.resource) { ctx.fillStyle = RES_DOT[c.resource] || '#7FB8D8'; dot(ctx, x, y, size * 0.1); }
     }
+    // The hex divider, as renderGridLines() draws it: one black line per
+    // shared edge -- every hex in ONE path on the true edge, stroked once, so
+    // neighbours trace the same pixels and the coverage doesn't stack. Width
+    // keeps the game's 1px-at-56px ratio: the TV's hexes are far bigger.
+    ctx.beginPath();
+    for (const c of cells) {
+      const x = size * 1.5 * c.dq;
+      const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i;
+        const px = x + size * Math.cos(a), py = y + size * Math.sin(a);
+        if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      ctx.closePath();
+    }
+    ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(1, size / 56); ctx.stroke();
     // VACANCY's sign, when its town is in the disk.
     const vac = snap.vac;
     const town = vac && vac.q >= 0 ? view.cells.find((c) => c.q === vac.q && c.r === vac.r) : null;
@@ -1590,6 +1609,100 @@
     // Where the camera subject is standing.
     ctx.strokeStyle = '#E8A828'; ctx.lineWidth = Math.max(2, size * 0.035);
     ctx.beginPath(); ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2); ctx.stroke();
+
+    // The camera the game renderer would have for this disk: map hex (q, r)
+    // lands at size * world(q, r) + (ox, oy), so the wind's torus-tiled
+    // clouds and gusts sit on the same ground they do in the players' hands.
+    Air.setDisk({
+      W, H, dpr, size, q: view.q, r: view.r, cells: airCells,
+      cam: { ox: W / 2 - size * 1.5 * view.q, oy: H / 2 - size * (SQ3 / 2 * view.q + SQ3 * view.r),
+             meRp: { q: view.q, r: view.r } },
+    });
+  }
+
+  // ── The air over the disk ─────────────────────────────────────
+  // The game's own wind.js and ground-fx.js: water that sways and glitters,
+  // heat shimmer, gusts over the scrub, glass glints, cloud shadows and the
+  // odd dust devil, on a transparent canvas (#s-air) laid over the disk. The
+  // disk stays a still picture, redrawn only when the ground changes; the
+  // shimmer reads it in place (GroundFx opts.source), so a tick costs the
+  // effects and nothing else. Paced by timers like observer-fx.js -- a TV
+  // browser that never ticks rAF must not freeze the water -- and only while
+  // the open-ground disk is actually on screen.
+  const AIR_PERIOD = 40;   // ms: 25 ticks a second is plenty at three metres
+  const Air = {
+    gfx: null, disk: null, running: false,
+
+    setDisk(d) {
+      this.disk = d;
+      if (d) this.kick();
+    },
+
+    kick() {
+      if (this.running || !this.disk) return;
+      if (typeof GroundFx !== 'function' || typeof Wind !== 'object') return;   // an older board's files
+      if (!this.gfx) this.gfx = new GroundFx({ source: EL['s-disk'], shimmerEvery: 2 });
+      this.running = true;
+      setTimeout(() => this.tick(), 0);
+    },
+
+    tick() {
+      const d = this.disk, snap = ST.snap, cv = EL['s-air'], base = EL['s-disk'];
+      const on = d && snap && cv && base && EL.stage.className === 'open' && !D.hidden;
+      if (!on) {
+        this.running = false;
+        if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+        return;
+      }
+      const now = Date.now();
+      try {
+        if (cv.width !== base.width || cv.height !== base.height) { cv.width = base.width; cv.height = base.height; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(d.dpr, 0, 0, d.dpr, 0, 0);
+        ctx.clearRect(0, 0, d.W, d.H);
+        Wind.update(now, snap.weather, 0, d.q, d.r);
+        const g = this.gfx;
+        g.beginFrame();
+        // Hexes sunk under the near-solid left of the plinth (#stage::after)
+        // can't be seen; animating them is wasted work on a TV's GPU.
+        const hidden = d.W * 0.42;
+        for (const c of d.cells) if (c.cx + d.size > hidden) g.collect(c.cx, c.cy, c, c.q, c.r, c.tile, 0);
+        const sun = airSun(snap);
+        g.drawGround(ctx, d.cam, now, d.size, d.W, d.H, sun, snap.weather);
+        g.drawDevils(ctx, d.cam, now, d.size, d.W, d.H, sun, snap.weather);
+        g.drawClouds(ctx, d.cam, d.size, d.W, d.H, sun, snap.weather);
+      } catch (e) {
+        // Scenery must never take the screen down with it.
+        console.warn('[observer] air:', e);
+        this.running = false;
+        return;
+      }
+      // A TV too slow for 25 a second gets fewer rather than none of the
+      // rest of the page: never more than a third of the time in here.
+      const took = Date.now() - now;
+      setTimeout(() => this.tick(), Math.max(8, AIR_PERIOD - took, took * 2));
+    },
+  };
+
+  // ground-fx.js's sun, on the TV's clock -- the world's dayTick, the same
+  // arc that dims the whole page (render(), --night) -- rather than one
+  // survivor's AP the way the game client tells it.
+  function airSun(snap) { return worldSun(snap.dayTick); }
+
+  // The sun on the board's clock: dawn at tick 0, dusk at 78% of the day
+  // (the SS_DUSK sting, kane.hpp KANE_DUSK_TICK), night until the next dawn.
+  // elev is its height: 1 at noon, 0 on the horizon, below 0 after dusk.
+  // light: how lit the page is (--night, 1 = full day). day: direct sun at
+  // all; noon: high and hot (heat shimmer); low: just over the horizon,
+  // either end of the day (the glass catches it).
+  const DUSK_FRAC = 0.78;
+  function worldSun(dayTick) {
+    const f = clamp(dayTick / DAY_TICKS, 0, 1);
+    const elev = f < DUSK_FRAC ? Math.sin(Math.PI * f / DUSK_FRAC)
+                               : -Math.sin(Math.PI * (f - DUSK_FRAC) / (1 - DUSK_FRAC));
+    const sm = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+    return { elev, light: sm(-0.35, 0.2, elev), day: sm(0, 0.3, elev), noon: sm(0.75, 0.97, elev),
+             low: elev > 0 ? Math.max(0, 1 - Math.abs(elev - 0.22) / 0.2) : 0 };
   }
 
   // A still of the game's neon (vacancy.js), since the disk only redraws on
@@ -1905,6 +2018,9 @@
   function handle(raw) {
     const now = Date.now();
     ST.polls++;
+    // The board's clock: its wind spreads the fire and carries the Doom's
+    // scent, so the air drawn over the disk follows it (wind.js).
+    if (raw && raw.wt != null && typeof Wind === 'object') Wind.serverClock(raw.wt);
     const snap = normalise(raw, now);
 
     const events = diff(ST.snap, snap);

@@ -1409,6 +1409,10 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 #include "ui-display.hpp"    // K10 screens, LED, audio, boot splash (needs getItemDef from boot-assets)
 #include "usb_drive.h"       // USB MSC mode (needs canvas + canvasXxx from ui-display)
 
+// The wind (data/wind.js's twin on the board's clock): fire spreads with it,
+// scent carries on it. Read by world-system.hpp.
+#include "wind.hpp"
+
 // World system: Caravan/Fire/Creeping Doom (see docs/world-system-spec.md).
 // Depends only on hex-map.hpp; ticked from tickGame() in actions_game_loop.hpp.
 #include "world-system.hpp"

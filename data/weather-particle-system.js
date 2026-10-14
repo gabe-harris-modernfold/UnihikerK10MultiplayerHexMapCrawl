@@ -367,11 +367,16 @@ class WeatherParticleSystem {
   // Advance all particles one frame and cull dead ones.
   update() {
     this._t++;
+    // Fog and dust hang in the air, so the wind carries them as they live
+    // (rain takes its slant once, at spawn).
+    const wind = this._wind;
     for (const p of this.particles) {
       if (p.fx) { this._stepFire(p); continue; }
 
       p.x += p.dx;
       p.y += p.dy;
+      const blow = p.shape === 'fog' ? 0.2 : p.shape === 'dust' ? 0.3 : 0;
+      if (blow) { p.x += wind.x * blow; p.y += wind.y * blow * 0.6; }
       p.age++;
       let opacity = p.age < p.fade ? (p.age / p.fade) * p.maxOpacity : p.maxOpacity;
 
@@ -420,9 +425,11 @@ class WeatherParticleSystem {
       // Lateral wander widens with height — the plume is narrow at the bed
       // and frays at the top, which is most of what reads as turbulence.
       const lateral = Math.sin(p.sway) * p.swayAmp * (0.25 + t * 1.15);
-      p.x = p.axis + lateral;
+      // The wind bends the lick over as it climbs: nothing at the bed, most
+      // at the frayed tip.
+      p.x = p.axis + lateral + (p.bend || 0) * t * t;
       p.y += p.vy;
-      p.lean = Math.max(-0.5, Math.min(0.5, lateral * 0.035));
+      p.lean = Math.max(-0.6, Math.min(0.6, lateral * 0.035 + (p.windLean || 0) * t));
       // Swell fast off the bed, then taper to a point over the rest of life.
       p.scale = t < 0.25
         ? 0.42 + (t / 0.25) * 0.58
@@ -446,6 +453,7 @@ class WeatherParticleSystem {
 
     // smoke
     p.vy *= 0.992;
+    p.vy += p.shearY || 0;
     p.vx += p.shear;
     p.x += p.vx;
     p.y += p.vy;
@@ -562,15 +570,21 @@ class WeatherParticleSystem {
   }
 
   _spawn(phase, w, h, anchor) {
+    // Rain slants with the wind (wind.js). Each drop starts half its drift
+    // upwind, so the slant leans across its hex rather than off the side.
+    const wind = this._wind;
     if (phase === 1) {
       // Light Rain: gentle diagonal lines, confined to just above/through
       // the storm hex they spawn over — never streaking past it downscreen.
-      const x0 = anchor ? anchor.x + (Math.random() - 0.5) * anchor.spread : Math.random() * w;
+      const dy = 3.5 + Math.random() * 1.5;
+      const dx = wind.x * 1.4 - 0.1 + (Math.random() - 0.5) * 0.2;
+      const fall = anchor ? anchor.spread * 1.55 / dy : 0;
+      const x0 = (anchor ? anchor.x + (Math.random() - 0.5) * anchor.spread : Math.random() * w) - dx * fall * 0.5;
       const y0 = anchor ? anchor.y - anchor.spread * 0.8 : -10;
       return {
         id: this._nextId++, shape: 'line',
         x: x0, y: y0,
-        dx: -0.3, dy: 3.5 + Math.random() * 1.5,
+        dx, dy,
         color: 'rgba(120,150,200,0.6)',
         size: 1,
         maxOpacity: 0.5 + Math.random() * 0.3,
@@ -580,13 +594,16 @@ class WeatherParticleSystem {
       };
     }
     if (phase === 2) {
-      // Storm: heavier angled rain, same hex-confined fall.
-      const x0 = anchor ? anchor.x + (Math.random() - 0.5) * anchor.spread * 1.3 : Math.random() * (w + 100) - 50;
+      // Storm: heavier angled rain, same hex-confined fall, driven harder.
+      const dy = 6 + Math.random() * 3;
+      const dx = wind.x * 2.6 - 0.2 + (Math.random() - 0.5) * 0.8;
+      const fall = anchor ? anchor.spread * 1.6 / dy : 0;
+      const x0 = (anchor ? anchor.x + (Math.random() - 0.5) * anchor.spread * 1.3 : Math.random() * (w + 100) - 50) - dx * fall * 0.5;
       const y0 = anchor ? anchor.y - anchor.spread * 0.8 : -10;
       return {
         id: this._nextId++, shape: 'line',
         x: x0, y: y0,
-        dx: -1.2 - Math.random() * 0.8, dy: 6 + Math.random() * 3,
+        dx, dy,
         color: 'rgba(80,110,160,0.7)',
         size: 1,
         maxOpacity: 0.6 + Math.random() * 0.3,
@@ -756,8 +773,11 @@ class WeatherParticleSystem {
     // lick starting at the same band it just reads as a lamp.
     const cooler = Math.random() * 1.7;
     const heat   = (i >= 3 ? 0.2 : i === 2 ? 1.6 : 2.8) + cooler;
+    const wind   = this._wind;
     return {
       id: this._nextId++, fx: 'flame',
+      bend: wind.x * anchor.spread * (0.10 + Math.random() * 0.06),
+      windLean: wind.x * 0.35,
       x: axis, y: base + anchor.spread * (0.04 + Math.random() * 0.10),
       prevX: axis, prevY: base,
       axis,
@@ -797,7 +817,7 @@ class WeatherParticleSystem {
       x: sx + (Math.random() - 0.5) * anchor.spread * 0.2,
       y: sy + anchor.spread * 0.05,
       prevX: sx, prevY: sy,
-      vx: (Math.random() - 0.5) * 0.5,
+      vx: (Math.random() - 0.5) * 0.5 + this._wind.x * 0.4,
       vy: -(1.1 + Math.random() * 1.4),
       phase: Math.random() * Math.PI * 2,
       heat,
@@ -810,12 +830,13 @@ class WeatherParticleSystem {
     };
   }
 
-  // One slowly-swinging wind direction shared by every plume on the map. Smoke
-  // that all leans the same way reads as weather; smoke where each puff picks
-  // its own drift reads as a particle system. Two very slow, incommensurate
-  // sines so the wind wanders instead of sweeping back and forth on a beat.
+  // The one wind (wind.js) every plume, puff and drop on the map shares --
+  // heading times strength. Smoke that all leans the same way reads as
+  // weather; smoke where each puff picks its own drift reads as a particle
+  // system. Zero underground: Wind.update() takes the depth.
   get _wind() {
-    return Math.sin(this._t * 0.0006) * 0.9 + Math.sin(this._t * 0.00017) * 0.45;
+    if (typeof Wind === 'undefined') return { x: 0.5, y: 0 };
+    return { x: Wind.x * Wind.s, y: Wind.y * Wind.s };
   }
 
   // Dark, non-additive plume. Starts just off the flame tips and climbs
@@ -832,11 +853,13 @@ class WeatherParticleSystem {
       x: sx + (Math.random() - 0.5) * anchor.spread * 0.34,
       y: sy - anchor.spread * (0.10 + Math.random() * 0.22),
       prevX: sx, prevY: sy,
-      vx: wind * 0.28 + (Math.random() - 0.5) * 0.2,
+      vx: wind.x * 0.28 + (Math.random() - 0.5) * 0.2,
       // Slow climb: fast-rising puffs string out into a dotted line, slow ones
       // pile up on each other into something with mass.
       vy: -(0.32 + Math.random() * 0.28),
-      shear: wind * 0.009 + (Math.random() - 0.5) * 0.003,
+      shear: wind.x * 0.009 + (Math.random() - 0.5) * 0.003,
+      // The wind's down-screen part leans the column too, but the climb wins.
+      shearY: wind.y * 0.004,
       lean: Math.random() * Math.PI * 2,
       spin: (Math.random() - 0.5) * 0.012,
       size: anchor.spread * (0.30 + Math.random() * 0.16) * seat.scale,

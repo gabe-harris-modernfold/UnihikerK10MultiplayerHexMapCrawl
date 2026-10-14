@@ -29,12 +29,15 @@ class AshParticleSystem {
     const now = Date.now();
     const maxDistPx = this.maxDistanceHexes * hexSz * SQRT3;
 
-    // Advance each particle and mark dead ones
+    // Advance each particle and mark dead ones. Ash streams off the dunes on
+    // the one wind (wind.js), each puff's own drift a small stray on top.
+    const wx = typeof Wind !== 'undefined' ? Wind.x * Wind.s * this.driftSpeed * 1.6 : 0;
+    const wy = typeof Wind !== 'undefined' ? Wind.y * Wind.s * this.driftSpeed * 1.6 : 0;
     for (const p of this.particles) {
       const dt = now - p.prevNow;
       p.prevNow = now;
-      p.driftOffsetX += p.driftVX * dt;
-      p.driftOffsetY += p.driftVY * dt;
+      p.driftOffsetX += (p.driftVX * 0.45 + wx) * dt;
+      p.driftOffsetY += (p.driftVY * 0.45 + wy) * dt;
       const dist = Math.hypot(p.driftOffsetX, p.driftOffsetY);
       const fadeIn = Math.min(1, (now - p.spawnTime) / this.fadeInMs);
       p.currentAlpha = p.maxAlpha * fadeIn * Math.max(0, 1 - dist / maxDistPx);

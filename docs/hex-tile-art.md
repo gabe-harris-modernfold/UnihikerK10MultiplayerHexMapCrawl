@@ -38,6 +38,14 @@ This is how the hex terrain tiles are being redrawn:
 - **River Channel (2026-10-13):** 23 tiles from the user's image-gen
   sheets, as 8 slots with alternates. Until now River had no art and drew
   animated ripples. See [River Channel](#river-channel-2026-10-13).
+- **Mountain (2026-10-14):** 26 tiles from the user's five image-gen
+  sheets, as three slots with alternates: 12 bare peaks, 8 landmarks
+  (rockslides and cairns) and 6 rare structures. The old painted tile is
+  retired. Four cave mouths are held back for later. See
+  [Mountain](#mountain-2026-10-14).
+- **Rolling Hills (2026-10-14):** 17 tiles from the user's three image-gen
+  sheets, as a common slot (12) and a rare slot (5), each with alternates.
+  The old painted tile is retired. See [Rolling Hills](#rolling-hills-2026-10-14).
 - **Tunnels (2026-09-27):** the bunker board is drawn from the user's
   underground sheets now: 17 overhead corridor pieces turned onto each cell's
   open sides, 18 angled rooms, and shaft and cave-in interiors. See
@@ -601,6 +609,174 @@ flat-top hexes each on flat magenta. 06 is byte-identical to 05.
 - Scripts `contact.py`, `fit.py`, `grade.py` (also writes `preview-slots.png`
   and `preview-map.png`) and `master.py` are in scratchpad
   `8f1fa5c3-5666-44ad-9ed6-171bac40583c\scratchpad\river`.
+
+## Mountain (2026-10-14)
+
+The user generated five sheets from the two prompts in
+`data/img/HEX_TILE_PROMPTS.md` "Mountain prompts", saved on their OneDrive
+Desktop: `hex-mountians01..04.png` (prompt 1, the common peaks) and
+`hex-mountians-rare01.png` (prompt 2, the rare structures). Each holds six
+hexes on magenta.
+
+**The rare sheet** (1376x768, flat-top) went in first:
+
+- **Sheet quirks:** the top row has no top edge (the peaks stand against the
+  magenta), and the bottom row's upper part is pure white sky (255).
+- **Geometry:** left/right extremes, then the bottom edge at the last row
+  still wider than 40% of the hex, with the two lower edges line-fitted to
+  meet it. The top edge is mirrored about the middle row. Inset 3 px, then a
+  centre-fan affine onto R = 128 * 1.035, at 3x and INTER_AREA down.
+- **Sky matte:** magenta-ness `min(R,B) - G` ramped over 40..215, plus every
+  pure-white blob (min channel >= 246) of 20+ px. A flood from the top edge
+  misses the three white wedges the relay mast's guy-wires close off; no prop
+  on the sheet is that white. De-contaminated, then a despill (R and B both
+  above G) within 4 px of magenta, which leaves rock (B < G) and slate
+  (R < G) alone.
+- **Sky fill: a hazed far range, not flat haze.** Flat haze puts a pale band
+  across the top of every row of a range. The fill is one unflipped strip of
+  bare peaks from inside the bottom-row hexes (tile 4 below its ridge, tile 5
+  below the dome; no tile gets its own), scaled to the hex width,
+  top-aligned, blurred 0.9 px, and mixed 62% at the top to 50% at the bottom
+  into the sheet's pale-rock haze (RGB 169, 168, 141). Mirror-tiling the strip
+  made Rorschach X-shapes, so don't.
+- **Grade:** only a*/b* move, 0.75 of the way to the old cell 0's mean; ink
+  (L* < 15) is left alone.
+
+**The common sheets** all hold the same six subjects: dense peaks, a broken
+peak, twin peaks with a pass, a rockslide, a saddle with a cairn and rag
+flag, and a cave mouth. All 24 were cut to `art/hex-sheets/mountain-candidates/`
+(`NN_sSS_cC.png`) with a numbered `contact-sheet.png` that also shows them at
+map size beside the old cell 0. The user kept 20 and held back the four cave
+mouths (6, 12, 18, 24) for later; graded copies are
+`cave-mouth-graded-NN.png` in the same folder.
+
+- **Sheet quirks:** 02, 03 and 04 are flat-top. 04 is flat-top too, but
+  squashed (1.08-1.11 : 1), and its outer hexes are clipped 1-2 px by the
+  sheet edge. 01 is pointy-top (1264x848). 01 has a 3.5 px black hex stroke
+  and 03 a 2.5 px one. 02 has a pink sky (RGB 250, 165, 251); 01, 03 and 04
+  have a flat pale-khaki sky (std < 2).
+- **Geometry:** one line per hex edge, fitted to the matte's contour within
+  20 deg of that edge's normal, with points off the line dropped and refitted
+  (a peak poking through an edge); the vertices are the line intersections. A
+  vertex more than 2.5 px off its row's median shape takes the median shape's
+  vertex. Inset by stroke + 1.5 px (3 px with no stroke).
+- **Fit:** flat-top sheets use the centre-fan affine. Pointy-top 01 can't: a
+  rotation turns the peaks sideways and an inscribed flat hex crops a quarter.
+  It takes a radial warp instead. Every direction keeps its angle, the centre
+  keeps a uniform (equal-area) scale, and the radius is eased to meet the
+  flat-top boundary at the rim: `r_src = r * (s0 + (bp/bf - s0) * (r/bf)^1.5)`.
+  Only the rim stretches (up to about 15%), and nothing is cropped.
+- **Sky matte:** 02's pink is every pink blob (dE < 5) of 20+ px, since
+  nothing painted is pink. The khaki skies are also the ground colour round
+  the lower peaks on 03, so a flood from the top leaks down the sides. Sky is
+  instead a straight run down each column from the top edge, plus sky-coloured
+  pockets that touch the run (under the flag, beside a leaning peak). Both
+  stop above a cap at 55% of the hex height, faded over 24 px, so 03 keeps
+  its khaki round the peak bases. The edge is ramped 5..14 dE over 2 px and
+  de-contaminated against the tile's own sky colour.
+- **Sky fill:** the rare-sheet method, built in game space after the fit, with
+  the same haze. Each sheet takes rows 105-185, x 34-222 of another sheet's
+  dense-peaks tile (01 from 03, 02 from 04, 03 from 01, 04 from 02), mirrored
+  on even subjects.
+- **Grade:** the picks were already close (L* 51-57, b* 7-13, against the
+  rare tiles' 54.7 and 12.7). Each moves 0.5 of the way in L* and 0.6 in
+  a*/b* toward the rare tiles' mean; ink (L* < 15) is left alone. The bluest
+  pass tiles warm by up to 3 b*.
+- **Slots** (pool 3; `hexMountain.json` lists the alternates and each cell's
+  source):
+
+  | Slot | Share | Subject | Tiles (own cell first) | Each |
+  |---|---|---|---|---|
+  | 0 | 64.3% | bare peaks: dense, broken, twin + pass | 7, 1, 2, 3, 8, 9, 13, 14, 15, 19, 20, 21 | 5.4% |
+  | 1 | 28.6% | landmarks: rockslide, cairn + flag | 10, 4, 5, 11, 16, 17, 22, 23 | 3.6% |
+  | 2 | 7.1% | rare: mine, quarry, chairlift, relay mast, observatory, base camp | rare01 cells 1-6 | 1.2% |
+
+  The old cell 0, a soft painted map-symbol that reads as cracked flat ground
+  at map size, is retired; git HEAD keeps it.
+- **Worlds made before this** carry Mountain variants 0-1 (counts[8] was 1,
+  then 2). They show bare peaks and landmarks at once, but the rare
+  structures only in a new world.
+- **Previews** in `art/hex-sheets/mountain-candidates/`: `preview-map.png`
+  (a 15x9 patch at the real mix, HEX_SZ 50) and `preview-slots.png`.
+- Scripts are in scratchpad
+  `eb4c16b1-c495-4b77-94e0-712006c097bb\scratchpad\mtn`: `geom.py` (edge
+  lines), `cut.py` (matte, fan and radial fit, far range), `contact.py`,
+  `master2.py` and `patch2.py` (previews). The rare-sheet scripts (`fit.py`,
+  `compose.py`, `master.py`) are copied there too. The masters before each
+  step are in `bak/` (cell 0 only) and `bak2/` (cell 0 + the rare slot).
+
+## Rolling Hills (2026-10-14)
+
+Terrain 7 is "Ridge" in game-data.js and "Rolling Hills" in the firmware; its
+sheet is still `hexRidge`. The user generated two sheets from the prompts in
+`data/img/HEX_TILE_PROMPTS.md` "Rolling Hills prompts", saved on their
+OneDrive Desktop: `hex-hills01.png` (1408x768, common) and
+`hex-hills-rare01.png` (1376x768, rare). Both are six flat-top hexes on
+magenta with every edge drawn and no outline stroke.
+
+- **Geometry:** every vertex comes from the matte: left/right extremes, the
+  top and bottom rows still wider than 40% of the hex, and lines fitted to the
+  four slanted edges. Inset 3 px, then the Mountain centre-fan affine onto
+  R = 128 * 1.035. Any pixel with magenta in it (R and B both above G;
+  nothing painted is) takes its nearest clean neighbour first, because the
+  hex corners are blunted past the inset.
+- **Sky:** every tile painted a flat pale sky (std < 1.5 per channel, about
+  RGB 203, 202, 173 on the common sheet and 223, 219, 196 on the rare one).
+  It is flooded from the hex's top edge: Lab distance to the tile's own sky
+  colour, below 5 dE as the core, ramped 5..14 dE over a 5 px band, kept only
+  where connected to the top. The horizon's antialiased edge is
+  de-contaminated against the sky colour.
+- **Fire tower pockets (rare cell 1):** the sky showing through the tower's
+  cross-braces, railing and cabin windows is enclosed, so the top flood
+  missed it and it shipped as cream triangles. No colour rule separates it
+  from the bluff's pale limestone or the turbine's white blades, so
+  `compose.py` `POCKETS` gives that tile a box (tile-local source px
+  140,40-310,300) inside which anything within 11 dE of the sky is sky,
+  ramped 11..20. The wider threshold takes the lighter halo (L* 89 against
+  87) the generator left round each pocket. Only that cell was rewritten.
+- **Sky fill:** the Mountain method, a hazed far range. Kept sky left a cream
+  wedge on top of every hills hex on the map. Three strips, the below-horizon
+  ground of common tiles 1-3 (no props), are used at 1:1 hex width,
+  top-aligned, blurred 1.2 px, and mixed 55% at the top to 45% at the bottom
+  into the common sheet's haze (RGB 186, 176, 138). Each tile takes one
+  strip, some mirrored, never its own ground. Scaling one strip up 1.6x for
+  variety made the far hills bigger than the near ones, so don't.
+- **No grade:** the tiles sit at L* 59-61, b* 18, between Open Scrub (L* 66)
+  and Mountain (L* 50), which is right for the ring between them. The old
+  cell 0 (L* 48, a soft map-symbol) clashed on the map and was retired; git
+  HEAD keeps it.
+- **Slots:** pool 2. Cell 0 (rolling hills) is the common slot with
+  alternates 2-6 and 11-16 (80%, about 6.7% each). Cell 1 (fire tower) is
+  the rare slot with alternates 7-10 (20%, 4% each), all in `hexRidge.json`.
+  The rare sheet's glass observation gallery was removed at the user's
+  request after integration; the cells after it moved down one.
+  Worlds made while counts[7] was 1 have every hill at variant 0, so they
+  show the common tiles at once and the rare ones only in a new world.
+- **Nature tiles (`hex-hills02.png`, same day):** heather, copse, tor,
+  wildflower grass, gorse, lone tree, appended as cells 12-17 (11-16 since
+  the gallery's removal) and listed as
+  more alternates of variant 0, so the common slot holds 12 (about 6.7%
+  each). Cells 0-11 were read back from the master unchanged
+  (`master_nature.py`).
+  - Five of its skies are pale pink (RGB 253, 160, 255 and 250, 207, 247),
+    one cream. A pink sky is matched as every blob of its colour, not only
+    the part touching the top: the tor has pink pockets between its
+    boulders. A cream sky stays top-connected, because pale grass crests
+    match cream.
+  - The heather is mauve, so R and B are both above G (up to 15). Inside a
+    tile the magenta cleanup only takes blends above 20; the 4 px rim takes
+    anything above 4.
+  - Pink sky also left a fringe on the horizon ink, so R and B are despilled
+    down to G within 4 px of a pink sky.
+  - Ungraded. They are a little darker (L* 54, the gorse tile 46, against 60)
+    and mix in on the map.
+- The user does not want the original painted hills tile back.
+- Scripts `fit.py`, `compose.py` (`python compose.py n` for the nature
+  sheet), `preview.py` (map-scale patch), `master.py` and `master_nature.py`
+  are in scratchpad
+  `53ab439a-ef8d-4331-bd17-a70366f4eda7\scratchpad\hills`, with the
+  pre-hills master, page and tiles.json in `bak/` and the 12-tile ones in
+  `bak2/`.
 
 ## Integration
 

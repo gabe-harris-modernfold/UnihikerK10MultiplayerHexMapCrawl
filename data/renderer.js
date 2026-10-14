@@ -20,6 +20,11 @@ const ecoField = (typeof EcoField === 'undefined')
 // the direction of travel network.js records from every move it hears.
 const trailField = (typeof TrailField === 'undefined')
   ? null : new TrailField();
+// The ground between the events (ground-fx.js): water that sways and
+// glitters, heat shimmer, gusts over grass, glass glints, cloud shadows and
+// dust devils, all on wind.js's one wind.
+const groundFx = (typeof GroundFx === 'undefined')
+  ? null : new GroundFx();
 
 // Storm hexes ({x, y, spread, intensity} in screen space) collected during
 // this frame's terrain pass — consumed by renderWeatherOverlay() afterward
@@ -503,6 +508,19 @@ function getTimePhase(apVal) {
   return TIME_PHASES[0];
 }
 
+// The sun on the survivor's own clock, for ground-fx.js. pos runs along
+// TIME_PHASES, 0 (first light) .. 5 (dark watch). day: is there direct sun
+// at all (gone by DARK WATCH, and held back while the dawn fade lifts).
+// noon / low: how close to NOON BURN / LOW SUN, 0..1 -- heat shimmer peaks
+// at the one, glass glints at the other.
+function sunState() {
+  const f   = (myId >= 0 && maxAP > 0) ? Math.max(0, Math.min(1, 1 - displayAP / maxAP)) : 0;
+  const pos = f * (TIME_PHASES.length - 1);
+  const bump = (c, w) => { const t = Math.max(0, 1 - Math.abs(pos - c) / w); return t * t * (3 - 2 * t); };
+  const day = Math.max(0, Math.min(1, (4.9 - pos) / 1.3)) * (1 - Math.min(1, nightFade));
+  return { pos, day, noon: bump(2, 1.15), low: bump(3.2, 1.1) };
+}
+
 // ── Ash particle system (Pass 3) ────────────────────────────────
 const ashParticles = (typeof AshParticleSystem === 'undefined')
   ? null : new AshParticleSystem({
@@ -775,7 +793,7 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
         + 0.09 * Math.sin(ft * 12.8 + ph * 1.7)
         + 0.05 * Math.sin(ft * 29.5 + ph * 2.9);
       ctx.save();
-      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      drawHexPath(ctx, cx, cy, HEX_SZ);
       ctx.clip();
       ctx.globalAlpha = 0.26 + fireIntensity * 0.07;
       ctx.fillStyle   = '#140A04';
@@ -829,7 +847,8 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
   const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant, mapQ, mapR);
   if (tile) {
     if (ghost > 0 && tile.diorama) drawTileSplit(tile, cx, cy, 1 - ghost);
-    else drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+    else if (tile.diorama || tile.tunnel) drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+    else drawTileInHex(tile, cx, cy);
     if (tile.diorama || tile.tunnel) tiledHexes.add(`${mapQ}_${mapR}`);
   } else {
     if (cell.terrain !== 11) drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, cell.resource > 0);
@@ -838,6 +857,7 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
   ctx.globalAlpha = 1;
   drawTrails(cx, cy, cell, mapQ, mapR);
   drawCellOverlays(cx, cy, cell, mapQ, mapR);
+  if (groundFx && !myDepth && !surveyed) groundFx.collect(cx, cy, cell, mapQ, mapR, tile, ghost);
 }
 
 // Ground you have seen and walked away from. Terrain and shelter only: no
@@ -849,8 +869,10 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
 // be a ghost of a ghost, and a hex-shaped veil could not cover it anyway.
 function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant, mapQ, mapR);
-  if (tile && !tile.diorama) {
+  if (tile?.tunnel) {
     drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
+  } else if (tile && !tile.diorama) {
+    drawTileInHex(tile, cx, cy);
   } else if (tile) {
     drawTileSplit(tile, cx, cy, 0, true);
     tiledHexes.add(`${mapQ}_${mapR}`);
@@ -858,7 +880,8 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
     drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
   }
   if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
-  drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+  if (groundFx && !myDepth) groundFx.noteRemembered(cx, cy, cell.terrain, mapQ, mapR);
+  drawHexPath(ctx, cx, cy, HEX_SZ);
   ctx.fillStyle = EXPLORED_VEIL_FILL[weatherPhase] || EXPLORED_VEIL.fill;
   ctx.fill();
   // Over the veil, not under it: a trap you escaped is the one remembered
@@ -866,15 +889,24 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   if (cell.trap) drawTrapMark(cx, cy, 0.85);
 }
 
-// An atlas tile drawn in two parts: the hex itself solid, and the overhang
-// above it at `overAlpha` (hexOnly: no overhang at all). Clipping the
-// overhang to "tile box minus hex" is an even-odd clip on one path.
-function drawTileSplit(tile, cx, cy, overAlpha, hexOnly = false) {
+// A tile masked to its own hex. The sheet tiles carry bleed past the rim (and
+// some art -- Glass Fields' crystals -- runs well over it); unmasked, that
+// spilled onto the neighbours and whichever hex drew later won the seam.
+// Clipped exactly on the edge, two neighbours meet in one antialiased pixel
+// that renderGridLines() covers with the divider.
+function drawTileInHex(tile, cx, cy) {
   ctx.save();
   drawHexPath(ctx, cx, cy, HEX_SZ);
   ctx.clip();
   drawTerrainTile(ctx, tile, cx, cy, HEX_SZ);
   ctx.restore();
+}
+
+// An atlas tile drawn in two parts: the hex itself solid, and the overhang
+// above it at `overAlpha` (hexOnly: no overhang at all). Clipping the
+// overhang to "tile box minus hex" is an even-odd clip on one path.
+function drawTileSplit(tile, cx, cy, overAlpha, hexOnly = false) {
+  drawTileInHex(tile, cx, cy);
   if (hexOnly || overAlpha <= 0.02) return;
   const b = tileBox(cx, cy, HEX_SZ);
   ctx.save();
@@ -950,7 +982,7 @@ function renderHexTerrain(cam) {
       const fade     = visible && !lit ? sightFadeLevel(dist, effectiveVR) : 0;
       if (lit) tunnelLitThisFrame.push({ x: cx, y: cy, level: light, op: cell.op | 0, terrain: cell.terrain });
 
-      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+      drawHexPath(ctx, cx, cy, HEX_SZ);
       applyHexFill(cell, dist, visible, surveyed, effectiveVR, remembered);
       ctx.fill();
       ctx.globalAlpha = 1;
@@ -977,7 +1009,7 @@ function renderHexTerrain(cam) {
           // later passes and stay clear on purpose — at the limit of vision
           // you can still tell *someone* is out there, just not much about
           // the ground they are standing on.
-          drawHexPath(ctx, cx, cy, HEX_SZ - 1);
+          drawHexPath(ctx, cx, cy, HEX_SZ);
           ctx.globalAlpha = SIGHT_FADE_ALPHA[fade];
           ctx.fillStyle   = SIGHT_FADE_FILL;
           ctx.fill();
@@ -999,11 +1031,16 @@ function renderHexTerrain(cam) {
 // ── Pass 1b: Hex grid lines (drawn on top of terrain PNGs) ────────
 // Diorama atlas tiles bake their own edge (see tiledHexes), so this only
 // outlines fog, flat-fill and flat (sheet or per-file) tile hexes.
+// One black line per shared edge: every hex goes into ONE path stroked once,
+// on the true edge (HEX_SZ, not inset), so the two hexes either side of an
+// edge trace the same pixels and the stroke's coverage doesn't stack. Each
+// hex stroked on its own, inset a pixel, drew two lines a gap apart.
 function renderGridLines(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR } = cam;
-  ctx.strokeStyle = 'rgba(50,50,50,0.5)';
+  ctx.strokeStyle = '#000';
   ctx.lineWidth   = 1;
   ctx.globalAlpha = 1;
+  ctx.beginPath();
   for (let dr = -viewR; dr <= viewR; dr++) {
     for (let dq = -viewQ; dq <= viewQ; dq++) {
       const vq = centreQ + dq;
@@ -1017,10 +1054,15 @@ function renderGridLines(cam) {
       const cy = px.y + oy;
       if (cx < -HEX_SZ * 2 || cx > cssWidth  + HEX_SZ * 2) continue;
       if (cy < -HEX_SZ * 2 || cy > cssHeight + HEX_SZ * 2) continue;
-      drawHexPath(ctx, cx, cy, HEX_SZ - 1);
-      ctx.stroke();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i;
+        const x = cx + HEX_SZ * Math.cos(a), y = cy + HEX_SZ * Math.sin(a);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
     }
   }
+  ctx.stroke();
 }
 
 function isPOIRenderable(mapQ, mapR, meAct) {
@@ -1101,7 +1143,8 @@ function renderCurrentHex(cam) {
   if (myId < 0 || !players[myId]?.on) return;
   const { ox, oy, meAct } = cam;
   const mePx = hexToPixel(meAct.q, meAct.r, HEX_SZ);
-  drawHexPath(ctx, mePx.x + ox, mePx.y + oy, HEX_SZ - 1);
+  // On the divider, not inset: an inset outline reads as a second line.
+  drawHexPath(ctx, mePx.x + ox, mePx.y + oy, HEX_SZ);
   ctx.globalAlpha = 1;
   ctx.strokeStyle = 'rgba(90,90,90,0.5)';
   ctx.lineWidth   = 1;
@@ -1123,12 +1166,13 @@ function closestWrapCoords(rp, meRp) {
 // ── Pass 1e: Remains — where survivors fell ───────────────────────
 // Drawn whatever the fog, like the caravan and the Doom (world-entities.js):
 // every client is told about a fall, and the survivor who fell has to be able
-// to find the way back to their pack. A bone grave-cross on a dark disc, ringed
-// in the fallen archetype's colour, set in the hex's lower-left so it clears
-// the centred character icon, the below-us marker (bottom edge) and the hex
-// label (top). It fades over its last few days, so a grave about to be
-// reclaimed (GROUND_AGE_DAYS) reads as one. The name comes out at a zoom where
-// there is room for it.
+// to find the way back to their pack. A grave marker knocked together from
+// two broken boards lashed into a cross (drawBrokenCross), with a rag in the
+// fallen archetype's colour tied to one arm, set in the hex's lower-left so it
+// clears the centred character icon, the below-us marker (bottom edge) and the
+// hex label (top). No name on it, and no ring round it: it is allowed to sit
+// half lost in the ground it stands in, like a real one. It fades over its
+// last few days, so a grave about to be reclaimed (GROUND_AGE_DAYS) reads as one.
 function renderRemains(cam) {
   if (typeof remains === 'undefined' || !remains.length) return;
   const { ox, oy, meRp } = cam;
@@ -1143,31 +1187,162 @@ function renderRemains(cam) {
     const left = groundDaysLeft(rm.d);
     ctx.save();
     ctx.globalAlpha = left < 5 ? 0.4 + 0.12 * left : 1;
-    ctx.fillStyle = '#0B0906';
-    ctx.beginPath(); ctx.arc(cx, cy, rad * 1.3, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = ARCHETYPE_COLORS[rm.pid] ?? PLAYER_COLORS[rm.pid] ?? '#8A7F6A';
-    ctx.lineWidth   = Math.max(1.5, rad * 0.24);
-    ctx.beginPath(); ctx.arc(cx, cy, rad * 1.08, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = '#E4D8BC';
-    ctx.lineCap     = 'round';
-    ctx.lineWidth   = Math.max(1.5, rad * 0.3);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - rad * 0.66);              ctx.lineTo(cx, cy + rad * 0.66);
-    ctx.moveTo(cx - rad * 0.42, cy - rad * 0.2);  ctx.lineTo(cx + rad * 0.42, cy - rad * 0.2);
-    ctx.stroke();
-    if (rm.nm && HEX_SZ >= 44) {
-      ctx.font         = `${Math.max(8, Math.round(HEX_SZ * 0.15))}px 'Courier New', monospace`;
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'top';
-      ctx.lineWidth    = 3;
-      ctx.strokeStyle  = 'rgba(11,9,6,0.85)';
-      ctx.fillStyle    = '#E4D8BC';
-      const tag = rm.nm.substring(0, 8).toUpperCase();
-      ctx.strokeText(tag, cx, cy + rad * 1.4);
-      ctx.fillText(tag, cx, cy + rad * 1.4);
-    }
+    // Seeded by where it stands and whose it is: the same grave looks the same
+    // on every screen and every frame.
+    const seed = ((rm.q | 0) * 73856093) ^ ((rm.r | 0) * 19349663) ^ ((rm.pid | 0) * 83492791);
+    drawBrokenCross(ctx, cx, cy + rad * 0.7, Math.max(18, HEX_SZ * 0.46), seed,
+                    ARCHETYPE_COLORS[rm.pid] ?? PLAYER_COLORS[rm.pid] ?? '#8A7F6A', weatherNow);
     ctx.restore();
   }
+}
+
+// A survivor's colour as a rag that has been out in the wasteland: most of
+// the dye gone, the rest muddied toward dust. #RRGGBB in, rgb() out.
+function fadedRag(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  if (!m) return '#6E6150';
+  const DUST = [92, 80, 64], k = 0.7;
+  const c = [1, 2, 3].map((i, j) => Math.round(parseInt(m[i], 16) * (1 - k) + DUST[j] * k));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+// A grave marker knocked together from two broken boards lashed into a cross,
+// planted at (x, y) on the ground and about s tall. Inked like the tile art:
+// a dark outline, flat weathered wood with a shadow side and a few strokes of
+// grain, splintered ends where the boards snapped, rope wound across the
+// joint, and a rag in `color` tied round one arm, stirring downwind (wind.js).
+// seed picks the lean, which ends broke and how, the knots and the rag's arm.
+function drawBrokenCross(g, x, y, s, seed, color, now) {
+  const h = (k) => {
+    let v = Math.imul(seed ^ Math.imul(k + 1, 0x9E3779B1), 0x85EBCA6B);
+    v ^= v >>> 13; v = Math.imul(v, 0xC2B2AE35); v ^= v >>> 16;
+    return (v >>> 0) / 4294967296;
+  };
+  const INK = '#140C06', lw = Math.max(1, s * 0.035);
+  const TAU = Math.PI * 2;
+  // One board along +x from a to b, centred on y = 0, w wide. A snapped end is
+  // a row of sharp splinters, the longest ones a full board-width long; a
+  // sawn end is square.
+  const boardPath = (a, b, w, brkA, brkB, k) => {
+    const jag = (end, dir) => {                    // dir: +1 at b, -1 at a
+      const n = 3 + ((h(k + 1) * 2) | 0), out = [];
+      for (let i = 0; i <= n; i++) {
+        const tip = i % 2 === 0;
+        const back = tip ? w * 0.15 * h(k + 2 + i) : w * (0.7 + 0.6 * h(k + 9 + i));
+        out.push([end - dir * back, -w / 2 + w * i / n]);
+      }
+      return out;
+    };
+    const pts = [[a, -w / 2], [(a + b) / 2, -w / 2 + (h(k) - 0.5) * w * 0.1]];
+    if (brkB) pts.push(...jag(b, 1)); else pts.push([b, -w / 2], [b, w / 2]);
+    pts.push([(a + b) / 2, w / 2 + (h(k + 3) - 0.5) * w * 0.1]);
+    if (brkA) pts.push(...jag(a, -1).reverse()); else pts.push([a, w / 2]);
+    g.beginPath();
+    pts.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py)));
+    g.closePath();
+  };
+  const board = (a, b, w, brkA, brkB, wood, k) => {
+    boardPath(a, b, w, brkA, brkB, k);
+    g.fillStyle = wood; g.fill();
+    g.save();
+    g.clip();
+    g.fillStyle = 'rgba(28,16,6,0.42)';            // the side away from the light
+    g.fillRect(a - w, w * 0.1, b - a + 2 * w, w);
+    g.fillStyle = 'rgba(255,236,200,0.16)';        // the lit edge
+    g.fillRect(a - w, -w / 2, b - a + 2 * w, w * 0.18);
+    g.strokeStyle = 'rgba(28,16,6,0.5)';           // grain, and a knot
+    g.lineWidth = Math.max(0.5, lw * 0.55);
+    for (const gy of [-0.18, 0.22]) {
+      g.beginPath();
+      for (let i = 0; i <= 8; i++) {
+        const gx = a + (b - a) * i / 8;
+        const yy = gy * w + Math.sin(i * 1.3 + h(k + 4) * 6) * w * 0.05;
+        if (i) g.lineTo(gx, yy); else g.moveTo(gx, yy);
+      }
+      g.stroke();
+    }
+    g.beginPath();
+    g.ellipse(a + (b - a) * (0.2 + 0.25 * h(k + 5)), (h(k + 6) - 0.5) * w * 0.3, w * 0.16, w * 0.09, 0, 0, TAU);
+    g.stroke();
+    g.restore();
+    g.strokeStyle = INK; g.lineWidth = lw; g.lineJoin = 'round';
+    g.stroke();
+  };
+
+  g.save();
+  g.translate(x, y);
+  // A low heap of turned dirt, lit on top, and the marker's shadow.
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  g.beginPath(); g.ellipse(s * 0.16, s * 0.04, s * 0.4, s * 0.09, 0, 0, TAU); g.fill();
+  g.beginPath();
+  g.moveTo(-s * 0.27, s * 0.05);
+  g.bezierCurveTo(-s * 0.2, -s * 0.07, s * 0.2, -s * 0.07, s * 0.27, s * 0.05);
+  g.closePath();
+  g.fillStyle = '#4C3826'; g.fill();
+  g.strokeStyle = INK; g.lineWidth = lw; g.stroke();
+  g.strokeStyle = 'rgba(140,110,78,0.6)'; g.lineWidth = Math.max(0.6, lw * 0.6);
+  g.beginPath(); g.moveTo(-s * 0.16, -s * 0.02); g.quadraticCurveTo(0, -s * 0.06, s * 0.14, -s * 0.025); g.stroke();
+
+  // The boards, leaning: a planted grave marker never stands true. Weathered
+  // grey-brown wood, no brighter than the ground it is planted in.
+  g.rotate((h(20) - 0.5) * 0.3);
+  const W = s * 0.14, barY = -s * (0.62 + 0.06 * h(21)), top = s * (0.92 + 0.08 * h(22));
+  const brokeLeft = h(25) < 0.5;
+  const L0 = -s * (0.38 + 0.06 * h(26)), L1 = s * (0.38 + 0.06 * h(27));
+  const barTilt = (h(24) - 0.5) * 0.2;
+  // The post, snapped off at the top.
+  g.save(); g.rotate(-Math.PI / 2); board(-s * 0.03, top, W, false, true, '#857055', 30); g.restore();
+  // The bar, lashed on a little askew, snapped at one end.
+  g.save();
+  g.translate(0, barY);
+  g.rotate(barTilt);
+  board(L0, L1, W * 0.9, brokeLeft, !brokeLeft, '#917B5E', 40);
+  // Rope: a few tight turns across the joint, both ways, and a loose end.
+  const r = W * 0.62, rope = Math.max(0.8, W * 0.17);
+  const turns = [[-r, r * 0.9, r, -r * 0.9, -0.2], [-r, r * 0.9, r, -r * 0.9, 0.2], [-r, -r * 0.9, r, r * 0.9, 0]];
+  g.lineCap = 'round';
+  for (const [ax, ay, bx, by, off] of turns) {
+    const ox = off * r;
+    g.beginPath(); g.moveTo(ax + ox, ay); g.lineTo(bx + ox, by);
+    g.strokeStyle = INK; g.lineWidth = rope + lw * 1.4; g.stroke();
+    g.strokeStyle = '#A89067'; g.lineWidth = rope; g.stroke();
+  }
+  g.beginPath(); g.moveTo(r * 0.5, r * 0.7);
+  g.quadraticCurveTo(r * 1.2, r * 1.6, r * 0.7, r * 2.7);
+  g.strokeStyle = INK; g.lineWidth = rope * 0.7 + lw; g.stroke();
+  g.strokeStyle = '#A89067'; g.lineWidth = rope * 0.7; g.stroke();
+
+  // Their rag: a strip of the fallen survivor's colour knotted round the
+  // sound arm, hanging and lifting on the wind (wind.js), its tail torn.
+  const ex = brokeLeft ? L1 - W * 0.9 : L0 + W * 0.9;
+  const rag = fadedRag(color);
+  const wx = typeof Wind !== 'undefined' ? Wind.x * Wind.s : 0.2;
+  const len = s * 0.3, rw = W * 0.5, ph = h(29) * TAU;
+  const dirx = Math.max(-0.9, Math.min(0.9, wx * 1.2)), diry = 1;
+  const dl = Math.hypot(dirx, diry), ux = dirx / dl, uy = diry / dl;
+  const N = 6, L = [], R = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const wav = Math.sin(t * 4 - now * 0.007 + ph) * W * 0.35 * t;
+    const cx = ex + ux * len * t - uy * wav, cy = W * 0.45 + uy * len * t + ux * wav;
+    const half = rw * (1 - 0.3 * t) / 2;
+    L.push([cx - uy * half, cy + ux * half]);
+    R.push([cx + uy * half, cy - ux * half]);
+  }
+  const tipX = ex + ux * len * 0.9, tipY = W * 0.45 + uy * len * 0.9;   // the torn notch
+  g.beginPath();
+  L.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py)));
+  g.lineTo(tipX, tipY);
+  for (let i = R.length - 1; i >= 0; i--) g.lineTo(R[i][0], R[i][1]);
+  g.closePath();
+  g.fillStyle = rag; g.fill();
+  g.strokeStyle = INK; g.lineWidth = lw; g.lineJoin = 'round'; g.stroke();
+  // The knot: a band round the arm.
+  g.beginPath();
+  g.rect(ex - rw * 0.55, -W * 0.5, rw * 1.1, W);
+  g.fillStyle = rag; g.fill(); g.stroke();
+  g.restore();
+  g.restore();
 }
 
 // Survivors sharing a hex ride as a pack: two staggered lanes, the leader at
@@ -1512,6 +1687,10 @@ function renderNightFade() {
 // To add a new layer: push a { name, draw } entry at the right position.
 const LAYERS = [
   { name: 'terrain',      draw: (cam) => renderHexTerrain(cam) },
+  // Water sway, cat's paws and glitter, heat shimmer, the gusts over grass,
+  // glass glints (ground-fx.js) -- on the ground the terrain pass just drew,
+  // under the grid and everything standing on it.
+  { name: 'ground_fx',    draw: (cam) => { if (groundFx && !myDepth) groundFx.drawGround(ctx, cam, weatherNow, HEX_SZ, cssWidth, cssHeight, sunState(), weatherPhase); } },
   { name: 'grid',         draw: (cam) => renderGridLines(cam) },
   { name: 'hex_labels',   draw: (cam) => renderHexLabels(cam) },
   { name: 'poi_outlines', draw: (cam) => renderPOIOutlines(cam) },
@@ -1546,6 +1725,10 @@ const LAYERS = [
   // His bursts: tracers, the muzzle flash, the brass -- over the pawns they hit.
   { name: 'kane_fx',      draw: (cam) => { if (!myDepth) renderKaneFx(cam); } },
   { name: 'doom',         draw: (cam) => { if (!myDepth) renderDoom(cam); } },
+  // Dust devils wander over the pawns, and cloud shadows fall on everything
+  // standing on the ground; both under the weather and the night tint.
+  { name: 'dust_devils',  draw: (cam) => { if (groundFx && !myDepth) groundFx.drawDevils(ctx, cam, weatherNow, HEX_SZ, cssWidth, cssHeight, sunState(), weatherPhase); } },
+  { name: 'cloud_shadows', draw: (cam) => { if (groundFx && !myDepth) groundFx.drawClouds(ctx, cam, HEX_SZ, cssWidth, cssHeight, sunState(), weatherPhase); } },
   // The Understory's spore flights and burst motes: in the air over the
   // ground and the entities, under the weather (eco-field.js drawAir).
   { name: 'eco_air',      draw: (cam) => { if (ecoField && !myDepth) ecoField.drawAir(ctx, cam, weatherNow, HEX_SZ, cssWidth, cssHeight); } },
@@ -1590,6 +1773,13 @@ function render() {
   tunnelTremorPixelsThisFrame = [];
   tunnelLitThisFrame = [];
   fireHexesThisFrame = [];
+  // The wind first: debris, every particle system and ground-fx.js read it
+  // this frame. The gust it feels is the one over us (last frame's position).
+  if (typeof Wind !== 'undefined') {
+    const me = myId >= 0 ? renderPos[myId] : { q: 0, r: 0 };
+    Wind.update(weatherNow, weatherPhase, myDepth, me.q, me.r);
+  }
+  if (groundFx) groundFx.beginFrame();
   if (quakeField) quakeField.update(weatherNow);
   if (debrisField) debrisField.update(weatherNow);
 

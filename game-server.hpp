@@ -834,6 +834,9 @@ static void setupWiFiAndServer() {
       j += ",\"tickId\":";      j += G.tickId;
       j += ",\"tc\":";          j += G.threatClock;
       j += ",\"weather\":";     j += G.weatherPhase;
+      // The board's clock for the wind (wind.hpp): the observer's drawn
+      // wind locks onto it, as the game client's does onto gs.wt.
+      j += ",\"wt\":";          j += (uint32_t)millis();
       j += ",\"connected\":";   j += G.connectedCount;
       j += ",\"evtQueue\":";    j += pendingCount;
       // Event loss: evSeq is the last "sq" handed out, evtDrops how many of

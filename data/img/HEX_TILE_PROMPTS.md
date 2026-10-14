@@ -17,8 +17,8 @@ in this folder (`hexOpenScrub0.png`, `hexSettlement3.png`, etc.), not guessed.
 | 4  | Broken Urban     | 10 | `#1A1814` | done |
 | 5  | Flooded District | 5  | `#08121E` | okay |
 | 6  | Glass Fields     | 2 real + 2 placeholder | `#121A22` | **priority** |
-| 7  | Ridge            | 1 real + 3 placeholder | `#1E1A12` | **priority** |
-| 8  | Mountain         | 1 real + 3 placeholder | `#14141C` | **priority** |
+| 7  | Ridge (Rolling Hills) | 2 slots: 12 common + 5 rare tiles (2026-10-14) | `#1E1A12` | done, see "Rolling Hills prompts" |
+| 8  | Mountain         | 3 slots: 12 bare peaks + 8 landmarks + 6 rare tiles (2026-10-14) | `#14141C` | done, see "Mountain prompts"; 4 cave mouths held back |
 | 9  | Settlement       | 8  | `#1A1206` | done |
 | 10 | Nuke Crater      | 2 real + 2 placeholder | `#0A0E04` | thin |
 | 11 | River Channel    | 8 slots + 15 alternates (23 tiles) | `#0B1E0F` | done (2026-10-13), see note below |
@@ -279,3 +279,87 @@ creature's ridged back and fin surfacing beside cattails.
 Both end with: no text, labels, numbers, hex outline stroke, frame, border,
 grid lines, vignette, drop shadow or watermark. The generator drew the
 outline stroke anyway on 01/03/07; the fit insets past it.
+
+## Mountain prompts
+
+The two prompts behind every `hexMountain` cell (2026-10-14). Same 3x2
+magenta-sheet header as the River prompts, except the hexagon is "a flat map
+tile seen from directly overhead" while the peaks inside it are drawn in
+classic three-quarter map view, which is how the original cell 0 reads.
+Mountains clump into ranges ringed by Ridge, so both prompts ask for rock out
+to all six edges with no flat ground or foothills at the rim.
+
+Style (both): a hand-inked fantasy-map mountain tile, thick scratchy black
+ink ridgelines, gritty 1980s comic-book cross-hatching and stipple, flat
+muted colour with soft washes; olive-khaki and sage-grey rock, grey-olive
+shadow faces, cold slate-blue clefts, pale bone crests; no snow caps, no blue
+sky. Soft, non-directional light.
+
+Prompt 1, the common look (`hex-mountians01..04.png`, slots 0 and 1): a
+dense cluster of five or six peaks; one huge broken peak with a sheer cracked
+face; twin peaks with a narrow pass; a rockslide of boulders; a high saddle
+with a cairn and a rag flag; a cave mouth under an overhang. 01 came out
+pointy-top. The cave mouths are held back for later use.
+
+Prompt 2, pre-war excavation, after the mountain encounters
+(`hex-mountians-rare01.png`, slot 2): a timber mine adit with a tipped ore
+cart; stepped quarry terraces with a broken crane; a rusted chairlift with
+one dangling chair; a relay mast with a dented dish; a cracked observatory
+dome; a base camp on a cliff ledge with a rope ladder.
+
+Both end with: no text, labels, numbers, hex outline stroke, frame, border,
+grid lines, vignette, drop shadow or watermark. The generator still drew sky
+(magenta or white on the rare sheet, pink or pale khaki on the common ones)
+and a black hex stroke on 01 and 03; see docs/hex-tile-art.md
+"Mountain" for how it was filled.
+
+## Rolling Hills prompts
+
+The two prompts behind `hexRidge` (terrain 7: "Ridge" in game-data.js, "Rolling
+Hills" in the firmware), 2026-10-14. Same 3x2 magenta-sheet header and
+three-quarter-view note as the Mountain prompts. The world generator puts
+hills in a ring around mountain ranges (hex-map.hpp Phase 2.5), so the prompts
+ask for hills that are lower and softer than mountains, with ground out to
+all six edges.
+
+Style (both): a hand-inked fantasy-map hills tile, thick scratchy black ink
+along each hill crest, gritty 1980s comic-book cross-hatching and stipple on
+the shadow sides, flat muted colour with soft washes; olive-khaki and
+sage-green slopes, grey-olive shadow faces, dry tan grass, pale bone crests
+and exposed slag-stone; no snow, no water, no blue sky. Soft,
+non-directional light. "ROLLING HILLS, the foothills that ring a mountain
+range ... no sharp peaks, no cliffs, no towering rock. Ground fills every
+hexagon ... no sky, no horizon, no distant range."
+
+Prompt 1, the common look (`hex-hills01.png`, cells 0 and 2-6): overlapping
+rounded hills with a footpath; one long ridgeline with a scree flank; small
+knolls round a dry stony gully; a hilltop cairn with a rag flag; a
+lightning-scorched outcrop with a split dead tree; tumbled dry-stone field
+walls on the contours.
+
+Prompt 2, after the ridge encounters (`hex-hills-rare01.png`, cells 1 and
+7-10), "one clear feature, large enough to read when the tile is shrunk to a
+thumbnail": a rusted fire tower with a padlocked box (ridge/1); a bluff ledge
+with a wedged pack (ridge/2); a driverless flatbed with a tuning fork in the
+dirt (ridge/3, the Perambulator); a glass observation gallery facing a bowl
+(ridge/4); a concrete survey pillar; a toppled wind turbine. The user had
+the glass gallery removed after integration, so ridge/4 has no tile.
+
+Both end with: no text, labels, numbers, hex outline stroke, frame, border,
+grid lines, vignette, drop shadow or watermark. Both sheets came out flat-top
+with clean edges and no stroke, but every tile still painted a flat pale sky
+above its horizon in spite of "no sky"; see docs/hex-tile-art.md "Rolling
+Hills" for how it was filled.
+
+Prompt 3, nature hills (`hex-hills02.png`, cells 11-16, more alternates of
+the common slot). Same header and style, plus small accents of "faded mauve
+heather, rust-brown bracken, dusty ochre and bone-white wildflowers", and
+"wild country where nature has taken the land back ... no buildings, no
+ruins, no vehicles, no people, no animals" (forage animals are their own
+sprites). To fight the sky it asked for a view "looking steeply down" with
+"the hillside rises all the way to the top edge of every hexagon: the top of
+each tile is more hillside, never sky". Tiles: heather and bracken; a
+hawthorn and birch copse in a fold; a lichen-crusted boulder tor; seeding
+grass with yarrow and ragwort; gorse thickets with an animal trail; a lone
+wind-sculpted tree gripping rock. It still drew sky: pale pink on five tiles
+(the magenta bleeding in), cream on the sixth.

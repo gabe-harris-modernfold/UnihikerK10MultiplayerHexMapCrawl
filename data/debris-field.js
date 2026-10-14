@@ -265,11 +265,17 @@ class DebrisField {
     this.last = now;
     if (!this.events.length && !this.sparks.length && !this.rocks.length && !this.dust.length) return;
 
-    // One drift for everything up there, leaning with the same slow wind the
-    // fire smoke follows -- smoke that all leans one way reads as weather.
-    const w = (typeof weatherParticles !== 'undefined' && weatherParticles) ? weatherParticles._wind : 0.5;
-    this.wind.x += (w * 0.00006 + 0.00001) * dt;
-    this.wind.y += 0.000012 * dt;
+    // One drift for everything up there, on the same wind (wind.js) the fire
+    // smoke and the cloud shadows follow -- smoke that all leans one way reads
+    // as weather. High up it never quite stops, even on a still day.
+    if (typeof Wind !== 'undefined') {
+      const k = (0.000015 + Wind.s * 0.00006) * dt;
+      this.wind.x += Wind.x * k;
+      this.wind.y += Wind.y * k;
+    } else {
+      this.wind.x += 0.00004 * dt;
+      this.wind.y += 0.000012 * dt;
+    }
 
     for (const ent of this.events) this._stepEvent(ent, now, dt);
     this.events = this.events.filter(e => now < e.until);

@@ -173,6 +173,10 @@ html, body {
 /* A canvas now: 61 hand-painted tiles per frame, redrawn only when the
    ground under the camera actually changes. Markers are drawn into it. */
 #s-disk { display: block; width: 100%; height: 100%; }
+/* The air over it (observer.js Air): wind-driven water, heat, glints, cloud
+   shadows and dust devils on a transparent canvas of the same size, so the
+   still disk under it never has to be redrawn. top/left, not inset. */
+#s-air { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 
 #who, #place, #greed, #doors { position: relative; z-index: 2; }
 

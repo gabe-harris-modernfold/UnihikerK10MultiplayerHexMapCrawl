@@ -2190,7 +2190,7 @@ setInterval(() => {
   fogTick(surface);
   maybeTriggerQuake(connected);
   worldTickCounter++;
-  if (worldTickCounter % WORLD_TICK_INTERVAL === 0) {
+  if (worldTickCounter % Math.max(1, Math.round(WORLD_TICK_INTERVAL / WORLD_SPEED)) === 0) {
     // Order matches world-system.hpp: Doom moves first (before anything else
     // reads/decays state this tick), fire damage resolves against THIS
     // tick's fresh intensity before spreadFire() decays it, and the caravan
@@ -2679,7 +2679,7 @@ function handleState(req, res) {
   }
   const body = {
     day: dayCount, dayTick, tickId: dayCount * DAY_TICKS + dayTick, tc: threatClock,
-    weather: weatherPhase, connected: Object.keys(players).length,
+    weather: weatherPhase, wt: uptimeMs(), connected: Object.keys(players).length,
     evtQueue: 0,
     // The heap telemetry has no meaning offline, but the observer graphs
     // mem.heap across a two-hour run to prove it is not leaking the board, so
@@ -2864,6 +2864,10 @@ const CARAVAN_STOCK_SLOTS   = 4;    // consumable shelf slots — matches the .i
 const CARAVAN_STOCK_MAX     = 3;    // max units per shelf slot — matches world-system.hpp
 const CARAVAN_TRADE_HOLD    = 4;    // world ticks the caravan waits on a co-located trader — matches world-system.hpp
 const WORLD_TICK_INTERVAL   = 150;  // game ticks between world updates (~15s) — matches firmware
+// Test harness: --world-speed=N (MOCK_WORLD_SPEED) runs world ticks N times as
+// often -- fire, the Doom, the caravan -- so a mechanic can be measured in
+// seconds instead of minutes. The board has no such knob.
+const WORLD_SPEED = Math.max(1, Number((process.argv.find(a => a.startsWith('--world-speed=')) || '').slice(14) || process.env.MOCK_WORLD_SPEED || 1));
 let worldTickCounter = 0;
 const caravan = {
   q: Math.floor(Math.random() * MAP_COLS),
@@ -2922,6 +2926,28 @@ const FIRE_SPREAD_CHANCE      = 20;  // % chance a burning hex (intensity >=2) i
 const FIRE_CAP                = 20;  // max simultaneously burning hexes
 const LIGHTNING_IGNITE_CHANCE = 17;  // % per world tick while a storm (phase 2) is active (was 15: +15% relative)
 const TERRAIN_ASH_DUNES       = 1;
+// Fire runs downwind -- mirrors FIRE_WIND_K/MIN/MAX in world-system.hpp.
+const FIRE_WIND_K = 1.25, FIRE_WIND_MIN = 0.25, FIRE_WIND_MAX = 2.25;
+
+// ── Wind (data/wind.js; wind.hpp on the board) ───────────────────────────────
+// The mock runs the client's own wind.js rather than a copy, so the formula has
+// one JS source; wind.hpp is its C++ twin. The clock is the mock's uptime, sent
+// as gs.wt and /state "wt" just as the board sends millis(), and the clients
+// lock their drawn wind to it.
+const WIND = (() => {
+  const vm = require('vm');
+  const ctx = { SQRT3: Math.sqrt(3), MAP_COLS, MAP_ROWS };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(DATA_DIR, 'wind.js'), 'utf8'), ctx, { filename: 'wind.js' });
+  return ctx;
+})();
+function windNow() { return WIND.windAt(uptimeMs() / 1000, weatherPhase); }
+// +1 when the wind blows straight along the axial step (dq, dr), -1 straight
+// into it -- wind.hpp windAlong(). Works for any delta, DIR_DELTA's included.
+function windAlong(w, dq, dr) {
+  const x = 1.5 * dq, y = Math.sqrt(3) / 2 * dq + Math.sqrt(3) * dr, l = Math.hypot(x, y);
+  return l ? (x * w.x + y * w.y) / l : 0;
+}
 const fireGrid = {};  // "q_r" -> intensity (1-3)
 let   fireCount = 0;
 
@@ -3002,6 +3028,7 @@ function spreadFire() {
     return;
   }
 
+  const wind = windNow();
   for (const key of Object.keys(fireGrid)) {
     const [q, r] = key.split('_').map(Number);
     const intensity = fireGrid[key];
@@ -3017,7 +3044,8 @@ function spreadFire() {
         const nr = ((r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
         if (fireGrid[`${nq}_${nr}`]) continue;               // already burning
         if (!isFlammable(terrainAt(nq, nr))) continue;        // immune terrain
-        if (Math.random() * 100 >= FIRE_SPREAD_CHANCE) continue;
+        const f = Math.min(FIRE_WIND_MAX, Math.max(FIRE_WIND_MIN, 1 + FIRE_WIND_K * wind.s * windAlong(wind, dq, dr)));
+        if (Math.random() * 100 >= Math.round(FIRE_SPREAD_CHANCE * f)) continue;   // downwind catches
         igniteHex(nq, nr, 1);
       }
     }
@@ -3182,6 +3210,8 @@ function floodArray() {
 const AWARENESS_GAIN   = 12;
 const AWARENESS_DECAY  = 5;
 const DOOM_BASE_RADIUS = 6;  // matches world-system.hpp
+// Scent carries on the wind -- matches DOOM_WIND_K/MAX in world-system.hpp.
+const DOOM_WIND_K = 0.4, DOOM_WIND_MAX = 0.35;
 const DOOM_TAUNT_COOLDOWN = 8;  // world ticks between repeat taunts — matches world-system.hpp
 const DOOM_TAUNT_MIN_GAP  = 2;  // floor between any two taunts, incl. tier changes
 const doom = {
@@ -3255,10 +3285,22 @@ function doomStepsPerTick() {
 // reason it does there — the awareness-100 lock-on used to `return` before
 // anything could touch awareness, so once it hit 100 it stayed at 100 forever
 // and there was no way to shake it off.
+// How far a survivor's scent reads from the Doom once the wind has had it:
+// hottestTrackWithin()'s stretch in world-system.hpp, applied to the survivor
+// since this mock has no trail to apply it to. The wind carrying their scent
+// at the Doom (along > 0) brings them closer; carrying it away, further.
+function doomScentDist(p) {
+  const w = windNow(), k = Math.min(DOOM_WIND_MAX, DOOM_WIND_K * w.s);
+  let dq = doom.q - p.q, dr = doom.r - p.r;   // survivor -> Doom, the short way round
+  dq -= Math.round(dq / MAP_COLS) * MAP_COLS;
+  dr -= Math.round(dr / MAP_ROWS) * MAP_ROWS;
+  return hexDistWrap(doom.q, doom.r, p.q, p.r) * (1 - k * windAlong(w, dq, dr));
+}
+
 function tickCreepingDoom(connected) {
   const radius  = doomDetectionRadius();
   const nearest = nearestConnectedPlayer(connected);
-  const inRange = !!nearest && nearest.dist <= radius;
+  const inRange = connected.some(p => !p.enc && doomScentDist(p) <= radius);
   const steps   = doomStepsPerTick();
 
   if (doom.awareness >= 100 && inRange) {
@@ -3898,7 +3940,7 @@ function syncMsg(id) {
     map: liveMapHex(players[id].q, players[id].r, surfaceVis(players[id]), id),
     trl: buildTrailDisk(players[id].q, players[id].r, surfaceVis(players[id])),
     p: Object.values(players).map(playerView),
-    gs: { wp: weatherPhase, dc: dayCount, tc: threatClock },
+    gs: { wp: weatherPhase, dc: dayCount, tc: threatClock, wt: uptimeMs() },
     world: worldStateMsg(),
     gi: groundItemsList(),
     rm: remainsList(),
@@ -4031,7 +4073,7 @@ function stateMsg() {
     else players[i].vm = 0x3F;
     p.push({ ...playerView(players[i]), id: i });
   }
-  return { t: 's', p, gs: { wp: weatherPhase, dc: dayCount, tc: threatClock }, world: worldStateMsg() };
+  return { t: 's', p, gs: { wp: weatherPhase, dc: dayCount, tc: threatClock, wt: uptimeMs() }, world: worldStateMsg() };
 }
 
 function lobbyMsg() {
@@ -5250,12 +5292,17 @@ wss.on('connection', (ws) => {
         // Test-only: ignite the sender's own hex at intensity 2, ignoring
         // weather/flammability's usual gate (still no-ops if the terrain is
         // immune — see isFlammable()). {"t":"dbg_ignite"}
+        // dq/dr light the hex at that axial offset instead -- somewhere the
+        // fire can be watched spreading without burning the sender.
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p) break;
-        igniteHex(p.q, p.r, 2);
+        const off = Number.isInteger(msg.dq) && Number.isInteger(msg.dr);
+        const iq = off ? ((p.q + msg.dq) % MAP_COLS + MAP_COLS) % MAP_COLS : p.q;
+        const ir = off ? ((p.r + msg.dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS : p.r;
+        igniteHex(iq, ir, 2);
         broadcast(stateMsg());
-        console.log(`[fire] dbg_ignite at (${p.q},${p.r}) by pid=${id}`);
+        console.log(`[fire] dbg_ignite at (${iq},${ir}) by pid=${id}`);
         break;
       }
 
@@ -5434,10 +5481,13 @@ wss.on('connection', (ws) => {
         // Test-only: teleport Doom adjacent to the sender and set its
         // awareness (default 100 — the most dramatic tier).
         // {"t":"dbg_doom","awareness":100}
+        // dq/dr put it at that axial offset from the sender instead -- e.g.
+        // six hexes up- or downwind, to watch the wind carry the scent.
         const id = sockets.get(ws);
         const p  = players[id];
         if (!p) break;
-        const [dq, dr] = DIR_DELTA[0]; // SE neighbor — "adjacent", not on top
+        const [dq, dr] = Number.isInteger(msg.dq) && Number.isInteger(msg.dr) ? [msg.dq, msg.dr]
+                       : DIR_DELTA[0]; // SE neighbor — "adjacent", not on top
         doom.q = ((p.q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
         doom.r = ((p.r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
         doom.awareness = Math.max(0, Math.min(100, (msg.awareness ?? 100) | 0));

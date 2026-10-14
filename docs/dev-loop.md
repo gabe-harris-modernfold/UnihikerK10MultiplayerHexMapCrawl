@@ -887,7 +887,9 @@ send({ t: 'dbg_weather', phase: 2 });             // force weatherPhase (0 clear
 send({ t: 'dbg_quake' });                         // force an earthquake near the sender, ignoring the cooldown
 send({ t: 'dbg_caravan' });                       // teleport the mock caravan onto the sender's hex (world-system-spec.md)
 send({ t: 'dbg_ignite' });                        // ignite the sender's own hex at intensity 2 (world-system-spec.md)
+send({ t: 'dbg_ignite', dq: 9, dr: -3 });         // ...or the hex at that axial offset from the sender (watch it spread without burning)
 send({ t: 'dbg_doom', awareness: 100 });          // teleport Creeping Doom adjacent to the sender, set its awareness (world-system-spec.md)
+send({ t: 'dbg_doom', awareness: 0, dq: 8, dr: 0 }); // ...or at that axial offset: e.g. 8 hexes downwind, to watch it catch the scent
 send({ t: 'dbg_settle' });                        // force a settlement to form on the sender's hex (actions_game_loop.hpp doShelter())
 send({ t: 'dbg_flood' });                         // force-flood the sender's hex at intensity 2, ignoring the water/storm gates
 send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill AP (tunnel-system-spec.md)
@@ -954,7 +956,10 @@ items" in `mock-server/server.js`.
   explicit `loot` / `pickup_item` messages remain for bots and tests.
 - The record doubles as the grave marker (`renderRemains()` in renderer.js),
   drawn whatever the fog like the caravan and the Doom, and lives until its
-  tokens are taken *and* the last pile on its hex is gone.
+  tokens are taken *and* the last pile on its hex is gone. It is drawn as two
+  broken boards lashed into a cross with a faded rag in the fallen archetype's
+  colour (`drawBrokenCross()`, `fadedRag()`). It has no name label and is
+  meant to sit half hidden in the ground (the user's call, 2026-10-13).
 - **Everything on the ground ages out `GROUND_AGE_DAYS` = 30 game-days after it
   was last added to** — dropped items and encounter overflow included, because
   a pile is one stack whoever left each part of it. Swept at dawn by
@@ -999,6 +1004,41 @@ items" in `mock-server/server.js`.
   steps jump two hexes, so they start a fresh pass and `d` is -1. Walk with
   1/2/4/5 to test.
 
+### Wind (fire runs downwind, scent carries)
+
+- **One wind, two halves.** [data/wind.js](../data/wind.js) draws it (smoke,
+  rain, ash, clouds, dust devils, the Doom's gas tail). [wind.hpp](../wind.hpp)
+  is the same closed form on the board, `windNow()`. Keep `WIND_TERMS`,
+  `WIND_V` and `WIND_WEATHER` the same in both files. The mock loads `wind.js`
+  itself through `vm`, so it has no copy to drift.
+- **The board's clock is the wind's clock.** `gs.wt` (every `s` tick and
+  `sync`) and `/state` `"wt"` carry `millis()`. `Wind.serverClock()` locks the
+  game client and the observer onto it, so the wind drawn is the one being
+  played. It doesn't use NTP because AP mode has none. A reboot just picks the
+  wind up somewhere else, and nothing is saved.
+- **Fire runs downwind** (`spreadFire`, world-system.hpp). Each neighbour's
+  20% roll is scaled by `1 + FIRE_WIND_K * s * along`, clamped 0.25-2.25. In
+  clear air that's about x1.7 downwind and x0.3 upwind. Total spread is
+  unchanged.
+- **Scent carries** (`hottestTrackWithin`). A trail `d` hexes off reads as
+  `d * (1 - k * along)`, with `k = min(0.35, 0.4 * s)`. Clear air gives the
+  Doom about +28% reach upwind of it and -18% downwind; a storm gives +54% and
+  -26%. The Doom's gas tail leans downwind, so if its reek blows at you, it
+  can't smell you.
+- **Measuring it in the mock:** run `node mock-server/server.js
+  --world-speed=15` (launch config "Mock Server (fast world)", port 8768).
+  That's one world tick a second instead of fifteen. Combine it with the
+  `dbg_ignite` / `dbg_doom` offsets above. On 2026-10-13, in a storm: a Doom
+  8 hexes downwind caught the scent 4/4 times and one 5 hexes upwind 0/4
+  (radius 6). In clear air, fire spread 15 downwind / 7 across / 5 up.
+- **Bots don't know about the wind.** No policy reads it, so an arena
+  measures what it does to wind-blind play. The A/B on 2026-10-13 compared a
+  zero-gain control build against the wind build: 2 x 15-min runs each, 5
+  `quester`, sprint. Doom deaths were 3 vs 3, and fire killed nobody in either
+  arm. The overall gap (21 vs 37 deaths) came from the weather rolls: the wind
+  arm drew a chem storm, which caused 7 of its deaths, and the control arm drew
+  none. A policy that stays downwind of the Doom would be the real test.
+
 ## Observer screen (`data/observer.html`)
 
 A full-screen page for a TV that watches a live game over `/state` and
@@ -1022,8 +1062,19 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
 - **Seven files, none of them in `web-assets.json`:** `observer.html`,
   `observer.css`, `observer.js`, `observer-scene.js`, `observer-lines.js`,
   `observer-feed.js`, `observer-fx.js`. `observer.html` also loads
-  `game-data.js` for `ADMIRED`/`TERRAIN`/`WEATHER_PHASE_NAMES`. Deploy with the
-  normal `.\scripts\sync_data.ps1 <board-ip>`.
+  `game-data.js` for `ADMIRED`/`TERRAIN`/`WEATHER_PHASE_NAMES`, and the game's
+  own `wind.js` + `ground-fx.js` for the air over the disk (below). Deploy
+  with the normal `.\scripts\sync_data.ps1 <board-ip>`.
+- **The air over the disk:** the hex disk (`#s-disk`) is a still picture,
+  redrawn only when the ground under the camera changes. Wind-driven water,
+  heat shimmer, glass glints, gusts over scrub, cloud shadows and dust devils
+  go on a transparent canvas laid over it (`#s-air`, `Air` in observer.js),
+  ticked by `setTimeout` at 25 Hz only while the open-ground disk is on screen.
+  The shimmer reads the still disk in place (`GroundFx` `opts.source`). A slow
+  TV gets fewer ticks, never more than a third of the main thread. Its sun is
+  `worldSun()` on the board's `dayTick`, which also drives the page's
+  `--night` dimming: dawn at tick 0 and dusk at 78% (the SS_DUSK sting). The
+  old `cos()` arc there was inverted and dimmed the page at mid-day.
 - **`observer-fx.js` is the LCD's FX engine ported to a canvas overlay**
   (same hash, noise, halftone, SFX glyphs — embedded from LovyanGFX by
   `python scripts/gen_observer_fx_fonts.py`). With firmware that publishes
@@ -1040,9 +1091,10 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
 - **Budget check before adding more:** the board caches one PSRAM entry and
   registers one HTTP route per file in the SD `/data` ROOT, capped at
   `MAX_WEB_FILES = 48` ([Esp32HexMapCrawl.ino:1046](../Esp32HexMapCrawl.ino:1046)).
-  These six take the root to 36 files / ~132 KB. There is headroom, but it is
-  no longer generous — a seventh observer file is a real cost, which is part
-  of why the synthetic feed is one file and not three.
+  These six took the root to 36 files / ~132 KB. With `wind.js` and
+  `ground-fx.js` (2026-10-13) it is 42 of 48 — a `.gz` and its plain twin share a
+  slot, and `.cfg` files take none. The headroom is thin now: a new root file is
+  a real cost, which is part of why the synthetic feed is one file and not three.
 - **`?feed=fake`** replaces `fetch` with a scripted five-player run that walks
   a real encounter file three different ways and kills everybody by a
   different cause. Use it to tune line banks with no hardware; `?t=N` jumps
