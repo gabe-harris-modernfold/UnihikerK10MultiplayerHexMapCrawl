@@ -349,12 +349,38 @@ function altPick(q, r, n) {
   return ((h ^ (h >>> 15)) >>> 0) % n;
 }
 
+// ── Quest sites placed during play ──────────────────────────────────
+// VACANCY's front desk and corridor, the town it fills, and Kane's house in
+// the glass are put down by the server mid-game, so no variant on the wire
+// points at their art (the fixed POIs -- Jack's Chopper, the Perambulator --
+// are pinned by the firmware instead). The client swaps the tile in by
+// position: each quest answers with a tiles.json `poi` key for (q, r), or
+// null (vacTileKey in vacancy.js, kaneTileKey in kane-jeep.js; observer.js
+// keeps its own copy for the TV).
+function questTileKey(q, r) {
+  return (typeof vacTileKey === 'function' && vacTileKey(q, r)) ||
+         (typeof kaneTileKey === 'function' && kaneTileKey(q, r)) || null;
+}
+
+// Is that landmark tile on screen now? Its quest's code-drawn stand-in
+// (drawVacDesk, drawKaneHouse, ...) stays off while it is.
+function questTileDrawn(key) {
+  const at = key && tileAtlas.state === 'atlas' && tileAtlas.poi[key];
+  return !!(at && tileAtlas.pages[at[0]]?.loaded);
+}
+
 // The tile to draw for a cell, or null (no art, or not decoded yet: the
 // caller draws the flat fallback). Atlas tiles are { page, sx, sy, diorama };
 // the per-file fallback is { img }. q, r (map coords) pick among a slot's
 // alternates (tiles.json `alts`); without them the slot's own cell is drawn.
 function terrainTile(terrain, variant, q, r) {
   if (tileAtlas.state === 'atlas') {
+    const qk = q !== undefined && questTileKey(q, r);
+    const quest = qk && tileAtlas.poi[qk];
+    if (quest) {
+      const page = tileAtlas.pages[quest[0]];
+      return page?.loaded ? { page, sx: quest[1], sy: quest[2], diorama: !tileAtlas.flat } : null;
+    }
     const pool = tileAtlas.tiles[terrain];
     // Wrap like the old pool did: a pinned variant with no entry of its own
     // degrades to an ordinary tile of its terrain.

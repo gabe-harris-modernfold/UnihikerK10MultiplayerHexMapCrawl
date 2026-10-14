@@ -146,6 +146,9 @@
       // VACANCY (vacancy.hpp): the sign, its town and its count, if the
       // board is new enough to have it.
       vac: raw.vac || null,
+      // Machine Gun Kane (kane.hpp): only read for the house in the glass's
+      // landmark tile (questTileKey) -- the TV has no jeep yet.
+      kane: raw.kane || null,
       players, byKey,
       live: players.filter((p) => p.conn),
     };
@@ -1114,6 +1117,22 @@
   // image decodes, and what an older board still gets.
   // ══════════════════════════════════════════════════════════════
 
+  // MIRRORED from vacTileKey() (vacancy.js) and kaneTileKey() (kane-jeep.js),
+  // through questTileKey() in engine.js: the landmark tile a quest site put
+  // down during play wears, by position, or null. Keep the keys in step with
+  // scripts/hex_sheets.py LANDMARKS.
+  function questTileKey(snap, q, r, terrain) {
+    const v = snap.vac;
+    if (v && v.q >= 0) {
+      if (v.dq === q && v.dr === r) return terrain === 1 ? '1_15' : '0_12';
+      if (v.kq === q && v.kr === r) return terrain === 5 || terrain === 3 ? '5_15' : '4_13';
+      if (v.q === q && v.r === r && v.st === 3 && v.rm === 0) return '4_14';
+    }
+    const k = snap.kane;
+    if (k && k.gq >= 0 && k.gq === q && k.gr === r) return '6_14';
+    return null;
+  }
+
   // MIRRORED from altPick() in engine.js: which of n tiles sharing a slot
   // the hex at map (q, r) wears. Must stay bit-identical, or the TV shows a
   // different building from the one the players are standing in.
@@ -1229,11 +1248,17 @@
 
     // -> { img, sx, sy, m } from the atlas, { img } per-file, or null.
     // q, r: map coords, which pick among a slot's alternates (tiles.json
-    // `alts`) exactly as terrainTile() in engine.js does.
-    tile(host, t, variant, vc, q, r) {
+    // `alts`) exactly as terrainTile() in engine.js does. quest: a landmark
+    // key from questTileKey() that overrides the variant on the wire.
+    tile(host, t, variant, vc, q, r, quest) {
       this.loadAtlas(host);
       const A = this.atlas;
       if (A === 'loading') return null;
+      const qa = quest && A && A !== 'failed' && A.poi[quest];
+      if (qa) {
+        const img = A.imgs[qa[0]];
+        return img && img.ok ? { img, sx: qa[1], sy: qa[2], m: A } : null;
+      }
       if (A && A !== 'failed') {
         const pool = A.tiles[t] || [];
         const poi = A.poi[t + '_' + variant];
@@ -1519,7 +1544,9 @@
     const sig = view.pid + ':' + view.q + ',' + view.r + ':' + view.visR + ':'
       + Math.round(box.width) + 'x' + Math.round(box.height) + ':'
       + view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('')
-      + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm : '');
+      + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm
+                  + ',' + snap.vac.dq + ',' + snap.vac.dr + ',' + snap.vac.kq + ',' + snap.vac.kr : '')
+      + (snap.kane ? ':k' + snap.kane.gq + ',' + snap.kane.gr : '');   // the quest tiles (questTileKey)
     if (sig === diskSig) { Air.kick(); return; }
     diskSig = sig;
     Art.onload = () => { diskSig = ''; };   // a late decode redraws on the next poll
@@ -1550,7 +1577,7 @@
     for (const c of cells) {
       const x = size * 1.5 * c.dq;
       const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
-      const tile = Art.tile(host, c.terrain, c.variant, snap.vc, c.q, c.r);
+      const tile = Art.tile(host, c.terrain, c.variant, snap.vc, c.q, c.r, questTileKey(snap, c.q, c.r, c.terrain));
       airCells.push({ cx: W / 2 + x, cy: H / 2 + y, q: c.q, r: c.r, terrain: c.terrain, tile });
       // Masked to the hex, as renderHexContent() does it (drawTileInHex): the
       // sheet tiles carry bleed past the rim, and unmasked it spilled onto the

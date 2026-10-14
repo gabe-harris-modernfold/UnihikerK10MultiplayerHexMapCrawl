@@ -152,9 +152,20 @@ TUNNEL_SHEETS = ['tunCorridor', 'tunRoom', 'tunFixture']
 TUNNEL_ROLES = ['entrance', 'vent', 'cave', 'rock']
 # First sentinel variant the firmware pins per terrain (hex-map.hpp): cells
 # from here on are landmark art, not pool tiles.
+#
+# Quest landmarks (2026-10-14, data/img/HEX_TILE_PROMPTS.md "Quest landmark
+# prompts"). "Phase 5.5" ones are pinned by the firmware on a fixed POI hex;
+# "client" ones are sites placed during play, which the client swaps in by
+# position (questTileKey() in engine.js) -- no variant on the wire is ever
+# set to them. A sentinel sits high so the pool below it can still grow.
 LANDMARKS = {
-    0: 10,   # Jack's Chopper (Phase 5.5), was poi_jacks_chopper.png
-    4: 10,   # downtown core, variants 10-12 (Phase 4 city-core pin), gi23 art 2026-09-28
+    0: 10,   # 10 Jack's Chopper, 11 Perambulator scrub/21 (both Phase 5.5);
+             # 12 VACANCY front desk (client); 13 Null Camp (not placed yet)
+    1: 15,   # 15 VACANCY front desk on Ash Dunes (client)
+    4: 10,   # downtown core, variants 10-12 (Phase 4 city-core pin), gi23 art 2026-09-28;
+             # 13 VACANCY corridor, 14 the fallen VACANCY town (client)
+    5: 15,   # 15 VACANCY corridor in a flooded ruin (client)
+    6: 14,   # 14 Kane's house in the glass (client), 15 Perambulator glass/3 (Phase 5.5)
 }
 # The per-file landmark art `import` folds into a sheet.
 LEGACY_POI = {(0, 10): 'poi_jacks_chopper.png'}

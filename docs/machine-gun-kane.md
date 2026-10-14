@@ -345,6 +345,11 @@ Built 2026-10-12. Kane's code lives in **`data/kane-jeep.js`** (in
 `web-assets.json` after `world-entities.js`), and the shared files only get
 small hooks:
 - `engine.js`: tiles.json `kane` / `kaneCell` go into `tileAtlas`.
+- The house in the glass wears landmark tile `6_14` (Glass Fields cell 14,
+  2026-10-14) while it is the next thing to find: `kaneTileKey()`, swapped in
+  by `questTileKey()` in `engine.js`, and on the TV by `observer.js`. Over the
+  tile only the pulse at her door is drawn (`KANE_HOUSE_DOOR`);
+  `drawKaneHouse()` is the fallback until the sheet loads.
 - `renderer.js`: layers `kane` (after `caravan`, under the pawns), `kane_fx`
   (after `characters`) and `kane_light` (last, over the night tint).
 - `network.js`: `kaneApplyWorld()` from `_applyWorldState`, the three `ev`

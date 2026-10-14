@@ -778,6 +778,73 @@ magenta with every edge drawn and no outline stroke.
   pre-hills master, page and tiles.json in `bak/` and the 12-tile ones in
   `bak2/`.
 
+## Quest landmarks (2026-10-14)
+
+One-of-a-kind tiles for the big quests' sites, from two image-gen sheets the
+user made from the prompts in `data/img/HEX_TILE_PROMPTS.md` "Quest landmark
+prompts": `six-main-tiles.png` (3x2) and `four-extra-tiles.png` (2x2), on
+their OneDrive Desktop. Where each cell went, and what puts it on the map,
+is the "Pinned art" table in that file.
+
+- **Sheets:** six-main came back as clean flat-top hexes, 1.24 : 1 with a
+  3-4 px black stroke. four-extra came back as isometric slabs: the faces are
+  2.0-2.25 : 1, with a painted side 15-20 px thick. The user chose to keep
+  them, so after the fit they are stretched 1.75-1.95x vertically. The
+  fallen town reads the steepest.
+- **Matte:** the River method (magenta-ness `min(R,B) - G`, ramp 40..215,
+  de-contaminate).
+- **Vertices:** open the matte with a 25 px ellipse first. Jack's rotor and a
+  Null Camp bush poke past the hex and pulled the extreme points outward,
+  which fanned magenta into the tile. The vertices are the extreme hull
+  points along 0, 60, ... 300 degrees.
+- **Slabs:** the matte is the face unioned with itself shifted down by t. t is
+  the height of the vertical run at the matte's leftmost and rightmost
+  columns. The face's bottom vertices are the matte's minus t, and its
+  left/right points are the tops of those runs. Inset by stroke + 1.5 px,
+  then a centre-fan affine onto R = 128 * 1.035 at 3x, then INTER_AREA down.
+  The source alpha inside the hex was 255 everywhere.
+- **Grade:** the ground only, toward the terrain's own pool (cells 0..n-1
+  plus their sidecar alternates).
+  - Stats are the median and IQR in Lab over the hex ring 0.62..0.97, with
+    ink (L < 25) dropped.
+  - L is matched by median with the IQR ratio clamped to 0.7..1.4. Unclamped,
+    the pale glass and flood grounds blew up to black. a and b are shifted by
+    their medians.
+  - The per-pixel weight is 0.85 * exp(-dE^2 / 2 * 22^2) against the tile's
+    own ground colour, never below 0.3. The rust, the carpet and the doors
+    barely move.
+  - The new art came in 10-20 L* paler than every pool. The flood tile's
+    ground went from L* 58 to 40.
+- **Cells:** listed in the `LANDMARKS` comments in `scripts/hex_sheets.py`.
+  - The Broken Urban gi23 alternates in cells 13/14 (variants 0/1) moved to
+    24/25 (`hexBrokenUrban.json`), because a landmark's cell is its variant
+    and must be under 16.
+  - Ash Dunes and Flooded District put their landmark at 15, so their pools
+    can still grow.
+  - Pool counts are unchanged, and only the five touched pages were
+    re-encoded.
+- **Wiring:**
+  - The Perambulator's two fixed POIs are pinned like Jack's:
+    `LANDMARK_PINS` in hex-map.hpp Phase 5.5. Only new worlds get them.
+  - Sites placed during play are swapped in by the client, by position:
+    `questTileKey()` in engine.js asks `vacTileKey()` (vacancy.js) and
+    `kaneTileKey()` (kane-jeep.js). observer.js mirrors this as
+    `questTileKey(snap, ...)`, and its disk signature now includes the sites.
+  - While a tile is up, the code-drawn desk, doorway and house are skipped.
+    The lamp, the strip light and the house's pulse stay, re-anchored on the
+    painted ones (`VAC_TILE_LIGHT`, `KANE_HOUSE_DOOR`, measured off the cells).
+- **Checked in the mock** (`dbg_vac` desk/keys/town/fall, `dbg_kane`
+  stage 3 site, pinned variants flipped client-side):
+  - all eight placements draw in the renderer, by day and at night;
+  - the lamp and strip glows land on the painted lights;
+  - the TV draws the house and the fallen town;
+  - no console errors.
+  - Not synced, not flashed.
+- **Scripts:** `probe.py`, `fit.py`, `grade.py`, `preview.py` and
+  `master.py` are in scratchpad
+  `2c560805-e860-4936-a649-8e9366560872\scratchpad\quest`. `master.py`
+  rebuilds the five masters from its `bak/` copies.
+
 ## Integration
 
 **Done (2026-09-23): the 10 shipped tiles.**
@@ -851,10 +918,8 @@ have alternates too.
    in the separate `data/img/tile-alts0.webp` (264 px stride, with
    `tile-alts.json`), which nothing loads. To use them, paint them into
    `hexOpenScrub.png` past cell 10 and list them in a `hexOpenScrub.json`.
-2. **Jack's Chopper.**
-   - Its POI art, `poi_jacks_chopper.png`, is a gas station, but
-     `data/encounters/scrub/19.json` describes a crashed military helicopter.
-   - The Huey (`gi26_12`) has been proposed for it. That's still undecided.
+2. ~~**Jack's Chopper.**~~ Done 2026-10-14: cell 10 is now the user's
+   image-gen helicopter wreck (see [Quest landmarks](#quest-landmarks-2026-10-14)).
 
 ## Tunnels
 

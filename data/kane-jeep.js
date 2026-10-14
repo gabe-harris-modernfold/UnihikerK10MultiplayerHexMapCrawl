@@ -263,12 +263,16 @@ function renderKane(cam) {
     const p = kaneScreen(cam, { q: k.cq, r: k.cr });
     if (kaneOnScreen(p, HEX_SZ * 2)) kaneDrawCell(3, p.x, p.y, { sx: 1, tilt: 0 });
   }
-  // The house in the glass: there is no sticker for it -- it is inside the
-  // glass and his ring of tracks is the landmark. A low pulse over the hex
-  // and a doorway with somebody standing in it.
+  // The house in the glass: no sticker -- it is inside the glass, so it is
+  // the hex's own tile (kaneTileKey, Glass Fields cell 14), and his ring of
+  // tracks is the landmark round it. Over the tile only the low pulse at her
+  // door; until the sheet loads, the code-drawn doorway with her in it.
   if (k.gq >= 0 && kaneKnown(k.gq, k.gr)) {
     const p = kaneScreen(cam, { q: k.gq, r: k.gr });
-    if (kaneOnScreen(p, HEX_SZ * 2)) drawKaneHouse(p.x, p.y, now);
+    if (kaneOnScreen(p, HEX_SZ * 2)) {
+      if (questTileDrawn(KANE_HOUSE_TILE)) drawKaneHouseGlow(p.x + KANE_HOUSE_DOOR[0] * HEX_SZ, p.y + KANE_HOUSE_DOOR[1] * HEX_SZ, now, 0.5);
+      else drawKaneHouse(p.x, p.y, now);
+    }
   }
 
   if (!kaneRenderLive) return;
@@ -370,17 +374,37 @@ function drawKaneAsk(x, y, now) {
   ctx.restore();
 }
 
-// Chapter 4's marker. Glass-green, still: a door frame and a small figure
-// with one hand up, lit from inside.
-function drawKaneHouse(x, y, now) {
+// Chapter 4's landmark tile (tiles.json poi, scripts/hex_sheets.py
+// LANDMARKS), swapped onto the house's hex while it is the next thing to
+// find; questTileKey() in engine.js asks here. KANE_HOUSE_DOOR is her open
+// door on that tile, in HEX_SZ from the hex centre (measured off the cell).
+const KANE_HOUSE_TILE = '6_14';
+const KANE_HOUSE_DOOR = [0.34, -0.08];
+function kaneTileKey(q, r) {
+  const k = worldState.kane;
+  return k && k.gq >= 0 && k.gq === q && k.gr === r ? KANE_HOUSE_TILE : null;
+}
+
+// The pulse from inside the house, centred on (x, y), radius rad * HEX_SZ.
+function drawKaneHouseGlow(x, y, now, rad = 0.8) {
   const s = HEX_SZ;
   const glow = 0.55 + 0.25 * Math.sin(now / 900);
   ctx.save();
-  const g = ctx.createRadialGradient(x, y, 0, x, y, s * 0.8);
+  const g = ctx.createRadialGradient(x, y, 0, x, y, s * rad);
   g.addColorStop(0, `rgba(150,220,190,${0.22 * glow})`);
   g.addColorStop(1, 'rgba(150,220,190,0)');
   ctx.fillStyle = g;
   ctx.fillRect(x - s, y - s, s * 2, s * 2);
+  ctx.restore();
+}
+
+// Chapter 4's stand-in until the tile loads. Glass-green, still: a door
+// frame and a small figure with one hand up, lit from inside.
+function drawKaneHouse(x, y, now) {
+  const s = HEX_SZ;
+  const glow = 0.55 + 0.25 * Math.sin(now / 900);
+  drawKaneHouseGlow(x, y, now);
+  ctx.save();
   const w = s * 0.26, h = s * 0.42, top = y - h * 0.62;
   ctx.fillStyle = 'rgba(12,22,18,0.85)';
   ctx.fillRect(x - w / 2, top, w, h);

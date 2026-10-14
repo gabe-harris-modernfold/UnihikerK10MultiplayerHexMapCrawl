@@ -133,6 +133,13 @@ hooks:
 
 - `renderer.js`: the `vacancy` layer under the pawns, `vacancy_light` over the
   night tint, and `vacQuestAt` in `isPOIRenderable`.
+- Landmark tiles (2026-10-14): the desk, the corridor and the full town wear
+  painted tiles, swapped in by position (`vacTileKey`, through `questTileKey()`
+  in `engine.js`; mirrored in `observer.js` for the TV). Desk `0_12` / `1_15`
+  on Ash Dunes, corridor `4_13` / `5_15` in water, town `4_14`. The code-drawn
+  desk and doorway are only the fallback until the sheet loads; the lamp and
+  strip light stay, anchored on the painted ones (`VAC_TILE_LIGHT`). See
+  [hex-tile-art.md](hex-tile-art.md) "Quest landmarks".
 - `network.js`: `ev vac`, and the `enc_start` branch.
 - `ui-encounter.js`: the kicker reads "VACANCY · THE SIGN / THE REGISTER /
   THE KEY / CHECK-OUT".

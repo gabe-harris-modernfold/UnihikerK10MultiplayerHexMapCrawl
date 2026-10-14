@@ -1095,10 +1095,22 @@ static void generateMap() {
   // (cell 10 of the Open Scrub sheet, tiles.json poi "0_10") instead of a
   // random scrub tile — see terrainTile() in engine.js. Overrides whatever
   // random variant Phase 4 picked.
+  //
+  // The Perambulator gets the same treatment where it stands on a fixed POI
+  // (docs/null-meridian-group.md): scrub/21 -> Open Scrub cell 11, glass/3 ->
+  // Glass Fields cell 15 (tiles.json poi "0_11" / "6_15"; scripts/hex_sheets.py
+  // LANDMARKS keeps those cells out of the pools, so pickVariant() never deals
+  // them). Its third pool, ridge/3, has no pinned tile.
+  static const struct { uint8_t terrain, poi, variant; } LANDMARK_PINS[] = {
+    { 0, 19, 10 },   // Jack's Chopper
+    { 0, 21, 11 },   // the Perambulator on scrub
+    { 6,  3, 15 },   // the Perambulator on glass
+  };
   for (int r2 = 0; r2 < MAP_ROWS; r2++)
     for (int c2 = 0; c2 < MAP_COLS; c2++)
-      if (G.map[r2][c2].terrain == 0 && G.map[r2][c2].poi == 19)
-        G.map[r2][c2].variant = 10;
+      for (const auto& pin : LANDMARK_PINS)
+        if (G.map[r2][c2].terrain == pin.terrain && G.map[r2][c2].poi == pin.poi)
+          G.map[r2][c2].variant = pin.variant;
 
   // ── Phase 6: bunker tunnels ──────────────────────────────────
   // Last, because it stamps hatch terrain onto finished surface hexes and

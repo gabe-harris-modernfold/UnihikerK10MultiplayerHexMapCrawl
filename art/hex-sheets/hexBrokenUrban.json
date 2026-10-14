@@ -14,8 +14,8 @@
   "gi23_07 apartment block",
   "gi23_08 teal corner block",
   "gi23_19 grey townhouse",
-  "gi23_05 caved-in bungalow",
-  "gi23_22 green cottage",
+  "quest landmark 4_13: VACANCY Housekeeping corridor (six-main-tiles.png cell 4), client-pinned",
+  "quest landmark 4_14: VACANCY fallen town, motel doors (four-extra-tiles.png cell 4), client-pinned",
   "gi23_00 colonial house",
   "gi23_02 log cabin",
   "gi23_23 garage",
@@ -24,14 +24,16 @@
   "gi23_16 post office",
   "gi23_21 gutted brick",
   "gi23_15 bank",
-  "gi23_18 fire station"
+  "gi23_18 fire station",
+  "gi23_05 caved-in bungalow",
+  "gi23_22 green cottage"
  ],
  "alts": {
   "0": [
-   13
+   24
   ],
   "1": [
-   14
+   25
   ],
   "2": [
    15

@@ -150,6 +150,10 @@ sighting pays all four instruments across its branches, at most three per
 visit (`ENC_MAX_ITEMS`). There are fork and scope choices at the arrival, and
 pendulum and glove choices on the flatbed. Nothing stops a survivor from
 taking a second copy of an item they already hold.
+The scrub and glass sightings wear their own landmark tiles (Open Scrub cell
+11, Glass Fields cell 15; 2026-10-14), pinned by `LANDMARK_PINS` in hex-map.hpp
+Phase 5.5. ridge/3 has no pinned tile: the hills flatbed is a random rare
+Ridge alternate.
 
 **The Null Camp** is `data/encounters/meridian/null_camp/{1,2,3}.json`. These
 files **cannot be reached yet**. They wait for the Meridian load path. Each

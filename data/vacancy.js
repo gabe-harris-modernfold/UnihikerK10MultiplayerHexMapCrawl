@@ -20,7 +20,11 @@
 // the strip light, the windows of the houses that turned) -- light is light,
 // the reasoning kane_light and debris_light use.
 //
-// Everything is drawn in code. The sign is a wreck on a leaning pole off the
+// The desk, the corridor and the fallen town wear the user's painted landmark
+// tiles (vacTileKey, swapped in by engine.js terrainTile); the desk and the
+// doorway below are drawn in code only until that sheet has loaded, and the
+// lamp and the strip light stay code-drawn either way, so they can light up
+// at night. The sign is all code. It is a wreck on a leaning pole off the
 // town's upper right: NO (dark unless full) + VACANCY in single-stroke pink
 // tubing, half of it broken or stuttering, and a backlit letter board hanging
 // off one chain under it with the count. It mends as the town fills (see
@@ -71,6 +75,38 @@ function vacJit(q, r) {
 }
 
 function vacState() { return worldState.vac || null; }
+
+// The landmark tiles VACANCY's places wear (tiles.json `poi`, from the user's
+// quest sheets; scripts/hex_sheets.py LANDMARKS). questTileKey() in engine.js
+// asks here, by position. Only while a site is open: a banked desk is gone,
+// carpet and all. The town wears its tile only once it is full -- a town lost
+// to a quake was levelled, not checked in.
+const VAC_TILE = {
+  desk: '0_12', deskDunes: '1_15',     // the desk on scrub / on ash dunes
+  hall: '4_13', hallWet: '5_15',       // the corridor in a ruin / in floodwater
+  town: '4_14',                        // the fallen town, every door a motel door
+};
+// Where each tile's own light is painted, in HEX_SZ from the hex centre, so
+// the lamp's glow and the strip light land on it (measured off the cells).
+const VAC_TILE_LIGHT = {
+  '0_12': [-0.24, -0.44], '1_15': [-0.03, -0.59],
+  '4_13': [0.02, -0.26],  '5_15': [-0.04, -0.34],
+};
+function vacTileKey(q, r) {
+  const v = vacState();
+  if (!v || v.q < 0) return null;
+  const t = gameMap[r]?.[q]?.terrain;
+  if (v.dq === q && v.dr === r) return t === 1 ? VAC_TILE.deskDunes : VAC_TILE.desk;
+  if (v.kq === q && v.kr === r) return t === 5 || t === 3 ? VAC_TILE.hallWet : VAC_TILE.hall;
+  if (v.q === q && v.r === r && vacFull(v)) return VAC_TILE.town;
+  return null;
+}
+// The painted light's offset for the site at (q, r), or null when the tile
+// isn't up (then the code-drawn desk / doorway is, with its own light).
+function vacTileLight(q, r) {
+  const key = vacTileKey(q, r);
+  return questTileDrawn(key) ? VAC_TILE_LIGHT[key] || null : null;
+}
 function vacMe() { return myId >= 0 ? players[myId] : null; }
 function vacCarries(id) {
   const p = vacMe();
@@ -168,11 +204,12 @@ function renderVacancy(cam) {
   const s = HEX_SZ;
   _vacShake = vacQuakeShake(v, now);
   _vacSiteJit = { d: vacJit(v.dq, v.dr), k: vacJit(v.kq, v.kr) };
-  if (v.dq >= 0 && vacKnown(v.dq, v.dr)) {
+  // Drawn in code only until their landmark tiles are up (vacTileKey).
+  if (v.dq >= 0 && vacKnown(v.dq, v.dr) && !vacTileLight(v.dq, v.dr)) {
     const p = vacScreen(cam, v.dq, v.dr);
     if (vacOnScreen(p, s * 2)) drawVacDesk(p.x + _vacSiteJit.d[0], p.y + _vacSiteJit.d[1], s);
   }
-  if (v.kq >= 0 && vacKnown(v.kq, v.kr)) {
+  if (v.kq >= 0 && vacKnown(v.kq, v.kr) && !vacTileLight(v.kq, v.kr)) {
     const p = vacScreen(cam, v.kq, v.kr);
     if (vacOnScreen(p, s * 2)) drawVacDoorway(p.x + _vacSiteJit.k[0], p.y + _vacSiteJit.k[1], s, now);
   }
@@ -190,11 +227,11 @@ function renderVacancyLight(cam) {
   const s = HEX_SZ, night = vacNight();
   if (v.dq >= 0 && vacKnown(v.dq, v.dr)) {
     const p = vacScreen(cam, v.dq, v.dr);
-    if (vacOnScreen(p, s * 2)) drawVacLamp(p.x + _vacSiteJit.d[0], p.y + _vacSiteJit.d[1], s, night, now);
+    if (vacOnScreen(p, s * 2)) drawVacLamp(p.x + _vacSiteJit.d[0], p.y + _vacSiteJit.d[1], s, night, now, vacTileLight(v.dq, v.dr));
   }
   if (v.kq >= 0 && vacKnown(v.kq, v.kr)) {
     const p = vacScreen(cam, v.kq, v.kr);
-    if (vacOnScreen(p, s * 2)) drawVacStrip(p.x + _vacSiteJit.k[0], p.y + _vacSiteJit.k[1], s, night, now);
+    if (vacOnScreen(p, s * 2)) drawVacStrip(p.x + _vacSiteJit.k[0], p.y + _vacSiteJit.k[1], s, night, now, vacTileLight(v.kq, v.kr));
   }
   if (!vacSignSeen(v) || vacDark(v)) return;   // saved or lost: the tubes are dead for good
   const p = vacScreen(cam, v.q, v.r);
@@ -782,9 +819,12 @@ function drawVacDesk(x, y, s) {
   ctx.restore();
 }
 
-function drawVacLamp(x, y, s, night, now) {
+// at: the lamp painted on the landmark tile (VAC_TILE_LIGHT), or null for the
+// code-drawn desk's own lamp. A painted lamp keeps its shade; it only gets
+// the glow, and a hot core once it is dark enough to need one.
+function drawVacLamp(x, y, s, night, now, at) {
   const kw = s * 0.27, ky = y + s * 0.06;
-  const lx = x - kw * 0.6, ly = ky - s * 0.16;
+  const lx = at ? x + at[0] * s : x - kw * 0.6, ly = at ? y + at[1] * s : ky - s * 0.16;
   const breathe = 0.85 + 0.15 * Math.sin(now / 1300);
   ctx.save();
   const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, s * (0.35 + 0.35 * night));
@@ -792,8 +832,16 @@ function drawVacLamp(x, y, s, night, now) {
   g.addColorStop(1, 'rgba(255,214,150,0)');
   ctx.fillStyle = g;
   ctx.fillRect(lx - s, ly - s, s * 2, s * 2);
-  ctx.fillStyle = `rgba(255,236,190,${0.7 + 0.3 * night})`;
-  ctx.beginPath(); ctx.moveTo(lx - s * 0.05, ly + s * 0.06); ctx.lineTo(lx + s * 0.05, ly + s * 0.06); ctx.lineTo(lx + s * 0.035, ly - s * 0.01); ctx.lineTo(lx - s * 0.035, ly - s * 0.01); ctx.closePath(); ctx.fill();
+  if (at) {
+    const c = ctx.createRadialGradient(lx, ly, 0, lx, ly, s * 0.07);
+    c.addColorStop(0, `rgba(255,240,200,${0.75 * night * breathe})`);
+    c.addColorStop(1, 'rgba(255,240,200,0)');
+    ctx.fillStyle = c;
+    ctx.fillRect(lx - s * 0.07, ly - s * 0.07, s * 0.14, s * 0.14);
+  } else {
+    ctx.fillStyle = `rgba(255,236,190,${0.7 + 0.3 * night})`;
+    ctx.beginPath(); ctx.moveTo(lx - s * 0.05, ly + s * 0.06); ctx.lineTo(lx + s * 0.05, ly + s * 0.06); ctx.lineTo(lx + s * 0.035, ly - s * 0.01); ctx.lineTo(lx - s * 0.035, ly - s * 0.01); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -833,17 +881,22 @@ function drawVacDoorway(x, y, s, now) {
   ctx.restore();
 }
 
-function drawVacStrip(x, y, s, night, now) {
+// at: the corridor painted on the landmark tile (VAC_TILE_LIGHT), or null for
+// the code-drawn doorway. The painted corridor already has its strip light;
+// it only gets the spill, stuttering the same way.
+function drawVacStrip(x, y, s, night, now, at) {
   const w = s * 0.3, h = s * 0.4, T = y - h * 0.62;
   // the strip light stutters the way they do
   const on = vacHash(Math.floor(now / 110), 3) > 0.06;
   if (!on) return;
   ctx.save();
-  const g = ctx.createRadialGradient(x, T + h * 0.7, 0, x, T + h * 0.7, s * (0.35 + 0.3 * night));
+  const gx = at ? x + at[0] * s : x, gy = at ? y + at[1] * s : T + h * 0.7;
+  const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, s * (0.35 + 0.3 * night));
   g.addColorStop(0, `rgba(215,255,232,${0.18 + 0.4 * night})`);
   g.addColorStop(1, 'rgba(215,255,232,0)');
   ctx.fillStyle = g;
-  ctx.fillRect(x - s, T - s * 0.5, s * 2, s * 1.6);
+  ctx.fillRect(gx - s, gy - s, s * 2, s * 2);
+  if (at) { ctx.restore(); return; }
   ctx.strokeStyle = `rgba(230,255,240,${0.75 + 0.25 * night})`;
   ctx.lineWidth = Math.max(1, s * 0.02);
   ctx.beginPath(); ctx.moveTo(x - w * 0.3, T + h * 0.08); ctx.lineTo(x + w * 0.3, T + h * 0.08); ctx.stroke();

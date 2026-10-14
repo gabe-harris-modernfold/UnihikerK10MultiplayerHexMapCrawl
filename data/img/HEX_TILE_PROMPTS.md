@@ -10,7 +10,7 @@ in this folder (`hexOpenScrub0.png`, `hexSettlement3.png`, etc.), not guessed.
 
 | Idx | Terrain | Variants now | Fill (behind the art) | Gap |
 |----|------------------|:-:|---------|-----|
-| 0  | Open Scrub       | 10 (+ reserved #10 for the Jack's Chopper POI) | `#2E2210` | done |
+| 0  | Open Scrub       | 10 (+ landmarks 10-13, see "Pinned art") | `#2E2210` | done |
 | 1  | Ash Dunes        | 4  | `#201E16` | thin |
 | 2  | Rust Forest      | 10 | `#1A2808` | done |
 | 3  | Marsh            | 2 real + 2 placeholder | `#081A10` | **priority** |
@@ -219,7 +219,14 @@ in `poi` first and only falls back to the pool when there is no entry.
 
 | Key | Cell | Pinned by | Subject |
 |----|----|----|----|
-| `0_10` | Open Scrub cell 10 (was `poi_jacks_chopper.png`) | hex-map.hpp Phase 5.5 — the scrub hex holding `scrub/19.json` | named landmark, already shipped |
+| `0_10` | Open Scrub cell 10 | hex-map.hpp Phase 5.5 — the scrub hex holding `scrub/19.json` | Jack's Chopper: the rusted helicopter, nose-down, Jack in his romper (2026-10-14; the old cell was a gas station, `poi_jacks_chopper.png`) |
+| `0_11` | Open Scrub cell 11 | Phase 5.5 — `scrub/21.json` | the Perambulator: driverless flatbed, tuning fork, a ring of leaning grass |
+| `6_15` | Glass Fields cell 15 | Phase 5.5 — `glass/3.json` | the Perambulator on glass, burns branching from its wheels |
+| `0_12`, `1_15` | Open Scrub cell 12, Ash Dunes cell 15 | client, by position (`vacTileKey`) — VACANCY's front desk (`dq/dr`), dunes art on Ash Dunes | the desk on its carpet, lamp lit, a lone door |
+| `4_13`, `5_15` | Broken Urban cell 13, Flooded District cell 15 | client — VACANCY's corridor (`kq/kr`), flooded art on Flooded District / Marsh | glass doors in a ruin, a motel corridor too long for it |
+| `4_14` | Broken Urban cell 14 | client — the VACANCY town once it is full (`st` 3, `rm` 0) | every front door a turquoise motel door; the sign is drawn over its upper right |
+| `6_14` | Glass Fields cell 14 | client — Kane's chapter 4 house (`gq/gr`) | the house fused to glass, her in the doorway |
+| `0_13` | Open Scrub cell 13 | nothing yet — waits for the Meridian load path | the Null Camp: tents round a glass floor |
 | `4_10`, `4_11`, `4_12` | Broken Urban cells 10–12 (2026-09-28: apartment block, teal corner block, grey townhouse from gi23, with alternates in `hexBrokenUrban.json`) | hex-map.hpp Phase 4 — any Broken Urban hex with 5+ urban neighbours, one of the three picked at random | **Dense downtown core.** Standing multi-storey hab-block shells rather than ground rubble: walls still up three or four floors, window rows blown out, a street canyon running between them in deep shadow. It must read as *taller and more intact* than `hexBrokenUrban0-9` at a glance — its whole job is to mark the middle of a real city against the fringe rubble around it. Swap-ins for extra variants: a collapsed skybridge between two towers; a toppled crane leaning across the canyon; a gutted parking structure; a billboard frame stripped to its lattice. |
 
 Notes on the downtown core tiles:
@@ -237,9 +244,12 @@ Notes on the downtown core tiles:
 - The core tiles can't leak into the pool. Broken Urban's `LANDMARKS`
   sentinel is 10, so cells 10 and up never count toward
   `terrainVariantCount[4]`. Keep ordinary rubble in cells 0–9.
-- Adding a fourth? Sentinels `4_13`..`4_15` are free. The wire packs
-  `variant` into 4 bits, so 0–15 is the hard ceiling per terrain. Paint
-  cell 13 and bump `CITY_CORE_TILES` in hex-map.hpp Phase 4.
+- Adding a fourth? Only `4_15` is free now (`4_13`/`4_14` are VACANCY's,
+  2026-10-14; the gi23 alternates that sat in cells 13/14 moved to 24/25).
+  The wire packs `variant` into 4 bits, so 0–15 is the hard ceiling per
+  terrain. A fourth core goes in cell 15, and Phase 4 in hex-map.hpp then
+  has to pick from 10–12 and 15 (no longer one run from `CITY_CORE_V0`).
+  More downtown variety is easier as alternates of 10–12 in the sidecar.
 
 ## River Channel prompts
 
@@ -363,3 +373,45 @@ hawthorn and birch copse in a fold; a lichen-crusted boulder tor; seeding
 grass with yarrow and ragwort; gorse thickets with an animal trail; a lone
 wind-sculpted tree gripping rock. It still drew sky: pale pink on five tiles
 (the magenta bleeding in), cream on the sixth.
+
+## Quest landmark prompts
+
+The two prompts behind the quest landmark cells in the "Pinned art" table
+(2026-10-14), saved as `six-main-tiles.png` (3x2) and `four-extra-tiles.png`
+(2x2) on the user's OneDrive Desktop. Same magenta-sheet header as the River
+prompts; the hexagon is a flat map tile seen from overhead and the one
+landmark on it is drawn in three-quarter map view.
+
+Style: gritty 1980s comic-book ink, thick scratchy black linework,
+cross-hatching and stipple, flat muted colour with soft washes; soft,
+non-directional light. "One clear subject, centred, filling about half the
+hexagon, large enough to read when the tile is shrunk to a thumbnail ...
+the ground runs out to all six edges ... no sky, no horizon." Each tile names
+its ground: SCRUB (pale tan earth, sage grass patches, ink tufts), GLASS
+(pale grey fused glass, cracks, crystal shards), RUIN (weeds over sand and
+brick rubble), DUNES (grey ash drifts), FLOOD (murky sage-green water).
+
+Prompt 1, six tiles: Jack's Chopper (helicopter nose-down, rotor snapped,
+Jack in a faded pink romper with a toolkit; "no building, no gas station");
+the Perambulator on scrub (driverless olive-drab 1950s flatbed, tuning fork by
+the rear wheel, a ring of grass leaning outward, no tracks in); the VACANCY
+front desk on scrub (burgundy gold-diamond carpet, counter, bell, fringed lamp
+glowing, key rack, a lone door ajar); Housekeeping in a ruin (clean glass
+doors in a roofless brick shell, an impossibly long motel corridor behind);
+the house in the glass (a 1960s house fused to glass, her in the open door,
+hand raised, a suitcase; "no tyre tracks on this tile"); the Perambulator on
+glass (burns branching through the glass from under its wheels).
+
+Prompt 2, four tiles: the Null Camp (six tents with flaps tied back round a
+broken glass floor, a cold stove and kettle); the front desk on DUNES;
+Housekeeping on FLOOD (the doors just above the waterline); the checked-in
+town (townhouses whose every front door is a turquoise motel door; "keep the
+upper-right part of the hexagon open").
+
+Both end with: no text, letters, numbers, words on signs or plaques, labels,
+hex outline stroke, frame, border, grid lines, vignette, drop shadow or
+watermark. Prompt 1 came back as clean flat-top hexes (1.24:1, a thin black
+stroke). Prompt 2 came back as isometric slabs about 2.1:1 with a painted
+side, despite "not isometric, no slab sides"; the user chose to keep them
+stretched (1.75-1.95x tall after the fit). How they were cut, fitted and
+graded: docs/hex-tile-art.md "Quest landmarks".
