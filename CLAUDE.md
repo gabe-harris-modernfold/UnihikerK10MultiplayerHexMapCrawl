@@ -18,6 +18,11 @@ Other key references:
   Read it before touching `bots/` or drawing conclusions from a run: the
   protocol has several failure modes that are completely silent (a refused
   `pick`, an `enc_start` without `q`/`r`, a dirty board at reset).
+- `bots/wroom_swarm/` — an ESP32 ("the wroom", COM3) that fills all five
+  seats over the K10's own hotspot to test direct-connect play; `away` on the
+  K10's serial console simulates no house network. See bot-testing.md "The
+  wroom swarm". Never stream big files off the SD on `async_tcp` (dev-loop.md
+  "Saves").
 - **[docs/sound-engine.md](docs/sound-engine.md)** — the K10 speaker: a
   16 kHz synth, generative score, orchestrated effects and a TMS5220
   (Speak & Spell) voice in `snd-*.hpp`, board glue in `ui-audio.hpp`. Story

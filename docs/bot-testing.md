@@ -69,6 +69,9 @@ knows about the game it learns through the same WebSocket a browser uses.
 - **Quests are checked, not just played.** See "Quests". `python quests.py`
   lints the content, `quest_check.py` stages every chain on the mock, and an
   arena with a `quester` in the fleet prints the fleet's quest ledger.
+- **Direct-connect play (hotspot, no router) is tested by hardware, not
+  Python:** `bots/wroom_swarm/` — see "The wroom swarm" below. Its
+  companion `sync_burst.py` fires N simultaneous picks (the join burst).
 - **Never `nohup` a background run, and never pipe `arena.py` into
   `head`/`tail`.** Both orphan the Python process: it survives, keeps
   playing, and every later `verify_reset()` then sees a dirty board and
@@ -931,6 +934,94 @@ seats but at most `MAX_SEATED` (5) filled. `handleConnect` rejects once
 `{"t":"full"}` and retries forever, so 5 bots leave no room for a browser
 player (the observer TV polls `/state` and takes no seat). Any stale lobby
 entry eats into that budget.
+
+---
+
+## The wroom swarm: direct-connect play over the hotspot
+
+`bots/wroom_swarm/` tests the case the Python bots cannot: players on the
+board's own hotspot `WASTELAND`, no router in the path. An ESP32-WROOM-32E
+("the wroom", CH340 on COM3) joins the hotspot, opens one WebSocket per seat
+to 192.168.47.1 (5 by default), plays a slow random walk on each and measures
+the link. Not `build.ps1` — it is a plain ESP32 sketch:
+
+```powershell
+arduino-cli compile --fqbn esp32:esp32:esp32 --build-path <dir> bots/wroom_swarm
+arduino-cli upload  --fqbn esp32:esp32:esp32 --input-dir <dir> -p COM3 bots/wroom_swarm
+python bots/wroom_swarm/swarm_log.py --minutes 15 --k10-cmd away --zero-after 45 --out bots/runs/swarm-x
+python bots/wroom_swarm/swarm_log.py --summarize bots/runs/swarm-x
+```
+
+- `swarm_log.py` logs the wroom (COM3) and the K10 (COM5) side by side with
+  DTR/RTS held low (no resets), reopens the K10 port across its reboots, and
+  prints a per-seat table plus a timeline that lines up the K10's radio events
+  (sweeps, scans) with the worst tick gap of each 10 s report.
+- `--k10-cmd away` reboots the K10 into the no-house-network simulation for
+  one boot (dev-loop.md "Direct-connect play"). `--zero-after` clears the
+  wroom's counters once that reboot has settled.
+- Wroom serial commands: `go`, `stop`, `seats N`, `sleep 0|1` (modem sleep,
+  like a phone in power save), `raw S <json>`, `report`, `zero`.
+- Per seat it counts tick delivery (`tk` vs the `tk` id gaps), gaps over 0.5 s
+  and 2 s, rid round trips (histogram), nacks by reason, unanswered requests,
+  and every drop by kind. A `/state` poll runs on its own task every 10 s.
+- A death respawns the way the browser does: re-pick on the same socket when
+  the lobby update arrives. A seat the K10 failed to free shows up as a
+  refused pick (`pick_nack_slot_taken` / `_full`), not hidden by a reconnect.
+- **One station, five sockets.** All seats share the wroom's single
+  association, so the airtime and per-station costs of five real phones are
+  not reproduced — it measures the board, not the air.
+- **Don't trust its first numbers after a harness change; check the K10 log.**
+  Two harness bugs looked like board faults until the K10's own log said
+  otherwise: a 2.5 KB report line through a 128-byte serial TX buffer froze
+  every seat for 240 ms at once, and unsigned `now - t` against a later
+  `millis()` counted picks unanswered and timed re-picks out instantly.
+
+**First runs, 2026-10-23** (5 seats, 10–15 min each):
+
+| | home Wi-Fi, old code | no home Wi-Fi, old code | no home Wi-Fi, final (87629904) | home Wi-Fi, final |
+|---|---|---|---|---|
+| Worst tick gap | 0.8 s, all seats | 3.4–4.7 s, all seats, every sweep | 1.6 s, one seat, once | 1.7 s, one seat, during a triple respawn |
+| Slowest reply | 0.3 s | 9.2 s | 1.4 s (one) | 1.4 s (one) |
+| Tick delivery | 99.3% | 95–98% | 99.5–99.8% | 99.2–99.6% |
+| Rejoins refused `full` | 60 | 90 | 0 (147 respawns) | 0 (103 respawns) |
+| `broadcastSkips` (mutex busy) | 301 / 10 min | 945 / 14 min | 1 / 14 min | 1 / 10 min |
+| `busy` nacks | 49 | 255 | 30 | 21 |
+| TCP / Wi-Fi drops | 0 | 0 | 0 | 0 |
+| Internal heap low-water | 86 KB | 79 KB | 88 KB | 73 KB |
+
+The interim build b0acc140 (everything but sync pacing) reached 39 and 19 KB
+in the same two runs: see "The pick burst" below. A one-seat gap in the final
+runs is that seat's ticks waiting behind another seat's 32 KB respawn sync on
+the wroom's single Wi-Fi link; five phones are five stations.
+
+**The pick burst (fixed in 87629904).** With seats freed at death, four
+survivors dying at one dawn re-picked within 150 ms (the wroom re-picks at
+once; a browser waits out a ~6 s death screen), and four ~32 KB `sync`s at once
+took the internal heap to 19 KB. `bots/sync_burst.py` reproduces it on demand
+(N sockets wait in the lobby, then pick at the same instant; reboot first,
+`minHeap` is a low-water mark): on b0acc140 five picks took 4.9–8.5 s each to
+get their sync, the heap went 118 → 56 KB, and the second round **crashed the
+board** — `AsyncWebSocketClient::text()` copies each message into a
+`std::vector`, and with no ~32 KB block left `operator new` threw and the board
+aborted (reset reason PANIC). That was in the firmware all along; the old seat
+leak just never let five picks land at once. Syncs are now queued and sent by
+GameLoop one at a time, only with room to copy them (network-sync.hpp "Sync
+pacing"): the same 3 × 5 burst got its syncs in 0.14–0.63 s with the heap
+never below 86 KB and no crash.
+
+```bash
+python sync_burst.py --host 192.168.4.135 --n 5 --rounds 3
+```
+
+The wroom's `/state` counters (`ok`, `fail`, `reboots`, `httpMax`) are kept
+from its own boot and are not cleared by `zero`: read them as deltas.
+
+What the runs found, all fixed (dev-loop.md "Direct-connect play" and "Saves"):
+the hotspot admitted 4 devices for a 5-seat game; the roaming sweep took the
+radio off the hotspot's channel for ~7 s; dawn saves held `G.mutex` ~270 ms;
+every death left its seat taken (32 of 32 in the first run); saves were
+written in place and one short `map.bin` in ~100 went to the card unnoticed;
+and PSRAM was full, so six web files were never served.
 
 ---
 

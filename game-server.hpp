@@ -200,10 +200,19 @@ static void netWatchdog(uint32_t now) {
       }
       if (seated > 0 && jammed == seated) {
         lastHealMs = now; healN++;
-        Log.warning("NETWD HEAL #%u: all %d seated sockets jammed, nothing inbound for %us -- reassociating Wi-Fi",
-                    (unsigned)healN, seated, (unsigned)((now - g_lastWsDataMs) / 1000));
-        wifiNextSweepMs = now + 30000;   // keep the roaming sweep off this reconnect
-        WiFi.reconnect();
+        // Only the station link can be reassociated. Without one the seats
+        // are on the hotspot, and reconnect() would only send the station
+        // scanning every channel for a network that is not there, freezing
+        // the very players this is meant to rescue.
+        if (WiFi.status() == WL_CONNECTED) {
+          Log.warning("NETWD HEAL #%u: all %d seated sockets jammed, nothing inbound for %us -- reassociating Wi-Fi",
+                      (unsigned)healN, seated, (unsigned)((now - g_lastWsDataMs) / 1000));
+          wifiNextSweepMs = now + 30000;   // keep the roaming sweep off this reconnect
+          WiFi.reconnect();
+        } else {
+          Log.warning("NETWD HEAL #%u skipped: all %d seated sockets jammed but there is no station link "
+                      "to reassociate (hotspot only)", (unsigned)healN, seated);
+        }
       }
     }
   } else if (deadT0) {
@@ -306,6 +315,7 @@ static void gameLoopTask(void* param) {
       }
     }
     broadcastState();
+    serviceSyncQueue();   // at most one pick's sync per turn (network-sync.hpp)
     // Refresh per-slot WS liveness so handleConnect's stale-slot reap only
     // fires on a slot that has been unverifiable for the whole grace window,
     // not on one bad ws.client() look (see network-session.hpp).
@@ -517,6 +527,15 @@ static void sendWebFile(AsyncWebServerRequest* req, int i) {
   req->send(resp);
 }
 
+static const char* imgMimeFor(const String& filename) {
+  if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
+      filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
+    return "image/jpeg";
+  if (filename.endsWith(".webp")) return "image/webp";
+  if (filename.endsWith(".json")) return "application/json";
+  return "image/png";
+}
+
 // ── /upload body writer (shared by the multipart and raw-body callbacks) ───
 // Runs on the async_tcp task. One upload at a time (sync scripts are
 // sequential); state is reset on index == 0. The request handler reads
@@ -674,6 +693,13 @@ static void setupWiFiAndServer() {
   }
   wifiStoreLoad();
   {
+    Preferences p; p.begin("k10", false);
+    g_wifiAway = p.getBool("away", false);
+    if (g_wifiAway) p.remove("away");
+    p.end();
+    if (g_wifiAway) Log.warning("WIFI AWAY simulation: every known network is out of range this boot");
+  }
+  {
     // Fast path first: the ESP32's own one-slot credential is whatever network
     // we last joined, so at home this connects in a few seconds with no scan.
     // If it doesn't answer (we're somewhere else), loop()'s roaming sweep takes
@@ -686,7 +712,8 @@ static void setupWiFiAndServer() {
       strlcpy(savedSsid, g_knownNets[0].ssid, sizeof(savedSsid));
       Log.notice("Known network ssid=%s -> joining", savedSsid);
       splashAdd("Joining saved WiFi...", 0x4080C0);
-      WiFi.begin(g_knownNets[0].ssid, g_knownNets[0].pass[0] ? g_knownNets[0].pass : nullptr);
+      WiFi.begin(g_wifiAway ? WIFI_AWAY_SSID : g_knownNets[0].ssid,
+                 g_knownNets[0].pass[0] ? g_knownNets[0].pass : nullptr);
       Log.notice("STA connect attempt (known[0])");
       bootWifiPending = true;
       bootWifiStartMs = millis();
@@ -867,6 +894,9 @@ static void setupWiFiAndServer() {
       j += ",\"minHeap\":";          j += (uint32_t)ESP.getMinFreeHeap();
       j += ",\"maxBlock\":";         j += (uint32_t)ESP.getMaxAllocHeap();
       j += ",\"psram\":";            j += (uint32_t)ESP.getFreePsram();
+      // Largest single PSRAM block: a ~32 KB sync needs one (network-sync.hpp
+      // "Sync pacing"), and free PSRAM says nothing about fragmentation.
+      j += ",\"psramMax\":";         j += (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
       j += ",\"uptimeMs\":";         j += (uint32_t)millis();
       j += ",\"uploadResumes\":";    j += g_uploadResumes;
       j += ",\"lastUploadErr\":\"";  j += g_uploadLastErr; j += "\"";
@@ -876,6 +906,9 @@ static void setupWiFiAndServer() {
       j += ",\"broadcastSkips\":";   j += g_broadcastSkips;
       j += ",\"broadcastSkipsConsec\":"; j += g_broadcastSkipsConsec;
       j += ",\"broadcastPartial\":"; j += g_broadcastPartial;
+      j += ",\"broadcastNoRoom\":";  j += g_broadcastNoRoom;
+      j += ",\"syncWaits\":";        j += g_syncWaits;
+      j += ",\"syncQueued\":";       j += g_syncQN;
       j += ",\"assetReqActive\":";   j += g_activeAssetReqs;
       j += ",\"assetReqRejects\":";  j += g_assetReqRejects;
       if (req->hasParam("sd")) {     // opt-in: f_getfree can take a while on big cards
@@ -1144,13 +1177,18 @@ static void setupWiFiAndServer() {
     uint32_t t0 = millis();
     // One f.read() into a PSRAM block. f.readString() grew a String one byte
     // at a time -- thousands of reallocs, every one under 4 KB landing on the
-    // internal heap, all while holding G.mutex. The response owns the block
-    // (shared_ptr captured by the filler) and frees it once sent.
+    // internal heap. The response owns the block (shared_ptr captured by the
+    // filler) and frees it once sent.
+    //
+    // No G.mutex: it only ever kept this read off the card while saveGame()
+    // wrote to it under the mutex. Saves write outside it now
+    // (save-stage.hpp), and FATFS serialises the card itself, as it always
+    // has for /upload; holding the mutex here would only stall the game for
+    // as long as a save's writes take.
     std::shared_ptr<uint8_t> body;
     size_t bodyLen = 0;
     bool found = false;
-    bool mutexOk = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(500)) == pdTRUE);
-    if (mutexOk) {
+    {
       uint32_t tsd = millis();
       bool exists = SD.exists(path);
       if (exists) {
@@ -1174,10 +1212,6 @@ static void setupWiFiAndServer() {
       } else {
         Log.warning("SD MISSING: %s (via /enc)", path);
       }
-      xSemaphoreGive(G.mutex);
-    } else {
-      Log.warning("HTTP /enc 503: mutex timeout path=%s", path);
-      req->send(503, "text/plain", "Server busy"); return;
     }
     if (!found) {
       Log.warning("HTTP /enc 404 path=%s", path);
@@ -1203,14 +1237,7 @@ static void setupWiFiAndServer() {
       String filename = url.substring(5);
       for (int i = 0; i < imgCacheCount; i++) {
         if (filename.equalsIgnoreCase(imgCache[i].name)) {
-          String mimeType = "image/png";
-          if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") ||
-              filename.endsWith(".JPG") || filename.endsWith(".JPEG"))
-            mimeType = "image/jpeg";
-          else if (filename.endsWith(".webp"))
-            mimeType = "image/webp";
-          else if (filename.endsWith(".json"))
-            mimeType = "application/json";
+          const char* mimeType = imgMimeFor(filename);
           // tiles.json names the current atlas build, so it revalidates
           // (cheap: 304 on the ETag); everything else is requested
           // versioned or never changes, and stays pinned for a year.

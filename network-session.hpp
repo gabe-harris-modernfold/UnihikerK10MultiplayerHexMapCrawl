@@ -89,6 +89,24 @@ static void refreshWsLiveness() {
   lastReapMs = now;
   bool freedAny = false;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
+  // Deaths EVT_DOWNED could not release (network-events.hpp). The socket is
+  // alive in the lobby, so the ghost reap below would never see this seat.
+  // The same fields EVT_DOWNED clears: it already sent `left`, dropped the
+  // remains, and a re-pick of an LL-0 seat backstops that drop anyway.
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    uint32_t id = downedSeatPending[i];
+    if (!id) continue;
+    downedSeatPending[i] = 0;
+    Player& p = G.players[i];
+    if (!p.connected || p.wsClientId != id) continue;   // re-picked or freed since
+    Log.warning("Released downed seat slot=%d wsId=%u (deferred)", i, (unsigned)id);
+    p.connected  = false;
+    p.wsClientId = 0;
+    p.resting    = false;
+    lastWsAliveMs[i] = 0;
+    if (G.connectedCount > 0) G.connectedCount--;
+    freedAny = true;
+  }
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p = G.players[i];
     if (!conn[i] || !p.connected || p.wsClientId != ids[i]) continue;  // changed since the snapshot
@@ -414,10 +432,30 @@ static void wifiAutoJoinTask(void* param) {
   WiFi.disconnect(false);
   vTaskDelay(pdMS_TO_TICKS(200));
 
+  // Anyone seated: scan only the channel the softAP is already on. A full
+  // sweep takes the one radio off that channel for ~7 s, and every phone on
+  // the hotspot froze for 3.4-4.7 s of it (bots/wroom_swarm, 2026-10-23) --
+  // with no house network in range that came round every 30 s to 5 min, for
+  // as long as the board ran. On its own channel a scan takes ~120 ms and
+  // costs the players nothing, and the network the board was carried away
+  // from is usually still there when it comes back (the softAP followed it
+  // there). With the station link down every seat is on the hotspot, so
+  // seated is the test. Not stations: an observer TV parked on the hotspot
+  // would then keep the board off a home network on another channel for good,
+  // since only the full sweep finds one there. For the same reason the first
+  // sweep after boot is always full: the softAP comes up on channel 1, not on
+  // the home network's, and players who re-seat within seconds of a reboot
+  // are still reloading the page anyway.
+  static bool firstSweepDone = false;
+  int apSta = WiFi.softAPgetStationNum();
+  int seated = G.connectedCount;
+  uint8_t scanCh = (seated > 0 && firstSweepDone) ? (uint8_t)WiFi.channel() : 0;
+  firstSweepDone = true;
   uint32_t scanT0 = millis();
-  int found = WiFi.scanNetworks(false /*async*/, false /*showHidden*/);
-  Log.notice("AutoJoin scan found=%d elapsed=%u ms", found,
-             (unsigned)(millis() - scanT0));
+  int found = WiFi.scanNetworks(false /*async*/, false /*showHidden*/, false /*passive*/,
+                                scanCh ? 120 : 300 /*ms per channel*/, scanCh);
+  Log.notice("AutoJoin scan found=%d elapsed=%u ms ch=%s%d apSta=%d seated=%d", found,
+             (unsigned)(millis() - scanT0), scanCh ? "" : "all/", (int)scanCh, apSta, seated);
   if (found < 0) {
     // The radio refused the scan: that says nothing about what is in range,
     // so no backoff -- look again shortly.
@@ -432,7 +470,7 @@ static void wifiAutoJoinTask(void* param) {
   // Rank the known networks that actually answered, strongest signal first.
   int cand[WIFI_MAX_NETS], candRssi[WIFI_MAX_NETS], nCand = 0;
   for (int i = 0; i < found; i++) {
-    int k = wifiStoreFind(WiFi.SSID(i).c_str());
+    int k = g_wifiAway ? -1 : wifiStoreFind(WiFi.SSID(i).c_str());
     if (k < 0) continue;
     int rssi = (int)WiFi.RSSI(i);
     int dup = -1;
@@ -455,7 +493,9 @@ static void wifiAutoJoinTask(void* param) {
     strlcpy(joinedSsid, g_knownNets[cand[c]].ssid, sizeof(joinedSsid));
     strlcpy(joinedPass, g_knownNets[cand[c]].pass, sizeof(joinedPass));
     Log.notice("AutoJoin try ssid=%s rssi=%d", joinedSsid, candRssi[c]);
-    WiFi.begin(joinedSsid, joinedPass[0] ? joinedPass : nullptr);
+    // The channel hint makes the join's own scan start (and, finding it,
+    // stop) on the channel the quiet scan heard it on.
+    WiFi.begin(joinedSsid, joinedPass[0] ? joinedPass : nullptr, scanCh);
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000)
       vTaskDelay(pdMS_TO_TICKS(400));
@@ -491,8 +531,8 @@ static void wifiAutoJoinTask(void* param) {
       if (wifiSweepBackoff > WIFI_SWEEP_MAX) wifiSweepBackoff = WIFI_SWEEP_MAX;
     }
     wifiNextSweepMs = millis() + wifiSweepBackoff;
-    Log.notice("AutoJoin no known network in range, next sweep in %lus",
-               (unsigned long)(wifiSweepBackoff / 1000));
+    Log.notice("AutoJoin no known network in range, next sweep in %d s",   // not %lus: ArduinoLog prints "120us"
+               (int)(wifiSweepBackoff / 1000));
   }
 
   wifiConnecting = false;

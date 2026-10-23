@@ -146,8 +146,9 @@ static constexpr size_t ENC_FILE_CAP = 16384;
 static char* encFileBuf = nullptr;
 
 // Load /data/encounters/<biome>/<id>.json into encFileBuf.  Returns the buffer
-// (NUL-terminated) or nullptr.  Caller holds G.mutex (SD access is serialised
-// behind it everywhere else in the firmware).
+// (NUL-terminated) or nullptr.  Caller holds G.mutex, which guards encFileBuf.
+// The card itself is serialised by FATFS: saves write outside G.mutex now
+// (save-stage.hpp), so a load that lands mid-save waits for that file's write.
 //
 // `pool` indexes encPools[]: a terrain id, or ENC_POOL_TRAP. This used to
 // refuse anything >= 10, which quietly made the bunker tunnel pool (14)

@@ -94,6 +94,11 @@ static void evTextTo(AsyncWebSocketClient* cl, const char* json, int len) {
   else       cl->text(json, (size_t)len);
 }
 
+// A death whose seat EVT_DOWNED could not release (G.mutex busy): the socket
+// it moved to the lobby, by slot. refreshWsLiveness() finishes the release.
+// GameLoop only, like both of them.
+static uint32_t downedSeatPending[MAX_PLAYERS] = {0};
+
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
   // Static, so a G.mutex timeout below really does fall back to the last
@@ -397,10 +402,21 @@ static void drainEvents() {
         //    whoever picks it up next, and the death screen wants who it was.
         //    Everything they carried stays on the hex where they fell
         //    (dropRemains, inventory_items.hpp) for anyone to take.
+        //    This take used to be 20 ms, and deaths come at dawn, when
+        //    saveGame() held G.mutex for ~270 ms of SD writes: it missed on 32
+        //    of 32 deaths (bots/wroom_swarm, 2026-10-23). The client went to
+        //    the lobby anyway and its seat stayed "connected" on a socket that
+        //    was still alive -- its re-pick was refused slot_taken, the dead
+        //    seat counted against MAX_SEATED, and only the ghost reaper, 8 s
+        //    after that socket finally closed, gave it back. Saves now hold
+        //    the mutex for the staging only (save-stage.hpp); the longer wait
+        //    is the backstop, since a seat that is not released here is lost.
         char downedName[16] = {0};
         bool fellWithStuff = false;
         int  fellQ = 0, fellR = 0;
-        if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        bool released = false;
+        if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
+          released = true;
           Player& p = G.players[ev.pid];
           memcpy(downedName, p.name, sizeof(downedName));
           downedName[sizeof(downedName) - 1] = '\0';
@@ -411,6 +427,10 @@ static void drainEvents() {
           p.resting    = false;  // clear stale resting flag on disconnect
           G.connectedCount--;
           xSemaphoreGive(G.mutex);
+        }
+        if (!released) {
+          downedSeatPending[ev.pid] = ev.evWsId;   // refreshWsLiveness() frees it within a second
+          Log.error("EVT downed pid=%d: G.mutex held >250 ms -- seat release deferred", (int)ev.pid);
         }
         if (fellWithStuff) {
           broadcastGroundUpdate(fellQ, fellR, "fell", ev.pid);
@@ -445,15 +465,15 @@ static void drainEvents() {
         len = snprintf(buf, sizeof(buf), "{\"t\":\"ev\",\"k\":\"regen\"}");
         evTextAll(buf, len);
         sndStory(SS_REGEN);
+        // Queued, not sent here: five syncs at once is the burst that
+        // aborted the board (network-sync.hpp "Sync pacing").
         int synced = 0;
         for (const auto& cl : ws.getClients()) {
           uint32_t cid = cl.id();
           int slot = findSlot(cid);
-          if (slot >= 0) {
-            if (AsyncWebSocketClient* mut = ws.client(cid)) { sendSync(mut, slot); synced++; }
-          }
+          if (slot >= 0) { queueSync(cid, slot); synced++; }
         }
-        Log.notice("EVT regen - broadcasting full sync to %d clients", synced);
+        Log.notice("EVT regen - full sync queued for %d clients", synced);
         break;
       }
 

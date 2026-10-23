@@ -23,11 +23,11 @@ struct __attribute__((packed)) SaveTrailHdr {
   uint16_t cells;
 };
 
-// Inside saveGame()'s G.mutex hold, and only when something moved since the
-// last write: a dawn with nobody walking costs nothing.
+// Inside saveGame()'s G.mutex hold (staged, save-stage.hpp), and only when
+// something moved since the last write: a dawn with nobody walking costs nothing.
 static void saveTrailFile() {
   if (!trailDirty || !trailSides) return;
-  File f = SD.open(SAVE_TRL_F, FILE_WRITE);
+  SaveOut f = saveOpen(SAVE_TRL_F);
   if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_TRL_F); return; }
   SaveTrailHdr h = { TRAIL_SAVE_MAGIC, 1, (uint8_t)MAP_COLS, (uint8_t)MAP_ROWS, (uint8_t)TRAIL_SLOTS, 0 };
   for (int r = 0; r < MAP_ROWS; r++)
@@ -105,9 +105,9 @@ struct __attribute__((packed)) SaveLightHdr {
   uint8_t  cols, rows;   // a file for another board shape is ignored
 };
 
-// Inside saveGame()'s G.mutex hold.
+// Inside saveGame()'s G.mutex hold (staged, save-stage.hpp).
 static void saveLightFile() {
-  File f = SD.open(SAVE_LIT_F, FILE_WRITE);
+  SaveOut f = saveOpen(SAVE_LIT_F);
   if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_LIT_F); return; }
   SaveLightHdr h = { LIGHT_SAVE_MAGIC, 1, (uint8_t)TUN_COLS, (uint8_t)TUN_ROWS };
   size_t bytes = f.write((uint8_t*)&h, sizeof(h));
@@ -160,17 +160,20 @@ void saveGame() {
   if (SD.cardType() == CARD_NONE) { Log.warning("saveGame: no SD card"); return; }
   LOG_FN();
   uint32_t _t0 = millis();
+  if (!SD.exists(SAVE_DIR)) {
+    Log.notice("SD mkdir: %s", SAVE_DIR);
+    SD.mkdir(SAVE_DIR);
+  }
+  // Every file below is staged into PSRAM (save-stage.hpp) while G.mutex is
+  // held, and only written to the card after it is given back.
   bool _got = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(100)) == pdTRUE);
   if (_got) {
-    if (!SD.exists(SAVE_DIR)) {
-      Log.notice("SD mkdir: %s", SAVE_DIR);
-      SD.mkdir(SAVE_DIR);
-    }
+    uint32_t _tHeld = millis();
     // Map file.  Active encounters are not persisted, so their POIs are put
     // back on the map for the duration of the write — after a reboot nobody is
     // mid-encounter and the hex is visitable again instead of being lost.
     size_t mapBytes = 0;
-    File f = SD.open(SAVE_MAP_F, FILE_WRITE);
+    SaveOut f = saveOpen(SAVE_MAP_F);
     if (f) {
       SaveHeader hdr = {};
       hdr.magic = SAVE_MAGIC; hdr.version = SAVE_VERSION;
@@ -225,7 +228,7 @@ void saveGame() {
     }
     // Players file
     size_t plyBytes = 0;
-    File p = SD.open(SAVE_PLY_F, FILE_WRITE);
+    SaveOut p = saveOpen(SAVE_PLY_F);
     if (p) {
       for (int i = 0; i < MAX_PLAYERS; i++) {
         Player& pl = G.players[i];
@@ -262,7 +265,7 @@ void saveGame() {
       Log.error("SD OPEN FAIL (write): %s", SAVE_PLY_F);
     }
     // Ground items — append to map file as a fixed-size block
-    File gf = SD.open(SAVE_MAP_F, FILE_APPEND);
+    SaveOut gf = saveOpen(SAVE_MAP_F, /*append=*/true);
     if (gf) {
       size_t giBytes = 0;
       for (int g = 0; g < MAX_GROUND; g++) {
@@ -277,7 +280,7 @@ void saveGame() {
     }
     // Ground ages + remains records -- their own file, see SAVE_GND_F. The
     // days are in groundItems[] order, the same order as the block above.
-    File gd = SD.open(SAVE_GND_F, FILE_WRITE);
+    SaveOut gd = saveOpen(SAVE_GND_F);
     if (gd) {
       SaveGroundHdr gh = { GROUND_SAVE_MAGIC, 1, MAX_GROUND, 0 };
       for (int i = 0; i < MAX_REMAINS; i++) if (remainsTable[i].used) gh.nRemains++;
@@ -311,8 +314,12 @@ void saveGame() {
     // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
     // task has published a change, and on this same serialised save path.
     ecoSaveScarsIfDirty();
+    uint32_t heldMs = millis() - _tHeld;
     xSemaphoreGive(G.mutex);
-    Log.notice("saveGame complete took=%ums", (unsigned)(millis() - _t0));
+    int lost = saveStageFlush();
+    Log.notice("saveGame complete took=%ums mutex=%ums%s", (unsigned)(millis() - _t0), (unsigned)heldMs,
+               lost ? " -- FILE(S) NOT WRITTEN" : "");
+    if (lost) Log.error("saveGame: %d file(s) not written, see above", lost);
   } else {
     Log.warning("saveGame: G.mutex timeout (100ms) — skipped");
   }
@@ -332,18 +339,28 @@ void saveGame() {
 // 250 ms freeze on the LCD -- one every couple of seconds in a bot run. Core 0
 // has the radio and the synth above the Saver and nothing busy beside it.
 // Every save goes through here: GameLoop's dawn and drop saves too.
+// 2026-10-23: and the card writes no longer hold G.mutex at all -- only the
+// staging into PSRAM does (save-stage.hpp).
 static volatile bool g_saveRequested = false;
 static TaskHandle_t  g_saveTask      = nullptr;
 static void requestSave() {
   g_saveRequested = true;
   if (g_saveTask) xTaskNotifyGive(g_saveTask);
 }
+// At most one save per SAVE_MIN_GAP_MS. A dawn, a death and the disconnect
+// after it each ask, and on 2026-10-23 that was four full saves inside one
+// second; a request in the gap waits and folds into the next save, never lost.
+static constexpr uint32_t SAVE_MIN_GAP_MS = 2000;
 static void saveTaskFn(void*) {
   bool loggedStack = false;
+  uint32_t lastSaveMs = 0;
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   // every request since the last save, as one
     if (!g_saveRequested) continue;
+    uint32_t since = millis() - lastSaveMs;
+    if (lastSaveMs && since < SAVE_MIN_GAP_MS) vTaskDelay(pdMS_TO_TICKS(SAVE_MIN_GAP_MS - since));
     g_saveRequested = false;
+    lastSaveMs = millis();
     saveGame();
     if (!loggedStack) {
       loggedStack = true;

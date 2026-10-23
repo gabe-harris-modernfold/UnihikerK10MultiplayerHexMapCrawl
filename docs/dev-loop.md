@@ -376,7 +376,46 @@ Boot order, in one breath: softAP `WASTELAND` comes up first and never drops →
 the board tries its last network directly (connected in ~2-4 s at home, no
 scan) → if that times out (12 s) the sweep starts, scans, and joins the best
 known network that answered → if nothing known is in range it keeps the AP and
-retries later, backing off to one sweep per 5 minutes.
+retries later, backing off to one sweep per 5 minutes. From the second sweep
+on, a sweep with anyone seated scans **only the softAP's own channel** (see
+"Direct-connect play" below).
+
+### Direct-connect play (no house network)
+
+Players can join the board's own open hotspot `WASTELAND` (192.168.47.1) and
+play with no router anywhere. Measured 2026-10-23 with `bots/wroom_swarm`
+(an ESP32 filling all five seats over the hotspot; docs/bot-testing.md):
+
+| What | Before | Now |
+|---|---|---|
+| Hotspot admits | 4 devices (core default) — the 5th phone could not join | `AP_MAX_CLIENTS` 8: the table, an observer TV, a spare |
+| Roaming sweep with players seated | full scan, ~7 s off-channel: every seat froze 3.4–4.7 s, replies up to 9.2 s, every 30 s → 5 min for as long as the board ran | one channel, ~120 ms, no freeze |
+| Dawn save | ~270 ms of `G.mutex`: ~1 s freezes, `busy` nacks | staged (`save-stage.hpp`), ~15–45 ms |
+| A death | seat stayed taken until the ghost reaper (8 s after the socket closed) | freed at once (deferred retry if the mutex is busy) |
+| Five picks at once (`bots/sync_burst.py`) | 4.9–8.5 s per sync, heap 118 → 56 KB, the next burst **aborted the board** | syncs paced one at a time: 0.14–0.63 s, heap ≥ 86 KB |
+
+- **Never hand the WebSocket library a big message without room to copy it.**
+  `text()` copies into a `std::vector`; when no block that big is left,
+  `operator new` throws and the board aborts (no exception handler). Syncs go
+  through `queueSync()` / `serviceSyncQueue()` (network-sync.hpp "Sync
+  pacing": GameLoop sends one at a time, once the last has left its socket and
+  `heap_caps_get_largest_free_block()` has room), and `broadcastState()` skips
+  a tick rather than copy into nothing. `/state` → `mem.psramMax`,
+  `syncWaits`, `syncQueued`, `broadcastNoRoom` show how close it runs.
+
+- **The full sweep is still needed** to find a home network on a different
+  channel than the softAP, so: the first sweep after boot is always full (the
+  softAP starts on channel 1), and sweeps are quiet only while someone is
+  *seated* — not merely associated, or an observer TV parked on the hotspot
+  would keep the board off its home network for good.
+- **`NETWD HEAL` only reassociates a station link.** With no house network it
+  logs `skipped`: `WiFi.reconnect()` would send the station scanning every
+  channel for a network that is not there.
+- **Test it at the desk: type `away` on the USB serial console (COM5).** The
+  board reboots once as if none of its known networks were in range (the boot
+  join goes to an SSID nobody broadcasts, sweeps ignore the known list) without
+  forgetting any password; the next reboot is normal. `swarm_log.py --k10-cmd
+  away` does it for a run.
 
 A network is remembered **only after a successful join** — from the settings
 panel, from the boot credential, or from the sweep itself. So the friend's
@@ -395,9 +434,10 @@ Protocol (all over `/ws`):
 
 Gotchas:
 
-- **A scan stalls the softAP for a second or two.** That's why sweeps only run
-  while the board is off every known network, never during an `/upload`, and
-  back off to 5-minute spacing.
+- **A full scan takes the softAP off its channel for ~7 s** (measured; it was
+  thought to be a second or two). That's why sweeps only run while the board
+  is off every known network, never during an `/upload`, back off to 5-minute
+  spacing, and stay on the softAP's channel while anyone is seated.
 - **Forgetting does not disconnect.** It only removes the network from future
   auto-joins, so you can drop a network you're standing in without dropping the
   players on it.
@@ -491,7 +531,9 @@ data/assets.json            { version, styles:[{url,size,gz}],       │ live in
         │
         ▼  boot: loadWebFilesToRAM()  (boot-assets.hpp)
 K10 scans SD /data ROOT → PSRAM → one HTTP route per file ("/<name>", index.html also "/")
-   • "<name>.gz" beats "<name>": served with Content-Encoding: gzip
+   • "<name>.gz" beats "<name>": served with Content-Encoding: gzip, and the
+     plain copy is not even read when its .gz is on the card. build_web
+     writes a .gz beside EVERY root .js/.css/.html/.json, not just the bundle
    • ETag = FNV-1a of the bytes (stable across reboots → real 304s)
    • Cache-Control: no-cache for "/", sw.js, assets.json, web-assets.json;
      immutable for everything else (client appends ?v=<version>)
@@ -524,6 +566,17 @@ Numbers as of 2026-09-12: 18 scripts → one 314 KB bundle → **92 KB gzipped**
 style.css 74 KB → 15 KB; index.html 35 KB → 11 KB. Cold page load is 5
 requests (`/`, `assets.json`, `style.css`, `app.bundle.js`, `sw.js`) instead of
 ~22, and ~120 KB on the wire instead of ~460 KB.
+
+**PSRAM is the cache's limit, and it was full.** Everything in the `/data`
+root and `/data/img` is cached at boot, and a file that does not fit is logged
+`WEB/IMG cache ps_malloc FAIL` and then 404s (204 for an image) for the whole
+boot. By 2026-10-23 the 50 image sheets were 5.2 MB of the ~7 MB left after
+the LCD FX, and the plain scripts the bundle is made of (still cached one by
+one, for the observer and the `web-assets.json` fallback) another 1.4 MB:
+the River Channel sheet and five scripts, two of them the observer TV's, were
+dropped at every boot. With a `.gz` beside every root web file those 1.4 MB are
+~0.5 MB; everything fits with ~380 KB of PSRAM to spare (42 web files, 51
+images). After adding art, check the boot log for `ps_malloc FAIL`.
 
 Verifying on hardware (board on the LAN):
 
@@ -571,6 +624,45 @@ If the game page stops loading part-way and the board stops answering:
   one-liner in "Verifying on hardware" above, or GET every file and compare
   `Content-Length` with the local file (all 120 web+image files were checked
   that way).
+
+### Saves (`save-stage.hpp`, 2026-10-23)
+
+`saveGame()` (network-persistence.hpp, on the `Saver` task) used to write its
+nine `/save/*.bin` files with `G.mutex` held: 270 ms median, 338 ms worst, on
+every dawn and every drop. Everything else that wanted the mutex waited or gave
+up — `broadcastState()` skipped those ticks (a ~1 s freeze on every phone at
+dawn), handlers nacked `busy`, and the `EVT_DOWNED` handler's 20 ms take missed
+on every death, which left the dead player's seat taken. Now:
+
+- **Staged.** Each save function writes into a `SaveOut` (same `if (!f)`,
+  `f.write()`, `f.close()` as a `File`) backed by a PSRAM buffer per file.
+  The mutex is held only for that copy (~15–45 ms); the card writes happen
+  after it is given back. The buffers are kept between saves (~60 KB).
+- **Crash-safe.** Each file is written as `<path>.new`, its size verified,
+  then swapped in (remove + rename). `saveRecoverInterrupted()` runs before
+  `tryLoadSave()` at boot and finishes or drops a swap the board died in.
+  Writing in place is how a world was lost on 2026-10-23: a board hung
+  (task watchdog) while rewriting `map.bin`, booted to a 0-byte file and
+  generated a new world.
+- **Short writes recover** the `/upload` way (above): reopen for append and
+  carry on from what landed. Write each file in ONE `f.write()` per attempt:
+  4 KB pieces hit the 16 KB-boundary failure on two saves in three. The old
+  unchecked writes put a short `map.bin` (6016 or 2010 of 49035 B) on the card
+  about once per hundred saves.
+- **At most one save per 2 s** (`SAVE_MIN_GAP_MS`). A dawn, a death and the
+  disconnect after it each request one; requests in the gap fold into the
+  next save, never lost.
+- `/enc` no longer takes `G.mutex` (it was only there to keep its read off the
+  card during a save). `encLoadFile()` still runs under the mutex, which
+  guards its buffer; FATFS serialises the card.
+
+**Never read big files off the SD card on the `async_tcp` task.** SD transfers
+on this board are polled (the CPU spins) and the bus is shared with the LCD
+(~10–30 KB/s). A 2026-10-23 experiment that streamed uncached web files from
+SD tripped the task watchdog within one 439 KB request; the board hung in the
+panic with the card mid-transaction, and the card would not mount again until
+the K10 was power-cycled (a USB reset does not cut its power). Make the file
+fit in PSRAM instead (see the web pipeline's `.gz` siblings).
 
 ## Art assets (`data/img/`)
 

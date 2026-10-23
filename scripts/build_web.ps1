@@ -8,6 +8,7 @@
 #   app.bundle.js      concatenation of web-assets.json "scripts", in order
 #   app.bundle.js.gz   gzip of the above (firmware prefers .gz siblings)
 #   style.css.gz, index.html.gz
+#   <name>.gz          for every other root .js/.css/.html/.json (PSRAM; see below)
 #   assets.json        manifest the browser loader fetches first:
 #                      { version, generated, styles:[{url,size,gz}], scripts:[...] }
 #
@@ -133,7 +134,32 @@ foreach ($c in $styles) { Write-Bytes (Join-Path $DataDir "$c.gz") $styleOutputs
 Write-Bytes (Join-Path $DataDir 'index.html.gz') $indexGz
 [System.IO.File]::WriteAllText($outManifest, $manifestJson, $utf8)
 
+# ── Every other root web file, gzipped beside it ────────────────────────────
+# The K10 caches every web file in the /data root into PSRAM, and a .gz
+# sibling takes the plain copy's place (boot-assets.hpp). The plain scripts the
+# bundle is made of, plus the observer's own, were ~1.4 MB of PSRAM: on
+# 2026-10-23 the card no longer fit, and the River Channel sheet and five
+# scripts (two of them the observer's) were dropped at every boot. Gzipped
+# they are about a quarter of that. A file gzip barely shrinks keeps no .gz.
+$gzSkip = @('app.bundle.js', 'index.html', 'assets.json') + $styles
+$gzIn = 0; $gzOut = 0; $gzN = 0
+Get-ChildItem $DataDir -File | Where-Object {
+  @('.js', '.css', '.html', '.json') -contains $_.Extension.ToLower() -and
+  -not $_.Name.StartsWith('.') -and $gzSkip -notcontains $_.Name
+} | ForEach-Object {
+  $plain = Read-Bytes $_.FullName
+  $gz    = Gzip-Bytes $plain
+  $gzPath = $_.FullName + '.gz'
+  if ($gz.Length -lt $plain.Length * 0.9) {
+    Write-Bytes $gzPath $gz
+    $gzIn += $plain.Length; $gzOut += $gz.Length; $gzN++
+  } elseif (Test-Path $gzPath) {
+    Remove-Item $gzPath   # stale: the board would serve it in place of the newer plain file
+  }
+}
+
 Write-Host ("[build_web] version {0}" -f $version)
 Write-Host ("[build_web] app.bundle.js  {0,8} B  -> {1,7} B gz  ({2} files)" -f $bundle.Length, $bundleGz.Length, $scripts.Count)
 foreach ($e in $styleEntries) { Write-Host ("[build_web] {0,-14} {1,8} B  -> {2,7} B gz" -f $e.url, $e.size, $e.gz) }
 Write-Host ("[build_web] index.html     {0,8} B  -> {1,7} B gz" -f (Get-Item $indexPath).Length, $indexGz.Length)
+Write-Host ("[build_web] {0} other files {1,8} B  -> {2,7} B gz" -f $gzN, $gzIn, $gzOut)

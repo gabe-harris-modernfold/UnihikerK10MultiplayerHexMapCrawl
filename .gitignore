@@ -11,6 +11,8 @@
 /data/style.css.gz
 /data/index.html.gz
 /data/assets.json
+# ...and a .gz beside every other root web file (the K10 caches those in PSRAM)
+/data/*.gz
 
 # Python bytecode from scripts/ (png_quant is imported by the art tools)
 __pycache__/

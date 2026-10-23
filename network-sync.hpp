@@ -11,6 +11,7 @@ static uint32_t lobbyIds[MAX_PLAYERS] = {0};
 static uint32_t g_broadcastSkips       = 0;  // total ticks skipped: G.mutex busy
 static uint32_t g_broadcastSkipsConsec = 0;  // current consecutive-skip streak
 static uint32_t g_broadcastPartial     = 0;  // ticks where >=1 client missed the send (backlogged)
+static uint32_t g_broadcastNoRoom      = 0;  // ticks skipped: no heap block to copy the tick into
 
 // Most `s` ticks a client's send queue may hold. The queue is 8 deep
 // (WS_MAX_QUEUED_MESSAGES, build_opt.h) and the library DISCARDS whatever
@@ -224,22 +225,107 @@ static void sendTunnelSync(AsyncWebSocketClient* client) {
              pid, (int)TUN_COLS, (int)TUN_ROWS, pq, pr, visR, pos);
 }
 
+// ── Sync pacing ───────────────────────────────────────────────────────────────
+// A sync is one ~32 KB message (and the eco state after it), and
+// AsyncWebSocketClient::text() copies it into a std::vector: with no block that
+// big left anywhere, operator new throws and the board aborts. On 2026-10-23
+// five picks at once (bots/sync_burst.py) did exactly that on the fifth --
+// "abort() ... makeSharedBuffer ... sendSync ... handleMsg_pick", reset reason
+// PANIC -- after the first four had taken the internal heap from 118 KB to
+// 56 KB and taken 5-8 s each to arrive. Picks come in bursts for real: four
+// survivors dying at one dawn re-pick together, phones rejoin together after a
+// Wi-Fi blip, a regen resyncs everyone.
+//
+// So a pick only queues its sync, and GameLoop sends them one at a time
+// (serviceSyncQueue(), every tick): the next goes once the last one has left
+// its socket's queue (or SYNC_GAP_MAX_MS has passed), and only while the heap
+// still has a block big enough to copy it into. sendSync() checks again just
+// before the copy and puts the sync back in the queue rather than crash.
+static constexpr uint32_t SYNC_GAP_MAX_MS = 1500;
+static constexpr size_t   SYNC_ROOM       = 48 * 1024;   // a sync is ~32-34 KB; the eco state follows it
+struct PendingSync { uint32_t wsId; int8_t pid; uint32_t sinceMs; };
+static PendingSync  g_syncQ[MAX_PLAYERS + 2];
+static int          g_syncQN       = 0;
+static portMUX_TYPE g_syncMux      = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t     g_syncLastWsId = 0, g_syncLastMs = 0;
+static uint32_t     g_syncWaits    = 0;   // syncs that waited for room or a turn (/state mem.syncWaits)
+
+// Any task. One entry per socket; a socket that asks again keeps its place.
+static void queueSync(uint32_t wsId, int pid) {
+  bool queued = false;
+  portENTER_CRITICAL(&g_syncMux);
+  int i = 0;
+  while (i < g_syncQN && g_syncQ[i].wsId != wsId) i++;
+  if (i < (int)(sizeof(g_syncQ) / sizeof(g_syncQ[0]))) {
+    if (i == g_syncQN) { g_syncQ[i].sinceMs = millis(); g_syncQN++; }
+    g_syncQ[i].wsId = wsId;
+    g_syncQ[i].pid  = (int8_t)pid;
+    queued = true;
+  }
+  portEXIT_CRITICAL(&g_syncMux);
+  if (!queued) Log.error("queueSync: queue full, pid=%d wsId=%u gets no sync", pid, (unsigned)wsId);
+}
+
+static bool syncRoom(size_t bytes) {
+  return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= bytes;
+}
+
+static void sendSync(uint32_t wsId, int pid);
+
+// GameLoop, every tick, without G.mutex (sendSync takes it). Clients are only
+// touched under wsClientsLock(), looked up by id: GameLoop is not the task
+// that destroys them, so a pointer kept across a disconnect would dangle.
+static void serviceSyncQueue() {
+  if (!g_syncQN) return;
+  uint32_t now = millis();
+  if (g_syncLastMs && now - g_syncLastMs < SYNC_GAP_MAX_MS) {
+    bool busy = false;
+    {
+      asyncsrv::lock_guard_type lk(wsClientsLock());
+      for (AsyncWebSocketClient& c : ws.getClients())
+        if (c.id() == g_syncLastWsId) { busy = c.queueLen() > WS_STATE_MAX_QUEUED; break; }
+    }
+    if (busy) return;   // the last sync is still going out
+  }
+  if (!syncRoom(SYNC_ROOM)) {
+    static uint32_t lastWarnMs = 0;
+    if (now - lastWarnMs >= 2000) {
+      lastWarnMs = now;
+      Log.warning("SYNC waiting: largest free block %u B < %u, %d queued",
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), (unsigned)SYNC_ROOM, g_syncQN);
+    }
+    return;
+  }
+  PendingSync ps;
+  portENTER_CRITICAL(&g_syncMux);
+  ps = g_syncQ[0];
+  g_syncQN--;
+  for (int i = 0; i < g_syncQN; i++) g_syncQ[i] = g_syncQ[i + 1];
+  portEXIT_CRITICAL(&g_syncMux);
+  if (findSlot(ps.wsId) != ps.pid) return;   // gone, or no longer holds that seat
+  if (now - ps.sinceMs > TICK_MS) g_syncWaits++;
+  g_syncLastWsId = ps.wsId;
+  g_syncLastMs   = now;
+  sendSync(ps.wsId, ps.pid);
+}
+
 // ── Sync message (unicast to one client on connect) ──────────────────────────
 // Buffer: map=4275×6=25650 + header~55 + players~1200 + ground items + margin,
-// + up to SYNC_TRAIL_CAP of trail records
+// + up to SYNC_TRAIL_CAP of trail records. Only serviceSyncQueue() calls this
+// (GameLoop); everyone else queues (queueSync()).
 static constexpr int SYNC_TRAIL_CAP = 3500;   // 500 records: a crowded disk's worth
-static void sendSync(AsyncWebSocketClient* client, int pid) {
+static void sendSync(uint32_t wsId, int pid) {
   PSRAM_STATIC(char, buf, [44000]);  // 75×57 map fog encoding (6 chars/cell); PSRAM — was 40 KB of internal .bss
   // One-shot (join/regen), never on the hot 100ms tick path, so a few retries
-  // here is cheap insurance against leaving a joining player with no map at
-  // all — previously a single 20ms miss sent the client nothing.
+  // here is cheap insurance; a miss goes back in the queue for the next tick
+  // (it used to send the client an error and nothing else).
   bool gotMutex = false;
   for (int attempt = 0; attempt < 3 && !gotMutex; attempt++) {
     gotMutex = (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE);
   }
   if (!gotMutex) {
-    Log.error("sendSync pid=%d: G.mutex timeout after 3 attempts", pid);
-    client->text("{\"t\":\"err\",\"msg\":\"Sync failed, try reconnecting\"}");
+    Log.warning("sendSync pid=%d: G.mutex timeout after 3 attempts, requeued", pid);
+    queueSync(wsId, pid);
     return;
   }
 
@@ -318,30 +404,48 @@ static void sendSync(AsyncWebSocketClient* client, int pid) {
     "],\"sv\":[%d,%d],\"fa\":%d}",
     shelterVariantCount[0], shelterVariantCount[1],
     forrageAnimalCount);
-  // Send BEFORE releasing G.mutex. buf is one static copy, and sendSync runs
-  // on two tasks (async_tcp via pick, GameLoop via the EVT_REGEN resync), so
-  // releasing first let the other caller overwrite buf before text() had
-  // copied it -- a client could get a torn or someone else's sync. G.mutex
-  // already serialises the build, so holding it through the copy closes that.
-  // Deadlock-free: text() only takes this client's own lock (the library
-  // never runs a user callback while holding a client lock), and every
-  // G.mutex waiter uses a timeout. Costs no RAM; lengthens the hold by the
-  // copy, on a join/regen-only path.
-  client->text(buf, (size_t)pos);
   uint32_t tickLog = G.tickId;
   bool below = me.depth;
+  // buf is one static copy, but only GameLoop builds syncs now, so it can be
+  // let go before the copy. (When picks sent their own on async_tcp, the copy
+  // had to happen under G.mutex or the regen resync on GameLoop could
+  // overwrite buf mid-copy.)
   xSemaphoreGive(G.mutex);
 
-  Log.notice("SYNC pid=%d tick=%lu mapBytes=%d totalBytes=%d",
-             pid, (unsigned long)tickLog, mapLen, pos);
-  // Reconnecting while underground: the sync above only carries the surface
-  // map, so hand over the tunnel board too or this player comes back to an
-  // empty screen with no way to redraw it. Sent after the sync so the client
-  // has its player id (and therefore its own depth) first.
-  if (below) sendTunnelSync(client);
-  // The Understory's latest published state (scars, then veins/bodies/
-  // daisies), read through its swapped index -- never races the Eco task.
-  ecoSendPublished(client);
+  // text() copies into a vector of `pos` bytes and aborts the board if that
+  // cannot be had (see "Sync pacing"): with no such block now, the sync goes
+  // back in the queue for a later tick instead.
+  if (!syncRoom((size_t)pos + 4096)) {
+    Log.warning("SYNC pid=%d deferred: no %d B block to copy it into", pid, pos);
+    queueSync(wsId, pid);
+    return;
+  }
+  bool sent = false;
+  {
+    asyncsrv::lock_guard_type lk(wsClientsLock());
+    for (AsyncWebSocketClient& c : ws.getClients()) {
+      if (c.id() != wsId) continue;
+      if (c.status() == WS_CONNECTED) {
+        c.text(buf, (size_t)pos);
+        // Reconnecting while underground: the sync above only carries the
+        // surface map, so hand over the tunnel board too or this player comes
+        // back to an empty screen with no way to redraw it. Sent after the
+        // sync so the client has its player id (and therefore its own depth)
+        // first.
+        if (below) sendTunnelSync(&c);
+        // The Understory's latest published state (scars, then veins/bodies/
+        // daisies), read through its swapped index -- never races the Eco task.
+        ecoSendPublished(&c);
+        sent = true;
+      }
+      break;
+    }
+  }
+  if (sent)
+    Log.notice("SYNC pid=%d tick=%lu mapBytes=%d totalBytes=%d",
+               pid, (unsigned long)tickLog, mapLen, pos);
+  else
+    Log.notice("SYNC pid=%d dropped: socket %u gone before it went out", pid, (unsigned)wsId);
 }
 
 // ── Periodic state broadcast (all clients) ───────────────────────────────────
@@ -435,6 +539,13 @@ static void broadcastState() {
   pos += snprintf(buf + pos, sizeof(buf) - pos, "]}}");
   xSemaphoreGive(G.mutex);
 
+  // The shared copy is a std::vector, and like every text() copy it aborts the
+  // board when no block that big is left (see "Sync pacing"). Skip the tick
+  // instead: the next one supersedes it 100 ms later.
+  if (!syncRoom((size_t)pos + 1024)) {
+    g_broadcastNoRoom++;
+    return;
+  }
   // textAll(), plus one test: a client already holding WS_STATE_MAX_QUEUED
   // messages is passed over this tick. Same recipients, same single shared
   // copy, same lock held across the walk (wsClientsLock() above), taken after

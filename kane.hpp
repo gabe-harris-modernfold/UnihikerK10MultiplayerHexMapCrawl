@@ -448,9 +448,10 @@ struct __attribute__((packed)) SaveKane {
   int16_t  campQ, campR, siteQ, siteR;
 };
 
-// Inside saveGame()'s G.mutex hold. Small enough to write every time.
+// Inside saveGame()'s G.mutex hold (staged, save-stage.hpp). Small enough to
+// write every time.
 static void saveKaneFile() {
-  File f = SD.open(SAVE_KANE_F, FILE_WRITE);
+  SaveOut f = saveOpen(SAVE_KANE_F);
   if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_KANE_F); return; }
   SaveKane s = { KANE_SAVE_MAGIC, 1, (uint8_t)MAP_COLS, (uint8_t)MAP_ROWS,
                  K.q, K.r, K.wq, K.wr, K.pq, K.pr, K.mode, K.facing, K.stage, K.ending,

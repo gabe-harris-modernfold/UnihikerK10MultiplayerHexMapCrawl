@@ -441,12 +441,13 @@ static void ecoPublishScars() {
   ecoScarDirty    = true;
   ecoScarMsgStale = true;
 }
-// Called inside saveGame()'s G.mutex hold: one SD write on the serialised save path.
+// Called inside saveGame()'s G.mutex hold: staged (save-stage.hpp) on the
+// serialised save path, written to the card after the mutex is given back.
 static void ecoSaveScarsIfDirty() {
   if (!ecoScarDirty || !ecoScarPack[0]) return;
   ecoScarDirty = false;
   const uint8_t* pack = ecoScarPack[ecoPubPackIdx];
-  File f = SD.open(SAVE_SCAR_F, FILE_WRITE);
+  SaveOut f = saveOpen(SAVE_SCAR_F);
   if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_SCAR_F); return; }
   EcoScarHdr h = { ECO_SCAR_MAGIC, 1, (uint8_t)MAP_COLS, (uint8_t)MAP_ROWS, ecoBootsSeen };
   uint8_t tmp[sizeof(h) + ECO_SCAR_NIBBLES];   // header then nibbles; the crc covers both

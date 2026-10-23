@@ -35,6 +35,21 @@ gzip -9 -n -c "$BUNDLE" > "$BUNDLE.gz"          # -n: no name/mtime → determin
 for c in "${STYLES[@]}"; do gzip -9 -n -c "$DATA/$c" > "$DATA/$c.gz"; done
 gzip -9 -n -c "$DATA/index.html" > "$DATA/index.html.gz"
 
+# Every other root web file, gzipped beside it: the K10 caches each one in
+# PSRAM and a .gz takes the plain copy's place (see build_web.ps1).
+for p in "$DATA"/*.js "$DATA"/*.css "$DATA"/*.html "$DATA"/*.json; do
+  [ -f "$p" ] || continue
+  n="$(basename "$p")"
+  case "$n" in .*|app.bundle.js|index.html|assets.json) continue ;; esac
+  for c in "${STYLES[@]}"; do [ "$n" = "$c" ] && continue 2; done
+  gzip -9 -n -c "$p" > "$p.gz.tmp"
+  if [ "$(stat -c%s "$p.gz.tmp" 2>/dev/null || wc -c < "$p.gz.tmp")" -lt $(( $(stat -c%s "$p" 2>/dev/null || wc -c < "$p") * 9 / 10 )) ]; then
+    mv "$p.gz.tmp" "$p.gz"
+  else
+    rm -f "$p.gz.tmp" "$p.gz"
+  fi
+done
+
 size() { stat -c%s "$1" 2>/dev/null || wc -c < "$1"; }
 
 {

@@ -51,6 +51,12 @@ static void cacheWebFile(File& f, const String& fname) {
     }
     if (!gz) return;                                            // duplicate plain (case-diff) — ignore
   }
+  // A plain file whose .gz is also on the card: the gz wins anyway, so don't
+  // read it in only to free it. For app.bundle.js that was a 1 MB block, read
+  // off the card and dropped at every boot.
+  if (!gz && existing < 0 && SD.exists(String("/data/") + fname + ".gz")) {
+    LOG_VERBOSE("WEB skip (gz sibling on the card): %s", fname.c_str()); return;
+  }
 
   size_t sz = f.size();
   uint8_t* buf = (uint8_t*)ps_malloc(sz ? sz : 1);

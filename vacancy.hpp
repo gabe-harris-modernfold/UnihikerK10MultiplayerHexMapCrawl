@@ -354,9 +354,10 @@ struct __attribute__((packed)) SaveVac {
   uint8_t  stage, rooms, got;
 };
 
-// Inside saveGame()'s G.mutex hold. Small enough to write every time.
+// Inside saveGame()'s G.mutex hold (staged, save-stage.hpp). Small enough to
+// write every time.
 static void saveVacFile() {
-  File f = SD.open(SAVE_VAC_F, FILE_WRITE);
+  SaveOut f = saveOpen(SAVE_VAC_F);
   if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_VAC_F); return; }
   SaveVac s = { VAC_SAVE_MAGIC, 1, (uint8_t)MAP_COLS, (uint8_t)MAP_ROWS,
                 VAC.townQ, VAC.townR, VAC.deskQ, VAC.deskR, VAC.keysQ, VAC.keysR,

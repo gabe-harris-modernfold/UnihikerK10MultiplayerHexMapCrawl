@@ -99,7 +99,7 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
     char buf[48];
     snprintf(buf, sizeof(buf), "{\"t\":\"asgn\",\"id\":%d}", arch);
     client->text(buf);
-    sendSync(client, arch);
+    queueSync(client->id(), arch);   // GameLoop sends it, one sync at a time (network-sync.hpp)
     broadcastLobbyUpdate();
     if (lateDrop) {
       broadcastGroundUpdate(lateQ, lateR, "fell", arch);

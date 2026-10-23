@@ -125,11 +125,13 @@ static void* psramStaticAlloc(size_t bytes) {
 #include "lgfx_config.h"
 
 static const char* AP_SSID = "WASTELAND";
-// How many survivors the board's own softAP will admit. This is exactly the
-// ESP32 core's softAP() default, named here so the "direct uplink" warning the
-// client shows (UPLINK_WARNINGS in data/ui-utils.js) quotes a number that is
-// actually true, and so raising it later is a one-line change in one place.
-static constexpr int AP_MAX_CLIENTS = 4;
+// How many devices the board's own softAP will admit. It was the ESP32 core's
+// softAP() default of 4, one short of MAX_SEATED: with no house network, the
+// fifth phone could not even join the hotspot. Now the full table plus an
+// observer TV and a spare (a phone that rejoins before its old association has
+// timed out still holds a slot). The "direct uplink" warning the client shows
+// (UPLINK_WARNINGS in data/ui-utils.js) quotes this number.
+static constexpr int AP_MAX_CLIENTS = 8;
 
 // ── WiFi STA connection (background task) ──────────────────────
 struct WifiTaskCtx { char ssid[33]; char pass[65]; };
@@ -151,6 +153,15 @@ static uint32_t wifiNextSweepMs  = 20000;
 static uint32_t wifiSweepBackoff = 30000;
 static constexpr uint32_t WIFI_SWEEP_MIN = 30000;
 static constexpr uint32_t WIFI_SWEEP_MAX = 300000;
+// Test hook, typed on the USB serial console: "away" reboots the board as if
+// it had been carried somewhere none of its known networks reach -- the
+// hotspot-only, no-LAN case -- without forgetting a single password. One boot
+// only: the NVS flag is cleared as it is read. The boot join goes to an SSID
+// nobody broadcasts (so the radio does exactly what it does for an absent
+// network) and sweeps ignore every known network they hear.
+// bots/wroom_swarm measures play in it.
+static bool g_wifiAway = false;
+static const char* WIFI_AWAY_SSID = "k10-away-sim";
 static bool rtcSynced = false;
 
 static bool checkRtcReady() {
@@ -1403,6 +1414,7 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 
 // ── Split module includes ──────────────────────────────────────
 // Order matters: each file depends on declarations above it.
+#include "save-stage.hpp"    // saveGame()'s files staged in PSRAM under G.mutex, written to SD after it
 #include "trails.hpp"        // which way each walker crossed each hex (before hex-map: map gen + encoding use it)
 #include "hex-map.hpp"       // hex math, slot mgmt, map gen, vision encoding
 #include "boot-assets.hpp"   // asset loading, item registry, loot tables
@@ -1693,6 +1705,7 @@ void setup() {
 
   splashAdd("Generating map...");
   Log.notice("Save load attempt");
+  saveRecoverInterrupted();   // save-stage.hpp: finish or drop a save the board died in
   if (!tryLoadSave()) {
     Log.notice("No save found, generating map");
     generateMap();
@@ -1738,6 +1751,22 @@ void loop() {
   // real cap of MAX_PLAYERS for anyone trying to join.
   ws.cleanupClients(MAX_PLAYERS + 2);
   unsigned long now = millis();
+
+  // USB serial console: one-word test commands (only "away", see g_wifiAway).
+  {
+    static char line[12];
+    static uint8_t ln = 0;
+    while (Serial.available()) {
+      char c = (char)Serial.read();
+      if (c != '\n' && c != '\r') { if (ln < sizeof(line) - 1) line[ln++] = c; continue; }
+      line[ln] = 0; ln = 0;
+      if (strcmp(line, "away") != 0) continue;
+      Preferences p; p.begin("k10", false); p.putBool("away", true); p.end();
+      Log.warning("WIFI AWAY: rebooting with every known network out of range (one boot)");
+      delay(200);
+      ESP.restart();
+    }
+  }
 
   // Monitor async boot-time STA connect
   if (bootWifiPending) {
