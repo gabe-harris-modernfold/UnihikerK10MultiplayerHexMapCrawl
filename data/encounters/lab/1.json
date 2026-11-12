@@ -1,0 +1,111 @@
+{
+  "id": "lab_1_sharps_ward",
+  "title": "The Sharps Ward",
+  "lab": {
+    "part": 1
+  },
+  "start_node": "the_ward",
+  "nodes": {
+    "the_ward": {
+      "text": "The corridor ends at a steel door, and stencilled on the door, still legible, is GAUNT INSTITUTE FOR CONTINUANCE - SHARPS. Under it, scratched in since by somebody with a nail: RUNAWAY SCIENCE. Behind the door is a ward thirty paces long, cut into the rock, and every inch of it bristles. Walls, ceiling, floor, the frames of the beds: hypodermic needles, thousands of them, pushed in up to the barrel like pins in a cushion, points out. Every barrel holds an inch of something amber. From every point grows a hair of pale fungus with a pinhead cap the colour of a bruise, and when you breathe, the nearest ones lean toward you. A speaker in the ceiling clears its throat. 'Sharps Ward,' says a man's voice, pleased. 'Mind the floor. There is a clipboard by the door. I accept payment.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Crawl the cleared path on your belly.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 4,
+          "success_node": "halfway",
+          "hazard_id": "pricked"
+        },
+        {
+          "label": "Walk it upright, slowly, and touch nothing.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 0,
+          "success_node": "halfway",
+          "hazard_id": "pricked"
+        },
+        {
+          "label": "Write the best thing you ever did on his clipboard. He keeps it.",
+          "cost": {
+            "score": 15
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "halfway",
+          "sure": true
+        }
+      ]
+    },
+    "halfway": {
+      "text": "Halfway down the ward the needles start to move. Not much: a few degrees, all of them together, the way a field of grass turns to the wind. They are turning to follow you. The amber in the barrels has gone cloudy. 'They are only curious,' says the speaker. 'They were filled from me, you see. Everything in here is a little bit me.' At the far wall, on a steel trolley, sits a pincushion of needles as big as a man's head, and out of it, like a crown, grows the thing he sent you for: a cluster of caps the size of thumbnails, bruise-purple, wet, and very slowly breathing.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Hold your breath and walk the last ten paces.",
+          "cost": {},
+          "base_risk": 65,
+          "skill": 4,
+          "success_node": "the_cap",
+          "hazard_id": "the_turn"
+        },
+        {
+          "label": "Let them have a vein. Roll up your sleeve and walk the wall.",
+          "cost": {
+            "radiation": 2
+          },
+          "base_risk": 40,
+          "skill": 4,
+          "success_node": "the_cap",
+          "hazard_id": "the_turn"
+        },
+        {
+          "label": "Tell the speaker the longest walk you ever made. He keeps it.",
+          "cost": {
+            "score": 25
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_cap",
+          "sure": true
+        }
+      ]
+    },
+    "the_cap": {
+      "text": "You lift the pincushion off the trolley and the fungus comes with it, the needles under it trailing threads of pale root like a pulled tooth. It is warm. It pulses once against your palm, out of time with you, then corrects itself to your heartbeat and stays there. Every needle in the ward turns at once to point at you, and holds. 'Needlecap,' says the speaker, fondly. 'Wrap it in something. It bites when it is cold.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 72,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "pricked": {
+      "text": "You do not feel the first one. You feel the ninth. Something cold and amber goes into the meat of your thigh and spreads, and for a moment you can taste a stranger's breakfast, sixty years old.",
+      "penalty": {
+        "ll": -1,
+        "radiation": 1
+      },
+      "ends_encounter": false
+    },
+    "the_turn": {
+      "text": "The needles turn faster than you do. A whole panel of the wall leans in as you pass and kisses you all down one side, and every place it touched has come up in a small purple bloom by the time you reach the trolley.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  }
+}

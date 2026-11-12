@@ -137,7 +137,7 @@ static void placeTraps() {
   for (int r = 0; r < MAP_ROWS; r++) {
     for (int q = 0; q < MAP_COLS; q++) {
       HexCell& cell = G.map[r][q];
-      if (!trapTerrainOk(cell.terrain) || cell.poi) continue;
+      if (!trapTerrainOk(cell.terrain) || cell.poi || oasisCell(cell)) continue;   // a grove is safe ground
       uint8_t band = TRAP_BAND_OPEN;
       if (cell.terrain == 4) {
         uint8_t un = 0;

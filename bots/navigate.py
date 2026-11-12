@@ -48,6 +48,15 @@ UNKNOWN_COST = 2
 DAISY_BLOOM_COST = 6
 DAISY_BUD_COST = 1
 
+# The slime mould (ecoBiteCheck): any hex with mould drawn on it costs 1 LL
+# on the first step onto it and 1 more for every step after it that stays on
+# slime (1, 2, 3...).  A flat per-hex price can't say "escalating", but at a
+# bloomed daisy's price a route with k slime hexes already costs a day per
+# hex, so the pathfinder skirts a patch and crosses only its narrowest part
+# when there is no way round.  Never impassable: a bot that wakes up inside
+# a patch still has to walk out.
+SLIME_COST = 6
+
 # A booby trap we escaped (traps.hpp): stepping on it forces the scene again,
 # with no walking away. Priced like a bloomed daisy and then some -- a detour
 # of most of a day is taken first -- but never impassable, since it may be

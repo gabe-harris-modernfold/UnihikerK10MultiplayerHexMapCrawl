@@ -1,0 +1,118 @@
+{
+  "id": "lab_2_pantry",
+  "title": "The Pantry",
+  "lab": {
+    "part": 2
+  },
+  "start_node": "the_aisles",
+  "nodes": {
+    "the_aisles": {
+      "text": "Two flights down from the corridor, the Institute's stores are still stocked. Steel shelving goes up into the dark, aisle after aisle, and every shelf is lined with jars: big pickling jars sealed with wax and labelled in a neat, upright hand. A jar of hands, all left. A jar of eyes, which turn to watch you come in. A jar of tongues. A jar of teeth labelled TEETH, which seems unnecessary. One labelled HALVERS - WOUNDS - KEPT FOR LATER. The brine in all of them is the yellow of old varnish, and some of the labels are dated this year. The ceiling speaker crackles. 'My pantry,' says the voice. 'Everything I took out of people to see how it worked, and everything I took out of me. Third aisle, top shelf. You cannot miss it. It is the one that is still going.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Climb the shelving to the top of the third aisle.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 0,
+          "success_node": "the_jar",
+          "hazard_id": "shelf_gives"
+        },
+        {
+          "label": "Drag the rolling ladder down the aisle, past the eyes.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "the_jar",
+          "hazard_id": "the_eyes"
+        },
+        {
+          "label": "Read him the labels you would want on your own jars. He keeps them.",
+          "cost": {
+            "score": 20
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_jar",
+          "sure": true
+        }
+      ]
+    },
+    "the_jar": {
+      "text": "Top shelf, third aisle: a jar the size of a bucket, and in it, in brine gone pink, a human heart. It is beating. Slowly, once to every four of yours, and each beat stirs the brine and lifts a little cloud of something off it. The label says G. - SPARE - 1966. The lid is waxed shut, with a thumbprint in the wax. On the shelf below stands a printed card, the kind a butcher puts in the window: HEART, ONE, 40 POINTS. 'It is not for sale, exactly,' says the speaker. 'It is for paying. You have done things. I have not done anything since 1966. I will take some off you.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Break the wax and put your arm in up to the shoulder.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 4,
+          "success_node": "the_heart",
+          "hazard_id": "the_brine"
+        },
+        {
+          "label": "Leave the shelf something of yours. A tooth will do.",
+          "cost": {
+            "ll": 1
+          },
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_heart",
+          "hazard_id": "the_brine"
+        },
+        {
+          "label": "Pay the card. Forty points. He keeps them.",
+          "cost": {
+            "score": 40
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_heart",
+          "sure": true
+        }
+      ]
+    },
+    "the_heart": {
+      "text": "The heart comes out of the brine with a sound like a boot out of mud. It goes on beating in your hand, slow and patient, and the cold of it climbs your arm and stops at the elbow, as though it has reached a door it was told not to open. All down the aisle the eyes have turned in their jar to watch it go. 'Careful,' says the speaker, very softly. 'That is mine.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 73,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "shelf_gives": {
+      "text": "The shelving takes your weight for exactly as long as it takes you to trust it. Then a whole run of jars goes, and you come down in a wash of yellow brine and glass and somebody's hands, and the hands are still trying to hold on to something.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_eyes": {
+      "text": "Every eye in the jar follows you down the aisle. Halfway along you realise they are not looking at you. They are looking behind you. You turn round and there is nothing there, and when you turn back you walk into the corner of a shelf hard enough to open your scalp.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_brine": {
+      "text": "The brine is cold the way a grave is cold, and it does not stop at your skin. Something in the jar takes hold of your wrist, gently, the way a nurse does, and holds it while the cold goes in. You are sick on the floor. You were always going to be.",
+      "penalty": {
+        "ll": -1,
+        "food": -1
+      },
+      "ends_encounter": false
+    }
+  }
+}

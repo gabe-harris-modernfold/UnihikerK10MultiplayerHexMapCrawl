@@ -31,6 +31,7 @@ function getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, maj
     if (def.id === ACT_TREAT)  return 'Only the Medic can treat outside a Settlement';
     if (def.id === ACT_CRAFT)  return 'Needs a Settlement hex';
     if (def.id === ACT_SHELTER && terr === 9) return 'A Settlement is already shelter';
+    if (def.id === ACT_SHELTER && terr === 2) return 'The oasis canopy is shelter enough';
     return 'Not available here';
   }
   if (!hasAP)    return `Needs ${def.apCost} AP (have ${ap})`;
@@ -106,16 +107,17 @@ function initActionPanel() {
     // Reset arrays
     tradeGive.fill(0);
     tradeWant.fill(0);
-    buildStepperRow('trade-give-row', tradeGive, i => (myId >= 0 ? (players[myId]?.inv?.[i] ?? 0) : 0));
-    // Cap at what the target actually holds — their inv is already visible
-    // client-side via the state broadcast, so there's no reason to let the
-    // player build an offer that's guaranteed to fail on accept.
-    const wantSource = tradeTargetPid === CARAVAN_PID ? worldState.caravan?.inv : players[tradeTargetPid]?.inv;
-    buildStepperRow('trade-want-row', tradeWant, i => wantSource?.[i] ?? 0);
-    // Against the caravan the steppers are a straight swap (no accept round-
-    // trip), and its shelf of consumables for sale sits above them.
-    document.getElementById('action-trade-send').textContent =
-      tradeTargetPid === CARAVAN_PID ? '⇄ SWAP' : '⇄ SEND OFFER';
+    // The caravan only sells: its shelf replaces the token steppers, which
+    // are for survivor↔survivor offers alone (there is no car_trade swap).
+    const isCaravan = tradeTargetPid === CARAVAN_PID;
+    document.getElementById('trade-swap-sec').style.display = isCaravan ? 'none' : '';
+    if (!isCaravan) {
+      buildStepperRow('trade-give-row', tradeGive, i => (myId >= 0 ? (players[myId]?.inv?.[i] ?? 0) : 0));
+      // Cap at what the target actually holds — their inv is already visible
+      // client-side via the state broadcast, so there's no reason to let the
+      // player build an offer that's guaranteed to fail on accept.
+      buildStepperRow('trade-want-row', tradeWant, i => players[tradeTargetPid]?.inv?.[i] ?? 0);
+    }
     buildStockList();
     document.getElementById('action-trade-offer-form').style.display = '';
   }
@@ -257,7 +259,7 @@ function initActionPanel() {
     if (caravanHere) {
       const btn = document.createElement('button');
       btn.className   = 'chk-action-btn';
-      btn.textContent = '⇄ Trade with Caravan';
+      btn.textContent = '⇄ Buy from the Caravan';
       btn.addEventListener('click', () => {
         tradeTargetPid = CARAVAN_PID;
         el.style.display = 'none';
@@ -284,11 +286,11 @@ function initActionPanel() {
     if (!caravanOnMyHex()) return;
     // Trade is free, so neither the AP-0 nor the resting gate applies.
     const terr = myBoardCell()?.terrain ?? null;
-    terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    terrName = cellTerrainName(myBoardCell());
     tradeTargetPid = CARAVAN_PID;
     document.getElementById('action-trade-target-list').style.display = 'none';
     buildTradeOfferForm();
-    openSubPanel('⇄ CARAVAN', 'action-trade-ctrl', '⇄ Caravan · trading is free');
+    openSubPanel('⇄ CARAVAN', 'action-trade-ctrl', '⇄ Caravan · buying costs no AP');
   }
 
   function maybeAutoOpenCaravanTrade() {
@@ -350,6 +352,13 @@ function initActionPanel() {
       }
     }
     const slots = packSlots(p);
+    // A token recipe (Medicine) needs token room once its cost is paid, not
+    // an item slot -- the same order applyRecipe() checks it in.
+    if (r.outputRes) {
+      const inv = (p?.inv ?? [0, 0, 0, 0, 0]).map((n, i) => (n || 0) - (r.resCost[i] || 0));
+      inv[r.outputRes - 1] += r.outputQty;
+      return tokenLoadOf(p, inv) <= slots;
+    }
     for (let s = 0; s < slots; s++) {
       if (!it[s] || it[s] === r.outputItem) return true;
     }
@@ -386,7 +395,7 @@ function initActionPanel() {
       // so here rather than leaving the player to work out why.
       const carry = tokenLoadOf(me, r.resCost);
       if (carry > packSlots(me)) missing.push(`a bigger pack (${carry} tokens to carry)`);
-      if (!outputHasRoom(me, r)) missing.push('a free pack slot');
+      if (!outputHasRoom(me, r)) missing.push(r.outputRes ? `room in the pack for ${recipeOutputName(r)}` : 'a free pack slot');
       const affordable = missing.length === 0;
       const reqParts = [];
       for (let m = 0; m < 3; m++) {
@@ -399,7 +408,7 @@ function initActionPanel() {
       btn.className = 'chk-action-btn craft-card' + (affordable ? '' : ' action-disabled');
       btn.innerHTML =
         `<span class="act-label">${escHtml(r.name)}</span>` +
-        `<span class="act-desc">${escHtml(reqParts.join(' + '))} → ${escHtml(getItemById(r.outputItem)?.name ?? '?')}</span>` +
+        `<span class="act-desc">${escHtml(reqParts.join(' + '))} → ${escHtml(recipeOutputName(r))}</span>` +
         (affordable ? '' : `<span class="act-unavail-reason">Needs ${escHtml(missing.join(', '))}</span>`);
       btn.addEventListener('click', () => {
         if (!affordable) return;
@@ -411,16 +420,12 @@ function initActionPanel() {
   }
 
   document.getElementById('action-trade-send').addEventListener('click', () => {
-    if (myId < 0 || tradeTargetPid < 0) return;
+    // Survivors only — the caravan is bought from (action-trade-buy), never swapped with.
+    if (myId < 0 || tradeTargetPid < 0 || tradeTargetPid === CARAVAN_PID) return;
     const allZero = tradeGive.every(v => v === 0) && tradeWant.every(v => v === 0);
     if (allZero) return;
-    if (tradeTargetPid === CARAVAN_PID) {
-      console.log('%c[TRADE] Sending car_trade', 'color:#fc0;font-weight:bold', `give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
-      send({ t: 'car_trade', give: [...tradeGive], want: [...tradeWant] });
-    } else {
-      console.log('%c[TRADE] Sending trade_offer', 'color:#fc0;font-weight:bold', `to=${tradeTargetPid} give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
-      send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
-    }
+    console.log('%c[TRADE] Sending trade_offer', 'color:#fc0;font-weight:bold', `to=${tradeTargetPid} give=${JSON.stringify(tradeGive)} want=${JSON.stringify(tradeWant)}`);
+    send({ t: 'trade_offer', to: tradeTargetPid, give: [...tradeGive], want: [...tradeWant] });
     closeActionPanel();
   });
 
@@ -573,7 +578,8 @@ function initActionPanel() {
     const ll           = me?.ll ?? 0;
     const llCap        = me?.llCap || uiLLCap.val || 0;   // wire llCap is the effective cap
 
-    terrName = (terr != null && terr < TERRAIN.length) ? (TERRAIN[terr]?.name ?? 'Unknown') : 'Unknown';
+    terrName = cellTerrainName(cell);
+    const oasis = isOasisCell(cell);   // a forest oasis: no shelter to build, and a free night
 
     // Whole-deck gates. TRADE is free and stays open when exhausted (a
     // co-located survivor or the caravan can still deal), nothing else does.
@@ -648,7 +654,8 @@ function initActionPanel() {
       const shelterMaxed = def.id === ACT_SHELTER && shelterLevel >= 2;
       // If cell hasn't loaded yet (null — race between 'asgn' and 'sync' messages),
       // allow terrain-dependent actions optimistically; the server validates.
-      const terrAvail  = terr === null || (!shelterMaxed && actAvailable(def.id, terr));
+      const terrAvail  = terr === null || (!shelterMaxed && actAvailable(def.id, terr)
+                                           && !(def.id === ACT_SHELTER && oasis));   // doShelter() refuses a grove
       // TREAT: the Medic closes a Major Wound anywhere; everyone else needs a
       // Settlement (9), and so does the no-wound heal for every archetype.
       const treatAvail = terr === null || terr === 9 || (isMedic && majorWounds > 0);
@@ -671,7 +678,10 @@ function initActionPanel() {
       let blockReason = def.teamTreat        ? (med < 1 ? 'Needs 1 Medicine' : `Needs ${def.apCost} AP (have ${ap})`)
                       : def.id === ACT_ASSIST ? 'No tokens to give'
                       : getBlockReason(def, shelterLevel, available, hasAP, ap, scrap, med, majorWounds, ll, llCap, terr);
-      const freeAct = def.id === ACT_TRADE || def.id === ACT_ASSIST;
+      // A Scout's SURVEY costs nothing (doSurvey() charges only the others),
+      // so an empty AP budget does not close it either.
+      const freeAct = def.id === ACT_TRADE || def.id === ACT_ASSIST ||
+                      (def.id === ACT_SURVEY && isScout);
       if (gate && !(freeAct && gateExemptsTrade)) { canAct = false; blockReason = gate; }
       def.canAct = canAct;
       def.blockReason = canAct ? '' : blockReason;
@@ -684,7 +694,9 @@ function initActionPanel() {
                       : (uiResting.val || restSent) ? 'Already resting — waiting for dawn'
                       : '';
     defs.push({ id: ACT_REST, key: ACT_REST, icon: 'rest', label: 'REST', apCost: 0, cls: 'rest', domId: 'fab-rest-btn',
-                desc: 'Sleep until dawn — recover AP, heal a little', canAct: !restBlocked, blockReason: restBlocked });
+                desc: oasis ? 'Sleep safe in the oasis \u2014 heals at dawn with no food or water needed, nothing can reach you'
+                            : 'Sleep until dawn — recover AP, heal a little',
+                canAct: !restBlocked, blockReason: restBlocked });
     return defs;
   }
 
@@ -981,361 +993,181 @@ function initMenuSystem() {
       );
     }
 
-    if (page === 'howto') return wrap(
-      back('main'),
-      mh2({ class: 'menu-sub-title' }, 'HOW TO PLAY'),
+    // ── How to play ───────────────────────────────────────────────
+    // The player's guide, in the house voice: short, bitter, a little damp.
+    // Mechanics live in the game's own toasts and the encounter screen — this
+    // page only has to get a new survivor on the air, on the TV and moving.
+    // Numbers quoted here are the firmware's (survival_state.hpp dawn upkeep,
+    // TERRAIN mc for move costs); keep them honest if those move.
+    if (page === 'howto') {
+      const em  = (t) => ms({ class: 'ht-em' }, t);
+      const url = (t) => ms({ class: 'ht-url' }, t);
+      const act = (name, cost, desc) => md({ class: 'ht-act-row' },
+        ms({ class: 'ht-act-name' }, name),
+        ms({ class: 'ht-act-cost' }, cost),
+        ms({ class: 'ht-act-desc' }, desc)
+      );
+      const here = location.host || '192.168.47.1';   // the TV wants whichever network you are on
+      return wrap(
+        back('main'),
+        mh2({ class: 'menu-sub-title' }, 'HOW TO PLAY'),
 
-      sec('The Mission',
-        mp({ class: 'menu-text-body' },
-          'Up to five survivors share a 75×57 toroidal wasteland. The map wraps — walk far enough ' +
-          'in any direction and you come back around. Explore hexes to reveal terrain, collect ' +
-          'resources, and keep each other alive. A game day lasts 5 minutes. Survive as many ' +
-          'days as you can.'
-        )
-      ),
-
-      sec('Movement',
-        mp({ class: 'menu-text-body' },
-          'Your Action Points (AP) = max(2, Life Level + 3 − major wounds − encumbrance). ' +
-          'Even at worst condition, you retain minimum 2 AP to stay mobile. ' +
-          'Each hex costs AP equal to its terrain cost (1–2 AP). ' +
-          'First visit to any hex grants +1 exploration point automatically.'
+        mp({ class: 'ht-lead' },
+          'The bombs fell, the sky curdled, and the survivors are mostly you. Up to five of you share ' +
+          'one wasteland that wraps around at the edges like a bad smell. Walk it, eat what you find, ' +
+          'drink what doesn’t fight back, and reach ', em(`${ADMIRED_WIN.toLocaleString('en-US')} points`),
+          ' — that’s the ticket out. Nobody has used it.'
         ),
-        md({ class: 'ctrl-ref' },
-          md({},
-            mp({ class: 'ctrl-label' }, 'KEYBOARD'),
-            md({ class: 'key-grid' },
-              ms({ class: 'key-badge' }, 'Q'), ms({ class: 'key-badge' }, 'W'), ms({ class: 'key-badge' }, 'E'),
-              ms({ class: 'key-badge' }, 'A'), ms({ class: 'key-badge key-badge-hidden' }, ''),
-              ms({ class: 'key-badge' }, 'D'),
-              ms({ class: 'key-badge key-badge-hidden' }, ''),
-              ms({ class: 'key-badge' }, 'S'),
-              ms({ class: 'key-badge key-badge-hidden' }, ''),
-            ),
-            md({ class: 'key-dir-grid' },
-              ms({}, 'NW'), ms({}, 'N'), ms({}, 'NE'),
-              ms({}, 'SW'), ms({}, ''),  ms({}, 'SE'),
-              ms({}, ''),   ms({}, 'S'), ms({}, ''),
-            ),
-            mp({ class: 'menu-text-hint' }, 'Arrow keys and numpad also work.')
+
+        sec('Getting On The Air',
+          mp({ class: 'menu-text-body' },
+            'The K10 is the whole operation: the world, the radio and the referee. It always throws up ' +
+            'its own open hotspot, ', em('WASTELAND'), ' — no password, no internet, no help. Join it, ' +
+            'then open ', url('http://192.168.47.1'), '. Plain http. If your phone whines about https, ' +
+            'let it whine.'
           ),
-          md({},
-            mp({ class: 'ctrl-label' }, 'TOUCH'),
-            mp({ class: 'menu-text-body' },
-              'Swipe anywhere on the map canvas in the direction you want to move. ' +
-              'Or use the direction pad below the map.'
+          mp({ class: 'menu-text-body' },
+            'That works anywhere — a car, a tent, a field full of strangers. The catch: one tiny antenna is ' +
+            'hosting every phone and running the apocalypse at the same time. It has room for about eight ' +
+            'devices (the five of you, a TV, a straggler) and it ', em('will'), ' stutter. That isn’t lag. ' +
+            'That’s the board chewing.'
+          ),
+          mp({ class: 'menu-text-body' },
+            'For a steadier world, feed the board your house Wi-Fi: ', em('☰ → SETTINGS → WIFI NETWORK'), '. ' +
+            'It remembers up to eight networks and rejoins them by itself next time. Then everyone hops on ' +
+            'that network and browses to the ', em('LAN'), ' address printed along the bottom of the K10’s ' +
+            'main screen. WASTELAND stays up regardless, for whoever shows up late.'
+          ),
+          () => !uiApLink.val ? ms() :
+            mp({ class: 'menu-text-hint' }, uiStaIp.val
+              ? ['You’re on WASTELAND right now. The board also answers at ', url(uiStaIp.val),
+                 ' — switch over and browse there.']
+              : 'You’re on WASTELAND right now, and the board hasn’t been given anything better yet.')
+        ),
+
+        sec('The TV — Wasteland Observer',
+          mp({ class: 'menu-text-body' },
+            'Got a TV, laptop or dusty tablet with a browser? Put it on the same network and open ',
+            url(`http://${here}/observer.html`), '. That’s the broadcast: a camera that hunts down ' +
+            'whoever is in the deepest trouble, narrates their worst decisions in headline type, and keeps ',
+            em('THE ADMIRED'), ' scoreboard — who’s ahead, who’s dead, and who’s next.'
+          ),
+          mp({ class: 'menu-text-body' },
+            'It only watches. It takes no seat and moves no pawn, so leave it running and let the room ' +
+            'heckle. The K10’s own screen keeps score too — press ', em('B'), ' to flip through its pages.'
+          )
+        ),
+
+        sec('Walking',
+          mp({ class: 'menu-text-body' },
+            'Each hex costs ', em('1–4 Action Points'), ' — open scrub is cheap, marsh and mountain eat your ' +
+            'legs. You get a fresh stack at dawn; wounds and a heavy pack shrink it. Every new hex you set ' +
+            'foot on is a point, and the map wraps, so you can’t walk off the edge. Lord knows people try.'
+          ),
+          md({ class: 'ctrl-ref' },
+            md({},
+              mp({ class: 'ctrl-label' }, 'KEYBOARD'),
+              md({ class: 'key-grid' },
+                ms({ class: 'key-badge' }, 'Q'), ms({ class: 'key-badge' }, 'W'), ms({ class: 'key-badge' }, 'E'),
+                ms({ class: 'key-badge' }, 'A'), ms({ class: 'key-badge key-badge-hidden' }, ''),
+                ms({ class: 'key-badge' }, 'D'),
+                ms({ class: 'key-badge key-badge-hidden' }, ''),
+                ms({ class: 'key-badge' }, 'S'),
+                ms({ class: 'key-badge key-badge-hidden' }, ''),
+              ),
+              md({ class: 'key-dir-grid' },
+                ms({}, 'NW'), ms({}, 'N'), ms({}, 'NE'),
+                ms({}, 'SW'), ms({}, ''),  ms({}, 'SE'),
+                ms({}, ''),   ms({}, 'S'), ms({}, ''),
+              ),
+              mp({ class: 'menu-text-hint' }, 'Arrow keys and numpad work too.')
+            ),
+            md({},
+              mp({ class: 'ctrl-label' }, 'TOUCH'),
+              mp({ class: 'menu-text-body' },
+                'Swipe the map the way you want to go, or use the pad under it.'
+              )
             )
           )
-        )
-      ),
+        ),
 
-      sec('The Day Cycle',
-        mp({ class: 'menu-text-body' },
-          'At dawn each day your body demands resources. The server automatically consumes ' +
-          '1 Food token and 2 Water tokens from your inventory. If you don\'t have them, ' +
-          'your Food or Water track drops instead.'
+        sec('Staying Alive',
+          mp({ class: 'menu-text-body' },
+            'A day lasts five minutes. At dawn your body collects: ', em('1 food and 2 water'), ' straight ' +
+            'out of your pack. Can’t pay, and hunger and thirst start taking Life instead. Life hits zero ' +
+            'and you’re a smear.'
+          ),
+          mp({ class: 'menu-text-body' },
+            'Sleep under something — a shelter, a Settlement, a mountainside. A night in the open takes ' +
+            'Life too. It never takes your last point; it just leaves you there, shivering, for something ' +
+            'else to finish.'
+          ),
+          mp({ class: 'menu-text-body' },
+            '▼ REST ends your day early. Rest fed and watered and you heal — in a Settlement you always ' +
+            'heal. Once everyone is resting, dawn comes early.'
+          ),
+          mp({ class: 'menu-text-body' },
+            'Glowing ground soaks radiation into your bones; walk off it and stay off it. Hatches lead ' +
+            'down into bunker tunnels: no weather down there, but the air is old and it wants you.'
+          )
         ),
-        mp({ class: 'menu-text-body' },
-          'Crossing downward thresholds costs Life Level: Food drops at 4 and 2; ' +
-          'Water drops at 5, 3, and 1. Recovery works in reverse — cross back up and you ' +
-          'gain the LL back.'
-        ),
-        mp({ class: 'menu-text-body' },
-          'If every connected player hits REST before dawn, the day ends immediately ' +
-          'and dawn triggers early.'
-        )
-      ),
 
-      sec('Survival Tracks',
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'LIFE LEVEL'),
-            ms({ class: 'ht-track-val' }, '1 – 6'),
-            ms({ class: 'ht-track-desc' }, 'Core health. Drops from starvation, thirst, hazards, radiation. Reaches 0 = downed. Restored by REST in good conditions.')
+        sec('Things To Do',
+          mp({ class: 'menu-text-body' },
+            'The action deck shows what this hex allows. Most of it is a roll — two dice plus your ' +
+            'skill against a target. Your skills are on ◈ SHEET.'
           ),
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'FOOD'),
-            ms({ class: 'ht-track-val' }, '1 – 6'),
-            ms({ class: 'ht-track-desc' }, 'Hunger level. Drops each dawn without food tokens. Thresholds at 4 and 2 cost LL. Use FORAGE to gather food tokens.')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'WATER'),
-            ms({ class: 'ht-track-val' }, '1 – 6'),
-            ms({ class: 'ht-track-desc' }, 'Hydration level. Requires 2 water tokens at dawn. Thresholds at 5, 3, and 1 cost LL. Use COLLECT WATER on water-source terrain.')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({ class: 'ht-track-lbl' }, 'RADIATION'),
-            ms({ class: 'ht-track-val' }, '0 – 10'),
-            ms({ class: 'ht-track-desc' }, 'R track. Gained entering rad-tagged terrain (failed Endure DN 6). R ≥ 7 = Dusk Check at day\'s end (Endure DN 8, fail = −1 LL). Spending a full day off rad terrain reduces R by 1 at dawn.')
-          ),
-        )
-      ),
+          md({ class: 'ht-act-list' },
+            act('⚗ FORAGE',        '2 AP',   'Food, on green-ish ground. If it stops wriggling, it’s lunch.'),
+            act('≈ COLLECT WATER', '1 AP',   'One token a tap, on wet ground. Don’t look at it too closely.'),
+            act('⚲ SCAVENGE',      '2 AP',   'Elbow-deep in salvage for scrap and better junk.'),
+            act('⌂ SHELTER',        '1–2 AP', 'Scrap becomes a roof. Everyone under it sleeps better.'),
+            act('✚ TREAT / HEAL',  '1–2 AP', 'Medicine on wounds. Anyone can in a Settlement; the Medic can anywhere.'),
+            act('⚒ CRAFT',         '1 AP',   'Settlement workbenches turn scrap into gear. Learn recipes in ruins.'),
+            act('⇄ TRADE',         'free',   'With anyone on your hex, or the caravan when it rolls by.'),
+          )
+        ),
 
-      sec('Actions',
-        mp({ class: 'menu-text-body' },
-          'Open the ☞ ACTION menu to choose an action. ' +
-          'Actions cost AP and most require a skill check. Every action awards points (see Scoring).'
+        sec('Ruins',
+          mp({ class: 'menu-text-body' },
+            'Some hexes hide a place worth robbing. Step onto one and a scene opens: pick a way in, roll, ' +
+            'and grab what the room has. ', em('TAKE HAUL & LEAVE'), ' pockets it. Pushing deeper is how ' +
+            'you get rich, or how you get found in three separate places.'
+          ),
+          mp({ class: 'menu-text-hint' },
+            'Some rooms won’t let you carry anything out. Some are rigged. You’ll find out which.'
+          )
         ),
-        md({ class: 'ht-act-list' },
-          md({ class: 'ht-act-row' },
-            ms({ class: 'ht-act-name' }, '⚗ FORAGE'),
-            ms({ class: 'ht-act-cost' }, '2 AP'),
-            ms({ class: 'ht-act-desc' }, 'Search for food on Forage terrain. Forage check — success +1–2 food (+3 pts), partial +1 food (+1 pt).')
-          ),
-          md({ class: 'ht-act-row' },
-            ms({ class: 'ht-act-name' }, '≈ COLLECT WATER'),
-            ms({ class: 'ht-act-cost' }, '1 AP'),
-            ms({ class: 'ht-act-desc' }, 'Gather water on Water terrain. Each tap spends 1 AP for 1 water token (+1 pt).')
-          ),
-          md({ class: 'ht-act-row' },
-            ms({ class: 'ht-act-name' }, '⚲ SCAVENGE'),
-            ms({ class: 'ht-act-cost' }, '2 AP'),
-            ms({ class: 'ht-act-desc' }, 'Rifle through Salvage terrain. Scavenge check — success +5 pts, partial +2 pts.')
-          ),
-          md({ class: 'ht-act-row' },
-            ms({ class: 'ht-act-name' }, '⛺ BUILD SHELTER'),
-            ms({ class: 'ht-act-cost' }, '1–2 AP'),
-            ms({ class: 'ht-act-desc' }, 'Requires scrap. 1 scrap = shelter ⛺ (1 AP, +4 pts); 2+ scrap = improved shelter 🏠 (2 AP, +8 pts). Boosts rest quality for all campers. Not in a Settlement — it is already cover.')
-          ),
-          md({ class: 'ht-act-row' },
-            ms({ class: 'ht-act-name' }, '◎ SURVEY'),
-            ms({ class: 'ht-act-cost' }, '1 AP'),
-            ms({ class: 'ht-act-desc' }, 'Reveal the ring of hexes one ring beyond your vision. Scout: free. Each hex can only be surveyed once per player (+2 pts first time, +0 repeats). Surveyed hexes dim when you move.')
-          ),
-        )
-      ),
 
-      sec('Rest',
-        mp({ class: 'menu-text-body' },
-          'The ▼ REST button is always available — it does not use your action slot. ' +
-          'If you are fed (Food ≥ 2) and watered (Water ≥ 2), you recover 1 Life Level — 2 if you are ' +
-          'badly hurt (LL ≤ 2). A Settlement always qualifies, however low your supplies are. ' +
-          'Once you REST you wait for dawn — if all connected players have rested, dawn triggers immediately.'
+        sec('Together',
+          mp({ class: 'menu-text-body' },
+            'Share a hex and you can ⇄ TRADE, ✚ TREAT each other, and ◉ ASSIST — slip a teammate one token ' +
+            'mid-scene and their next roll gets easier. Three of you on one hex when an improved shelter ' +
+            'goes up founds a ', em('Settlement'), ': +20 points to every founder.'
+          ),
+          mp({ class: 'menu-text-hint' },
+            'But a crowd stinks. Every huddle wakes the Creeping Doom a little more, wherever it is lurking.'
+          )
         ),
-        mp({ class: 'menu-text-body' },
-          'You can rest underground, and no weather reaches you there — the exposure loss is off ' +
-          'entirely in the bunker tunnels. The air is the price: one night in three below ground ' +
-          'costs a Life Level, and unlike exposure, bad air can take your last one.'
-        )
-      ),
 
-      sec('Together',
-        mp({ class: 'menu-text-body' },
-          'Survivors on the same hex can help each other. ◉ ASSIST appears on the deck while a ' +
-          'teammate here is in an encounter: give one token from your pack and their next roll is ' +
-          `DN ${ENC_ASSIST_DN} easier (${ENC_ASSIST_CAP} allies at most, one token each). It costs no AP, and if ` +
-          'the roll comes off you share the credit (+1 pt).'
+        sec('Dying & The Way Out',
+          mp({ class: 'menu-text-body' },
+            'You will die. Your pack drops where you fall and your tokens rot into Remains for whoever finds ' +
+            'them — quite possibly you, on your next survivor.'
+          ),
+          mp({ class: 'menu-text-body' },
+            `Points come from new ground, food, salvage, shelters, ruins and Settlements. ` +
+            `${ADMIRED_WIN.toLocaleString('en-US')} of them and you walk out. ☠ THE ADMIRED — in this menu, ` +
+            'on the K10 and on the TV — lists the dead you’re climbing past. Not one of them made it. All ' +
+            'of them are admired.'
+          )
         ),
-        mp({ class: 'menu-text-body' },
-          '✚ TREAT works on anyone standing with you: their wounds decide the job, your AP and ' +
-          'Medicine pay for it. The Medic can close a teammate’s Major Wound anywhere; in a ' +
-          'Settlement anyone can heal a teammate 1 LL.'
-        ),
-        mp({ class: 'menu-text-body' },
-          'Three survivors on one hex when an improved shelter finishes raise a Settlement, and every ' +
-          'founder standing there scores the bonus.'
-        ),
+
         mp({ class: 'menu-text-hint' },
-          'A crowd is loud. Every survivor sharing a hex raises the Creeping Doom’s awareness, ' +
-          'wherever it is — and stepping onto a teammate’s hex raises it at once.'
-        )
-      ),
-
-      sec('Vision & Fog',
-        mp({ class: 'menu-text-body' },
-          'Your base vision radius is ' + VISION_R + ' hex. Terrain modifies this:'
+          'Bot, script or AI? ℹ AGENT HELP in the menu has the wiring.'
         ),
-        md({ class: 'ht-vis-list' },
-          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag hi' }, '+2 VHIGH'), ms({}, 'Ridge, Mountain — sweeping view from elevation.')),
-          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag hi' }, '+1 HIGH'),  ms({}, 'Glass Fields — flat reflective surface, open sightlines.')),
-          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag lo' }, 'BLIND'),    ms({}, 'Rust Forest — canopy blocks all vision. Range drops to 0.')),
-          md({ class: 'ht-vis-row' }, ms({ class: 'ht-vis-tag lo' }, 'MASKED'),   ms({}, 'Broken Urban — vision range 1 and resource contents are hidden until you stand on the hex.')),
-        )
-      ),
-
-      sec('Terrain',
-        md({ class: 'terrain-grid' },
-          ...TERRAIN.map((t, ti) => {
-            let vis;
-            if (t.vis > 0) {
-              vis = ms({ class: 'tr-vis-hi'  }, '\u25B2 HIGH');
-            } else if (t.vis < 0) {
-              vis = ms({ class: 'tr-vis-pen' }, '\u25BC MASK');
-            } else {
-              vis = ms({ class: 'vis-std' }, 'STD');
-            }
-            const mc  = t.mc === 255 ? ms({ class: 'mc-block' }, 'BLOCK')
-                      :               ms({}, `MC:${t.mc}`);
-            return md({ class: 'terrain-ref-card' },
-              md({ class: 'tr-head' },
-                ms({ class: 'tr-icon ui-glyph', style: `background-position:-${ti * GLYPH_CELL}px 0` }),
-                ms({ class: 'tr-name' }, t.name)
-              ),
-              md({ class: 'tr-stats' }, mc, ms({}, ' \u00B7 '), vis)
-            );
-          })
-        )
-      ),
-
-      sec('Wounds',
-        mp({ class: 'menu-text-body' },
-          'Encounter hazards leave wounds. Each Minor Wound is −1 on Endure checks; each Major Wound ' +
-          'is −1 on every skill check and −1 AP per day. Three of each tier is the cap.'
-        ),
-        mp({ class: 'menu-text-body' },
-          'Resting with Food 4+ and Water 3+ knits one Minor Wound closed per night — resting in a ' +
-          'Settlement always qualifies. Major Wounds need ' +
-          'the TREAT action: 2 AP, 1 Medicine, and an Endure check at DN 9. The Medic can do this ' +
-          'anywhere; everyone else must be standing in a Settlement. A near miss downgrades the Major ' +
-          'Wound to a Minor one instead of clearing it.'
-        )
-      ),
-
-      sec('Skill Checks',
-        mp({ class: 'menu-text-body' },
-          'Roll 2d6 + skill value + modifiers vs. the Difficulty Number (DN). ' +
-          'Meeting or exceeding DN = success. ' +
-          'Five skills: NAVIGATE · FORAGE · SCAVENGE · SHELTER · ENDURE. ' +
-          'FORAGE and SCAVENGE roll on those actions; ENDURE rolls on radiation and TREAT; all five ' +
-          'are called for by encounter choices. Each is rated 0 (untrained), 1 (trained) or 2 (expert) ' +
-          'and is fixed by your archetype for the life of the character.'
-        )
-      ),
-
-      sec('Scoring',
-        mp({ class: 'menu-text-body' },
-          'Every action awards points. Score is earned through:'
-        ),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            ms({}, 'Exploration'), ms({}, '+1 pt per new hex')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'FORAGE'), ms({}, '+3 pts success, +1 partial')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'WATER'), ms({}, '+1 pt per token')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'SCAVENGE'), ms({}, '+5 pts success, +2 partial')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'SHELTER'), ms({}, '+4 pts basic, +8 pts improved')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'SURVEY'), ms({}, '+2 pts first per hex, +0 repeats')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'ASSIST'), ms({}, '+1 pt when the roll you backed succeeds')
-          ),
-          md({ class: 'ht-track-row' },
-            ms({}, 'FOUND A SETTLEMENT'), ms({}, '+20 pts to every founder')
-          ),
-        ),
-        mp({ class: 'menu-text-hint' },
-          `${ADMIRED_WIN} points is the way out — that is the win. ☠ THE ADMIRED lists who is ` +
-          'above you on the way there, and how far most people actually get.'
-        )
-      ),
-
-      sec('AI Agents',
-        mp({ class: 'menu-text-body' },
-          'This game exposes machine-readable HTTP endpoints, a JS state object, and accessible DOM elements to assist AI agents and automation tools.'
-        ),
-        mp({ class: 'menu-text-body' }, mb({}, '\u26A0 Session tip'), ' — Navigating away from the game page disconnects your WebSocket session. Open /state (or /state?pid=N for view data) in a separate browser window or tab to avoid losing your connection.'),
-
-        mp({ class: 'menu-text-body' }, mb({}, 'GET /state'), ' — Full server game state. Returns JSON with:'),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Global'),
-            mp({ class: 'ht-track-desc' }, 'day, dayTick, tc (Threat Clock), crisis, connected, evtQueue')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Map'),
-            mp({ class: 'ht-track-desc' }, 'Shelter counts, resource totals per type, cell count per terrain (11 types)')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Players'),
-            mp({ class: 'ht-track-desc' }, 'One entry per archetype seat (at most 5 seated at once): name, archetype, q/r position, survival tracks (ll/food/water/rad), wounds[2] (minor, major), skills[5], inv[5] quick totals + full invType/invQty grids, turn state (ap/resting/radClean), score/steps. conn:false = empty slot.')
-          )
-        ),
-
-        mp({ class: 'menu-text-body' }, mb({}, 'GET /state?pid=N'), ' — Same as /state but also includes a ', mb({}, 'view'), ' object with visible hex cells for player N. Returns:'),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Header'),
-            mp({ class: 'ht-track-desc' }, 'pid, name, q, r, visR (vision radius)')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'cells[]'),
-            mp({ class: 'ht-track-desc' }, 'Each hex: q, r, dq (col offset from player), dr (row offset), terrain index, terrainName, shelter (0/1/2), resource index, resourceName, amount, footprints bitmask')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Direction'),
-            mp({ class: 'ht-track-desc' }, 'Use dq/dr to find neighbours without hex math. dq:0,dr:-1 = North. dq:+1,dr:0 = NE. dq:-1,dr:+1 = SW.')
-          )
-        ),
-
-        mp({ class: 'menu-text-body' }, mb({}, 'window.__gameState'), ' — in-page JS object, updated after every WS message. Read without navigating away:'),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'How to read'),
-            mp({ class: 'ht-track-desc' }, 'javascript_tool: return JSON.stringify(window.__gameState)')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Fields'),
-            mp({ class: 'ht-track-desc' }, 'myId, day, tc, visR, me (position/stats/inv/ap), players[] (other online survivors), visibleCells[] (terrain/resource/shelter per known hex)')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Advantage'),
-            mp({ class: 'ht-track-desc' }, 'No navigation required — WS session stays alive. Best choice for in-browser agents.')
-          )
-        ),
-
-        mp({ class: 'menu-text-body' }, mb({}, 'Accessible DOM IDs'), ' — readable without screenshots:'),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#game-narrator'),
-            mp({ class: 'ht-track-desc' }, 'aria-live region. textContent updates after every move ("Moved to Broken Urban at q:5,r:3. AP:3.") and every action ("Scavenge \u2014 Success. AP:1. +5pts.").')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#tc-name'),
-            mp({ class: 'ht-track-desc' }, 'Current hex terrain name. Updated on every move.')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#hud-ap'),
-            mp({ class: 'ht-track-desc' }, 'Action points remaining. e.g. "3 AP"')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#inv0\u2013#inv4'),
-            mp({ class: 'ht-track-desc' }, 'Inventory counts: water / food / fuel / medicine / scrap')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, '#action-btn-1 to -7'),
-            mp({ class: 'ht-track-desc' }, '1=Forage 2=Water 3=Scavenge 4=Shelter 5=Treat 6=Survey 7=Rest. Has aria-label. .action-disabled class when blocked.')
-          )
-        ),
-
-        mp({ class: 'menu-text-body' }, mb({}, 'WebSocket'), ' — ws://192.168.47.1/ws'),
-        md({ class: 'ht-track-list' },
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Join'),
-            mp({ class: 'ht-track-desc' }, '{"t":"join","name":"BOT","arch":0}  arch: 0=Guide 1=Quartermaster 2=Medic 3=Mule 4=Scout 5=Endurer')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Move'),
-            mp({ class: 'ht-track-desc' }, '{"t":"mv","d":N}  dirs 0\u20135 = NW / N / NE / SW / SE / S')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Action'),
-            mp({ class: 'ht-track-desc' }, '{"t":"act","a":N}  a: 1=Forage 2=Water 3=Scavenge 4=Shelter 5=Treat 6=Survey 7=Rest')
-          ),
-          md({ class: 'ht-track-row' },
-            md({ class: 'ht-track-label' }, 'Tip'),
-            mp({ class: 'ht-track-desc' }, 'Prefer window.__gameState for in-browser agents — no navigation needed. To use REST endpoints, open them in a new window: e.g. http://192.168.47.1/state?pid=0 for player zero, /state?pid=1 for player one, etc.')
-          )
-        )
-      ));
+      );
+    }
 
     if (page === 'settings') return wrap(
       back('main'),
@@ -1639,11 +1471,9 @@ function initMenuSystem() {
           }
         }
 
-        // Item illustrations. Badges are drawn by item-icons.js, so there
-        // is no file to fetch for them.
-        for (const item of ITEMS) {
-          entries.push({ group: 'Item Img',  label: item.name, path: item.img });
-        }
+        // No item rows: badges are drawn by item-icons.js, and the
+        // item_<id>.png illustrations in ITEMS were never made and nothing
+        // loads them, so listing them only reported every item as MISSING.
 
         assetProgress.val = { done: 0, total: entries.length };
         let completedCount = 0;
@@ -1882,22 +1712,27 @@ function initCharSelect() {
     const extras   = bonus.map((n, r) => (n ? `+${n} ${RES_NAMES[r + 1]}` : '')).filter(Boolean);
 
     // Starter recipes: the same for everyone, but they say the pack can grow.
-    const blueprints = RECIPES.filter(rc => rc.starter).map(rc => {
-      const item = getItemById(rc.outputItem);
-      const name = item?.name ?? rc.name;
-      const mods = typeof _formatMods === 'function' ? _formatMods(getItemMods?.(rc.outputItem)) : '';
+    // Then this survivor's own trade (recipes.cfg known_by -- the Medic's).
+    const bpChip = (rc) => {
+      const item = rc.outputRes ? null : getItemById(rc.outputItem);
+      const name = rc.outputRes ? rc.name : (item?.name ?? rc.name);
+      const mods = rc.outputRes ? `makes ${recipeOutputName(rc)}`
+                 : typeof _formatMods === 'function' ? _formatMods(getItemMods?.(rc.outputItem)) : '';
       const mats = rc.matItem.map((id, m) => (id ? `${rc.matQty[m]} ${getItemById(id)?.name ?? '?'}` : '')).filter(Boolean);
       const cost = [...mats, ...rc.resCost.map((n, r) => (n ? `${n} ${RES_NAMES[r + 1]}` : ''))].filter(Boolean).join(' + ');
       return span({ class: 'sv-bp', title: `${name}${mods ? ' (' + mods + ')' : ''} \u2014 costs ${cost}` },
-        img({ class: 'item-icon-img', src: getItemIcon(rc.outputItem, _CS_BP_PX), alt: '',
-              width: _CS_BP_PX, height: _CS_BP_PX, draggable: false }),
+        rc.outputRes ? token(rc.outputRes, _CS_BP_PX)
+          : img({ class: 'item-icon-img', src: getItemIcon(rc.outputItem, _CS_BP_PX), alt: '',
+                  width: _CS_BP_PX, height: _CS_BP_PX, draggable: false }),
         span({ class: 'sv-bp-name' }, name),
         ...rc.matItem.map((id, m) => (id ? span({ class: 'sv-bp-cost' }, `${rc.matQty[m]}\u00D7`,
           img({ class: 'item-icon-img', src: getItemIcon(id, _CS_COST_PX), alt: '',
                 width: _CS_COST_PX, height: _CS_COST_PX, draggable: false })) : null)),
         ...rc.resCost.map((n, r) => (n ? span({ class: 'sv-bp-cost' }, `${n}\u00D7`, token(r + 1, _CS_COST_PX)) : null))
       );
-    });
+    };
+    const blueprints = RECIPES.filter(rc => rc.starter).map(bpChip);
+    const ownBps     = RECIPES.filter(rc => rc.knownBy?.includes(i)).map(bpChip);
 
     return div({
       class: `sv-file${taken ? ' taken' : ''}${dir > 0 ? ' in-r' : dir < 0 ? ' in-l' : ''}`,
@@ -1937,7 +1772,10 @@ function initCharSelect() {
         div({ class: 'sv-pack', role: 'img', 'aria-label': `${kitWords}; ${load} of ${slots} slots filled` }, ...tiles),
         extras.length
           ? p({ class: 'sv-note' }, span({ class: 'sv-plus' }, '+'), ` role bonus: ${extras.join(', ')}`)
-          : null
+          : null,
+        p({ class: 'sv-note' }, span({ class: 'sv-plus' }, '+'),
+          ` ${START_PATCHES}× ${getItemById(START_PATCH_ITEM)?.name ?? 'Trauma Patch'}, ` +
+          `${archRandomItems(i)} random items`)
       ),
       div({ class: 'sv-sec' },
         div({ class: 'sv-sec-head' },
@@ -1963,6 +1801,13 @@ function initCharSelect() {
               span({ class: 'sv-lbl' }, 'BLUEPRINTS'),
               span({ class: 'sv-aside' }, 'every survivor')),
             div({ class: 'sv-bps' }, ...blueprints))
+        : null,
+      ownBps.length
+        ? div({ class: 'sv-sec' },
+            div({ class: 'sv-sec-head' },
+              span({ class: 'sv-lbl' }, 'TRADE SECRETS'),
+              span({ class: 'sv-aside' }, `${arch.name} only`)),
+            div({ class: 'sv-bps' }, ...ownBps))
         : null
     );
   };

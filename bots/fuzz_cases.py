@@ -36,7 +36,7 @@ from typing import Any
 # checks this against the firmware source, so it cannot drift silently.
 COMMANDS = ("pick", "m", "n", "wifi", "wifi_forget", "check", "regen",
             "eraseslot", "act", "trade_offer", "trade_accept", "trade_decline",
-            "car_trade", "car_buy", "use_item", "equip_item", "unequip_item",
+            "car_buy", "use_item", "equip_item", "unequip_item",
             "drop_item", "drop_res", "pickup_item", "loot", "settings", "enc_start",
             "enc_choice", "enc_bank", "enc_abort", "enc_assist")
 
@@ -215,7 +215,8 @@ CASES: list[Case] = [
     Case("trade_accept:from-9", {"t": "trade_accept", "from": 9}, "nack:bad_arg"),
     Case("trade_accept:no-offer", _trade_accept_nobody, "nack"),
     Case("trade_decline:no-offer", _trade_decline_nobody, "nack"),
-    Case("car_trade:empty", {"t": "car_trade"}, "nack:empty"),
+    Case("car_trade:removed", {"t": "car_trade", "give": [0, 1, 0, 0, 0], "want": [1, 0, 0, 0, 0]},
+         "nack:unknown_cmd", note="the caravan's token swap, removed 2026-10-23: it only sells"),
     Case("car_buy:no-item", {"t": "car_buy"}, "nack:parse"),
     Case("car_buy:item-0", {"t": "car_buy", "item": 0}, "nack:bad_arg"),
     Case("car_buy:item-300", {"t": "car_buy", "item": 300}, "nack:bad_arg"),

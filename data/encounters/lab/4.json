@@ -1,0 +1,179 @@
+{
+  "id": "lab_4_graft",
+  "title": "The Graft",
+  "lab": {
+    "part": 4
+  },
+  "start_node": "the_second_table",
+  "nodes": {
+    "the_second_table": {
+      "text": "There is a second table beside his now, steel, with straps, and the straps are open. You did not see it brought in. 'You will have to do it yourself,' says Gaunt. 'I cannot, obviously. I will talk you through it. I have done this one before. On me.' On the tray: a scalpel, a hand drill, a funnel, a reel of catgut and a brown bottle of something amber. 'Lie down. Open yourself under the ribs, on the left. The Needlecap goes in first. It likes to get there before the heart, to make the bed.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Not today. Step back from the table.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        },
+        {
+          "label": "Cut under the ribs and seed the Needlecap.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 4,
+          "success_node": "heart_in",
+          "requires_item": 72,
+          "hazard_id": "the_knife"
+        },
+        {
+          "label": "Pay him to guide the knife. He keeps it.",
+          "cost": {
+            "score": 30
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "heart_in",
+          "requires_item": 72,
+          "sure": true
+        }
+      ]
+    },
+    "heart_in": {
+      "text": "The Needlecap goes into you the way a hand goes into a glove. Its roots find your blood at once, warm, busy, and the cut stops bleeding on its own. 'Good,' says Gaunt. 'Now my heart. In beside yours, not instead of. Two is the whole trick. One to live and one to keep going when the first one would rather not.' His spare heart beats in your hand, once to your four, waiting.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Stop. Sew yourself shut and get up.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        },
+        {
+          "label": "Set his heart in beside yours.",
+          "cost": {},
+          "base_risk": 65,
+          "skill": 4,
+          "success_node": "the_wiring",
+          "requires_item": 73,
+          "hazard_id": "rejection"
+        },
+        {
+          "label": "Pay him to hold it still with his voice. He keeps it.",
+          "cost": {
+            "score": 30
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_wiring",
+          "requires_item": 73,
+          "sure": true
+        }
+      ]
+    },
+    "the_wiring": {
+      "text": "Two hearts. Yours is racing and his is not, and the fungus is threading between them like a seamstress. 'The wires last,' says Gaunt. 'Base of the skull. The drill is on the tray. Do not think about it, it only makes the hole crooked.' The loom twitches in your other hand like something that can smell where it is going.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Stop here. Get off the table while you still can.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        },
+        {
+          "label": "Drill the base of your skull and wire yourself in.",
+          "cost": {},
+          "base_risk": 70,
+          "skill": 4,
+          "success_node": "the_fee",
+          "requires_item": 74,
+          "hazard_id": "live_spine"
+        },
+        {
+          "label": "Pay him to count you through it. He keeps it.",
+          "cost": {
+            "score": 30
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_fee",
+          "requires_item": 74,
+          "sure": true
+        }
+      ]
+    },
+    "the_fee": {
+      "text": "It is all in you. The heart sits beside yours, cold and still, waiting for a word. The wires hum in your spine with nothing to say yet. 'And now my fee,' says Gaunt. 'Nothing personal. I do not do anything for nothing any more, and I have not done anything at all for sixty years. I want a week. Your best one. Everything you did in it. Then I will say the word.' He does not want water, or scrap, or medicine. He has never wanted anything you can carry.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Get up with a cold heart in you, and walk away.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        },
+        {
+          "label": "Pay the fee: everything you did on your best week. He keeps it.",
+          "cost": {
+            "score": 100
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "runaway",
+          "sure": true
+        }
+      ]
+    },
+    "runaway": {
+      "text": "He says the word. The heart catches. You feel it before you hear it: a second beat, slower than yours and a half-step behind, and then yours slows to meet it, and the two of them settle into a rhythm like two men carrying something heavy between them. The fungus warms through your chest. The wires in your spine begin to sing. You could walk to the end of the world. You sit up. On the other table, Doctor Gaunt's head lies still on the pillow, eyes open and dry, mouth closed. For the first time in sixty years he has stopped. In your pocket, where there was nothing, there is a folded note in the neat, upright hand of a thousand jar labels. You have not read it yet. It is already laughing.",
+      "lab_ending": "graft",
+      "can_bank": true,
+      "choices": []
+    },
+    "walk_away": {
+      "text": "You get off the table. Everything you brought is still in your pack, wrapped and cold, and you are not sure how. 'I will be here,' says Gaunt to the ceiling. 'Obviously.'",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_knife": {
+      "text": "The scalpel is sharper than you thought, or you are softer. 'Deeper,' says Gaunt, interested. 'No. Too deep. Never mind, it is only blood. You have lots.'",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "rejection": {
+      "text": "The heart will not sit. It fights you like a landed fish, the Needlecap's roots go the wrong way, and for a long minute everything in your chest beats in a different time. 'Rejection,' says Gaunt, with professional interest. 'Try again. Or die, I suppose. Either way I learn something.'",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "live_spine": {
+      "text": "The loom goes into your spine like a dog through a door. Every muscle you own pulls tight at once, and you lie on the steel and listen to your own teeth. When it lets you go you are on the floor, the loom is not in you, and Gaunt is humming.",
+      "penalty": {
+        "ll": -2
+      },
+      "wound": [
+        0,
+        1
+      ],
+      "ends_encounter": true
+    }
+  }
+}

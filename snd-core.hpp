@@ -199,11 +199,12 @@ struct SndPatch {
 enum SndPatchId : uint8_t {
   // pitched, the music's orchestra
   P_DRONE = 0, P_PAD, P_CALLIOPE, P_MUSETTE, P_MUSICBOX, P_BELL, P_TUBA, P_PAH,
-  P_THEREMIN, P_WHISTLE, P_CHOIR, P_HOLLOW, P_GLASS,
+  P_THEREMIN, P_WHISTLE, P_CHOIR, P_HOLLOW, P_GLASS, P_TWANG, P_HARMONICA,
   // percussion
-  P_THUMP, P_TICK, P_SNARE, P_HAT, P_SWELL, P_TOM, P_CHAIN,
+  P_THUMP, P_TICK, P_SNARE, P_HAT, P_SWELL, P_TOM, P_CHAIN, P_CLOP, P_TAP, P_SHOT,
   // textures
-  P_WIND, P_DRIP, P_CRACKLE, P_GEIGER, P_RUMBLE,
+  P_WIND, P_DRIP, P_CRACKLE, P_GEIGER, P_RUMBLE, P_ROLL, P_HOWL, P_RATTLE, P_CREAK,
+  P_GUST, P_YELL, P_ALARM,
   // effects
   P_SIREN, P_GROWL, P_RADIO, P_SQUELCH, P_ZAP, P_SQUISH, P_WHOOSH, P_DOORGRIND,
   P_TESTSINE,       // a bare sine with no sends: the engine's own test tone (calibration seq 2)
@@ -278,6 +279,20 @@ static bool sndPatchesInit() {
   // Glass: a wet finger on a rim. Sustained, pure, a little sick.
   p = &sndPatch[P_GLASS];   p->osc = OSC_FM; p->fmRatio = 2.0f; p->fmIndex = 0.12f; p->atk = 0.4f; p->dec = 1.0f;
   p->sus = 0.7f; p->rel = 1.2f; p->tremHz = 3.1f; p->tremDepth = 0.25f; p->drift = 9; p->gain = 0.2f; p->rev = 0.6f; p->echo = 0.3f;
+  // Twang: a baritone guitar through a tremolo amp and a tape echo. A narrow
+  // pulse is a string plucked near the bridge; the filter snaps shut behind
+  // the pick, and the string goes a hair flat as it is struck.
+  p = &sndPatch[P_TWANG];   p->osc = OSC_PULSE; p->pw = 0.2f; p->detune = 4; p->flt = FLT_LP; p->cut = 850;
+  p->cutEnv = 2.6f; p->cutKey = 0.5f; p->res = 0.25f; p->mdec = 0.2f; p->atk = 0.002f; p->dec = 2.4f; p->sus = 0;
+  p->rel = 0.5f; p->tremHz = 5.6f; p->tremDepth = 0.32f; p->pEnvSemi = 0.25f; p->pEnvTime = 0.03f; p->drift = 4;
+  p->gain = 0.62f; p->rev = 0.5f; p->echo = 0.36f;
+  // Harmonica: a reed in somebody's fist. Breath, a draw bend up into every
+  // fresh note, a hand vibrato that comes in late, a glide between held ones.
+  p = &sndPatch[P_HARMONICA]; p->osc = OSC_WT; p->wt = WT_REED; p->detune = 6; p->noise = 0.03f; p->flt = FLT_LP;
+  p->cut = 1600; p->cutKey = 0.5f; p->res = 0.35f; p->cutEnv = 0.8f; p->matk = 0.08f; p->mdec = 0.4f; p->msus = 0.3f;
+  p->atk = 0.06f; p->dec = 0.5f; p->sus = 0.85f; p->rel = 0.18f; p->pEnvSemi = -1.2f; p->pEnvTime = 0.14f;
+  p->vibHz = 5.2f; p->vibSemi = 0.12f; p->vibDelay = 0.35f; p->tremHz = 4.8f; p->tremDepth = 0.12f;
+  p->mono = 1; p->glide = 0.06f; p->drift = 5; p->gain = 0.38f; p->rev = 0.45f; p->echo = 0.3f;
 
   // Thump: a heartbeat / kick the little cone can actually play -- a click
   // and a fast downward sweep ending near 80 Hz, which the ear reads as low.
@@ -298,6 +313,19 @@ static bool sndPatchesInit() {
   p->sus = 0; p->rel = 0.1f; p->gain = 0.48f; p->rev = 0.35f;
   p = &sndPatch[P_CHAIN];   p->osc = OSC_FM; p->fmRatio = 2.76f; p->fmIndex = 1.5f; p->fmEnv = 4.0f; p->mdec = 0.06f;
   p->atk = 0.001f; p->dec = 0.3f; p->sus = 0; p->rel = 0.05f; p->gain = 0.18f; p->rev = 0.3f;
+  // Clop: a hoof on hard pan, a long way off.
+  p = &sndPatch[P_CLOP];    p->osc = OSC_SINE; p->noise = 0.4f; p->flt = FLT_BP; p->cut = 1100; p->cutKey = 0.5f;
+  p->res = 0.45f; p->pEnvSemi = 7; p->pEnvTime = 0.012f; p->atk = 0.0005f; p->dec = 0.06f; p->sus = 0; p->rel = 0.03f;
+  p->gain = 0.32f; p->rev = 0.5f; p->echo = 0.1f;
+  // Tap: something loose -- a shutter, a sign on one nail -- knocking in the wind.
+  p = &sndPatch[P_TAP];     p->osc = OSC_SINE; p->noise = 0.5f; p->flt = FLT_BP; p->cut = 1500; p->cutKey = 0.5f;
+  p->res = 0.55f; p->pEnvSemi = 5; p->pEnvTime = 0.008f; p->atk = 0.0005f; p->dec = 0.045f; p->sus = 0; p->rel = 0.02f;
+  p->gain = 0.32f; p->rev = 0.45f; p->echo = 0.12f;
+  // Shot: a gun a long way off. A crack that the distance has already dulled;
+  // the room and the echo are the canyon walls throwing it back.
+  p = &sndPatch[P_SHOT];    p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_LP; p->cut = 1100; p->cutEnv = 2.6f;
+  p->res = 0.2f; p->mdec = 0.035f; p->atk = 0.0005f; p->dec = 0.5f; p->sus = 0; p->rel = 0.1f;
+  p->gain = 0.75f; p->rev = 0.75f; p->echo = 0.45f;
 
   // Wind: always under the day. The director owns its cutoff and level.
   p = &sndPatch[P_WIND];    p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_LP; p->cut = 720; p->res = 0.7f;
@@ -314,6 +342,41 @@ static bool sndPatchesInit() {
   p = &sndPatch[P_RUMBLE];  p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_LP; p->cut = 480; p->cutEnv = 1.6f;
   p->res = 0.42f; p->matk = 0.001f; p->mdec = 1.2f; p->atk = 0.015f; p->dec = 2.6f; p->sus = 0; p->rel = 0.8f;
   p->tremHz = 7.5f; p->tremDepth = 0.35f; p->gain = 0.55f; p->rev = 0.45f;
+  // Roll: thunder miles off. Darker than the rumble and slow to arrive, with
+  // more room on it. The note sets the cutoff (cutKey 1: C4 = 300 Hz, so a
+  // bend sags it) and a wide drift makes it wander, so overlapping rolls
+  // grumble rather than hiss.
+  p = &sndPatch[P_ROLL];    p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_LP; p->cut = 300; p->cutKey = 1.0f;
+  p->cutEnv = 0.6f; p->res = 0.5f; p->matk = 0.5f; p->mdec = 1.8f; p->atk = 0.28f; p->dec = 2.4f; p->sus = 0;
+  p->rel = 1.0f; p->tremHz = 2.7f; p->tremDepth = 0.3f; p->drift = 600; p->gain = 0.8f; p->rev = 0.7f;
+  // Howl: a coyote over the next rise. It climbs into the note (the pitch
+  // envelope); the composer bends it back down as it runs out of breath.
+  p = &sndPatch[P_HOWL];    p->osc = OSC_SINE; p->noise = 0.02f; p->flt = FLT_BP; p->cut = 1400; p->cutKey = 1.0f;
+  p->res = 0.2f; p->pEnvSemi = -9; p->pEnvTime = 0.35f; p->atk = 0.25f; p->dec = 1; p->sus = 1; p->rel = 0.6f;
+  p->vibHz = 6.5f; p->vibSemi = 0.25f; p->vibDelay = 0.3f; p->gain = 0.30f; p->rev = 0.75f; p->echo = 0.35f;
+  // Rattle: a snake under a rock nearby. Hiss chopped forty times a second.
+  p = &sndPatch[P_RATTLE];  p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_HP; p->cut = 4200; p->res = 0.3f;
+  p->tremHz = 40.0f; p->tremDepth = 0.9f; p->atk = 0.25f; p->dec = 1.6f; p->sus = 0; p->rel = 0.3f;
+  p->gain = 0.13f; p->rev = 0.3f;
+  // Creak: a windmill that wants oil. Stick-slip judder through a narrow band.
+  p = &sndPatch[P_CREAK];   p->osc = OSC_SAW; p->detune = 18; p->noise = 0.25f; p->flt = FLT_BP; p->cut = 1300;
+  p->cutKey = 0.6f; p->res = 0.7f; p->tremHz = 17.0f; p->tremDepth = 0.55f; p->atk = 0.12f; p->dec = 0.9f; p->sus = 0;
+  p->rel = 0.15f; p->drift = 30; p->gain = 0.10f; p->rev = 0.55f;
+  // Gust: the wind you can hear on a speaker this small -- a resonant band of
+  // noise whistling through wire and broken glass. The director swells it.
+  p = &sndPatch[P_GUST];    p->osc = OSC_NOISE; p->noise = 1.0f; p->flt = FLT_BP; p->cut = 700; p->res = 0.88f;
+  p->fltLfoHz = 0.11f; p->fltLfoOct = 0.7f; p->atk = 2.0f; p->dec = 1; p->sus = 1; p->rel = 3.0f;
+  p->gain = 0.13f; p->rev = 0.4f;
+  // Yell: somebody calling into the wind, a long way off. The vowel table, one
+  // throat, rising into the shout; the composer lets it fall away.
+  p = &sndPatch[P_YELL];    p->osc = OSC_WT; p->wt = WT_VOX; p->noise = 0.05f; p->flt = FLT_BP; p->cut = 1000;
+  p->cutKey = 0.3f; p->res = 0.3f; p->atk = 0.08f; p->dec = 1; p->sus = 1; p->rel = 0.5f; p->pEnvSemi = -4;
+  p->pEnvTime = 0.18f; p->vibHz = 5.5f; p->vibSemi = 0.15f; p->vibDelay = 0.4f; p->gain = 0.16f; p->rev = 0.8f;
+  p->echo = 0.4f;
+  // Alarm: a car alarm streets away. A piezo square, dulled by the distance;
+  // the director plays its pattern on the pitch bend, and runs its battery down.
+  p = &sndPatch[P_ALARM];   p->osc = OSC_PULSE; p->pw = 0.5f; p->flt = FLT_LP; p->cut = 1500; p->res = 0.15f;
+  p->atk = 0.01f; p->dec = 1; p->sus = 1; p->rel = 0.06f; p->gain = 0.06f; p->rev = 0.6f; p->echo = 0.3f;
 
   // Siren: the air-raid wail, a slow tritone sweep.
   p = &sndPatch[P_SIREN];   p->osc = OSC_PULSE; p->pw = 0.42f; p->flt = FLT_LP; p->cut = 1700; p->cutKey = 0.4f;
@@ -438,8 +501,13 @@ static SndVoice* sndVoiceAlloc(uint8_t bus, uint8_t part) {
     if (!v.p) return &v;
     // Steal order: releasing before sounding, same part before others,
     // oldest first. Stealing a sounding voice can click; it is the last resort.
-    uint32_t age = SC.serial - v.serial; if (age > 0x00FFFFFFu) age = 0x00FFFFFFu;
-    uint32_t score = age + (v.amp.st == ENV_REL ? 0x04000000u : 0) + (v.part == part ? 0x02000000u : 0)
+    // A pedal held until sndNoteOff (the wind, a drone) is never the same-part
+    // victim and never counts as old: a passing howl on the texture part took
+    // the wind, and with the pool full the wind was always the oldest voice --
+    // either way it needed its whole three-second attack to come back.
+    bool pedal = v.held && v.gate < 0;
+    uint32_t age = pedal ? 0 : SC.serial - v.serial; if (age > 0x00FFFFFFu) age = 0x00FFFFFFu;
+    uint32_t score = age + (v.amp.st == ENV_REL ? 0x04000000u : 0) + (v.part == part && !pedal ? 0x02000000u : 0)
                    + (v.amp.lvl < 0.05f ? 0x01000000u : 0);
     if (!best || score > bestScore) { best = &v; bestScore = score; }
   }

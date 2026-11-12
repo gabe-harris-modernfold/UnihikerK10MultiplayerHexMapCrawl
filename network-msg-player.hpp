@@ -59,10 +59,19 @@ static void handleMsg_pick(AsyncWebSocketClient* client, char* data, size_t len)
         // fell instead of being wiped by resetSurvivor() below. A no-op when
         // the pack is already empty, which is the usual case.
         if (isDowned && dropRemains(arch)) { lateDrop = true; lateQ = p.q; lateR = p.r; }
+        ghostReleaseSeat(arch);   // a ghost on the old survivor has nobody to ride now (ghosts.hpp)
+        dshReleaseSeat(arch);     // and the Dshingus went with them (dshingus.hpp)
+        // A cursed item (the Cursed Note) is not left on the body: it is in
+        // the new survivor's pocket. Only a fall keeps it; a new seat has none.
+        uint8_t cursed[4];
+        const int nCursed = isDowned ? keepCursed(p, cursed, 4) : 0;
         resetSurvivor(p, (uint8_t)arch);
+        restoreCursed(p, cursed, nCursed);
         pickSpawnNearPlayer(p, (uint8_t)arch);
         snprintf(p.name, sizeof(p.name), "%s", ARCHETYPE_NAME[arch]);
-        int n = (arch == 3) ? 3 : (arch == 1) ? 2 : 1;
+        // Starting gear: two Trauma Patches, then random tradeable items.
+        addItemToInv(p, ITEM_TRAUMA_PATCH, START_PATCHES);
+        int n = (arch == 3) ? 5 : (arch == 1) ? 3 : 2;
         for (int i = 0; i < n; i++) grantRandomStartItem(p);
         p.score = savedScore;
         p.steps = savedSteps;
@@ -126,7 +135,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
   int slot = -1;
   uint8_t depBefore = 0, depAfter = 0;
   const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
-  char trapPath[88]; int trapPathLen = 0;
+  char trapPath[112]; int trapPathLen = 0;
   // What the step picked up off the ground (scoopGroundOnArrival): the
   // mover's loot_result, and the hex for the ground_update everyone gets.
   PSRAM_STATIC(char, scoopAck, [768]);
@@ -150,36 +159,28 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
       // Landing beside another survivor -- a step, or climbing out of a
       // hatch -- is felt by the Doom wherever it is (world-system.hpp).
       if (!refused && depAfter == 0) doomNoteArrival(slot);
-      // The step landed on a booby trap and opened a scene the client never
-      // asked for (traps.hpp). Same enc_path an enc_start would get, plus
-      // "trap" so the panel knows there is no walking away from this one.
-      if (!refused && encounters[slot].active && encounters[slot].trap)
-        trapPathLen = snprintf(trapPath, sizeof(trapPath),
-          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"trap\":1}",
-          encPools[ENC_POOL_TRAP].path, (int)encounters[slot].encIdx);
-      // Or one of Machine Gun Kane's chapters opened (kane.hpp): same push,
-      // "kane" = the chapter, so the panel knows whose story it is.
-      else if (!refused && encounters[slot].active && encounters[slot].kane)
-        trapPathLen = snprintf(trapPath, sizeof(trapPath),
-          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"kane\":%d}",
-          encPools[ENC_POOL_KANE].path, (int)encounters[slot].encIdx, (int)encounters[slot].kane);
-      // Or one of VACANCY's parts (vacancy.hpp): "vac" = the part.
-      else if (!refused && encounters[slot].active && encounters[slot].vac)
-        trapPathLen = snprintf(trapPath, sizeof(trapPath),
-          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d,\"vac\":%d}",
-          encPools[ENC_POOL_VAC].path, (int)encounters[slot].encIdx, (int)encounters[slot].vac);
+      // The step opened a scene the client never asked for: a booby trap
+      // (traps.hpp, "trap" -- no walking away from this one), one of Machine
+      // Gun Kane's chapters (kane.hpp, "kane"), a VACANCY part (vacancy.hpp,
+      // "vac"), one of Doctor Gaunt's buildings (lab.hpp, "lab") or Bonney's
+      // fire (bonney.hpp, "bonney" + "apple"/"own"). Same enc_path an
+      // enc_start would get; encPathJson() names which kind.
+      if (!refused && encounters[slot].active)
+        trapPathLen = encPathJson(slot, trapPath, sizeof(trapPath), /*resume=*/false);
       // Anything lying on the hex comes with you -- the remains' supplies and
-      // every pile.  Surface only: a step that went down a hatch took nothing
-      // off it, and piles never lie underground.  Climbing back up onto a
-      // hatch does, which is where anyone who fell below left their pack.
-      if (!refused && depAfter == 0) {
+      // every pile -- on the board the step ended on: a step down a hatch
+      // takes nothing off the hatch, only what lies on the shaft cell below.
+      // Climbing back up onto a hatch does, which is where anyone who fell
+      // below left their pack.  Remains are surface only.
+      if (!refused) {
         uint8_t got[5], items[2 * 24]; int nItems = 0; bool left = false;
         scoopTook = scoopGroundOnArrival(slot, got, items, 24, &nItems, &left);
         // A full pack that could take nothing still hears about it (ok false,
         // why LOOT_FULL): otherwise walking onto a grave says nothing at all.
         if (scoopTook || left) {
           Player& sp = G.players[slot];
-          scooped = true; scoopQ = sp.q; scoopR = sp.r;
+          int16_t sq, sr; boardPos(sp, &sq, &sr);
+          scooped = true; scoopQ = sq; scoopR = sr;
           int ap = appendFmt(scoopAck, sizeof(scoopAck), 0,
             "{\"t\":\"loot_result\",\"ok\":%s,\"why\":%d,\"auto\":1,\"left\":%d,\"pid\":%d,"
             "\"got\":[%d,%d,%d,%d,%d],\"inv\":[%d,%d,%d,%d,%d],\"items\":[",
@@ -209,6 +210,7 @@ static void handleMsg_move(AsyncWebSocketClient* client, char* data, size_t len)
                             depAfter ? G.players[slot].tq : G.players[slot].q,
                             depAfter ? G.players[slot].tr : G.players[slot].r,
                             vr, mr, &visCells, depAfter, slot);
+      noteVisSent(slot, vr);
     }
     xSemaphoreGive(G.mutex);
   }
@@ -483,6 +485,7 @@ static void handleMsg_eraseslot(AsyncWebSocketClient* client, char* data, size_t
     // Wipe all persistent fields; setting name[0]='\0' makes saveGame() write
     // sp.used=0, and LL 0 makes the next pick take the fresh-survivor path.
     resetSurvivor(p, (uint8_t)arch);
+    dshReleaseSeat(arch);   // whoever sits here next starts clean (dshingus.hpp)
     memset(p.name, 0, sizeof(p.name));
     memset(p.inv,  0, sizeof(p.inv));
     p.ll = 0; p.food = 0; p.water = 0;

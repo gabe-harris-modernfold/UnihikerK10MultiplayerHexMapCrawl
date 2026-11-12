@@ -10,8 +10,10 @@
 // flood, the caravan's ruts, the weather, the board's vital signs) through
 // the transforms in section 2 and never writes anything the game reads.
 //
-// Cosmetic, with two exceptions, both in section 7: a bloomed Wasteland Daisy
-// bites for 1 LL (ecoBiteCheck), and the mould's blight -- a surface hex with
+// Cosmetic, with two exceptions, both in section 7: what bites on entry
+// (ecoBiteCheck) -- the slime mould, 1 LL for the first step onto it and one
+// more for every step after it without clean ground between, and a bloomed
+// Wasteland Daisy, a flat 1 LL -- and the mould's blight -- a surface hex with
 // visible growth on it holds no resource and grows none back (ecoBlightMap;
 // the GameLoop's respawn pass does the eating). Each is behind its own NVS
 // switch, eco/bite and eco/blight (default 1). With both off, or ECO_ENABLE=0
@@ -942,7 +944,7 @@ static void ecoLifecycle() {
 static bool ecoIsInjury(uint8_t cause) {
   switch (cause) {
     case DC_FIRE: case DC_LIGHTNING: case DC_FLOOD: case DC_DOOM:
-    case DC_ENC_HAZARD: case DC_CHEM: case DC_DAISY: case DC_KANE:
+    case DC_ENC_HAZARD: case DC_CHEM: case DC_DAISY: case DC_KANE: case DC_SLIME:
       return true;
     default:
       return false;
@@ -1017,27 +1019,68 @@ static inline bool ecoBloomAt(int q, int r) {
   int hi = ecoHexIdx(q, r);
   return (ecoBloom[ecoPubBloomIdx][hi >> 3] >> (hi & 7)) & 1;
 }
+// The slime: a surface hex with any mould the client draws on it -- the
+// blight's own test (density 1+ or a mature body; not a daisy), but read
+// whether or not the blight switch is on. Nothing published yet, or since a
+// regen, is no slime.
+static inline bool ecoSlimeAt(int q, int r) {
+  if (!ecoWireReady) return false;
+  const uint8_t* d = ecoPubDens[ecoPubDensIdx];
+  return d && (d[ecoHexIdx(q, r)] & 0x8F);
+}
+// Slime steps in a row per seat: the next one costs this + 1 LL. GameLoop-
+// owned (G.mutex), like everything ecoBiteCheck touches. Not saved: a reboot
+// is clean ground.
+static uint8_t ecoSlimeRun[MAX_PLAYERS] = {};
+
+// One bite's worth of damage, through the same path as fire. False if the
+// survivor had nothing left to lose.
+static bool ecoBite(int pid, uint8_t want, uint8_t cause) {
+  Player& p = G.players[pid];
+  uint8_t amt = (uint8_t)min((int)want, (int)p.ll);
+  if (!amt) return false;
+  p.ll -= amt;
+  if (cause == DC_SLIME) { ledFlash(150, 60, 190); k10Play(MOTIF_GROSS_SLUDGE); }
+  else                   { ledFlash(210, 235, 120); k10Play(MOTIF_MUTANT_BREATH); }
+  { GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
+    dmg.amt = amt; dmg.res = cause; dmg.actNewLL = p.ll; dmg.q = p.q; dmg.r = p.r; enqEvt(dmg); }
+  ecoNoteHurt(pid, cause);   // a bite is an injury: daisies seed where it happened
+  if (p.ll == 0) {
+    p.apLeft = 0;
+    ecoSlimeRun[pid] = 0;
+    GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
+    dev.res = cause; dev.evWsId = p.wsClientId; enqEvt(dev);
+  }
+  return true;
+}
+
 // The bite. Called under G.mutex wherever a survivor ENTERS a surface hex:
 // a step, surfacing from the tunnels, a respawn, a teleport. Once per entry.
-// Reads only the published bloom bitset, so the patch array stays private.
-static bool ecoBiteCheck(int pid) {
-  if (!ecoBiteOn || pid < 0 || pid >= MAX_PLAYERS) return false;
+// Reads only the published bitset/density, so the Eco task's arrays stay
+// private.
+//   Slime: 1 LL, and 1 more for each STEP after it that lands on slime too
+//   (1, 2, 3...). A step onto clean ground ends the run; so does arriving any
+//   other way (step = false), which starts a new one at 1.
+//   Daisy: a flat 1 LL, after the slime's if the hex has both.
+static bool ecoBiteCheck(int pid, bool step) {
+  if (pid < 0 || pid >= MAX_PLAYERS) return false;
+  uint8_t run = step ? ecoSlimeRun[pid] : 0;
+  ecoSlimeRun[pid] = 0;
+  if (!ecoBiteOn) return false;
   Player& p = G.players[pid];
   if (!p.connected || p.depth || p.ll == 0) return false;
   if (p.q < 0 || p.q >= MAP_COLS || p.r < 0 || p.r >= MAP_ROWS) return false;
-  if (!ecoBloomAt(p.q, p.r)) return false;
-  p.ll--;
-  ledFlash(210, 235, 120);
-  k10Play(MOTIF_MUTANT_BREATH);
-  { GameEvent dmg = {}; dmg.type = EVT_DAMAGE; dmg.pid = (uint8_t)pid;
-    dmg.amt = 1; dmg.res = DC_DAISY; dmg.actNewLL = p.ll; dmg.q = p.q; dmg.r = p.r; enqEvt(dmg); }
-  ecoNoteHurt(pid, DC_DAISY);   // a bite is an injury: the patch that bit you thickens
-  if (p.ll == 0) {
-    p.apLeft = 0;
-    GameEvent dev = {}; dev.type = EVT_DOWNED; dev.pid = (uint8_t)pid;
-    dev.res = DC_DAISY; dev.evWsId = p.wsClientId; enqEvt(dev);
+  if (inOasis(p)) return false;   // nothing bites in a grove; the run ends (docs/forest-oasis.md)
+  bool bit = false;
+  if (ecoSlimeAt(p.q, p.r)) {
+    if (run < 255) run++;
+    ecoSlimeRun[pid] = run;
+    bit = ecoBite(pid, run, DC_SLIME);
+    Log.notice("slime pid=%d at (%d,%d) run=%d ll=%d",
+               pid, (int)p.q, (int)p.r, (int)run, (int)p.ll);
   }
-  return true;
+  if (p.ll && ecoBloomAt(p.q, p.r)) bit |= ecoBite(pid, 1, DC_DAISY);
+  return bit;
 }
 
 // The blight: a surface hex with any mould the client draws on it (density 1
@@ -1398,7 +1441,7 @@ static void ecoStartTask() {
 
 static void ecoAllocPsram() {}
 static void ecoNoteHurt(int, uint8_t) {}
-static bool ecoBiteCheck(int) { return false; }
+static bool ecoBiteCheck(int, bool) { return false; }
 static void ecoOnIgnite(int16_t, int16_t) {}
 static void ecoRequestRegen() {}
 static void ecoSendPublished(AsyncWebSocketClient*) {}

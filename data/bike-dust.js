@@ -39,6 +39,15 @@ const BIKE_DUST_COLOR = [
   [150, 142, 128],   // 15 Tunnel Collapsed
 ];
 const BIKE_DUST_VARIANTS = 3;     // puff shapes per colour
+// A kick-start's smoke (BikeDust.exhaust), per kind of puff: how many, the
+// throw (hex units a frame), radius born and opened out to (HEX_SZ), opacity,
+// life in frames, how hard it climbs (hex units a frame², on top of the
+// dust's drift up) and colour. Hot exhaust climbs; ground dust doesn't.
+const BIKE_EXHAUST = {
+  cough: { n: 3, sp: 0.012, s0: 0.06, s1: 0.26, a: 0.62, ttl:  80, buoy: 0.0004, rgb: [108, 104,  98] },
+  catch: { n: 4, sp: 0.024, s0: 0.08, s1: 0.36, a: 0.72, ttl: 110, buoy: 0.0006, rgb: [ 86,  77,  68] },
+  putt:  { n: 1, sp: 0.010, s0: 0.05, s1: 0.18, a: 0.45, ttl:  65, buoy: 0.0004, rgb: [100,  95,  88] },
+};
 
 class BikeDust {
   constructor() {
@@ -104,6 +113,60 @@ class BikeDust {
     }
   }
 
+  // One puff of a kick-start (renderer.js KICK_SMOKE), out of the tailpipe at
+  // wx, wy (hex units), blown back the way the bike points away from: dir -1
+  // is left. 'cough' is a kick that didn't catch: a thin grey puff of fuel
+  // that didn't burn. 'catch' is the engine firing: a dark blast, thrown hard.
+  // 'putt' is the idle settling, small and pale, one per beat. Same puffs as
+  // the dust, smoke-coloured; the blast is the debris trail's near-black
+  // (DEBRIS_SMOKE_RGB, debris-field.js).
+  exhaust(wx, wy, dir, what, scale) {
+    const K = BIKE_EXHAUST[what];
+    if (!K) return;
+    for (let k = 0; k < K.n && this.parts.length < BIKE_DUST_CAP; k++) {
+      const sp = (K.sp + Math.random() * K.sp * 0.8) * scale;
+      const up = (Math.random() - 0.3) * 0.5;               // mostly back, some lift
+      this.parts.push({
+        x: wx + (Math.random() - 0.5) * 0.03 * scale,
+        y: wy + (Math.random() - 0.5) * 0.02 * scale,
+        vx: dir * sp * (1 - Math.abs(up) * 0.4),
+        vy: -sp * up * 0.6 - 0.002 * scale,
+        s0: (K.s0 + Math.random() * K.s0 * 0.5) * scale,
+        s1: (K.s1 + Math.random() * K.s1 * 0.6) * scale,
+        a:  Math.min(1, K.a + Math.random() * 0.15),
+        rot: (Math.random() - 0.5) * 0.7,
+        spin: (Math.random() - 0.5) * 0.006,
+        age: 0,
+        ttl: K.ttl + Math.random() * K.ttl * 0.5,
+        buoy: K.buoy * scale,
+        round: true,                                         // a puff in the air, not dust on the ground
+        key: `${K.rgb}|${(Math.random() * BIKE_DUST_VARIANTS) | 0}`,
+      });
+    }
+  }
+
+  // The back tyre spinning as the engine catches: a spray of the ground it
+  // sits on, low and thrown back. Wet ground throws none, same as riding.
+  spin(wx, wy, dir, terrain, scale) {
+    const col = BIKE_DUST_COLOR[terrain] ?? (terrain == null ? BIKE_DUST_COLOR[0] : null);
+    if (!col) return;
+    for (let k = 0; k < 5 && this.parts.length < BIKE_DUST_CAP; k++) {
+      const sp = (0.014 + Math.random() * 0.014) * scale;
+      this.parts.push({
+        x: wx + (Math.random() - 0.5) * 0.06 * scale, y: wy,
+        vx: dir * sp, vy: -(0.001 + Math.random() * 0.004) * scale,
+        s0: (0.08 + Math.random() * 0.06) * scale,
+        s1: (0.3 + Math.random() * 0.25) * scale,
+        a:  0.55 + Math.random() * 0.2,
+        rot: (Math.random() - 0.5) * 0.7,
+        spin: (Math.random() - 0.5) * 0.004,
+        age: 0,
+        ttl: 80 + Math.random() * 60,
+        key: `${col}|${(Math.random() * BIKE_DUST_VARIANTS) | 0}`,
+      });
+    }
+  }
+
   // Age everything a frame: it slows fast, keeps rising a little, and opens
   // out. Riders not fed this frame are forgotten after a moment.
   update() {
@@ -117,7 +180,7 @@ class BikeDust {
       p.x  += p.vx + wx;
       p.y  += p.vy + wy;
       p.vx *= 0.93;
-      p.vy  = p.vy * 0.93 - 0.00035;
+      p.vy  = p.vy * 0.93 - 0.00035 - (p.buoy || 0);
       p.rot += p.spin;
     }
     this.parts = this.parts.filter(p => p.age < p.ttl);
@@ -141,8 +204,9 @@ class BikeDust {
       ctx.save();
       ctx.globalAlpha = al;
       ctx.translate(x, y);
-      // Low and wide while it hugs the ground, rounder as it lifts.
-      ctx.scale(1, 0.55 + 0.45 * t);
+      // Low and wide while it hugs the ground, rounder as it lifts. Exhaust
+      // is in the air from the start.
+      ctx.scale(1, p.round ? 0.8 + 0.2 * t : 0.55 + 0.45 * t);
       ctx.rotate(p.rot);
       // Lumpy while it's fresh off the tyre, thinning to haze as it spreads.
       const hz = Math.min(1, Math.max(0, (t - 0.15) / 0.6));

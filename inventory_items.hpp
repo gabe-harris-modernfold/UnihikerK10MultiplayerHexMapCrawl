@@ -74,6 +74,39 @@ static bool playerHasForChoice(int pid, uint8_t itemId) {
   return false;
 }
 
+// A "spends_item" choice came off: take one itemId out of pid's pack. True if
+// there was one to take. Equipment is never spent -- the gate wants it worn,
+// and pulling worn gear would leave its stats applied. Mirrored by
+// spendForChoice() in mock-server/server.js. The caller owes the survivor a
+// targeted item_result (act "enc_spend").
+static bool spendItemForChoice(int pid, uint8_t itemId) {
+  const ItemDef* def = getItemDef(itemId);
+  if (!def || def->category == ITEM_EQUIPMENT) return false;
+  Player& p = G.players[pid];
+  uint8_t slots = effectiveInvSlots(p);
+  for (int s = 0; s < slots; s++) {
+    if (p.invType[s] != itemId || !p.invQty[s]) continue;
+    if (--p.invQty[s] == 0) p.invType[s] = 0;
+    return true;
+  }
+  return false;
+}
+
+// Is there one of itemId anywhere a survivor could still get it: in any
+// seat's pack or worn, or in a pile on the ground? For a quest whose part is
+// banked out of a scene once (lab.hpp's three parts, VACANCY's Register and
+// Key): one that has left the world reopens the scene it came from. Called
+// at dawn, after the scenes were cut short, so no unbanked haul holds one.
+static bool itemExistsInWorld(uint8_t itemId) {
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    const Player& p = G.players[i];
+    for (int s = 0; s < INV_SLOTS_MAX; s++) if (p.invType[s] == itemId && p.invQty[s]) return true;
+    for (int e = 0; e < EQUIP_SLOTS; e++) if (p.equip[e] == itemId) return true;
+  }
+  for (int g = 0; g < MAX_GROUND; g++) if (groundItems[g].itemType == itemId && groundItems[g].qty) return true;
+  return false;
+}
+
 // Water tokens that ride outside the pack cap: STAT_WATER_CAP summed over
 // equipment (the Canteen's +3).  Water only -- a canteen holds nothing else.
 static int canteenCap(const Player& p) {
@@ -138,7 +171,8 @@ static void efxCureStatus(int pid, uint8_t itemId, uint8_t param) {
 // EFX_NARRATIVE — server-side handler.  Only the NAR_* params listed in the
 // .ino are acted on here; passive equipment params (NAR_FIRE_STARTER,
 // NAR_COLD_IMMUNE, NAR_*_FORAGE, NAR_SCAV_DOUBLE) are queried where they apply
-// via hasNarrativeParam().  Params 11/12 are client-side and are echoed back
+// via hasNarrativeParam(), and NAR_DOUBLE_AP (Super Juice) lives in useItem()
+// because it has to read the AP budget before the item's LL cost.  Params 11/12 are client-side and are echoed back
 // in the item_result "efxp" field.
 static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
   (void)itemId;
@@ -178,28 +212,30 @@ static void efxNarrative(int pid, uint8_t itemId, uint8_t param) {
   }
 }
 
-// EFX_REVEAL_FOG — param==1 is a passive vision bonus handled in playerVisParams().
-// param>=2: one-shot reveal — mark all cells within radius in surveyedMap.
-// param==99: reveal entire map.
-static void efxRevealFog(int pid, uint8_t itemId, uint8_t param) {
-  (void)itemId;
-  if (param < 2) return;
-  Player& p = G.players[pid];
-  for (int r = 0; r < MAP_ROWS; r++) {
-    for (int q = 0; q < MAP_COLS; q++) {
-      if (param == 99 || hexDistWrap((int)p.q, (int)p.r, q, r) <= (int)param) {
-        int idx = r * MAP_COLS + q;
-        p.surveyedMap[idx / 8] |= (uint8_t)(1 << (idx % 8));
-      }
-    }
-  }
+// EFX_REVEAL_FOG has no entry in the table: there is no server state to
+// change. param 1 is a passive vision bonus (equipVisionBonus(), read by
+// playerVisParams()); 2..98 and 99 are one-shot reveals, and a reveal is
+// nothing but cells sent to the reader -- handleMsg_use_item does that once
+// useItem() has said yes (network-msg-items.hpp).
+//
+// It used to set bits in p.surveyedMap, which put nothing on any screen (no
+// encoder reads that map) and was worse than nothing: surveyedMap is also
+// SURVEY's "+2 the first time from this hex" ledger, so reading the Pre-War
+// Net Map ended a Scout's survey score for good.
+static constexpr uint8_t REVEAL_WHOLE_MAP = 99;
+
+// The one-shot reveal an item does on use, 0 if none (param 1 is passive).
+static uint8_t itemRevealParam(const ItemDef* def) {
+  if (!def) return 0;
+  if (def->effectId  == EFX_REVEAL_FOG && def->effectParam  >= 2) return def->effectParam;
+  if (def->effectId2 == EFX_REVEAL_FOG && def->effectParam2 >= 2) return def->effectParam2;
+  return 0;
 }
 
 static void initEffectTable() {
   effectTable[EFX_THREAT_MOD]  = efxThreatMod;
   effectTable[EFX_CURE_STATUS] = efxCureStatus;
   effectTable[EFX_NARRATIVE]   = efxNarrative;
-  effectTable[EFX_REVEAL_FOG]  = efxRevealFog;
 }
 
 static void dispatchEffect(int pid, const ItemDef& item) {
@@ -219,9 +255,10 @@ static void dispatchEffect(int pid, const ItemDef& item) {
 // what the map shows is what the rider gets.
 //
 // s_paidItem[pid] lists the item ids paid for today, so taking one off and
-// putting it back on can't buy its AP twice; dawn clears it. Not saved:
-// after a boot s_paidKnown is false, and the first look (kickStartItems)
-// takes whatever is equipped as paid rather than charging it again.
+// putting it back on can't buy its AP twice; dawn clears it. Saved beside
+// players.bin (saveFuelFile, below). With no usable file s_paidKnown is
+// false after a boot, and the first look (kickStartItems) takes whatever is
+// equipped as paid rather than charging it again.
 static uint8_t s_paidItem[MAX_PLAYERS][EQUIP_SLOTS];
 static bool    s_paidKnown[MAX_PLAYERS];
 
@@ -337,12 +374,94 @@ static uint8_t kickStartItems(int pid) {
   return started;
 }
 
+// ── Paid-for-today across a reboot (/save/fuel.bin) ─────────────────────────
+// Without it a reboot lost the day's bookkeeping, and worse than the comment
+// above admitted: setup()'s resetSurvivor() pass runs clearItemsPaid() on
+// every seat before the save loads, so the first-look fallback never fired.
+// Every equipped bike came back unpaid -- charged a second fuel for a second
+// +5 AP on top of the saved apLeft, or, with the pack dry, drawn stalled
+// although the day's bonus was already in apLeft. Written inside saveGame()'s
+// G.mutex hold, the same snapshot as players.bin, so the two agree: a
+// kick-start after the last save is lost along with the fuel it burned, and
+// simply happens again. A file for another day -- or none at all -- now
+// leaves the first-look fallback in charge, as intended.
+struct __attribute__((packed)) SaveFuel {
+  uint32_t magic;
+  uint8_t  version;
+  uint16_t day;
+  uint8_t  known[MAX_PLAYERS];
+  uint8_t  paid[MAX_PLAYERS][EQUIP_SLOTS];
+};
+
+static void saveFuelFile() {
+  SaveOut f = saveOpen(SAVE_FUEL_F);
+  if (!f) { Log.error("SD OPEN FAIL (write): %s", SAVE_FUEL_F); return; }
+  SaveFuel s = {};
+  s.magic = FUEL_SAVE_MAGIC; s.version = 1; s.day = (uint16_t)G.dayCount;
+  for (int i = 0; i < MAX_PLAYERS; i++) s.known[i] = s_paidKnown[i] ? 1 : 0;
+  memcpy(s.paid, s_paidItem, sizeof(s.paid));
+  f.write((uint8_t*)&s, sizeof(s));
+  f.close();
+}
+
+// Called by tryLoadSave() once players.bin has loaded, so a paid id can be
+// checked against what that survivor actually has on.
+static void loadFuelFile() {
+  // Undo the boot pass's "known, nothing paid": a loaded survivor's day is
+  // unknown until this file says otherwise (kickStartItems' first look).
+  memset(s_paidKnown, 0, sizeof(s_paidKnown));
+  if (!SD.exists(SAVE_FUEL_F)) { Log.notice("No %s: equipped gear counts as paid", SAVE_FUEL_F); return; }
+  File f = SD.open(SAVE_FUEL_F, FILE_READ);
+  if (!f) { Log.error("SD OPEN FAIL (read): %s", SAVE_FUEL_F); return; }
+  SaveFuel s;
+  bool ok = f.read((uint8_t*)&s, sizeof(s)) == sizeof(s);
+  f.close();
+  if (!ok || s.magic != FUEL_SAVE_MAGIC || s.version != 1 || s.day != (uint16_t)G.dayCount) {
+    Log.warning("%s unreadable or for another day - equipped gear counts as paid", SAVE_FUEL_F);
+    return;
+  }
+  int seats = 0;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (!s.known[i]) continue;
+    clearItemsPaid(i);   // and s_paidKnown: this seat's day is known now
+    for (int k = 0; k < EQUIP_SLOTS; k++) {
+      uint8_t eid = s.paid[i][k];
+      if (!eid) continue;
+      for (int e = 0; e < EQUIP_SLOTS; e++)
+        if (G.players[i].equip[e] == eid) { markItemPaid(i, eid); break; }
+    }
+    seats++;
+  }
+  Log.notice("SD READ: %s day=%u seats=%d", SAVE_FUEL_F, (unsigned)s.day, seats);
+}
+
+static int effectiveAP(int pid);   // defined further down; useItem's Super Juice reads it
+
+// An item whose whole point is a one-shot reveal: no stat change, no other
+// effect. Underground there is nothing for it to show -- a reveal is a band of
+// surface cells, and q/r below are pinned to the hatch -- so useItem() turns
+// it down there rather than eat a Static Chew for nothing. The Bright Bad
+// Idea is not one: its threat_mod still goes off, and below it burns in the
+// hand (network.js _flareOnUse).
+static bool itemRevealOnly(const ItemDef* def) {
+  if (!itemRevealParam(def)) return false;
+  if (def->effectId  != EFX_NONE && def->effectId  != EFX_REVEAL_FOG) return false;
+  if (def->effectId2 != EFX_NONE && def->effectId2 != EFX_REVEAL_FOG) return false;
+  for (int k = 0; k < STAT_COUNT; k++) if (def->statMods[k]) return false;
+  return true;
+}
+
+// Why the last useItem() said no, for the item_result "why": "underground",
+// or "" for a refusal the client has nothing to say about.
+static const char* s_useWhy = "";
+
 // ── useItem ───────────────────────────────────────────────────────────────
 // Use the item in inventory slot slotIdx.  Consumables apply their statMods
 // and effects and lose one charge.  Key items with an effect (Pre-War Net
 // Map, Cursed Device) may be "read" any number of times and are never
 // consumed.  Equipment and materials cannot be used.  Must hold G.mutex.
 static bool useItem(int pid, uint8_t slotIdx) {
+  s_useWhy = "";
   if (slotIdx >= INV_SLOTS_MAX) return false;
   Player& p = G.players[pid];
   uint8_t itemId = p.invType[slotIdx];
@@ -351,7 +470,16 @@ static bool useItem(int pid, uint8_t slotIdx) {
   if (!def) return false;
   bool isKeyWithEffect = (def->category == ITEM_KEY) && (def->effectId != EFX_NONE);
   if (def->category != ITEM_CONSUMABLE && !isKeyWithEffect) return false;
+  if (p.depth && itemRevealOnly(def)) { s_useWhy = "underground"; return false; }
 
+
+  // Super Juice (NAR_DOUBLE_AP): the day's budget is read BEFORE the drink's
+  // own LL cost lands, so "move double" is exactly double -- effectiveAP()
+  // falls with LL and would otherwise short the grant by one.
+  const bool doubleAP =
+      (def->effectId  == EFX_NARRATIVE && def->effectParam  == NAR_DOUBLE_AP) ||
+      (def->effectId2 == EFX_NARRATIVE && def->effectParam2 == NAR_DOUBLE_AP);
+  const int apDay = doubleAP ? effectiveAP(pid) : 0;
 
   // Apply stat modifiers — food/water via threshold-aware steps to propagate LL events
   const uint8_t llBefore = p.ll;
@@ -377,6 +505,9 @@ static bool useItem(int pid, uint8_t slotIdx) {
   }
   if (def->statMods[STAT_RAD]) p.radiation = (uint8_t)constrain((int)p.radiation + def->statMods[STAT_RAD], 0, 10);
   if (def->statMods[STAT_AP])  p.apLeft = (int8_t)max(0, (int)p.apLeft + def->statMods[STAT_AP]);
+  // A second day's legs, paid for in LL above. Not for the dead: a juice that
+  // takes the last LL downs its drinker with nothing to spend it on.
+  if (doubleAP && p.ll > 0) p.apLeft = (int8_t)min(99, (int)p.apLeft + apDay);
 
   // Dispatch effects
   dispatchEffect(pid, *def);
@@ -404,7 +535,15 @@ static bool useItem(int pid, uint8_t slotIdx) {
 // new cap would be unreachable — every pack loop iterates 0..effectiveInvSlots.
 // Same orphan guard unequipItem() below has, with one extra allowance: slotIdx
 // is exempt, since the incoming item vacates it on its way to the equip slot.
+// Why the last equipItem()/unequipItem() said no, for the item_result "why"
+// (network-msg-items.hpp) -- a refused swap used to look like a dead button.
+//   orphan     the pack would shrink around items still in its last slots
+//   pack_full  no free slot under the cap for the item coming off
+//   no_item    nothing equippable there
+static const char* s_itemWhy = "";
+
 static bool equipItem(int pid, uint8_t slotIdx) {
+  s_itemWhy = "no_item";
   if (slotIdx >= INV_SLOTS_MAX) return false;
   Player& p = G.players[pid];
   uint8_t itemId = p.invType[slotIdx];
@@ -428,6 +567,7 @@ static bool equipItem(int pid, uint8_t slotIdx) {
   // over the cap are merely encumbering -- a legal, reachable state that
   // effectiveAP() already prices at -1 AP, and one enc_bank's haul tray can
   // put you in anyway.  Different failure modes, deliberately different rules.
+  s_itemWhy = "orphan";
   for (int i = newSlots; i < INV_SLOTS_MAX; i++) {
     if (i != (int)slotIdx && p.invType[i]) return false;
   }
@@ -453,6 +593,7 @@ static bool equipItem(int pid, uint8_t slotIdx) {
       p.equip[eslot]     = prev;
       p.invType[slotIdx] = itemId;
       p.invQty[slotIdx]  = qty0;
+      s_itemWhy = "pack_full";
       return false;
     }
   }
@@ -478,6 +619,7 @@ static bool equipItem(int pid, uint8_t slotIdx) {
 // pack would shrink around items the player could no longer reach.
 // Must hold G.mutex.
 static bool unequipItem(int pid, uint8_t eslot) {
+  s_itemWhy = "no_item";
   if (eslot >= EQUIP_SLOTS) return false;
   Player& p = G.players[pid];
   uint8_t itemId = p.equip[eslot];
@@ -486,9 +628,11 @@ static bool unequipItem(int pid, uint8_t eslot) {
   p.equip[eslot] = 0;
   uint8_t newSlots = effectiveInvSlots(p);
   p.equip[eslot] = itemId;
+  s_itemWhy = "orphan";
   for (int i = newSlots; i < INV_SLOTS_MAX; i++) {
     if (p.invType[i]) return false;  // would orphan an item beyond the new cap
   }
+  s_itemWhy = "pack_full";
   // Find free inv slot within the new cap
   for (int i = 0; i < newSlots; i++) {
     if (!p.invType[i]) {
@@ -513,13 +657,29 @@ static bool unequipItem(int pid, uint8_t eslot) {
 // to (groundAgeOut()).  Everything here must hold G.mutex.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Age in game-days of something stamped on `day`.  G.dayCount is a uint16 and
-// wraps, so ages are compared, never raw days.
-static uint16_t groundAge(uint16_t day) { return (uint16_t)(G.dayCount - day); }
+// Age in game-days of something stamped on `day`.  G.dayCount goes 365 -> 1
+// (DAYS_PER_YEAR), so ages are taken mod the year, never as raw differences.
+// Nothing on the ground outlives GROUND_AGE_DAYS, so a year never aliases.
+// A stamp from a save older than the wrap (day > 365) still ages correctly:
+// tryLoadSave() folds G.dayCount into the year without changing its residue.
+static uint16_t groundAge(uint16_t day) {
+  int a = ((int)G.dayCount - (int)day) % (int)DAYS_PER_YEAR;
+  return (uint16_t)(a < 0 ? a + DAYS_PER_YEAR : a);
+}
 
-static bool groundHasAt(int16_t q, int16_t r) {
+// The cell a survivor is standing on, on whichever board they are on, and that
+// board (0 surface, 1 tunnels). p.q/p.r stay pinned to the hatch while below
+// (tunnels.hpp), so anything put down or picked up "here" must ask this.
+static uint8_t boardPos(const Player& p, int16_t* q, int16_t* r) {
+  *q = p.depth ? p.tq : p.q;
+  *r = p.depth ? p.tr : p.r;
+  return p.depth;
+}
+
+static bool groundHasAt(int16_t q, int16_t r, uint8_t depth = 0) {
   for (int g = 0; g < MAX_GROUND; g++)
-    if (groundItems[g].itemType && groundItems[g].q == q && groundItems[g].r == r) return true;
+    if (groundItems[g].itemType && groundItems[g].depth == depth &&
+        groundItems[g].q == q && groundItems[g].r == r) return true;
   return false;
 }
 
@@ -545,12 +705,14 @@ static void remainsPrune(int16_t q, int16_t r) {
 // twenty-odd piles, and a table that simply filled up would make every later
 // drop, an encounter's overflow loot included, vanish without a word.  Never
 // reclaims on (q,r) itself, so it cannot eat a pile it is about to join.
-static int groundSlotFor(int16_t q, int16_t r, uint8_t itemId) {
+// (q,r) is on the board `depth` names -- the same numbers on the other board
+// are a different place.
+static int groundSlotFor(int16_t q, int16_t r, uint8_t itemId, uint8_t depth) {
   int freeSlot = -1, oldest = -1;
   for (int g = 0; g < MAX_GROUND; g++) {
     const GroundItem& gi = groundItems[g];
     if (!gi.itemType) { if (freeSlot < 0) freeSlot = g; continue; }
-    if (gi.q == q && gi.r == r) {
+    if (gi.depth == depth && gi.q == q && gi.r == r) {
       if (gi.itemType == itemId) return g;   // stack onto the existing pile
       continue;
     }
@@ -559,44 +721,56 @@ static int groundSlotFor(int16_t q, int16_t r, uint8_t itemId) {
   if (freeSlot >= 0) return freeSlot;
   if (oldest < 0) return -1;                 // every slot is on this very hex
   GroundItem& gone = groundItems[oldest];
-  Log.warning("ground full: reclaimed item %d x%d at (%d,%d) from day %u",
-              (int)gone.itemType, (int)gone.qty, (int)gone.q, (int)gone.r, (unsigned)gone.day);
+  Log.warning("ground full: reclaimed item %d x%d at (%d,%d) dp=%d from day %u",
+              (int)gone.itemType, (int)gone.qty, (int)gone.q, (int)gone.r,
+              (int)gone.depth, (unsigned)gone.day);
   int16_t gq = gone.q, gr = gone.r;
+  const bool surface = !gone.depth;
   memset(&gone, 0, sizeof(gone));
-  remainsPrune(gq, gr);
+  if (surface) remainsPrune(gq, gr);         // remains only ever lie up top
   return oldest;
 }
 
-// Put qty of itemId on the ground at (q,r).  Adding to a pile restarts its
-// GROUND_AGE_DAYS clock -- a pile is one stack whoever left each part of it,
-// so there is no per-unit age to keep.  Returns false only when the whole
-// table is on this one hex.
-static bool groundPut(int16_t q, int16_t r, uint8_t itemId, uint8_t qty) {
+// Put qty of itemId on the ground at (q,r) on board `depth`.  Adding to a pile
+// restarts its GROUND_AGE_DAYS clock -- a pile is one stack whoever left each
+// part of it, so there is no per-unit age to keep.  Returns false only when
+// the whole table is on this one hex.
+static bool groundPut(int16_t q, int16_t r, uint8_t itemId, uint8_t qty, uint8_t depth = 0) {
   if (!itemId || !qty) return false;
-  int g = groundSlotFor(q, r, itemId);
+  int g = groundSlotFor(q, r, itemId, depth);
   if (g < 0) {
-    Log.warning("groundPut: no slot at (%d,%d), item %d x%d lost",
-                (int)q, (int)r, (int)itemId, (int)qty);
+    Log.warning("groundPut: no slot at (%d,%d) dp=%d, item %d x%d lost",
+                (int)q, (int)r, (int)depth, (int)itemId, (int)qty);
     return false;
   }
   GroundItem& gi = groundItems[g];
   if (gi.itemType != itemId) gi.qty = 0;     // a free or reclaimed slot
-  gi.q = q; gi.r = r; gi.itemType = itemId;
+  gi.q = q; gi.r = r; gi.itemType = itemId; gi.depth = depth;
   gi.qty = (uint8_t)min(255, (int)gi.qty + (int)qty);
   gi.day = G.dayCount;
   return true;
 }
 
+// The same, at whatever cell pid is standing on, on their board.
+static bool groundPutHere(const Player& p, uint8_t itemId, uint8_t qty) {
+  int16_t q, r;
+  const uint8_t d = boardPos(p, &q, &r);
+  return groundPut(q, r, itemId, qty, d);
+}
+
 // ── dropItem ──────────────────────────────────────────────────────────────
-// Drop qty of item from inventory slot slotIdx at the player's current hex.
-// Creates/extends a GroundItem entry. Returns true on success.
-// Must hold G.mutex.
+// Drop qty of item from inventory slot slotIdx at the player's current hex --
+// the tunnel cell, when they are below. Creates/extends a GroundItem entry.
+// Returns true on success. Must hold G.mutex.
 static bool dropItem(int pid, uint8_t slotIdx, uint8_t qty) {
   if (slotIdx >= INV_SLOTS_MAX || qty == 0) return false;
   Player& p = G.players[pid];
   if (!p.invType[slotIdx]) return false;
   if (p.invQty[slotIdx] < qty) return false;
-  if (!groundPut(p.q, p.r, p.invType[slotIdx], qty)) return false;
+  // A cursed item (items.cfg "cursed", the Cursed Note) will not be put down.
+  const ItemDef* def = getItemDef(p.invType[slotIdx]);
+  if (def && def->cursed) return false;
+  if (!groundPutHere(p, p.invType[slotIdx], qty)) return false;
   p.invQty[slotIdx] -= qty;
   if (!p.invQty[slotIdx]) { p.invType[slotIdx] = 0; }
   return true;
@@ -640,6 +814,10 @@ static bool dropRemains(int pid) {
   bool piles = false;
   for (int s = 0; s < INV_SLOTS_MAX; s++) {
     if (!p.invType[s]) continue;
+    // A cursed item stays in the pack: keepCursed() carries it into whoever
+    // this seat comes back as.
+    const ItemDef* def = getItemDef(p.invType[s]);
+    if (def && def->cursed) continue;
     groundPut(p.q, p.r, p.invType[s], p.invQty[s] ? p.invQty[s] : 1);
     p.invType[s] = 0; p.invQty[s] = 0;
     piles = true;
@@ -788,6 +966,26 @@ static uint8_t addItemToInv(Player& p, uint8_t itemId, uint8_t qty) {
   return (uint8_t)(qty - left);
 }
 
+// ── Cursed items through a fall ───────────────────────────────────────────
+// The respawn (handleMsg_pick) wipes the pack with resetSurvivor(). A cursed
+// item (items.cfg "cursed") rides through it: keepCursed() before the wipe,
+// restoreCursed() after. dropRemains() already left it in the pack. A regen
+// or an erased seat does not come this way, so there it goes with the world.
+// Returns how many ids were written to out[].
+static int keepCursed(const Player& p, uint8_t* out, int cap) {
+  int n = 0;
+  for (int s = 0; s < INV_SLOTS_MAX && n < cap; s++) {
+    if (!p.invType[s] || !p.invQty[s]) continue;
+    const ItemDef* def = getItemDef(p.invType[s]);
+    if (def && def->cursed) out[n++] = p.invType[s];
+  }
+  return n;
+}
+static void restoreCursed(Player& p, const uint8_t* ids, int n) {
+  for (int i = 0; i < n; i++)
+    if (!addItemToInv(p, ids[i], 1)) Log.warning("restoreCursed: no room for item %d", (int)ids[i]);
+}
+
 // ── pickupGroundItem ──────────────────────────────────────────────────────
 // Pick up all of a ground item at gslot. Player must be in same hex.
 // Returns true on success, false if blocked (different hex / no inv space).
@@ -797,12 +995,13 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   Player& p = G.players[pid];
   GroundItem& gi = groundItems[gslot];
   if (!gi.itemType) return false;
-  // Piles are surface-only (GroundItem has no depth) and q/r stay pinned to
-  // the hatch while below, so without this a survivor underground could lift
-  // whatever lies on their hatch -- which is exactly where anyone who dies
-  // down there leaves their pack.
-  if (p.depth) return false;
-  if (gi.q != p.q || gi.r != p.r) return false; // wrong hex
+  // Same cell on the same board. q/r stay pinned to the hatch while below, so
+  // comparing them alone let a survivor underground lift whatever lay on
+  // their hatch -- which is exactly where anyone who dies down there leaves
+  // their pack.
+  int16_t bq, br;
+  const uint8_t d = boardPos(p, &bq, &br);
+  if (gi.depth != d || gi.q != bq || gi.r != br) return false; // wrong hex
 
   uint8_t canTake = addItemToInv(p, gi.itemType, gi.qty);
   if (!canTake) return false;
@@ -811,7 +1010,7 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
   if (!gi.qty) {
     int16_t q = gi.q, r = gi.r;
     memset(&gi, 0, sizeof(gi));
-    remainsPrune(q, r);   // that may have been the last thing on a grave
+    if (!d) remainsPrune(q, r);   // that may have been the last thing on a grave
   }
 
   return true;
@@ -822,17 +1021,20 @@ static bool pickupGroundItem(int pid, uint8_t gslot) {
 // the hex's own tokens: a fallen survivor's supplies (lootRemains(), all that
 // fits) and every item pile, theirs or anyone's.  Whatever the pack can't hold
 // stays where it is -- *left says so.  items[] receives (itemId, qty) pairs,
-// up to maxItems of them, *nItems how many.  Surface only, like the piles.
-// Returns true when anything moved.  Must hold G.mutex.
+// up to maxItems of them, *nItems how many.  Piles on whichever board they are
+// standing on; remains are surface only (a fall below is hauled up to the
+// hatch).  Returns true when anything moved.  Must hold G.mutex.
 static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
                                  int maxItems, int* nItems, bool* left) {
   memset(got, 0, 5);
   *nItems = 0;
   *left   = false;
   Player& p = G.players[pid];
-  if (p.depth || p.ll == 0) return false;
+  if (p.ll == 0) return false;
+  int16_t bq, br;
+  const uint8_t d = boardPos(p, &bq, &br);
   bool any = false;
-  if (remainsIndexAt(p.q, p.r) >= 0) {
+  if (!d && remainsIndexAt(p.q, p.r) >= 0) {
     uint8_t out = lootRemains(pid, 0, got);
     if (out == LOOT_OK) any = true;
     int i = remainsIndexAt(p.q, p.r);
@@ -840,7 +1042,7 @@ static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
   }
   for (int g = 0; g < MAX_GROUND; g++) {
     GroundItem& gi = groundItems[g];
-    if (!gi.itemType || gi.q != p.q || gi.r != p.r) continue;
+    if (!gi.itemType || gi.depth != d || gi.q != bq || gi.r != br) continue;
     uint8_t id = gi.itemType, before = gi.qty;
     if (!pickupGroundItem(pid, (uint8_t)g)) { *left = true; continue; }
     uint8_t took = gi.itemType ? (uint8_t)(before - gi.qty) : before;
@@ -857,7 +1059,9 @@ static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
 
 // ── applyRecipe ───────────────────────────────────────────────────────────
 // Consumes a known recipe's material items + resource tokens and grants its
-// output item. Returns nullptr on success, else a short player-facing reason
+// output item -- or, for an `output_res` recipe (the Medic's Medicine), its
+// output tokens, which need token room (tokenRoomFor) once the cost is paid
+// rather than a pack slot. Returns nullptr on success, else a short player-facing reason
 // (static string) with the pack left untouched — every affordability check
 // and the output-room check run on a scratch copy before any mutation, so a
 // blocked craft never partially consumes materials. The room check looks at
@@ -868,7 +1072,7 @@ static bool scoopGroundOnArrival(int pid, uint8_t got[5], uint8_t* items,
 static const char* applyRecipe(int pid, uint8_t recipeId) {
   Player& p = G.players[pid];
   const RecipeDef* r = getRecipeDef(recipeId);
-  if (!r || !r->outputItem) return "No such recipe";
+  if (!r || (!r->outputItem && !r->outputRes) || r->outputRes > 5) return "No such recipe";
 
   for (int i = 0; i < 5; i++)
     if (r->resCost[i] > p.inv[i]) return "Not enough resources for that recipe";
@@ -890,14 +1094,33 @@ static const char* applyRecipe(int pid, uint8_t recipeId) {
     if (need > 0) return "Missing materials for that recipe";
   }
 
-  if (invRoomFor(types, qtys, effectiveInvSlots(p), r->outputItem) < (int)r->outputQty)
+  if (r->outputItem &&
+      invRoomFor(types, qtys, effectiveInvSlots(p), r->outputItem) < (int)r->outputQty)
     return "No room in your pack for the result";
 
-  // Everything fits — commit the scratch pack and pay the tokens.
+  // Pay the tokens. A token output is checked against the pack as it stands
+  // AFTER the cost comes out (the water spent on a batch of Medicine frees
+  // the slot one of the pills goes into), so the check has to follow the
+  // payment -- and put it back if the result does not fit.
+  uint8_t invBefore[5];
+  memcpy(invBefore, p.inv, sizeof(invBefore));
   for (int i = 0; i < 5; i++) p.inv[i] = (uint8_t)(p.inv[i] - r->resCost[i]);
+  if (r->outputRes) {
+    int ri = r->outputRes - 1;
+    if (tokenRoomFor(p, ri) < (int)r->outputQty) {
+      memcpy(p.inv, invBefore, sizeof(invBefore));
+      return "No room in your pack for the result";
+    }
+  }
+
+  // Everything fits — commit the scratch pack and grant the result.
   memcpy(p.invType, types, INV_SLOTS_MAX);
   memcpy(p.invQty,  qtys,  INV_SLOTS_MAX);
-  addItemToInv(p, r->outputItem, r->outputQty);
+  if (r->outputItem) addItemToInv(p, r->outputItem, r->outputQty);
+  if (r->outputRes) {
+    int ri = r->outputRes - 1;
+    p.inv[ri] = (uint8_t)min(99, (int)p.inv[ri] + (int)r->outputQty);
+  }
   return nullptr;
 }
 
@@ -932,12 +1155,16 @@ static bool hasTunnelLight(int pid) {
 // moved (items.cfg "tracks" — the Motorbike today). Loops every slot like
 // hasPassTerrainBit() rather than hardcoding EQUIP_VEHICLE, since nothing
 // stops a future non-vehicle item from setting the flag too. Must hold G.mutex.
+// A stalled bike is pushed, not ridden: the client draws the rider on foot
+// (bikeStalled()), so a daily-cost item not paid for today lays no rut.
 static bool hasTireTracks(int pid) {
   const Player& p = G.players[pid];
   for (int s = 0; s < EQUIP_SLOTS; s++) {
     if (!p.equip[s]) continue;
     const ItemDef* def = getItemDef(p.equip[s]);
-    if (def && def->leavesTracks) return true;
+    if (!def || !def->leavesTracks) continue;
+    if (itemHasOpCost(def) && !itemPaidToday(pid, p.equip[s])) continue;
+    return true;
   }
   return false;
 }
@@ -1074,17 +1301,20 @@ static int appendPackArrays(char* buf, size_t cap, int pos, int pid) {
 // two halves of what is lying on the ground -- and returns the new offset.
 // The one emitter for sync and ground_update, the way appendPackArrays() is
 // for the pack.  "d" is the day each was left, so the client can say how long
-// before the wasteland takes it.  Worst case ~3.2 KB of gi (MAX_GROUND x 50)
-// plus ~0.9 KB of rm.  Must hold G.mutex.
+// before the wasteland takes it; "dp":1 marks a pile in the tunnels, whose q/r
+// are tunnel-board cells (absent = surface, so old clients read it as before).
+// Worst case ~3.6 KB of gi (MAX_GROUND x 57) plus ~0.9 KB of rm.  Must hold
+// G.mutex.
 static int appendGroundArrays(char* buf, size_t cap, int pos) {
   pos = appendFmt(buf, cap, pos, "\"gi\":[");
   bool first = true;
   for (int g = 0; g < MAX_GROUND; g++) {
     const GroundItem& gi = groundItems[g];
     if (!gi.itemType) continue;
-    pos = appendFmt(buf, cap, pos, "%s{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d,\"d\":%u}",
+    pos = appendFmt(buf, cap, pos, "%s{\"g\":%d,\"q\":%d,\"r\":%d,\"id\":%d,\"n\":%d,\"d\":%u%s}",
                     first ? "" : ",", g, (int)gi.q, (int)gi.r,
-                    (int)gi.itemType, (int)gi.qty, (unsigned)gi.day);
+                    (int)gi.itemType, (int)gi.qty, (unsigned)gi.day,
+                    gi.depth ? ",\"dp\":1" : "");
     first = false;
   }
   pos = appendFmt(buf, cap, pos, "],\"rm\":[");
@@ -1105,7 +1335,7 @@ static int appendGroundArrays(char* buf, size_t cap, int pos) {
 // q/r is the hex that changed (-1,-1 for a map-wide change); `why` marks the
 // updates worth a line in the log: "fell" (pid's survivor went down there)
 // and "aged" (the dawn sweep reclaimed something).
-static constexpr size_t GROUND_UPD_CAP = 4608;
+static constexpr size_t GROUND_UPD_CAP = 5120;   // was 4608 -- tunnel piles' "dp" took the headroom
 static int buildGroundUpdate(char* buf, size_t cap, int q, int r, const char* why, int pid) {
   int pos = appendFmt(buf, cap, 0, "{\"t\":\"ground_update\",\"q\":%d,\"r\":%d,", q, r);
   if (why) pos = appendFmt(buf, cap, pos, "\"why\":\"%s\",\"pid\":%d,", why, pid);
@@ -1170,8 +1400,13 @@ static void executeTrade(int fromPid, int toPid, const TradeOffer& offer) {
   }
 }
 
+// Every new survivor's pack also holds this many Trauma Patches (handleMsg_pick).
+static constexpr uint8_t ITEM_TRAUMA_PATCH = 1;   // data/items.cfg
+static constexpr uint8_t START_PATCHES     = 2;
+
 // Grants one random tradeable item (qty 1) to the first free inventory slot.
-// Call once for standard survivors, twice for Mule/Quartermaster.
+// handleMsg_pick calls it twice, three times for the Quartermaster, five for
+// the Mule.
 // trade = no is the pool filter, not just category != key: it also keeps out
 // the recipe-only outputs items.cfg says never drop (Raft, Backpack, Canteen,
 // the concoctions) and the Null Meridian instruments -- a survivor starting
@@ -1197,12 +1432,16 @@ static void grantRandomStartItem(Player& p) {
 // pack, equipment, wounds, AP, and the starting resource kit.  Position, name,
 // score, steps, and connection fields are left to the caller.
 //
-// The starting kit must fit under the archetype's pack size, otherwise the
-// survivor spawns encumbered and collectResource() refuses every pickup.
-//   standard  : 2 water, 1 food, 1 fuel, 1 med, 1 scrap  = 6 of 8
-//   Quarterm. : +1 food                                 = 7 of 8
-//   Medic     : +1 med                                  = 7 of 8
-//   Mule      : +1 food, +1 med, +1 scrap                = 9 of 12
+// The starting kit fills the archetype's pack exactly: the role's tokens,
+// then water up to the pack size. One more and the survivor spawns
+// encumbered; a full pack means collectResource() refuses pickups until
+// something is used.
+//   standard  : 4 water, 1 food, 1 fuel, 1 med, 1 scrap  = 8 of 8
+//   Quarterm. : 3 water, +1 food                        = 8 of 8
+//   Medic     : 3 water, +1 med                         = 8 of 8
+//   Mule      : 5 water, +1 food, +1 med, +1 scrap       = 12 of 12
+// Mirrored by archKit() in data/game-data.js and ARCHETYPE_KIT in
+// mock-server/server.js.
 static void resetSurvivor(Player& p, uint8_t arch) {
   if (arch >= NUM_ARCHETYPES) arch = 0;
   p.archetype = arch;
@@ -1214,15 +1453,21 @@ static void resetSurvivor(Player& p, uint8_t arch) {
   if (arch == 1) { p.inv[1]++; }
   if (arch == 2) { p.inv[3]++; }
   if (arch == 3) { p.inv[1]++; p.inv[3]++; p.inv[4]++; }
+  // Top up to a full pack with water. p.invSlots, not effectiveInvSlots():
+  // the equipment that could add to it is wiped below.
+  int kit = 0;
+  for (int k = 0; k < 5; k++) kit += p.inv[k];
+  if (kit < (int)p.invSlots) p.inv[0] = (uint8_t)(p.inv[0] + p.invSlots - kit);
 
   memset(p.invType,     0, sizeof(p.invType));
   memset(p.invQty,      0, sizeof(p.invQty));
   memset(p.equip,       0, sizeof(p.equip));
   memset(p.surveyedMap, 0, sizeof(p.surveyedMap));
   memset(p.wounds,      0, sizeof(p.wounds));
-  // Fresh survivor: the common know-how only, even if this slot held someone
-  // else before. Everything past that is earned from encounters.
-  p.knownRecipes = starterRecipeMask();
+  // Fresh survivor: the common know-how plus their trade's own (recipes.cfg
+  // `known_by` -- the Medic's medicine), even if this slot held someone else
+  // before. Everything past that is earned from encounters.
+  p.knownRecipes = starterRecipeMask() | archRecipeMask(arch);
 
   p.ll = 7; p.food = 6; p.water = 6; p.radiation = 0;
   p.llCapPenalty = 0;

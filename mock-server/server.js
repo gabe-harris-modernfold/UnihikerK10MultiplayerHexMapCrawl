@@ -73,6 +73,12 @@ const VARIANT_COUNTS = scanVariantCounts();
 const resources = {};
 const RESPAWN_TICKS = 8;       // ~8 seconds (1 tick/sec)
 const RES_MAX_TYPE  = 5;
+// Food is the only free pile on the surface (the forage animals); only a hex
+// that lost food grows anything back. Mirrors terrainGrowsFood() /
+// respawnTicksFor() in hex-map.hpp.
+const RES_FOOD = 2;
+const growsFood = (t) => t === 0 || t === 2 || t === 3 || t === 9;
+const respawnTicksFor = (res) => (res === RES_FOOD ? RESPAWN_TICKS : 0);
 
 // ── Build a fully-revealed map with sprinkled features ──────────────────────
 // 6 hex chars per cell: TT (terrain) DD (data: footprints/shelter/poi) VV (resource/variant)
@@ -84,10 +90,9 @@ function buildMap() {
       const tt  = idx % 11;                              // terrain 0..10
       let   dd  = 0;
       let   vv  = 0;
-      if (idx % 17 === 0) {
-        const rType = (idx % 5) + 1;                     // 1..5
-        vv = (rType << 4) | (idx & 0x0F);
-        resources[`${c}_${r}`] = { res: rType, amt: 2 + (idx % 2), respawnTimer: 0 };
+      if (idx % 17 === 0 && growsFood(tt)) {             // food only, as the firmware
+        vv = (RES_FOOD << 4) | (idx & 0x0F);
+        resources[`${c}_${r}`] = { res: RES_FOOD, amt: 2 + (idx % 2), respawnTimer: 0 };
       }
       if (idx % 31 === 7) dd |= 0x80;                    // POI
       if (idx % 23 === 3 && tt !== 9) dd |= 0x40;        // shelter (never on a Settlement)
@@ -114,7 +119,19 @@ const terrainOverrides = new Map();
 const variantOverrides = new Map();
 function variantFor(c, r, baseIdx) {
   const ov = variantOverrides.get(`${c}_${r}`);
-  return ov === undefined ? (baseIdx & 0x0F) : ov;
+  if (ov !== undefined) return ov;
+  // Rust Forest's cells from 6 up are pinned art (encounter pins, the oasis
+  // group; LANDMARKS in scripts/hex_sheets.py) and the client draws a pinned
+  // variant before its pool, so a raw pseudo-variant would scatter them over
+  // every wood. Deal from the pool instead, as pickVariant() does.
+  const n = VARIANT_COUNTS.vc[2];
+  if (n && (parseInt(MAP_HEX.substr(baseIdx, 2), 16) & 0x0F) === 2 && !terrainOverrides.has(`${c}_${r}`)) {
+    // weight (n-i)^2, like pickVariant(), by a stable hash of the cell
+    let h = Math.imul((baseIdx / 6) ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
+    h = ((h ^ (h >>> 13)) >>> 0) % (n * (n + 1) * (2 * n + 1) / 6);
+    for (let i = 0; i < n; i++) { h -= (n - i) * (n - i); if (h < 0) return i; }
+  }
+  return baseIdx & 0x0F;
 }
 // Hexes a vehicle has driven through ("q_r") — the caravan (every step) or a
 // player riding items.cfg "tracks"-flagged gear (the Motorbike) — mirrors
@@ -240,11 +257,18 @@ function buildVisDisk(pq, pr, vr, pid) {
 // Just the outer ring of buildVisDisk() -- buildSurveyDisk() in hex-map.hpp.
 // `ring` is already visR + 1.
 function buildSurveyRing(pq, pr, ring, pid) {
+  return buildSurveyBand(pq, pr, ring - 1, ring, pid);
+}
+
+// Every cell with inner < distance <= outer: buildSurveyBand() in hex-map.hpp.
+// SURVEY's ring is (visR, visR + 1); a reveal item's band (visR, visR + param).
+// (No resource masking: the mock does not model TERRAIN_VIS.)
+function buildSurveyBand(pq, pr, inner, outer, pid) {
   let cells = '';
-  for (let dr = -ring; dr <= ring; dr++) {
-    for (let dq = -ring; dq <= ring; dq++) {
-      const s = -(dq + dr);
-      if ((Math.abs(dq) + Math.abs(dr) + Math.abs(s)) / 2 !== ring) continue;
+  for (let dr = -outer; dr <= outer; dr++) {
+    for (let dq = -outer; dq <= outer; dq++) {
+      const n = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+      if (n <= inner || n > outer) continue;
       const cq = ((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
       const cr = ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
       const baseIdx = (cr * MAP_COLS + cq) * 6;
@@ -276,12 +300,29 @@ function trailRecsAt(q, r) {
 }
 // ring: only cells exactly that far out (buildSurveyDisk); else the whole disk.
 function buildTrailDisk(pq, pr, vr, ring = false) {
+  return buildTrailBand(pq, pr, ring ? vr - 1 : -1, vr);
+}
+function buildTrailBand(pq, pr, inner, outer) {
   let out = '';
-  for (let dr = -vr; dr <= vr; dr++) {
-    for (let dq = -vr; dq <= vr; dq++) {
+  for (let dr = -outer; dr <= outer; dr++) {
+    for (let dq = -outer; dq <= outer; dq++) {
       const n = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-      if (ring ? n !== vr : n > vr) continue;
+      if (n <= inner || n > outer) continue;
       out += trailRecsAt(((pq + dq) % MAP_COLS + MAP_COLS) % MAP_COLS, ((pr + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS);
+    }
+  }
+  return out;
+}
+
+// The Pre-War Net Map's whole-map terrain: buildTerrainReveal() in hex-map.hpp.
+// 2 hex chars a cell, terrain << 4 | art variant, row-major.
+function buildTerrainReveal() {
+  let out = '';
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let q = 0; q < MAP_COLS; q++) {
+      const baseIdx = (r * MAP_COLS + q) * 6;
+      out += (terrainAt(q, r) & 0x0F).toString(16).toUpperCase() +
+             (variantFor(q, r, baseIdx) & 0x0F).toString(16).toUpperCase();
     }
   }
   return out;
@@ -303,6 +344,7 @@ const TUNNEL_MC = 2, VENT_ASCEND_AP = 2;
 const TUNNEL_REST_LL_PCT = 30;
 const TUNNEL_VIS_BASE = 1, TUNNEL_VIS_SCOUT = 1;
 const ITEM_BILE_FLARE = 54;
+const ITEM_BRIGHT_BAD_IDEA = 10;   // the road flare: ev "flare" to everyone when it goes up
 
 // tunnel[r][q] = { tt, res, amt, variant, poi, footprints }
 const tunnel = [];
@@ -739,16 +781,21 @@ function tunnelVis(p) {
   return vr;
 }
 
-// Surface sight. The mock does not model TERRAIN_VIS, the Scout bonus or
-// equipment reveal — but it DOES model the weather penalty, because that is
-// the one modifier big enough to zero the radius outright, and a flat vr: 4
-// hid a whole class of bug: anything gated on fog of war looked fine here and
-// vanished on the board the moment a storm rolled in. Table is verbatim from
-// WEATHER_VIS_PENALTY in Esp32HexMapCrawl.ino; the subtraction mirrors
-// playerVisParams() in hex-map.hpp. Like the firmware, this is only resampled
-// when a vis disk is sent (on move), so a phase change mid-stand doesn't
-// retroactively blind you until your next step.
-const SURFACE_VIS_BASE   = 4;
+// Surface sight. The mock does not model TERRAIN_VIS, the group bonus or
+// fire smoke; it does model the Scout's +2, gear with reveal_fog 1, and the
+// weather penalty -- that last because it is the one modifier big enough to
+// zero the radius outright, and a flat vr: 4 hid a whole class of bug:
+// anything gated on fog of war looked fine here and vanished on the board the
+// moment a storm rolled in. Table is verbatim from WEATHER_VIS_PENALTY in
+// Esp32HexMapCrawl.ino; the order and the VIS_R_MAX ceiling mirror
+// playerVisParams() in hex-map.hpp. Like the firmware, a weather change is
+// only picked up when a vis disk is next sent (on move), so a phase change
+// mid-stand doesn't retroactively blind you until your next step.
+// The base is VISION_R, the firmware's sight on Open Scrub (TERRAIN_VIS 0),
+// which is most of the map.
+const SURFACE_VIS_BASE   = 3;
+const VIS_R_MAX          = 9;
+const REVEAL_R_MAX       = 13;
 const WEATHER_VIS_PENALTY = [0, 1, 2, 3, 0, 2];
 function surfaceVis(p) {
   // equipVisionBonus before the weather penalty, same order as
@@ -757,7 +804,23 @@ function surfaceVis(p) {
   const gear = p ? equipVisionBonus(p) : 0;
   // Scout: +2 vision radius, applied before the weather penalty like the firmware.
   const scout = p && p.arch === 4 ? 2 : 0;
-  return Math.max(0, SURFACE_VIS_BASE + scout + gear - WEATHER_VIS_PENALTY[weatherPhase]);
+  return Math.min(VIS_R_MAX, Math.max(0, SURFACE_VIS_BASE + scout + gear - WEATHER_VIS_PENALTY[weatherPhase]));
+}
+
+// The one-shot reveal an item does on use, 0 if none: itemRevealParam().
+function itemRevealParam(def) {
+  if (!def) return 0;
+  if (def.effect  === 'reveal_fog' && def.param  >= 2) return def.param;
+  if (def.effect2 === 'reveal_fog' && def.param2 >= 2) return def.param2;
+  return 0;
+}
+// A pure reveal -- no stats, no other effect -- is refused underground:
+// itemRevealOnly() in inventory_items.hpp.
+function itemRevealOnly(def) {
+  if (!itemRevealParam(def)) return false;
+  const other = (fx) => fx && fx !== 'none' && fx !== 'reveal_fog';
+  if (other(def.effect) || other(def.effect2)) return false;
+  return !(def.food || def.water || def.ll || def.rad || def.ap);
 }
 
 function tunCellHex(q, r, pid) {
@@ -891,11 +954,12 @@ const ARCHETYPE_SKILLS = [
 const ARCHETYPE_INV_SLOTS = [8, 8, 8, 12, 8, 8];
 // Starting tokens (water, food, fuel, med, scrap) -- resetSurvivor() in
 // inventory_items.hpp: 2/1/1/1/1 for everyone, +1 food for the Quartermaster,
-// +1 med for the Medic, +1 food/med/scrap for the Mule. The lobby's pack
-// preview (SURVIVOR_KIT/kitBonus in game-data.js) shows the same numbers.
+// +1 med for the Medic, +1 food/med/scrap for the Mule, then water up to a
+// full pack. The lobby's pack preview (archKit() in game-data.js) shows the
+// same numbers.
 const ARCHETYPE_KIT = [
-  [2, 1, 1, 1, 1], [2, 2, 1, 1, 1], [2, 1, 1, 2, 1],
-  [2, 2, 1, 2, 2], [2, 1, 1, 1, 1], [2, 1, 1, 1, 1],
+  [4, 1, 1, 1, 1], [3, 2, 1, 1, 1], [3, 1, 1, 2, 1],
+  [5, 2, 1, 2, 2], [4, 1, 1, 1, 1], [4, 1, 1, 1, 1],
 ];
 const NUM_SKILLS     = 5;
 const WOUND_MAX_EACH = 3;
@@ -957,8 +1021,8 @@ function makePlayer(id) {
     // Bunker tunnels (tunnels.hpp): q/r above always stay on the surface,
     // pinned to the hatch this player descended through.
     dp: 0, tq: 0, tr: 0, hatchIdx: 0,
-    kr: STARTER_RECIPES,  // knownRecipes bitmask — bit (id-1) per known RecipeDef:
-                          // starter recipes from spawn, the rest via encounters
+    kr: STARTER_RECIPES | archRecipeMask(id),  // knownRecipes bitmask — bit (id-1) per known RecipeDef:
+                          // starter + this archetype's (known_by) from spawn, the rest via encounters
   };
 }
 
@@ -1006,6 +1070,7 @@ function loadItemRegistry() {
     else if (key === 'trade')    cur.trade   = /^(y|1)/i.test(val);    // caravan may stock it (consumables only)
     else if (key === 'value')    cur.value   = parseInt(val, 10) || 0;  // caravan asking price, tokens of any mix
     else if (key === 'tracks')   cur.tracks  = /^(y|1)/i.test(val);    // leaves a tire track when equipped and moved
+    else if (key === 'cursed')   cur.cursed  = /^(y|1)/i.test(val);    // never dropped, kept through a fall (the Cursed Note)
     // Daily operating costs, same order as inv[]: water, food, fuel, med, scrap.
     else if (key === 'water_cost') (cur.opCost ??= [0,0,0,0,0])[0] = parseInt(val, 10) || 0;
     else if (key === 'food_cost')  (cur.opCost ??= [0,0,0,0,0])[1] = parseInt(val, 10) || 0;
@@ -1167,6 +1232,19 @@ function loadRecipeRegistry() {
     else if (key === 'mat3')        cur.matItem[2] = parseInt(val, 10) || 0;
     else if (key === 'matqty3')     cur.matQty[2]  = parseInt(val, 10) || 0;
     else if (key === 'starter')     cur.starter    = /^(y|1)/i.test(val);   // known from spawn, no encounter
+    else if (key === 'output_res') {
+      // Token output (the Medic's Medicine): RES order, +1 so 0 = none.
+      const k = ['water', 'food', 'fuel', 'med', 'scrap'].findIndex(n => val.toLowerCase().startsWith(n));
+      if (k >= 0) cur.outputRes = k + 1;
+    }
+    else if (key === 'known_by') {
+      // Archetype names: those survivors spawn knowing it (archRecipeMask()).
+      cur.archMask = 0;
+      for (const tok of val.split(/[\s,]+/).filter(Boolean)) {
+        const a = ['guide', 'quartermaster', 'medic', 'mule', 'scout', 'endurer'].indexOf(tok.toLowerCase());
+        if (a >= 0) cur.archMask |= (1 << a);
+      }
+    }
     else if (key === 'water_cost')  cur.resCost[0] = parseInt(val, 10) || 0;
     else if (key === 'food_cost')   cur.resCost[1] = parseInt(val, 10) || 0;
     else if (key === 'fuel_cost')   cur.resCost[2] = parseInt(val, 10) || 0;
@@ -1206,6 +1284,11 @@ const RECIPE_DEFS = loadRecipeRegistry();
 // needs no encounter; everything else stays secret until one is banked.
 const STARTER_RECIPES = Object.values(RECIPE_DEFS).reduce(
   (m, r) => (r.starter && r.id >= 1 && r.id <= 32) ? (m | (1 << (r.id - 1))) : m, 0);
+// ...plus the ones their archetype knows (`known_by`) — archRecipeMask().
+function archRecipeMask(arch) {
+  return Object.values(RECIPE_DEFS).reduce(
+    (m, r) => ((r.archMask >> arch) & 1 && r.id >= 1 && r.id <= 32) ? (m | (1 << (r.id - 1))) : m, 0);
+}
 
 // Mirrors applyRecipe() in inventory_items.hpp: returns null on success, else
 // the same player-facing refusal string the firmware toasts. Resource and
@@ -1215,7 +1298,7 @@ const STARTER_RECIPES = Object.values(RECIPE_DEFS).reduce(
 // occupies a slot can still take the result there.
 function craftRecipe(p, recipeId) {
   const r = RECIPE_DEFS[recipeId];
-  if (!r || !r.outputItem) return 'No such recipe';
+  if (!r || (!r.outputItem && !r.outputRes)) return 'No such recipe';
   for (let i = 0; i < 5; i++) if (r.resCost[i] > (p.inv[i] || 0)) return 'Not enough resources for that recipe';
 
   const it = [...p.it], iq = [...p.iq];
@@ -1230,11 +1313,18 @@ function craftRecipe(p, recipeId) {
     }
     if (need > 0) return 'Missing materials for that recipe';
   }
-  if (invRoomFor(it, iq, effectiveInvSlots(p), r.outputItem) < r.outputQty) return 'No room in your pack for the result';
+  if (r.outputItem && invRoomFor(it, iq, effectiveInvSlots(p), r.outputItem) < r.outputQty) return 'No room in your pack for the result';
 
+  // Token output needs token room AFTER the cost is paid -- pay, check, undo.
+  const invBefore = p.inv.slice();
   for (let i = 0; i < 5; i++) p.inv[i] -= r.resCost[i];
+  if (r.outputRes && tokenRoomFor(p, r.outputRes - 1) < r.outputQty) {
+    for (let i = 0; i < 5; i++) p.inv[i] = invBefore[i];
+    return 'No room in your pack for the result';
+  }
   for (let s = 0; s < INV_SLOTS_MAX; s++) { p.it[s] = it[s]; p.iq[s] = iq[s]; }
-  addItemToInv(p, r.outputItem, r.outputQty);
+  if (r.outputItem) addItemToInv(p, r.outputItem, r.outputQty);
+  if (r.outputRes) p.inv[r.outputRes - 1] = Math.min(99, p.inv[r.outputRes - 1] + r.outputQty);
   return null;
 }
 
@@ -1246,20 +1336,28 @@ function craftRecipe(p, recipeId) {
 const MAX_GROUND      = 64;
 const GROUND_AGE_DAYS = 30;
 const MAX_REMAINS     = 12;
-const groundItems = Array.from({ length: MAX_GROUND }, () => ({ q: 0, r: 0, itemType: 0, qty: 0, day: 0 }));
+const groundItems = Array.from({ length: MAX_GROUND }, () => ({ q: 0, r: 0, itemType: 0, qty: 0, day: 0, dp: 0 }));
 // Where survivors fell and the resource tokens they were carrying — mirrors
 // Remains remainsTable[MAX_REMAINS]. Their items are ordinary piles above.
 const remainsTable = Array.from({ length: MAX_REMAINS }, () => ({ used: false }));
 
-// Age in days of something stamped `day`; the firmware's dayCount is a uint16.
-const groundAge = (day) => (dayCount - day) & 0xFFFF;
-const clearPile = (gi) => Object.assign(gi, { q: 0, r: 0, itemType: 0, qty: 0, day: 0 });
+// Age in days of something stamped `day` — mirrors groundAge(). dayCount goes
+// 365 -> 1 (DAYS_PER_YEAR), so ages are taken mod the year.
+const groundAge = (day) => (((dayCount - day) % DAYS_PER_YEAR) + DAYS_PER_YEAR) % DAYS_PER_YEAR;
+// Any day number folded onto 1..DAYS_PER_YEAR, residue kept.
+const dayFold = (d) => ((((d - 1) % DAYS_PER_YEAR) + DAYS_PER_YEAR) % DAYS_PER_YEAR) + 1;
+const clearPile = (gi) => Object.assign(gi, { q: 0, r: 0, itemType: 0, qty: 0, day: 0, dp: 0 });
 
+// "dp":1 marks a pile on the tunnel board (q/r are tunnel cells), as
+// appendGroundArrays() does; surface piles leave it out.
 function groundItemsList() {
   const out = [];
   for (let g = 0; g < MAX_GROUND; g++) {
     const gi = groundItems[g];
-    if (gi.itemType) out.push({ g, q: gi.q, r: gi.r, id: gi.itemType, n: gi.qty, d: gi.day });
+    if (!gi.itemType) continue;
+    const o = { g, q: gi.q, r: gi.r, id: gi.itemType, n: gi.qty, d: gi.day };
+    if (gi.dp) o.dp = 1;
+    out.push(o);
   }
   return out;
 }
@@ -1277,8 +1375,12 @@ function groundUpdateMsg(q, r, why, pid) {
   return m;
 }
 
-function groundHasAt(q, r) {
-  return groundItems.some((gi) => gi.itemType && gi.q === q && gi.r === r);
+// The cell p stands on and its board -- boardPos(): p.q/p.r stay pinned to the
+// hatch while below, so anything put down or picked up "here" asks this.
+const boardPos = (p) => (p.dp ? { q: p.tq, r: p.tr, dp: 1 } : { q: p.q, r: p.r, dp: 0 });
+
+function groundHasAt(q, r, dp = 0) {
+  return groundItems.some((gi) => gi.itemType && (gi.dp | 0) === dp && gi.q === q && gi.r === r);
 }
 function remainsIndexAt(q, r) {
   return remainsTable.findIndex((rm) => rm.used && rm.q === q && rm.r === r);
@@ -1290,34 +1392,39 @@ function remainsPrune(q, r) {
   if (remainsTable[i].res.some((n) => n > 0) || groundHasAt(q, r)) return;
   remainsTable[i].used = false;
 }
-// The pile of itemId at (q,r), else a free slot, else the oldest pile
-// elsewhere is reclaimed early. Mirrors groundSlotFor().
-function groundSlotFor(q, r, itemId) {
+// The pile of itemId at (q,r) on board dp, else a free slot, else the oldest
+// pile elsewhere is reclaimed early. Mirrors groundSlotFor().
+function groundSlotFor(q, r, itemId, dp) {
   let freeSlot = -1, oldest = -1;
   for (let g = 0; g < MAX_GROUND; g++) {
     const gi = groundItems[g];
     if (!gi.itemType) { if (freeSlot < 0) freeSlot = g; continue; }
-    if (gi.q === q && gi.r === r) { if (gi.itemType === itemId) return g; continue; }
+    if ((gi.dp | 0) === dp && gi.q === q && gi.r === r) { if (gi.itemType === itemId) return g; continue; }
     if (oldest < 0 || groundAge(gi.day) > groundAge(groundItems[oldest].day)) oldest = g;
   }
   if (freeSlot >= 0) return freeSlot;
   if (oldest < 0) return -1;
   const gone = groundItems[oldest];
-  console.log(`[ground] full: reclaimed item ${gone.itemType} x${gone.qty} at (${gone.q},${gone.r}) from day ${gone.day}`);
-  const { q: gq, r: gr } = gone;
+  console.log(`[ground] full: reclaimed item ${gone.itemType} x${gone.qty} at (${gone.q},${gone.r}) dp=${gone.dp | 0} from day ${gone.day}`);
+  const { q: gq, r: gr } = gone, surface = !gone.dp;
   clearPile(gone);
-  remainsPrune(gq, gr);
+  if (surface) remainsPrune(gq, gr);   // remains only ever lie up top
   return oldest;
 }
 // Mirrors groundPut(): stacking onto a pile restarts its age.
-function groundPut(q, r, itemId, qty) {
+function groundPut(q, r, itemId, qty, dp = 0) {
   if (!itemId || !qty) return false;
-  const g = groundSlotFor(q, r, itemId);
+  const g = groundSlotFor(q, r, itemId, dp);
   if (g < 0) return false;
   const gi = groundItems[g];
   if (gi.itemType !== itemId) gi.qty = 0;
-  Object.assign(gi, { q, r, itemType: itemId, qty: Math.min(255, gi.qty + qty), day: dayCount });
+  Object.assign(gi, { q, r, itemType: itemId, qty: Math.min(255, gi.qty + qty), day: dayCount, dp });
   return true;
+}
+// Mirrors groundPutHere(): the cell p is standing on, on their board.
+function groundPutHere(p, itemId, qty) {
+  const { q, r, dp } = boardPos(p);
+  return groundPut(q, r, itemId, qty, dp);
 }
 // Mirrors remainsFor(): join a record already on the hex, else a free one,
 // else reclaim the oldest (its tokens go; its piles stay, unmarked).
@@ -1341,6 +1448,7 @@ function dropRemains(p) {
   let piles = false;
   for (let s = 0; s < INV_SLOTS_MAX; s++) {
     if (!p.it[s]) continue;
+    if (ITEM_DEFS[p.it[s]]?.cursed) continue;   // stays in the pack: downPlayer carries it on
     groundPut(p.q, p.r, p.it[s], p.iq[s] || 1);
     p.it[s] = 0; p.iq[s] = 0;
     piles = true;
@@ -1441,6 +1549,66 @@ function trapTier(band, amount) {             // trapRollTier(): richness weight
   const roll = Math.random() * (wc + wm + wt);
   return roll < wc ? 0 : roll < wc + wm ? 1 : 2;
 }
+// ── Forest oasis (docs/forest-oasis.md) ────────────────────────────────────
+// placeForestOases() in hex-map.hpp, over the baked map. Five 7-hex groves:
+// a bed (8 root hollow / 9 den) ringed by canopy 10/11/12, stamped through
+// terrainOverrides + variantOverrides. The stripe map has no real forest, so
+// the "grow forest" path does most of the work here. A grove hex is terrain 2
+// with variant 8..12, exactly as the firmware reads it.
+const OASIS_V_HOLLOW = 8, OASIS_V_DEN = 9, OASIS_V_CANOPY = 10, OASIS_CANOPIES = 3, OASIS_COUNT = 5;
+const oasisCells = new Set();   // "q_r" of every grove hex
+const oases = [];               // [{ q, r }] centres, for the log and dbg_oasis
+function isOasis(q, r) { return oasisCells.has(`${q}_${r}`) && terrainAt(q, r) === 2; }
+const inOasis = (p) => !!p && !p.dp && isOasis(p.q, p.r);
+function placeOases() {
+  const MIN_GAP = 4, SPREAD_CAP = 14;
+  const wq = (q) => ((q % MAP_COLS) + MAP_COLS) % MAP_COLS, wr = (r) => ((r % MAP_ROWS) + MAP_ROWS) % MAP_ROWS;
+  // The firmware's ground (forest, or Scrub/Dunes/Hills to grow over) first.
+  // The stripe map never lines seven of those up, so a second pass takes any
+  // ground but a town, a hatch, a river or a crater -- mock only.
+  let strict = true;
+  const groundOk = (q, r) => {
+    const t = terrainAt(q, r);
+    const ok = strict ? (t === 0 || t === 1 || t === 2 || t === 7) : !(t === 9 || t === 10 || t === 11 || t === 12 || t === 13);
+    return ok && !hasPoi(q, r) && !hasShelter(q, r);
+  };
+  let grown = 0;
+  const flip = (Math.random() * 2) | 0;
+  while (oases.length < OASIS_COUNT) {
+    let best = -1, bq = -1, br = -1;
+    for (let r = 0; r < MAP_ROWS; r++) for (let q = 0; q < MAP_COLS; q++) {
+      let spread = SPREAD_CAP;
+      for (const o of oases) spread = Math.min(spread, hexDistWrap(q, r, o.q, o.r));
+      if (spread < MIN_GAP || !groundOk(q, r)) continue;
+      let forest = terrainAt(q, r) === 2 ? 1 : 0, ok = true;
+      for (let d = 0; d < 6 && ok; d++) {
+        const nq = wq(q + TUN_DQ[d]), nr = wr(r + TUN_DR[d]);
+        if (!groundOk(nq, nr)) ok = false; else if (terrainAt(nq, nr) === 2) forest++;
+      }
+      if (!ok) continue;
+      let depth = 0;
+      for (let dq = -2; dq <= 2; dq++) for (let dr = -2; dr <= 2; dr++)
+        if (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr) === 4 && terrainAt(wq(q + dq), wr(r + dr)) === 2) depth++;
+      const score = forest * 6 + depth + spread * 3 + ((Math.random() * 4) | 0);
+      if (score > best) { best = score; bq = q; br = r; }
+    }
+    if (best < 0 && strict) { strict = false; continue; }
+    if (best < 0) break;
+    const stamp = (q, r, v) => {
+      if (terrainAt(q, r) !== 2) { terrainOverrides.set(`${q}_${r}`, 2); grown++; }
+      variantOverrides.set(`${q}_${r}`, v);
+      oasisCells.add(`${q}_${r}`);
+    };
+    stamp(bq, br, ((oases.length + flip) & 1) ? OASIS_V_DEN : OASIS_V_HOLLOW);
+    const off = (Math.random() * OASIS_CANOPIES) | 0;
+    for (let d = 0; d < 6; d++)
+      stamp(wq(bq + TUN_DQ[d]), wr(br + TUN_DR[d]), OASIS_V_CANOPY + (off + d) % OASIS_CANOPIES);
+    oases.push({ q: bq, r: br });
+  }
+  console.log(`[oasis] ${oases.length} groves, ${grown} hexes grown to forest: ` +
+              oases.map((o) => `(${o.q},${o.r})${variantOverrides.get(`${o.q}_${o.r}`) === OASIS_V_DEN ? 'den' : 'hollow'}`).join(' '));
+}
+
 function placeTraps() {
   traps.clear();
   if (!TRAP_POOL || !(TRAP_POOL.count > 0)) { console.warn('[trap] no traps pool in index.json'); return; }
@@ -1458,6 +1626,7 @@ function placeTraps() {
   for (let r = 0; r < MAP_ROWS; r++) for (let q = 0; q < MAP_COLS; q++) {
     const t = terrainAt(q, r) & 0x0F;
     if (t === 9 || t === 10 || t === 11 || t === 12 || t === 13 || t === 15 || hasPoi(q, r)) continue;
+    if (isOasis(q, r)) continue;   // a grove is safe ground (traps.hpp)
     let band = 'open';
     if (t === 4) {
       let un = 0;
@@ -1557,8 +1726,11 @@ function resolveChoice(json, nodeKey, ci) {
     baseRisk: Math.max(0, Math.min(100, ch.base_risk ?? 50)),
     skill:    Math.max(0, Math.min(NUM_SKILLS - 1, ch.skill | 0)),
     reqItem:  Math.max(0, Math.min(255, ch.requires_item | 0)),
-    cost:     { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
-                water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0 },
+    spendItem: !!(ch.requires_item | 0) && ch.spends_item === true,
+    cost:    { ll: cost.ll | 0, rad: cost.radiation | 0, food: cost.food | 0,
+                water: cost.water | 0, scrap: cost.scrap | 0, med: cost.med | 0,
+                score: cost.score | 0 },   // points: RUNAWAY SCIENCE's currency
+    sure:    ch.sure === true,             // a price, not a gamble: never rolled
     nextKey, nextCanBank: true, nextTerminal: true, nextEscape: false, nextLights: false,
     loot: [0, 0, 0, 0, 0], items: [], lootTable: '', recipeId: 0,
     hazLL: 0, hazRad: 0, hazRes: [0, 0, 0, 0, 0], hazWMin: 0, hazWMaj: 0, hazEnds: false,
@@ -1594,6 +1766,8 @@ function resolveChoice(json, nodeKey, ci) {
     out.hazWMin = wroll(0);
     out.hazWMaj = wroll(1);
     out.hazEnds = !!haz.ends_encounter;
+    out.hazDsh  = haz.dshingus === true;   // the failure gives the Dshingus (dshingus.hpp)
+    out.hazSteal = (pen.steal | 0) > 0;     // Pinch lifts one thing (bonney.hpp)
   }
   return out;
 }
@@ -1604,33 +1778,82 @@ function openEncounter(ws, id, p, q, r, biome, encId, consumePoi, opts) {
   const trap = !!(opts && opts.trap), dp = opts && opts.dp ? 1 : 0;
   const kaneCh = (opts && opts.kane) | 0;   // a Machine Gun Kane chapter, opened on arrival (kaneOpen)
   const vacPart = (opts && opts.vac) | 0;   // a VACANCY part, opened on arrival (vacOpen)
+  const labPart = (opts && opts.lab) | 0;   // a RUNAWAY SCIENCE part, opened on arrival (labOpen)
+  const bonSec  = (opts && opts.bonney) | 0;   // a ONE-HAND BONNEY section, opened at her fire (bonOpen)
   const json = loadEncounterJson(biome, encId);
   if (!json) { if (!trap) send(ws, { t: 'err', msg: 'The way in is blocked' }); return false; }
   if (consumePoi) consumedPoi.add(`${q}_${r}`);
-  if (!trap && !kaneCh && !vacPart && threatClock < 20) threatClock++;
+  if (!trap && !kaneCh && !vacPart && !labPart && !bonSec && threatClock < 20) threatClock++;
   const startKey = json.nodes?.[json.start_node] ? json.start_node : Object.keys(json.nodes ?? {})[0];
   const start = json.nodes?.[startKey];
-  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws, kane: kaneCh, vac: vacPart,
+  encounters[id] = { q, r, dp, biome, encId, json, nodeKey: startKey, trap, ws, kane: kaneCh, vac: vacPart, lab: labPart,
+                     bonney: bonSec, bonStole: 0, bonApple: (opts && opts.apple) | 0, bonFrom: opts?.from ?? 255,
                      canBank: !!start?.can_bank, escape: !!start?.escape,
                      pendingLoot: [0, 0, 0, 0, 0], pendingItems: [], pendingRecipes: 0,
                      fullClear: !(Array.isArray(start?.choices) && start.choices.length),
                      assist: 0 };   // bit per seat: allies backing the next roll (encAssist)
   p.enc = true;
+  // dbg_drop_enc_path: lose this one, as a full send queue on the board can.
+  if (dropNextEncPath) { dropNextEncPath = false; console.log(`[enc] dbg: dropped the enc_path for pid=${id}`); }
+  else send(ws, encPathMsg(id, false));
   if (kaneCh) {
-    send(ws, { t: 'enc_path', biome, id: encId, kane: kaneCh });
     broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, kane: kaneCh });
   } else if (vacPart) {
-    send(ws, { t: 'enc_path', biome, id: encId, vac: vacPart });
     broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, vac: vacPart });
+  } else if (labPart) {
+    broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, dp: 1, lab: labPart });
+  } else if (bonSec) {
+    const e = encounters[id], own = e.bonApple && e.bonFrom === id ? 1 : 0;
+    broadcast({ t: 'ev', k: 'enc_start', pid: id, q, r, bonney: bonSec, apple: e.bonApple, own });
   } else {
-    send(ws, trap ? { t: 'enc_path', biome, id: encId, trap: 1 } : { t: 'enc_path', biome, id: encId });
-    broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 } : { t: 'ev', k: 'enc_start', pid: id, q, r });
+    // "dp" for a tunnel panel too, as handleMsg_enc_start sends it: without it
+    // every client cleared the surface hex sharing the panel's coordinates.
+    broadcast(trap ? { t: 'ev', k: 'enc_start', pid: id, q, r, dp, trap: 1 }
+                   : { t: 'ev', k: 'enc_start', pid: id, q, r, ...(dp ? { dp: 1 } : {}) });
   }
   console.log(`[enc] start pid=${id} ${biome}/${encId}.json node=${startKey}`);
   return true;
 }
+
+// The enc_path for seat id's scene -- encPathJson() in encounter_engine.hpp.
+// `resume`: the scene is under way and the client lost it, so it also says
+// where it is and what is on the tray (PROTO 16).
+function encPathMsg(id, resume) {
+  const e = encounters[id];
+  if (!e) return null;
+  const m = { t: 'enc_path', biome: e.biome, id: e.encId };
+  if      (e.trap)   m.trap = 1;
+  else if (e.kane)   m.kane = e.kane;
+  else if (e.vac)    m.vac = e.vac;
+  else if (e.lab)    m.lab = e.lab;
+  else if (e.bonney) { m.bonney = e.bonney; m.apple = e.bonApple; m.own = e.bonApple && e.bonFrom === id ? 1 : 0; }
+  if (resume) {
+    let as = 0;
+    for (let a = 0; a < 6; a++) if ((e.assist | 0) & (1 << a)) as++;
+    Object.assign(m, { rs: 1, node: e.nodeKey, tm: e.fullClear ? 1 : 0, pl: [...e.pendingLoot],
+                       pi: e.pendingItems.slice(0, 3).map(it => [it.it, it.iq]), pr: e.pendingRecipes >>> 0, as });
+  }
+  return m;
+}
+
+// Every file of a pool, starting at `want`, until one loads --
+// encOpenPoolFile(): a place is not a promise of one file.
+function loadPoolEncounter(pool, want) {
+  const n = pool?.count | 0;
+  if (!n) return null;
+  if (want < 1 || want > n) want = 1;
+  for (let k = 0; k < n; k++) {
+    const encId = ((want - 1 + k) % n) + 1;
+    if (loadEncounterJson(pool.path, encId)) {
+      if (k) console.warn(`[enc] ${pool.path}/${want}.json would not load, opened ${encId}`);
+      return encId;
+    }
+  }
+  return null;
+}
 let   threatClock = 0;
 let   forcedOutcome = null;   // dbg_force: null | 0 | 1 — overrides the next roll
+let   dropNextEncPath = false;   // dbg_drop_enc_path: the next scene opens without telling its client
 
 // The terrain id alone. ttFor() builds the wire TT byte, which carries the
 // tire-track flag in bit 7, and this used to return that byte whole -- so any
@@ -1664,6 +1887,7 @@ const d6 = () => 1 + Math.floor(Math.random() * 6);
 // to exercise REST end-to-end. Weather is a simplified 3-roll cycle, not the
 // firmware's full Markov chain with bad-weather-streak capping.
 const DAY_TICKS  = 3000;  // TICK_MS(100) x 3000 = 5 min/day, matches firmware
+const DAYS_PER_YEAR = 365; // dayCount runs 1..365, then day 1 again — matches firmware
 const TICK_MS    = 100;
 const LL_CAP     = 7;     // effectiveMaxLL() base cap — mock has no equip stat mods
 const TERRAIN_SV = [0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 0]; // mirrors TERRAIN_SV[] in Esp32HexMapCrawl.ino
@@ -1671,6 +1895,7 @@ const WEATHER_NAMES = ['CLEAR', 'RAIN', 'STORM', 'CHEM', 'STRANGLE FOG', 'FOG'];
 
 let dayTick      = 0;
 let dayCount     = 0;
+let tickId       = 0;   // monotonic, unlike dayCount (it wraps at DAYS_PER_YEAR)
 let weatherPhase = 0;
 
 function hasShelter(q, r) {
@@ -1726,12 +1951,16 @@ function healWound(p, tier) {
 // then resets each player's resting flag and refills AP, and emits a proper
 // EVT_DAWN-shaped event so the client's day counter / toast / REST button reset.
 function dawnUpkeepAll() {
-  dayCount++;
+  dayCount = dayCount >= DAYS_PER_YEAR ? 1 : dayCount + 1;   // 365 -> day 1
   if (threatClock > 0) threatClock--;
   advanceWeather();
   // VACANCY: another house checks in. The mock only runs days with somebody
   // connected, so every dawn here is a watched one (vacDawn(connCount > 0)).
   vacDawn();
+  // RUNAWAY SCIENCE: Gaunt may call again, and a lost part grows back (labDawn()).
+  labDawn();
+  // ONE-HAND BONNEY: run off yesterday, her fire is lit near another town (bonneyDawn()).
+  bonDawn();
 
   for (const idStr of Object.keys(players)) {
     const id = Number(idStr);
@@ -1742,6 +1971,9 @@ function dawnUpkeepAll() {
     // Settlement flag — food/water consumption exemption removed; still used
     // below to guarantee the rest-recovery heal regardless of supply levels.
     const inSettlement = terrainAt(p.q, p.r) === 9;
+    // A forest oasis rests like a Settlement: cover, and the heal whatever
+    // the tracks say. Food and water are still eaten (survival_state.hpp).
+    const oasis = inOasis(p);
 
     // Equipment radiation delta at dawn (Glow Suit -1, Lead Snuggie -5).
     // Signed, matching items.cfg and survival_state.hpp.
@@ -1764,7 +1996,7 @@ function dawnUpkeepAll() {
     // be exposed to, and q/r stay pinned to the hatch down there, so without
     // it this reads the surface hex and the answer depends on whether the
     // survivor happened to descend through an Entrance (SV 2) or a Vent (SV 0).
-    const covered  = hasShelter(p.q, p.r) || sv >= 2 || !!p.dp;
+    const covered  = hasShelter(p.q, p.r) || sv >= 2 || !!p.dp || oasis;
     // Bite of 2, mirrors EXPOSURE_BITE in survival_state.hpp — safe only
     // because exposure can no longer take the last point (see below).
     const EXPOSURE_BITE = 2;
@@ -1801,7 +2033,7 @@ function dawnUpkeepAll() {
     // see survival_state.hpp.
     // Ceiling is the survivor's own, not the bare LL_CAP: +LL gear raises it.
     const llCap = effectiveMaxLL(p);
-    const restedWell = !!p.rt && ((p.food >= 2 && p.water >= 2) || inSettlement);
+    const restedWell = !!p.rt && ((p.food >= 2 && p.water >= 2) || inSettlement || oasis);
     if (restedWell && p.ll < llCap) state.llDelta += (p.ll <= 2) ? (EXPOSURE_BITE + 1) : 1;
     if (restedWell) healWound(p, 0);
 
@@ -1850,7 +2082,10 @@ function dawnUpkeepAll() {
   }
   // Piles and remains GROUND_AGE_DAYS old go back to the dust — mirrors the
   // groundAgeOut() call in tickGame()'s dawn block.
-  if (groundAgeOut()) broadcast(groundUpdateMsg(-1, -1, 'aged'));
+  // Then the ghosts GHOST_DAYS old fade and leave what they took (ghostDawn()).
+  const aged = groundAgeOut();
+  if (ghostDawn() || aged) broadcast(groundUpdateMsg(-1, -1, 'aged'));
+  dshDawn();   // a day off every Dshingus count; old spots dry up
   broadcast(stateMsg());
 }
 
@@ -2127,6 +2362,7 @@ function fogTick(connected) {
     if (p.ll === 0) continue;
     const t = terrainAt(p.q, p.r);
     if (t === 9 || t === 4) continue; // Settlement, Broken Urban — immune
+    if (inOasis(p)) continue;         // and the canopy: no AP, no LL
     let apProb = (FOG_INTENSITY[t] ?? 0) * FOG_AP_TICK_RATE;
     let llProb = (FOG_INTENSITY[t] ?? 0) * FOG_LL_TICK_RATE;
     if (hasShelter(p.q, p.r)) { apProb *= 0.5; llProb *= 0.5; }
@@ -2161,6 +2397,7 @@ setInterval(() => {
   const connected = Object.values(players);
   if (connected.length === 0) return; // nobody connected — don't burn days
   dayTick++;
+  tickId++;
   const allResting = connected.every((p) => p.rt);
   if (dayTick >= DAY_TICKS || allResting) {
     dayTick = 0;
@@ -2209,6 +2446,7 @@ setInterval(() => {
     resolveCaravanProximity(surface);
     tickKane(surface);   // asks, fires, drives on, camps at dusk -- after the caravan, as tickGame() does
     tickVacancy();       // a quake got to the town first (tickVacancy())
+    if (!ghostHold) tickGhosts();   // ghosts ride, drift, take hold and feed (tickGhosts())
     // Firmware's broadcastState() runs unconditionally every game tick (see
     // game-server.hpp), so caravan movement is never stale there. This mock
     // only broadcasts opportunistically (from message handlers) otherwise,
@@ -2235,7 +2473,9 @@ function encStart(ws, id, msg) {
   const p = players[id];
   if (!p) { send(ws, { t: 'enc_dbg', msg: 'no_slot' }); return; }
   const q = msg.q | 0, r = msg.r | 0;
-  if (encounters[id])            { send(ws, { t: 'err', msg: 'Already in an encounter — abort first' }); return; }
+  // Already inside one: the client lost it (dropped enc_path, hung fetch).
+  // Send it again, with its node and tray -- handleMsg_enc_start, PROTO 16.
+  if (encounters[id])            { send(ws, encPathMsg(id, true)); console.log(`[enc] pid=${id} already in a scene -- resent`); return; }
   if (p.ll === 0)                { send(ws, { t: 'err', msg: 'Cannot enter — you are downed' }); return; }
   if (p.dp) {
     // Underground: tunnel coordinates, the tunnel board's POI, and the file
@@ -2246,17 +2486,21 @@ function encStart(ws, id, msg) {
     if (Object.entries(encounters).some(([k, e]) => +k !== id && e.dp && e.q === q && e.r === r)) {
       send(ws, { t: 'err', msg: 'Another survivor is already inside' }); return;
     }
-    const tpool = ENC_INDEX[String(c.tt)];
-    if (!tpool || !tpool.count)  { send(ws, { t: 'err', msg: 'No encounters here' }); return; }
-    const encId = c.poi;
+    // Ground with no pool of its own draws from the tunnel's (handleMsg_enc_start).
+    let tpool = ENC_INDEX[String(c.tt)];
+    if (!tpool || !tpool.count) tpool = ENC_INDEX['14'];
+    const encId = loadPoolEncounter(tpool, c.poi);
+    if (!encId)                  { send(ws, { t: 'err', msg: 'The way in is blocked' }); return; }
     if (openEncounter(ws, id, p, q, r, tpool.path, encId, false, { dp: 1 })) c.poi = 0;
     return;
   }
   if (p.q !== q || p.r !== r)    { send(ws, { t: 'err', msg: 'Not at that hex' }); return; }
   if (!hasPoi(q, r))             { send(ws, { t: 'err', msg: 'Already looted' }); return; }
-  const pool = ENC_INDEX[String(terrainAt(q, r))];
-  if (!pool || !pool.count)      { send(ws, { t: 'err', msg: 'No encounters here' }); return; }
-  const encId = 1 + Math.floor(Math.random() * pool.count);
+  // ...and on the surface, from Open Scrub's.
+  let pool = ENC_INDEX[String(terrainAt(q, r))];
+  if (!pool || !pool.count) pool = ENC_INDEX['0'];
+  const encId = loadPoolEncounter(pool, 1 + Math.floor(Math.random() * (pool?.count | 0)));
+  if (!encId)                    { send(ws, { t: 'err', msg: 'The way in is blocked' }); return; }
   openEncounter(ws, id, p, q, r, pool.path, encId, true);
 }
 
@@ -2273,11 +2517,11 @@ function encEnd(id, reason) {
   if (e.trap) {
     if (reason === 'dawn' || reason === 'disconnect') trapSettle(e.ws, id, 'rearm');
     else if (reason === 'hazard' || reason === 'downed') trapSettle(e.ws, id, 'sprung');
-  } else if (e.dp) {
+  } else if (e.dp && !e.lab) {
     // A tunnel control panel is a fixture: it stays until its section is lit,
     // however the scene ended (endEncounter()).
     if (reason !== 'regen' && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
-  } else if (!e.kane && !e.vac && (reason === 'dawn' || reason === 'disconnect')) consumedPoi.delete(`${e.q}_${e.r}`);
+  } else if (!e.kane && !e.vac && !e.lab && !e.bonney && (reason === 'dawn' || reason === 'disconnect')) consumedPoi.delete(`${e.q}_${e.r}`);
   delete encounters[id];
   const p = players[id];
   if (p) p.enc = false;
@@ -2296,6 +2540,20 @@ function hasForChoice(p, itemId) {
   return p.it.some((t, i) => i < slots && t === itemId && p.iq[i] > 0);
 }
 
+// "spends_item": true beside it -- a trade that came off takes one out of the
+// pack. Mirrors spendItemForChoice(): never equipment, which the gate wants worn.
+function spendForChoice(p, itemId) {
+  const def = ITEM_DEFS[itemId];
+  if (!def || def.category === 'equipment') return false;
+  const slots = effectiveInvSlots(p);
+  for (let s = 0; s < slots; s++) {
+    if (p.it[s] !== itemId || !(p.iq[s] > 0)) continue;
+    if (--p.iq[s] === 0) p.it[s] = 0;
+    return true;
+  }
+  return false;
+}
+
 function encChoice(ws, id, m) {
   const p = players[id], e = encounters[id];
   if (!p || !e || p.ll === 0) return;
@@ -2306,8 +2564,9 @@ function encChoice(ws, id, m) {
   const c = ch.cost;
   const canAfford = p.ll >= c.ll && p.rad + c.rad <= 10 &&
                     p.inv[1] >= c.food && p.inv[0] >= c.water && p.inv[4] >= c.scrap &&
-                    p.inv[3] >= c.med;
+                    p.inv[3] >= c.med && (p.sc | 0) >= c.score;
   if (!canAfford) { send(ws, { t: 'err', msg: 'Cannot afford cost' }); return; }
+  if (c.score) p.sc = Math.max(0, (p.sc | 0) - c.score);   // points, spent (encRunChoice())
   p.ll     = Math.max(0, Math.min(7, p.ll - c.ll));
   p.rad    = Math.max(0, Math.min(10, p.rad + c.rad));
   p.inv[1] = Math.max(0, p.inv[1] - c.food);
@@ -2318,31 +2577,34 @@ function encChoice(ws, id, m) {
   const skill = ch.skill;
   // Allies who steadied this roll (encAssist below) -- spent here, hit or
   // miss. Mirrors encRunChoice() in network-msg-encounter.hpp.
-  const helpers = e.assist | 0;
+  // A "sure" choice is paid for, not rolled: it always goes through, and the
+  // help offered waits for the next roll that needs it.
+  const helpers = ch.sure ? 0 : e.assist | 0;
   let nHelp = 0;
   for (let a = 0; a < 6; a++) if (helpers & (1 << a)) nHelp++;
-  e.assist = 0;
-  const dn    = Math.max(2, computeDN(p, ch.baseRisk) - nHelp * ENC_ASSIST_DN);
+  if (!ch.sure) e.assist = 0;
+  const dn    = ch.sure ? 0 : Math.max(2, computeDN(p, ch.baseRisk) - nHelp * ENC_ASSIST_DN);
   // Mirrors checkSkillMod(): major wounds hit every skill, minor wounds hit
   // Endure only, and the Endurer (archetype 5) reads Endure 1 higher.
   let mod = -(p.wnd?.[1] ?? 0);
   if (skill === 4) { mod -= (p.wnd?.[0] ?? 0); if (p.arch === 5) mod += 1; }
-  let   tot   = d6() + d6() + (p.sk[skill] || 0) + mod;
-  if (forcedOutcome !== null) { tot = forcedOutcome ? dn : dn - 1; forcedOutcome = null; }
-  const ok    = tot >= dn;
+  let   tot   = ch.sure ? 0 : d6() + d6() + (p.sk[skill] || 0) + mod;
+  if (forcedOutcome !== null && !ch.sure) { tot = forcedOutcome ? dn : dn - 1; forcedOutcome = null; }
+  const ok    = ch.sure || tot >= dn;
   const ev    = { t: 'ev', k: 'enc_res', pid: id, out: ok ? 1 : 0, skill, dn, tot,
                   loot: [0, 0, 0, 0, 0], it: 0, iq: 0, it2: 0, iq2: 0, penLL: 0, penRad: 0,
                   penRes: [0, 0, 0, 0, 0], penWnd: [0, 0], ends: 0,
-                  as: nHelp, rec: 0, trap: e.trap ? 1 : 0 };
+                  as: nHelp, rec: 0, trap: e.trap ? 1 : 0, sure: ch.sure ? 1 : 0 };
   let ended = false;
+  let spent = false;
   // A roll that came off shares its credit with whoever backed it.
   if (ok) for (let a = 0; a < 6; a++)
     if ((helpers & (1 << a)) && players[a]?.on) players[a].sc += ENC_ASSIST_SCORE;
   if (ok) {
-    for (let i = 0; i < 5; i++) {
-      e.pendingLoot[i] = Math.min(99, e.pendingLoot[i] + ch.loot[i]);
-      ev.loot[i] = ch.loot[i];
-    }
+    // A trade: the gated item changes hands on the roll (encRunChoice()).
+    if (ch.spendItem) spent = spendForChoice(p, ch.reqItem);
+    const lootBefore = [...e.pendingLoot];
+    for (let i = 0; i < 5; i++) e.pendingLoot[i] = Math.min(99, e.pendingLoot[i] + ch.loot[i]);
     const items = [...ch.items];
     const rolled = ch.lootTable ? rollLootTable(ch.lootTable) : null;
     if (rolled) items.push(rolled);
@@ -2372,6 +2634,13 @@ function encChoice(ws, id, m) {
     // Likewise the town's and Check-Out's last node (vacPartRead); the desk
     // and the corridor count on the bank (vacOnBank).
     if (e.vac && ch.nextTerminal && !ch.nextEscape) vacPartRead(id, e, ch.nextKey);
+    // And the Graft's (labPartRead); the three buildings count on the bank (labOnBank).
+    if (e.lab && ch.nextTerminal && !ch.nextEscape) labPartRead(id, e, ch.nextKey);
+    // And each of Bonney's two sections: its "bonney_ending" (bonneySectionRead).
+    if (e.bonney && ch.nextTerminal && !ch.nextEscape) bonSectionRead(id, e, ch.nextKey);
+    // What the roll put on the tray, after the hooks: Bonney's real apple
+    // (bonSectionRead) included, or the client's keep[] trims it off.
+    for (let i = 0; i < 5; i++) ev.loot[i] = Math.max(0, e.pendingLoot[i] - lootBefore[i]);
     if (p.ll === 0) ended = true;
   } else {
     // A sprung trap is a spent trap: every trap hazard ends it, and it never
@@ -2395,10 +2664,14 @@ function encChoice(ws, id, m) {
       ev.penWnd[tier] = p.wnd[tier] - before;
     });
     if (ev.penWnd[1]) p.ap = Math.max(0, p.ap - ev.penWnd[1]);
+    if (ch.hazDsh) dshCatch(id, DSH_SRC_BAND);   // Dshinguest Ron's parting gift
+    if (ch.hazSteal && e.bonney) bonPinch(id, e);   // Bonney's other hand, in your pack
     ended = p.ll === 0 || ch.hazEnds;
   }
-  console.log(`[enc] choice pid=${id} skill=${skill} dn=${dn} tot=${tot} ok=${ok} ends=${ended}`);
+  console.log(`[enc] choice pid=${id} skill=${skill} dn=${dn} tot=${tot} ok=${ok} ends=${ended}${spent ? ` spent=${ch.reqItem}` : ''}`);
   broadcast(ev);
+  // The pack changed: owed a targeted item_result, as handleMsg_enc_choice sends.
+  if (spent) send(ws, { t: 'item_result', ok: true, act: 'enc_spend', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
   if (ended) {
     if (p.ll === 0) downPlayer(p);
     encEnd(id, p.ll === 0 ? 'downed' : 'hazard');
@@ -2468,11 +2741,14 @@ function encBank(ws, id, m) {
     broadcast(stateMsg());
     return;
   }
+  // A ghost riding them takes its third of the haul on the way out (handleMsg_enc_bank).
+  total = 0;
+  for (let i = 0; i < 5; i++) { e.pendingLoot[i] = ghostTithe(id, i, e.pendingLoot[i]); total += e.pendingLoot[i]; }
   for (let i = 0; i < 5; i++) p.inv[i] = Math.min(99, p.inv[i] + e.pendingLoot[i]);
   const hadItems = e.pendingItems.length > 0;
   let spilled = false;
   for (const { it, iq } of e.pendingItems) spilled = grantItemOrDrop(p, it, iq) || spilled;
-  if (spilled) broadcast(groundUpdateMsg(p.q, p.r));   // mirrors handleMsg_enc_bank
+  if (spilled) { const b = boardPos(p); broadcast(groundUpdateMsg(b.q, b.r)); }   // mirrors handleMsg_enc_bank
   p.kr = (p.kr | 0) | (e.pendingRecipes | 0);
   const scoreD = total * 3 + ((e.fullClear && !e.escape) ? 10 : 0);   // an escape node is a way out, not a clear
   p.sc += scoreD;
@@ -2484,18 +2760,28 @@ function encBank(ws, id, m) {
   if (hadItems) send(ws, { t: 'item_result', ok: true, act: 'enc_bank', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
   if (e.trap) trapSettle(ws, id, 'spent');   // taking the bait is what disarms it
   // A panel banked short of its switch is still a panel (handleMsg_enc_bank).
-  if (e.dp && !e.trap && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
+  if (e.dp && !e.trap && !e.lab && tunnelPanelDark(e.q, e.r) && !tunnel[e.r][e.q].poi) tunnel[e.r][e.q].poi = e.encId;
   // The front desk or the corridor: done once its item is out in the world (vacOnBank).
   if (e.vac) vacOnBank(id, e);
+  if (e.lab) labOnBank(id, e);   // likewise a clinic building
   delete encounters[id];
   p.enc = false;
   broadcast(stateMsg());
   console.log(`[enc] bank pid=${id} loot=${JSON.stringify(e.pendingLoot)} +${scoreD}`);
 }
 
-function encAbort(id, ws) {
+function encAbort(id, ws, m) {
   const e = encounters[id];
   if (!e) return;
+  // {"t":"enc_abort","lf":1}: the scene never loaded on that screen. As
+  // handleMsg_enc_abort: the place stays and the clock holds, as for a
+  // dropped socket. (A trap still takes the escape roll, below.)
+  if (m?.lf && !e.trap) {
+    encEnd(id, 'abort');
+    if (!e.kane && !e.vac && !e.lab && !e.bonney && !e.dp) consumedPoi.delete(`${e.q}_${e.r}`);
+    broadcast(stateMsg());
+    return;
+  }
   if (e.trap) {
     // handleMsg_enc_abort: no walking away from a trap. Past the mechanism
     // (a cache) or out the escape door, you leave with nothing and it stays
@@ -2508,7 +2794,7 @@ function encAbort(id, ws) {
     broadcast(stateMsg());
     return;
   }
-  if (!e.kane && !e.vac && threatClock < 20) threatClock++;   // nobody chose to walk into Kane's story, or under the sign
+  if (!e.kane && !e.vac && !e.lab && !e.bonney && threatClock < 20) threatClock++;   // nobody chose to walk into Kane's story, under the sign, into Gaunt's clinic, or into Bonney's firelight
   encEnd(id, 'abort');
   broadcast(stateMsg());
 }
@@ -2612,6 +2898,21 @@ function stateView(pid) {
   return { pid, name: p.name, q: p.q, r: p.r, visR, cells };
 }
 
+// The 19 hexes within 2 of a survivor, as game-server.hpp's "near": row by
+// row like the view, flat triples terrain, variant, shelter | 4 if a POI.
+// What the observer's per-survivor panels are drawn from.
+function stateNear(p) {
+  const out = [];
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dq = -2; dq <= 2; dq++) {
+      if (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr) > 4) continue;
+      const c = stateViewCell(p, dq, dr);
+      out.push(c.terrain, c.variant | 0, (c.shelter & 3) | (c.poi ? 4 : 0));
+    }
+  }
+  return out;
+}
+
 // An empty slot still serialises, same as the firmware's fixed players[6] —
 // the observer needs to watch a slot go quiet, not have it vanish from the array.
 function stateEmptyPlayer(i) {
@@ -2640,6 +2941,7 @@ function statePlayer(i) {
     invSlots: p.is, invSlotsEff: effectiveInvSlots(p),
     equip: p.eq.slice(),
     q: p.q, r: p.r,
+    near: stateNear(p),
     ll: p.ll, food: p.food, water: p.water, rad: p.rad, ap: p.ap,
     wounds: p.wnd.slice(),
     resting: !!p.rt, radClean: false,
@@ -2678,7 +2980,7 @@ function handleState(req, res) {
     }
   }
   const body = {
-    day: dayCount, dayTick, tickId: dayCount * DAY_TICKS + dayTick, tc: threatClock,
+    day: dayCount, dayTick, tickId, tc: threatClock,
     weather: weatherPhase, wt: uptimeMs(), connected: Object.keys(players).length,
     evtQueue: 0,
     // The heap telemetry has no meaning offline, but the observer graphs
@@ -2694,6 +2996,10 @@ function handleState(req, res) {
     // Machine Gun Kane: the same object sync and the tick broadcast carry (game-server.hpp).
     kane: kaneWire(),
     vac: vacWire(),     // VACANCY, likewise
+    lab: labWire(),     // RUNAWAY SCIENCE, likewise
+    bon: bonWire(),     // ONE-HAND BONNEY, likewise
+    ghosts: ghostWire(),   // wasteland ghosts, likewise
+    dsh: dshWire(true),    // the Dshingus: counts and spots, as sync carries them
     map: {
       cells: MAP_ROWS * MAP_COLS,
       shelters, impShelters, pois: poiCount,
@@ -2762,9 +3068,113 @@ const wifiLinkMsg = () => ({
 
 // ── Direction deltas (approximate — "mostly works") ─────────────────────────
 // Buttons: 0=SE 1=NE 2=N 3=NW 4=SW 5=S
-// Which inv[] slot each action fills (ACT_* -> RES_*). FORAGE pays food,
-// WATER pays water, SCAV pays scrap; the rest pay nothing here.
-const ACT_RESOURCE = { 0: 1, 1: 0, 3: 4 };
+// ── FORAGE / WATER / SCAVENGE ───────────────────────────────────────────────
+// Mirrors doForage / doWater / doScav (actions_game_loop.hpp) and the terrain
+// tables in Esp32HexMapCrawl.ino. These used to be one generic branch: spend
+// msg.ap (or 1) AP, get one token -- no roll, no terrain or AP check, and no
+// act event, so the client never logged a result and the mock's economy was
+// nothing like the board's (FORAGE there is 2 AP for 2-3 food on a roll).
+const GATHER_ACTS = new Set([0, 1, 3]);
+const TERRAIN_FORAGE_DN  = [7,0,6,8,0,0,0,0,0,0,0, 6, 0,0,0,0];
+const TERRAIN_SALVAGE_DN = [0,0,0,0,6,7,8,0,0,0,0, 0, 0,0,7,0];
+const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1, 0,0,1,0];
+const TERRAIN_IS_RUINS   = [0,0,0,0,1,0,0,0,0,0,0, 0, 0,0,0,0];
+const SK_FORAGE = 1, SK_SCAVENGE = 2;
+const NAR_SCAV_DOUBLE = 30, NAR_RIVER_FORAGE = 31, NAR_LAND_FORAGE = 32;
+const NAR_DOUBLE_AP   = 33;   // Super Juice, on use -- useItem()
+const AO_BLOCKED = 0, AO_SUCCESS = 1, AO_PARTIAL = 2, AO_FAIL = 3;
+const ABW_PACK_FULL = 1, ABW_TERRAIN = 2, ABW_NO_AP = 3;
+
+// hasNarrativeParam(): any WORN item with a "narrative" effect of this param
+// (Compound Bow, Fishing Pole, Portable Forge).
+function hasNarrativeParam(p, param) {
+  return (p.eq || []).some((eid) => {
+    const d = eid && ITEM_DEFS[eid];
+    return !!d && ((d.effect  === 'narrative' && d.param  === param) ||
+                   (d.effect2 === 'narrative' && d.param2 === param));
+  });
+}
+
+// One of the three, already past handleAction()'s downed / mid-scene refusal.
+// Every outcome broadcasts the act event, a refusal included (out 0 + bw), the
+// way the firmware does; a roll also broadcasts its chk first.
+function gatherAction(id, p, a, apParam) {
+  const terr = p.dp ? (tunnel[p.tr]?.[p.tq]?.tt ?? 15) : terrainAt(p.q, p.r);
+  const ev = { t: 'ev', k: 'act', pid: id, a, out: AO_BLOCKED, tg: id };
+  const done = () => { ev.ap = p.ap; ev.ll = p.ll; broadcast(ev); };
+  // resolveCheck() + broadcastCheck(): 2d6 + skill, major wounds -1 each.
+  // dbg_force pins the next roll to a clean success or a clean miss (a near
+  // miss, dn - 1, is the partial).
+  const roll = (sk, dn) => {
+    const r1 = d6(), r2 = d6(), sv = p.sk[sk] || 0, mod = -(p.wnd[1] || 0);
+    let tot = r1 + r2 + sv + mod;
+    if (forcedOutcome !== null) { tot = forcedOutcome ? dn : dn - 2; forcedOutcome = null; }
+    broadcast({ t: 'ev', k: 'chk', pid: id, sk, dn, r1, r2, sv, mod, tot, suc: tot >= dn ? 1 : 0 });
+    ev.dn = dn; ev.tot = tot;
+    return tot;
+  };
+  const score = (n) => { ev.scoreD = n; p.sc += n; };
+
+  if (a === 1) {
+    // doWater: no roll, 1 water per AP, 1-3 AP. Uncapped like FORAGE --
+    // drinking is survival; the overflow is paid for in encumbrance.
+    if (!TERRAIN_HAS_WATER[terr]) { ev.bw = ABW_TERRAIN; return done(); }
+    if (p.ap < 1)                 { ev.bw = ABW_NO_AP;   return done(); }
+    const spend = Math.max(1, Math.min(3, apParam, p.ap));
+    p.ap -= spend;
+    const kept = ghostTithe(id, 0, spend);   // a rider takes its third
+    p.inv[0] = Math.min(99, (p.inv[0] || 0) + kept);
+    ev.wd = kept;
+    score(spend);
+    ev.out = AO_SUCCESS;
+    return done();
+  }
+
+  if (a === 0) {
+    // doForage: 2 AP, Forage vs the terrain's DN. 3 food on Open Scrub and
+    // Rust Forest, 2 elsewhere; the Compound Bow doubles land, the Fishing
+    // Pole the river; a partial comes in one under. Not bound by the pack.
+    const dn = TERRAIN_FORAGE_DN[terr] || 0;
+    if (!dn)      { ev.bw = ABW_TERRAIN; return done(); }
+    if (p.ap < 2) { ev.bw = ABW_NO_AP;   return done(); }
+    p.ap -= 2;
+    const tot = roll(SK_FORAGE, dn);
+    if (tot < dn - 1) { ev.out = AO_FAIL; return done(); }
+    const partial = tot < dn;
+    let y = (terr === 0 || terr === 2) ? 3 : 2;
+    if (terr !== 11 && hasNarrativeParam(p, NAR_LAND_FORAGE))  y = Math.min(y * 2, 99);
+    if (terr === 11 && hasNarrativeParam(p, NAR_RIVER_FORAGE)) y = Math.min(y * 2, 99);
+    if (partial) y = Math.max(1, y - 1);
+    y = ghostTithe(id, 1, y);
+    p.inv[1] = Math.min(99, (p.inv[1] || 0) + y);
+    ev.fd = y;
+    score(partial ? 1 : 3);
+    ev.out = partial ? AO_PARTIAL : AO_SUCCESS;
+    return done();
+  }
+
+  // doScav: 2 AP, Scavenge vs the terrain's DN, 2 scrap (4 with the Portable
+  // Forge), half on a partial. Loot, not survival: refused with a full pack
+  // and never more than it can hold. Broken Urban ticks the Threat Clock.
+  const dn = TERRAIN_SALVAGE_DN[terr] || 0;
+  if (!dn)                  { ev.bw = ABW_TERRAIN;   return done(); }
+  if (p.ap < 2)             { ev.bw = ABW_NO_AP;     return done(); }
+  if (tokenRoomFor(p) <= 0) { ev.bw = ABW_PACK_FULL; return done(); }
+  p.ap -= 2;
+  if (TERRAIN_IS_RUINS[terr] && threatClock < 20) threatClock++;
+  const tot = roll(SK_SCAVENGE, dn);
+  if (tot < dn - 1) { ev.out = AO_FAIL; return done(); }
+  const partial = tot < dn;
+  let y = hasNarrativeParam(p, NAR_SCAV_DOUBLE) ? 4 : 2;
+  if (partial) y = Math.max(1, Math.floor(y / 2));
+  y = Math.min(y, tokenRoomFor(p));
+  y = ghostTithe(id, 4, y);
+  p.inv[4] = Math.min(99, (p.inv[4] || 0) + y);
+  ev.sd = y;
+  score(partial ? 2 : 5);
+  ev.out = partial ? AO_PARTIAL : AO_SUCCESS;
+  return done();
+}
 // handleAction() refuses these three at depth 1 (actions_game_loop.hpp).
 // REST is deliberately NOT here: it is legal underground and pays the
 // TUNNEL_REST_LL_PCT bad-air roll in dawnUpkeep instead.
@@ -2782,6 +3192,7 @@ const DIR_DELTA = {
 // Tunnel generation uses DIR_DELTA above, so it cannot run at module top --
 // const is in the temporal dead zone until this point.
 buildTunnels();
+placeOases();   // Phase 5.6 -- after the hatches here, which are fixed cells it must step round
 placeTraps();   // last, like Phase 7: after the POIs and the hatches
 
 const send = (ws, obj) => {
@@ -2808,6 +3219,7 @@ const sendToPid = (id, obj) => {
 // "downed" path. The seat is freed a turn later so a caller still looping over
 // `players` (dawn upkeep, the world tick) never sees the map change under it.
 const downedCarry = {};   // id -> { sc, sp } for the next pick of that seat
+const downedCursed = {};  // id -> [item ids] -- cursed items ride into the next survivor (keepCursed())
 function downPlayer(p, cause) {
   if (!p || p.downed) return;        // a second hit on a body already falling
   p.downed = true;
@@ -2819,12 +3231,14 @@ function downPlayer(p, cause) {
   sendToPid(id, { t: 'ev', k: 'downed', pid: id, ...why });
   broadcast({ t: 'ev', k: 'left', pid: id, ...why });
   if (left) broadcast(groundUpdateMsg(p.q, p.r, 'fell', id));
+  ghostRise(p);   // and a ghost gets up off the body (ghosts.hpp)
   setImmediate(() => {
     if (players[id] !== p) return;
     if (encounters[id]) encEnd(id, 'downed');
     if (tradeOffers[id]) tradeOffers[id].active = false;
     delete lastCaravanHex[id];
     downedCarry[id] = { sc: p.sc, sp: p.sp };
+    downedCursed[id] = p.it.filter((t, i) => t && p.iq[i] > 0 && ITEM_DEFS[t]?.cursed);
     delete players[id];
     for (const [ws, pid] of sockets.entries()) {
       if (pid !== id) continue;
@@ -2957,8 +3371,11 @@ function isFlammable(t) {
   return t === 0 || t === 2 || t === 3 || t === 4 || t === 7 || t === 9;
 }
 
+// A grove never catches (isFlammableAt() in world-system.hpp).
+const isFlammableAt = (q, r) => isFlammable(terrainAt(q, r)) && !isOasis(q, r);
+
 function igniteHex(q, r, intensity) {
-  if (!isFlammable(terrainAt(q, r))) return;
+  if (!isFlammableAt(q, r)) return;
   const key = `${q}_${r}`;
   const wasUnlit = !fireGrid[key];
   if (wasUnlit) {
@@ -2992,10 +3409,14 @@ function maybeIgniteLightning(connected) {
   const ref = connected[Math.floor(Math.random() * connected.length)];
   // Explicit direct-hit chance, then a jitter box for the near misses —
   // mirrors maybeIgniteLightning() in world-system.hpp.
+  // High ground draws the bolt: on Rolling Hills a strike that picked you
+  // lands ON you 2.5x as often (Mountain's caves still shelter).
   const LIGHTNING_DIRECT_CHANCE = 30;
+  const LIGHTNING_DIRECT_CHANCE_HILLS = 75;
   const LIGHTNING_JITTER = 2, LIGHTNING_SPAN = LIGHTNING_JITTER * 2 + 1;
   const jit = () => Math.floor(Math.random() * LIGHTNING_SPAN) - LIGHTNING_JITTER;
-  const direct = Math.random() * 100 < LIGHTNING_DIRECT_CHANCE;
+  const directChance = terrainAt(ref.q, ref.r) === TERRAIN_HILLS ? LIGHTNING_DIRECT_CHANCE_HILLS : LIGHTNING_DIRECT_CHANCE;
+  const direct = Math.random() * 100 < directChance;
   const q = direct ? ref.q : ((ref.q + jit()) % MAP_COLS + MAP_COLS) % MAP_COLS;
   const r = direct ? ref.r : ((ref.r + jit()) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
   igniteHex(q, r, 2);  // strikes in hot, not just an ember; no-ops on immune terrain
@@ -3005,6 +3426,7 @@ function maybeIgniteLightning(connected) {
   for (const p of connected) {
     if (p.q !== q || p.r !== r) continue;
     if (p.ll === 0) continue;   // already down — mirrors the guard in world-system.hpp
+    if (inOasis(p)) continue;   // the canopy takes the bolt
     p.ll = Math.max(0, p.ll - 2);
     eco.noteHurt(q, r);   // an injury: the daisies seed where it landed (ecology.js)
     broadcast({ t: 'ev', k: 'fire_dmg', pid: p.id, q, r, intensity: 10 }); // 10 = direct strike sentinel, outside fire's 1-3 range
@@ -3043,7 +3465,7 @@ function spreadFire() {
         const nq = ((q + dq) % MAP_COLS + MAP_COLS) % MAP_COLS;
         const nr = ((r + dr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
         if (fireGrid[`${nq}_${nr}`]) continue;               // already burning
-        if (!isFlammable(terrainAt(nq, nr))) continue;        // immune terrain
+        if (!isFlammableAt(nq, nr)) continue;                 // immune terrain, or a grove
         const f = Math.min(FIRE_WIND_MAX, Math.max(FIRE_WIND_MIN, 1 + FIRE_WIND_K * wind.s * windAlong(wind, dq, dr)));
         if (Math.random() * 100 >= Math.round(FIRE_SPREAD_CHANCE * f)) continue;   // downwind catches
         igniteHex(nq, nr, 1);
@@ -3058,6 +3480,7 @@ function resolveFireDamage(connected) {
   for (const p of connected) {
     const intensity = fireGrid[`${p.q}_${p.r}`] || 0;
     if (intensity < 2 || p.ll === 0) continue;
+    if (inOasis(p)) continue;   // a grove never burns; belt and braces
     // Scales with intensity, mirroring fireDamageFor() in world-system.hpp
     p.ll = Math.max(0, p.ll - (intensity >= 3 ? 2 : 1));
     eco.noteHurt(p.q, p.r);   // an injury: the daisies seed here -- and burn with the hex (ecology.js)
@@ -3386,6 +3809,7 @@ function resolveDoomProximity(connected) {
   if (doom.awareness < 51) return;
   for (const p of connected) {
     if (p.enc) continue;
+    if (inOasis(p)) continue;   // it cannot reach under the canopy
     if (hexDistWrap(p.q, p.r, doom.q, doom.r) > 1) continue;
 
     if (doom.awareness < 76) {
@@ -3440,7 +3864,8 @@ pickCaravanWaypoint();
 
 function restockCaravan() {
   caravan.restockTimer = CARAVAN_RESTOCK_TICKS;
-  for (let i = 0; i < 5; i++) caravan.inv[i] = Math.min(99, caravan.inv[i] + 4 + Math.floor(Math.random() * 5));
+  // Only the shelf restocks: caravan.inv is the till (tokens paid in at the
+  // shelf), never paid back out — same as world-system.hpp.
   // Shelf: rotate one occupied slot out, re-roll empties, top the rest up by
   // one to CARAVAN_STOCK_MAX — same rule as world-system.hpp.
   const rotate = Math.floor(Math.random() * CARAVAN_STOCK_SLOTS);
@@ -3476,7 +3901,9 @@ function moveCaravanOneStep() {
   const fq = caravan.q, fr = caravan.r;
   caravan.q = ((caravan.q + bestDq) % MAP_COLS + MAP_COLS) % MAP_COLS;
   caravan.r = ((caravan.r + bestDr) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
-  caravanTracks.add(`${caravan.q}_${caravan.r}`);
+  // The caravan fords the River Channel (world-system.hpp CARAVAN_FORD_TERRAIN);
+  // water keeps no ruts, so only dry hexes are marked — same as the firmware.
+  if (terrainAt(caravan.q, caravan.r) !== 11) caravanTracks.add(`${caravan.q}_${caravan.r}`);
   trailMove(TRAIL_CARAVAN, fq, fr, caravan.q, caravan.r, true);
   return true;
 }
@@ -3555,7 +3982,7 @@ const kane = {
 };
 function kaneIsNight() { return dayTick >= KANE_DUSK_TICK; }
 function kaneExposed(p) {
-  return hexDistWrap(kane.q, kane.r, p.q, p.r) <= KANE_RANGE && kaneOpenGround(terrainAt(p.q, p.r));
+  return hexDistWrap(kane.q, kane.r, p.q, p.r) <= KANE_RANGE && kaneOpenGround(terrainAt(p.q, p.r)) && !inOasis(p);
 }
 function kanePickDrivable() {
   for (let i = 0; i < 400; i++) {
@@ -3917,7 +4344,619 @@ function vacWire() {
 }
 vacInit();
 
-function worldStateMsg() {
+// ── RUNAWAY SCIENCE (lab.hpp, docs/runaway-science.md) ───────────────────────
+// Doctor Gaunt's clinic, ported rule for rule. Only ever underground: the
+// three rooms are tunnel cells and the scenes open from the step below.
+//   * every room within LAB_SPAN cells of the other two, placed once
+//     (labInit) -- three dead-end rooms if any trio fits, else the theatre in
+//     a room and the others on the corridor, else anywhere on the floor;
+//   * the first step each day below within LAB_CALL_RANGE of the theatre: he
+//     calls (unicast); at his table without all three parts: he taunts;
+//   * parts 1-3 count on the bank (labOnBank); the Graft at its lab_ending
+//     node (labPartRead), which spends the three and grants the heart and
+//     the note into the pack at once;
+//   * a banked part that is nowhere at dawn grows back (labDawn).
+// No persistence. dbg_lab stages it.
+const LAB_SPAN = 5, LAB_RING_MIN = 2, LAB_RING_MAX = 4, LAB_CALL_RANGE = 5;
+const LAB_ITEM_CAP = 72, LAB_ITEM_HEART = 73, LAB_ITEM_WIRES = 74, LAB_ITEM_GRAFT = 75, LAB_ITEM_NOTE = 76;
+const LAB_PART_PATIENT = 3, LAB_PART_GRAFT = 4;
+const LAB_ST_OPEN = 0, LAB_ST_GRAFTED = 1, LAB_GOT_WIRES = 4;
+const LAB_POOL = ENC_INDEX.lab || null;
+const LAB_BANKED_W = ['needle', 'jar', 'wires'];   // ev lab "w" when part 1/2/3 is banked
+const lab = { q: [-1, -1, -1], r: [-1, -1, -1], stage: LAB_ST_OPEN, got: 0, called: {}, taunted: {} };
+const labLive = () => lab.q[2] >= 0 && lab.stage === LAB_ST_OPEN;
+// labSiteOk(): plain tunnel floor (no shaft, no rock), no POI (the lighting
+// panels sit in rooms), no armed trap; roomOnly: a dead-end room.
+function labSiteOk(q, r, roomOnly) {
+  const c = tunnel[r][q];
+  if (c.tt !== 14 || c.poi) return false;
+  const tr = traps.get(trapKey(1, q, r));
+  if (tr && tr.armed) return false;
+  return !roomOnly || !!(c.op & TOP_ROOM);
+}
+function labPlaceAround(tq, tr, roomOnly) {
+  const pick = [null, null];
+  for (let s = 0; s < 2; s++) {
+    let n = 0;
+    for (let r = 0; r < TUN_ROWS; r++) {
+      for (let q = 0; q < TUN_COLS; q++) {
+        if (!labSiteOk(q, r, roomOnly)) continue;
+        const d = tunDist(tq, tr, q, r);
+        if (d < LAB_RING_MIN || d > LAB_RING_MAX) continue;
+        if (s === 1) { const e = tunDist(pick[0][0], pick[0][1], q, r); if (e < LAB_RING_MIN || e > LAB_SPAN) continue; }
+        if (Math.floor(Math.random() * (++n)) === 0) pick[s] = [q, r];
+      }
+    }
+    if (!n) return false;
+  }
+  lab.q = [pick[0][0], pick[1][0], tq];
+  lab.r = [pick[0][1], pick[1][1], tr];
+  return true;
+}
+function labPlace() {
+  const order = [];
+  for (let i = 0; i < TUN_COLS * TUN_ROWS; i++) order.push(i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  for (let pass = 0; pass < 3; pass++) {
+    for (const i of order) {
+      const tq = i % TUN_COLS, tr = Math.floor(i / TUN_COLS);
+      if (!labSiteOk(tq, tr, pass < 2) || !labPlaceAround(tq, tr, pass === 0)) continue;
+      console.log(`[lab] clinic below: theatre (${lab.q[2]},${lab.r[2]}) ward (${lab.q[0]},${lab.r[0]}) pantry (${lab.q[1]},${lab.r[1]}) pass ${pass}`);
+      return;
+    }
+  }
+  lab.q = [-1, -1, -1]; lab.r = [-1, -1, -1];
+  console.log('[lab] nowhere in the tunnels fits the clinic -- no Gaunt');
+}
+function labInit() {
+  Object.assign(lab, { stage: LAB_ST_OPEN, got: 0, called: {}, taunted: {} });
+  labPlace();
+}
+// Broadcast: { w, pid, q, r, part } at building `site` (appendLabJson's order).
+function labEmit(w, pid, site, part = 0) {
+  broadcast({ t: 'ev', k: 'lab', w, pid: pid ?? -1, q: lab.q[site], r: lab.r[site], part });
+}
+function labItemExists(itemId) {
+  for (const p of Object.values(players)) {
+    if (p && (p.it.some((t, i) => t === itemId && p.iq[i] > 0) || p.eq.includes(itemId))) return true;
+  }
+  return groundItems.some((g) => g.itemType === itemId && g.qty > 0);
+}
+function labDawn() {
+  lab.called = {}; lab.taunted = {};
+  if (!labLive()) return;
+  for (let s = 0; s < 3; s++) {
+    const bit = 1 << s;
+    if (!(lab.got & bit) || labItemExists(LAB_ITEM_CAP + s)) continue;
+    lab.got &= ~bit;
+    labEmit('lost', -1, s, s + 1);
+    console.log(`[lab] part ${s + 1} is gone from the world: its building is open again`);
+  }
+}
+function labPartBusy(part) { return Object.values(encounters).some((e) => e.lab === part); }
+function labOpen(ws, id, p, part) {
+  if (!LAB_POOL || labPartBusy(part)) return false;
+  return openEncounter(ws, id, p, p.tq, p.tr, LAB_POOL.path, part, false, { lab: part, dp: 1 });
+}
+// The step below, after the trap (labOnArrival(), from moveTunnel()).
+function labOnArrival(ws, id, p) {
+  if (!labLive() || !p || p.ll === 0 || !p.dp || encounters[id]) return false;
+  const tq = lab.q[2], tr = lab.r[2];
+  if (!lab.called[id]) {
+    const d = tunDist(p.tq, p.tr, tq, tr);
+    if (d <= LAB_CALL_RANGE) {
+      lab.called[id] = 1;
+      sendToPid(id, { t: 'ev', k: 'lab', w: 'call', pid: id, q: tq, r: tr, d });
+    }
+  }
+  for (let s = 0; s < 2; s++)
+    if (p.tq === lab.q[s] && p.tr === lab.r[s]) return !(lab.got & (1 << s)) && labOpen(ws, id, p, s + 1);
+  if (p.tq !== tq || p.tr !== tr) return false;
+  if (!(lab.got & LAB_GOT_WIRES)) return labOpen(ws, id, p, LAB_PART_PATIENT);
+  const has = [LAB_ITEM_CAP, LAB_ITEM_HEART, LAB_ITEM_WIRES].map((it) => hasForChoice(p, it));
+  if (has.every(Boolean)) return labOpen(ws, id, p, LAB_PART_GRAFT);
+  if (!lab.taunted[id]) {
+    lab.taunted[id] = 1;
+    sendToPid(id, { t: 'ev', k: 'lab', w: 'taunt', pid: id, q: tq, r: tr,
+                    has: (has[0] ? 1 : 0) | (has[1] ? 2 : 0) | (has[2] ? 4 : 0) });
+  }
+  return false;
+}
+// encChoice reached a terminal, non-escape node of a lab scene (labPartRead()).
+function labPartRead(id, e, nodeKey) {
+  if (e.lab !== LAB_PART_GRAFT || lab.stage !== LAB_ST_OPEN) return;
+  if (e.json.nodes?.[nodeKey]?.lab_ending !== 'graft') { console.warn(`[lab] Graft node ${nodeKey} has no lab_ending -- not an ending`); return; }
+  const p = players[id];
+  for (const it of [LAB_ITEM_CAP, LAB_ITEM_HEART, LAB_ITEM_WIRES]) vacSpendItem(p, it);
+  let spilled = false;
+  // Beside a full pack the gift lands on the clinic floor (labGrant()).
+  for (const it of [LAB_ITEM_GRAFT, LAB_ITEM_NOTE]) if (!addItemToInv(p, it, 1)) spilled = groundPutHere(p, it, 1) || spilled;
+  send(e.ws, { t: 'item_result', ok: true, act: 'lab_graft', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+  if (spilled) { const b = boardPos(p); broadcast(groundUpdateMsg(b.q, b.r)); }
+  lab.stage = LAB_ST_GRAFTED;
+  labEmit('graft', id, 2);
+  console.log(`[lab] the Graft is done: pid=${id} carries the Runaway Heart, and Gaunt is still`);
+}
+// encBank, before the slot is dropped (labOnBank()).
+function labOnBank(id, e) {
+  if (lab.stage !== LAB_ST_OPEN || !(e.lab >= 1 && e.lab <= 3)) return;
+  const site = e.lab - 1, bit = 1 << site;
+  if ((lab.got & bit) || !e.pendingItems.some((x) => x.it === LAB_ITEM_CAP + site)) return;
+  lab.got |= bit;
+  labEmit(LAB_BANKED_W[site], id, site);
+  console.log(`[lab] part ${e.lab} taken by pid=${id}`);
+}
+// The "lab" object: sync, the tick broadcast's world, and /state (appendLabJson()).
+function labWire() {
+  return { st: lab.stage, g: lab.got, nq: lab.q[0], nr: lab.r[0], jq: lab.q[1], jr: lab.r[1], pq: lab.q[2], pr: lab.r[2] };
+}
+labInit();
+
+// ── ONE-HAND BONNEY (bonney.hpp, docs/one-hand-bonney.md) ───────────────────
+// A huge, foul hag at her fire, Dennis Turnbull on her spit, and Pinch -- her
+// runaway left hand -- doing her stealing. She stays put: section 1 and then
+// section 2 open on the same hex, and only a finished quest moves her, to
+// somewhere 2-4 hexes from a random settlement at the next dawn.
+//   * a "steal" hazard: Pinch lifts one thing (cursed first, else the most
+//     valuable; never a key item that is not cursed), once a scene
+//   * section 1 "deal" robs you if Pinch has not yet; "caught" gives back
+//     what this scene took
+//   * section 2: the apple in Turnbull's mouth is the newest hoard entry
+//     stolen from the reader, else anyone's, else a real apple. "rescue"
+//     hands it over, "bargain" -- she eats it
+// No persistence. dbg_bonney stages it.
+const BON_CALL_RANGE = 3, BON_TOWN_AVOID = 6, BON_HOME_MIN = 2, BON_HOME_MAX = 4;
+const BON_FIRST_MIN = 3, BON_FIRST_MAX = 8, BON_HOARD = 6;
+const BON_ITEM_DEVICE = 37, BON_LINT = 255;
+const BON_HAND = 0, BON_SUPPER = 1, BON_AWAY = 2;
+const BON_POOL = ENC_INDEX.bonney || null;
+const bonWalkable = (t) => t === 0 || t === 1 || t === 3 || t === 4 || t === 7;   // scrub, dunes, marsh, urban, hills
+const bon = { q: -1, r: -1, mode: BON_HAND, lastQ: -1, lastR: -1, ringQ: -1, ringR: -1, ringDay: 0, n: 0, hoard: [], called: {} };
+const bonWrap = (q, r) => [((q % MAP_COLS) + MAP_COLS) % MAP_COLS, ((r % MAP_ROWS) + MAP_ROWS) % MAP_ROWS];
+// bonHexOk(): her ground, no armed trap, nobody standing on it.
+function bonHexOk(q, r) {
+  if (q < 0 || q >= MAP_COLS || r < 0 || r >= MAP_ROWS || !bonWalkable(terrainAt(q, r))) return false;
+  const tr = traps.get(trapKey(0, q, r));
+  if (tr && tr.armed) return false;
+  return !Object.values(players).some((p) => p && p.on !== false && !p.dp && p.q === q && p.r === r);
+}
+const bonGroundScore = (t) => (t === 1 ? 2 : t === 0 ? 1 : 0);
+function bonPickAround(cq, cr, dlo, dhi) {
+  let best = -1, n = 0, pick = null;
+  for (let r = 0; r < MAP_ROWS; r++) for (let c = 0; c < MAP_COLS; c++) {
+    const d = hexDistWrap(cq, cr, c, r);
+    if (d < dlo || d > dhi || !bonHexOk(c, r)) continue;
+    const sc = bonGroundScore(terrainAt(c, r));
+    if (sc > best) { best = sc; n = 0; }
+    if (sc === best && Math.floor(Math.random() * (++n)) === 0) pick = [c, r];
+  }
+  return pick;
+}
+function bonPickDunes(dlo, dhi) {
+  const towns = [];
+  if (dhi) for (let r = 0; r < MAP_ROWS; r++) for (let c = 0; c < MAP_COLS; c++) if (terrainAt(c, r) === TERRAIN_SETTLEMENT) towns.push([c, r]);
+  let n = 0, pick = null;
+  for (let r = 0; r < MAP_ROWS; r++) for (let c = 0; c < MAP_COLS; c++) {
+    if (terrainAt(c, r) !== 1 || !bonHexOk(c, r)) continue;
+    if (dhi) {
+      let near = 999;
+      for (const [tq, tr] of towns) near = Math.min(near, hexDistWrap(c, r, tq, tr));
+      if (near < dlo || near > dhi) continue;
+    }
+    if (Math.floor(Math.random() * (++n)) === 0) pick = [c, r];
+  }
+  return pick;
+}
+// bonPlace(): the first fire on the dunes near a town; a comeback near a random
+// town (not the one she was just run out of, when there is another).
+function bonPlace(first) {
+  let at = null;
+  if (first) at = bonPickDunes(BON_FIRST_MIN, BON_FIRST_MAX);
+  else {
+    let town = null;
+    for (let pass = 0; pass < 2 && !town; pass++) {
+      let n = 0;
+      for (let r = 0; r < MAP_ROWS; r++) for (let c = 0; c < MAP_COLS; c++) {
+        if (terrainAt(c, r) !== TERRAIN_SETTLEMENT) continue;
+        if (pass === 0 && bon.lastQ >= 0 && hexDistWrap(c, r, bon.lastQ, bon.lastR) <= BON_TOWN_AVOID) continue;
+        if (Math.floor(Math.random() * (++n)) === 0) town = [c, r];
+      }
+    }
+    if (town) at = bonPickAround(town[0], town[1], BON_HOME_MIN, BON_HOME_MAX);
+  }
+  at ??= bonPickDunes(0, 0);
+  for (let i = 0; i < 400 && !at; i++) { const q = Math.floor(Math.random() * MAP_COLS), r = Math.floor(Math.random() * MAP_ROWS); if (bonHexOk(q, r)) at = [q, r]; }
+  at ??= [0, 0];
+  [bon.q, bon.r] = at;
+  bon.mode = BON_HAND;
+  console.log(`[bonney] her fire goes down at (${bon.q},${bon.r}) ${first ? 'first time' : 'comeback'}`);
+}
+function bonInit() {
+  Object.assign(bon, { q: -1, r: -1, mode: BON_HAND, lastQ: -1, lastR: -1, ringQ: -1, ringR: -1, ringDay: 0, n: 0, hoard: [], called: {} });
+  bonPlace(true);
+}
+function bonEv(w, pid, extra) { return { t: 'ev', k: 'bonney', w, pid: pid ?? -1, q: bon.q, r: bon.r, ...extra }; }
+function bonItemResult(e, id, act) {
+  const p = players[id];
+  send(e.ws, { t: 'item_result', ok: true, act, pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+}
+// Into the pack, or onto the ground beside a full one.
+function bonGive(p, item) {
+  if (addItemToInv(p, item, 1)) return;
+  if (groundPut(p.q, p.r, item, 1)) broadcast(groundUpdateMsg(p.q, p.r));
+}
+function bonHoardTake(item, pid) {
+  for (let i = bon.hoard.length - 1; i >= 0; i--) {
+    const h = bon.hoard[i];
+    if (h.item !== item || (pid !== 255 && h.pid !== pid)) continue;
+    bon.hoard.splice(i, 1);
+    return true;
+  }
+  return false;
+}
+// bonPickTheft(): anything cursed, else the most valuable, ties at random.
+function bonPickTheft(p) {
+  let bestRank = -1, n = 0, slot = -1;
+  for (let s = 0; s < effectiveInvSlots(p); s++) {
+    const id = p.it[s];
+    if (!id || !p.iq[s]) continue;
+    const d = ITEM_DEFS[id];
+    if (!d) continue;
+    const curse = !!d.cursed || id === BON_ITEM_DEVICE;
+    if (!curse && d.category === 'key') continue;
+    const rank = curse ? 1000 : (d.value | 0);
+    if (rank > bestRank) { bestRank = rank; n = 0; }
+    if (rank === bestRank && Math.floor(Math.random() * (++n)) === 0) slot = s;
+  }
+  return slot;
+}
+// bonneyPinch(): a failed roll on a "steal" hazard, or the "deal" with nothing taken yet.
+function bonPinch(id, e) {
+  if (!e.bonney || e.bonStole) return;
+  const p = players[id];
+  const s = bonPickTheft(p);
+  if (s < 0) {
+    e.bonStole = BON_LINT;
+    sendToPid(id, bonEv('pinch', id, { item: 0 }));
+    console.log(`[bonney] Pinch went through pid=${id}'s pack and found only lint`);
+    return;
+  }
+  const item = p.it[s];
+  if (--p.iq[s] === 0) p.it[s] = 0;
+  if (bon.hoard.length >= BON_HOARD) bon.hoard.shift();   // the oldest falls out of the sack, gone
+  bon.hoard.push({ item, pid: id });
+  e.bonStole = item;
+  bonItemResult(e, id, 'bonney_pinch');
+  sendToPid(id, bonEv('pinch', id, { item }));
+  console.log(`[bonney] Pinch took item ${item} from pid=${id} (hoard ${bon.hoard.length})`);
+}
+function bonOpen(ws, id, p, sec) {
+  if (!BON_POOL || Object.values(encounters).some((x) => x.bonney === sec)) return false;
+  let apple = 0, from = 255;
+  if (sec === 2) {
+    for (let i = bon.hoard.length - 1; i >= 0 && !apple; i--) if (bon.hoard[i].pid === id) { apple = bon.hoard[i].item; from = id; }
+    if (!apple && bon.hoard.length) { const h = bon.hoard[bon.hoard.length - 1]; apple = h.item; from = h.pid; }
+  }
+  return openEncounter(ws, id, p, p.q, p.r, BON_POOL.path, sec, false, { bonney: sec, apple, from });
+}
+// The surface step, after VACANCY's (bonneyOnArrival()).
+function bonOnArrival(ws, id, p) {
+  if (!p || p.ll === 0 || p.dp || encounters[id] || bon.mode === BON_AWAY) return false;
+  if (p.q !== bon.q || p.r !== bon.r) {
+    if (!bon.called[id] && hexDistWrap(p.q, p.r, bon.q, bon.r) <= BON_CALL_RANGE) {
+      bon.called[id] = 1;
+      sendToPid(id, bonEv('call', id, { i: Math.floor(Math.random() * 256) }));
+    }
+    return false;
+  }
+  return bonOpen(ws, id, p, bon.mode === BON_HAND ? 1 : 2);
+}
+// encChoice reached a terminal, non-escape node of a Bonney scene (bonneySectionRead()).
+function bonSectionRead(id, e, nodeKey) {
+  const end = e.json.nodes?.[nodeKey]?.bonney_ending;
+  const p = players[id];
+  if (e.bonney === 1 && bon.mode === BON_HAND) {
+    if (end === 'deal') bonPinch(id, e);
+    else if (end === 'caught') {
+      const item = e.bonStole;
+      if (item && item !== BON_LINT && bonHoardTake(item, id)) {
+        bonGive(p, item);
+        bonItemResult(e, id, 'bonney_caught');
+        broadcast(bonEv('caught', id, { item }));
+      } else broadcast(bonEv('caught', id, { item: 0 }));
+    } else { console.warn(`[bonney] section 1 node ${nodeKey} has no bonney_ending -- not an ending`); return; }
+    bon.mode = BON_SUPPER;
+    broadcast(bonEv('supper', id, { item: 0 }));
+    console.log(`[bonney] section 1 read by pid=${id} (${end}), stole=${e.bonStole}`);
+    return;
+  }
+  if (e.bonney === 2 && bon.mode === BON_SUPPER) {
+    const item = e.bonApple | 0;
+    if (end === 'rescue') {
+      if (item && bonHoardTake(item, e.bonFrom)) { bonGive(p, item); bonItemResult(e, id, 'bonney_rescue'); }
+      else if (!item) e.pendingLoot[1] = Math.min(99, e.pendingLoot[1] + 1);   // a real apple: banked as food
+      broadcast(bonEv('rescue', id, { item }));
+    } else if (end === 'bargain') {
+      if (item) bonHoardTake(item, e.bonFrom);   // she ate it
+      broadcast(bonEv('bargain', id, { item }));
+    } else { console.warn(`[bonney] section 2 node ${nodeKey} has no bonney_ending -- not an ending`); return; }
+    Object.assign(bon, { ringQ: bon.q, ringR: bon.r, lastQ: bon.q, lastR: bon.r, ringDay: dayCount, mode: BON_AWAY, q: -1, r: -1 });
+    bon.n++;
+    console.log(`[bonney] supper read by pid=${id} (${end}), apple=${item}; pass ${bon.n} done`);
+  }
+}
+// bonneyDawn(): a comeback near another town; the ring blows off after a day.
+function bonDawn() {
+  bon.called = {};
+  if (bon.ringQ >= 0 && bon.ringDay !== dayCount) { bon.ringQ = -1; bon.ringR = -1; }
+  if (bon.mode === BON_AWAY) { bonPlace(false); broadcast(bonEv('back', -1, { item: 0 })); }
+}
+// The "bon" object: sync, the tick broadcast's world, and /state (appendBonneyJson()).
+function bonWire() { return { q: bon.q, r: bon.r, m: bon.mode, n: bon.n, aq: bon.ringQ, ar: bon.ringR }; }
+bonInit();
+
+// ── Dshingus (dshingus.hpp) ──────────────────────────────────────────────────
+// Dshinguest Ron's parting gift (settlement/25.json). A hazard carrying
+// "dshingus": true gives it; for DSH_DAYS dawns every REST has a DSH_SPOT_PCT
+// chance of leaving a brown spot on the hex (surface only, dried up
+// DSH_SPOT_DAYS dawns on), and sharing a hex passes it on, either way. No
+// persistence. dbg_dsh drives it for UI work.
+const DSH_DAYS = 30, DSH_SPOT_PCT = 50, DSH_SPOT_DAYS = 10, DSH_SPOT_MAX = 48, DSH_SRC_BAND = 255;
+const dshDays = new Array(MAX_PLAYERS).fill(0);   // dawns left infected per seat; 0 = clean
+let   dshSpots = [];                              // [{ q, r, day }]
+let   dshForceSpot = null;                        // dbg_dsh "spot": the next REST's roll, decided
+
+function dshEv(w, pid, src, q, r) {
+  broadcast({ t: 'ev', k: 'dsh', w, pid, src: src === DSH_SRC_BAND ? -1 : src, q, r, d: dshDays[pid], day: dayCount });
+}
+// dshCatch(): a no-op for somebody who already has it -- a count never restarts.
+function dshCatch(pid, src) {
+  const p = players[pid];
+  if (!p || dshDays[pid]) return;
+  dshDays[pid] = DSH_DAYS;
+  console.log(`[dsh] pid=${pid} caught it (src=${src}) at (${p.q},${p.r})`);
+  dshEv('catch', pid, src, p.q, p.r);
+}
+// dshOnArrival(): an infected survivor here gives it to pid; then, if pid has
+// it, everybody up on the hex who does not catches it. sameHex() needs both on.
+function dshOnArrival(pid) {
+  const p = players[pid];
+  if (!p || p.ll <= 0) return;
+  for (let k = 0; k < MAX_PLAYERS && !dshDays[pid]; k++)
+    if (k !== pid && dshDays[k] && players[k]?.ll > 0 && sameHex(p, players[k])) dshCatch(pid, k);
+  if (!dshDays[pid]) return;
+  for (let k = 0; k < MAX_PLAYERS; k++)
+    if (k !== pid && !dshDays[k] && players[k]?.ll > 0 && sameHex(p, players[k])) dshCatch(k, pid);
+}
+// dshOnRest(): one spot per hex (a new one freshens it); a full table loses its oldest.
+function dshOnRest(pid, force = null) {
+  const p = players[pid];
+  if (!p || !dshDays[pid] || p.dp) return;
+  const hit = force ?? dshForceSpot ?? (Math.random() * 100 < DSH_SPOT_PCT);
+  if (force === null) dshForceSpot = null;
+  if (!hit) return;
+  const s = dshSpots.find((x) => x.q === p.q && x.r === p.r);
+  if (s) s.day = dayCount;
+  else {
+    if (dshSpots.length >= DSH_SPOT_MAX) {
+      let oi = 0;
+      for (let i = 1; i < dshSpots.length; i++) if (groundAge(dshSpots[i].day) > groundAge(dshSpots[oi].day)) oi = i;
+      dshSpots.splice(oi, 1);
+    }
+    dshSpots.push({ q: p.q, r: p.r, day: dayCount });
+  }
+  console.log(`[dsh] pid=${pid} left a spot at (${p.q},${p.r})`);
+  dshEv('spot', pid, pid, p.q, p.r);
+}
+// dshDawn(): after the day count moved.
+function dshDawn() {
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    if (!dshDays[i] || --dshDays[i]) continue;
+    console.log(`[dsh] pid=${i} is over it`);
+    dshEv('clear', i, DSH_SRC_BAND, players[i]?.q ?? -1, players[i]?.r ?? -1);
+  }
+  dshSpots = dshSpots.filter((s) => groundAge(s.day) < DSH_SPOT_DAYS);
+}
+// {d:[days per seat], s:[[q,r,day],...]} -- "s" only for sync and /state (appendDshJson()).
+function dshWire(spots) {
+  return spots ? { d: dshDays.slice(), s: dshSpots.map((s) => [s.q, s.r, s.day]) } : { d: dshDays.slice() };
+}
+
+// ── Wasteland ghosts (ghosts.hpp) ─────────────────────────────────────────────
+// A survivor who falls leaves a ghost where they went down. It drifts a hex
+// every other world tick over anything but a Settlement, toward the living
+// within GHOST_SENSE, and latches onto whoever it shares a hex with: a token
+// off their biggest stack every GHOST_DRAIN_TICKS, and a third of every gain
+// (ghostTithe). A Settlement shakes it off; GHOST_DAYS dawns and it fades,
+// leaving its hoard as Remains. The mock does not model impassable terrain,
+// so a fade drops the hoard on the ghost's own hex. No persistence. dbg_ghost
+// drives it for UI work.
+const GHOST_MAX = 6, GHOST_DAYS = 7, GHOST_RISE_TICKS = 2, GHOST_MOVE_EVERY = 2;
+const GHOST_SENSE = 4, GHOST_DRAIN_TICKS = 8, GHOST_TITHE_DIV = 3, GHOST_SHUN_TICKS = 4;
+const ghosts = Array.from({ length: GHOST_MAX }, () => null);
+let ghostHold = false;   // dbg_ghost "hold": the world tick skips them
+
+function ghostInit() { ghosts.fill(null); }
+function ghostEv(gi, w, pid, res = 0, n = 0) {
+  const g = ghosts[gi];
+  broadcast({ t: 'ev', k: 'ghost', w, g: gi, src: g.src, pid: pid ?? -1, q: g.q, r: g.r, res, n });
+}
+const ghostHaunting = (id) => ghosts.findIndex((g) => g && g.haunt === id);
+// Up, on the surface, not in a scene, not in a Settlement, not already ridden.
+function ghostCanHaunt(p) {
+  return !!p && p.on !== false && !p.downed && p.ll > 0 && !p.dp && !encounters[p.id] &&
+         terrainAt(p.q, p.r) !== TERRAIN_SETTLEMENT && !inOasis(p) && ghostHaunting(p.id) < 0;
+}
+const ghostCanDrift = (q, r) => terrainAt(q, r) !== TERRAIN_SETTLEMENT;
+function ghostStepToward(g, tq, tr) {
+  let best = hexDistWrap(g.q, g.r, tq, tr), pick = null, side = null, sideN = 0;
+  for (let d = 0; d < 6; d++) {
+    const [nq, nr] = kaneWrap(g.q + DIR_DELTA[d][0], g.r + DIR_DELTA[d][1]);
+    if (!ghostCanDrift(nq, nr)) continue;
+    const dist = hexDistWrap(nq, nr, tq, tr);
+    if (dist < best) { best = dist; pick = [nq, nr]; }
+    else if (dist === best && !pick && Math.floor(Math.random() * (++sideN)) === 0) side = [nq, nr];
+  }
+  const to = pick || side;
+  if (to) [g.q, g.r] = to;
+}
+function ghostWander(g) {
+  const d = Math.floor(Math.random() * 6);
+  const [nq, nr] = kaneWrap(g.q + DIR_DELTA[d][0], g.r + DIR_DELTA[d][1]);
+  if (ghostCanDrift(nq, nr)) { g.q = nq; g.r = nr; }
+}
+function ghostOutsideTown(q, r) {
+  const out = [];
+  for (let d = 0; d < 6; d++) {
+    const [nq, nr] = kaneWrap(q + DIR_DELTA[d][0], r + DIR_DELTA[d][1]);
+    if (ghostCanDrift(nq, nr)) out.push([nq, nr]);
+  }
+  return out.length ? out[Math.floor(Math.random() * out.length)] : [q, r];
+}
+function ghostLatch(gi, id) {
+  const g = ghosts[gi];
+  g.haunt = id; g.drain = 0; g.tithe = 0;
+  console.log(`[ghost] ${gi} (${g.name}) latches onto pid=${id} at (${g.q},${g.r})`);
+  ghostEv(gi, 'latch', id);
+}
+function ghostLetGo(gi, q, r, told) {
+  const g = ghosts[gi], id = g.haunt;
+  g.haunt = -1; g.q = q; g.r = r; g.shun = GHOST_SHUN_TICKS; g.moveSkip = 0;
+  console.log(`[ghost] ${gi} (${g.name}) lets go of pid=${id} at (${q},${r})${told ? '' : ' (silent)'}`);
+  if (told) ghostEv(gi, 'letgo', id);
+}
+// Fades, leaving its hoard as Remains. True when that changed the ground.
+function ghostFade(gi) {
+  const g = ghosts[gi];
+  const tokens = g.hoard.reduce((a, b) => a + b, 0);
+  if (tokens) {
+    const rm = remainsFor(g.q, g.r);
+    if (!rm.name) { rm.pid = g.src; rm.name = g.name; }
+    rm.day = dayCount;
+    for (let k = 0; k < 5; k++) rm.res[k] = Math.min(99, rm.res[k] + g.hoard[k]);
+  }
+  console.log(`[ghost] ${gi} (${g.name}) fades at (${g.q},${g.r}), leaving ${tokens} tokens`);
+  ghostEv(gi, 'fade', g.haunt, 0, tokens);
+  ghosts[gi] = null;
+  return tokens > 0;
+}
+// The ghost rising off a survivor who just went down (the EVT_DOWNED handler).
+function ghostRise(p) {
+  const rode = ghostHaunting(p.id);
+  if (rode >= 0) ghostLetGo(rode, p.q, p.r, false);
+  let slot = ghosts.findIndex((g) => !g), ground = false;
+  if (slot < 0) {
+    slot = 0;
+    for (let i = 1; i < GHOST_MAX; i++) if (ghosts[i].daysLeft < ghosts[slot].daysLeft) slot = i;
+    ground = ghostFade(slot);
+  }
+  const name = (String(p.name || '').replace(/[^\x20-\x7E]|["\\]/g, '_').slice(0, 11)) || `Walker ${p.id + 1}`;
+  ghosts[slot] = { src: p.id, name, q: p.q, r: p.r, haunt: -1, daysLeft: GHOST_DAYS,
+                   hoard: [0, 0, 0, 0, 0], tithe: 0, rise: GHOST_RISE_TICKS, shun: 0, drain: 0, moveSkip: 0 };
+  console.log(`[ghost] ${slot} rises: ${name} at (${p.q},${p.r})`);
+  if (ground) broadcast(groundUpdateMsg(-1, -1));
+  broadcast({ t: 'ev', k: 'ghost', w: 'rise', g: slot, src: p.id, pid: -1, q: p.q, r: p.r, name });
+  return slot;
+}
+function ghostDrain(gi) {
+  const g = ghosts[gi], p = players[g.haunt];
+  let best = -1;
+  for (let k = 0; k < 5; k++) if ((p.inv[k] | 0) > 0 && (best < 0 || p.inv[k] > p.inv[best])) best = k;
+  if (best < 0) return;
+  p.inv[best]--;
+  g.hoard[best] = Math.min(99, g.hoard[best] + 1);
+  ghostEv(gi, 'drain', g.haunt, best + 1, 1);
+}
+// Mirrors ghostTithe(): what a haunted survivor keeps of a gain of resource
+// idx 0-4. Exactly a third over time -- small gains count toward the next.
+function ghostTithe(id, idx, gain) {
+  if (!gain || idx < 0 || idx > 4) return gain;
+  const gi = ghostHaunting(id);
+  if (gi < 0) return gain;
+  const g = ghosts[gi];
+  const owed = g.tithe + gain;
+  const cut = Math.floor(owed / GHOST_TITHE_DIV);
+  g.tithe = owed % GHOST_TITHE_DIV;
+  if (!cut) return gain;
+  g.hoard[idx] = Math.min(99, g.hoard[idx] + cut);
+  ghostEv(gi, 'tithe', id, idx + 1, cut);
+  return gain - cut;
+}
+// The surface step (ghostOnArrival()): a rider follows or stays outside town.
+function ghostOnArrival(p, fromQ, fromR) {
+  const gi = ghostHaunting(p.id);
+  if (gi >= 0) {
+    if (terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT) ghostLetGo(gi, fromQ, fromR, true);
+    else { ghosts[gi].q = p.q; ghosts[gi].r = p.r; }
+    return;
+  }
+  if (!ghostCanHaunt(p)) return;
+  const at = ghosts.findIndex((g) => g && g.haunt < 0 && !g.rise && !g.shun && g.q === p.q && g.r === p.r);
+  if (at >= 0) ghostLatch(at, p.id);
+}
+function tickGhosts() {
+  for (let i = 0; i < GHOST_MAX; i++) {
+    const g = ghosts[i];
+    if (!g) continue;
+    if (g.rise) g.rise--;
+    if (g.shun) g.shun--;
+    if (g.haunt >= 0) {
+      const p = players[g.haunt];
+      if (!p || p.downed || p.ll <= 0) { ghostLetGo(i, g.q, g.r, false); continue; }
+      g.q = p.q; g.r = p.r;
+      if (!p.dp && terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT) {
+        const [oq, or] = ghostOutsideTown(p.q, p.r);
+        ghostLetGo(i, oq, or, true);
+        continue;
+      }
+      if (encounters[g.haunt]) continue;
+      if (inOasis(p)) continue;   // in a grove: it rides, but cannot feed
+      if (++g.drain >= GHOST_DRAIN_TICKS) { g.drain = 0; ghostDrain(i); }
+      continue;
+    }
+    if (g.rise) continue;
+    if (++g.moveSkip >= GHOST_MOVE_EVERY) {
+      g.moveSkip = 0;
+      let tgt = null, bestD = GHOST_SENSE + 1;
+      if (!g.shun) {
+        for (const p of Object.values(players)) {
+          if (!ghostCanHaunt(p)) continue;
+          const d = hexDistWrap(g.q, g.r, p.q, p.r);
+          if (d < bestD) { bestD = d; tgt = p; }
+        }
+      }
+      if (tgt && bestD > 0) ghostStepToward(g, tgt.q, tgt.r);
+      else if (!tgt) ghostWander(g);
+    }
+    if (g.shun) continue;
+    const on = Object.values(players).find((p) => ghostCanHaunt(p) && p.q === g.q && p.r === g.r);
+    if (on) ghostLatch(i, on.id);
+  }
+}
+// The dawn block (ghostDawn()). True when a fade left a hoard on the ground.
+function ghostDawn() {
+  let ground = false;
+  for (let i = 0; i < GHOST_MAX; i++) {
+    const g = ghosts[i];
+    if (!g) continue;
+    if (g.daysLeft > 0) g.daysLeft--;
+    if (g.daysLeft === 0) ground = ghostFade(i) || ground;
+  }
+  return ground;
+}
+// [slot,q,r,haunt,state,hoard,src,name] per live ghost (appendGhostJson()).
+function ghostWire() {
+  const out = [];
+  ghosts.forEach((g, i) => {
+    if (!g) return;
+    out.push([i, g.q, g.r, g.haunt, g.rise ? 1 : g.shun ? 2 : 0, g.hoard.reduce((a, b) => a + b, 0), g.src, g.name]);
+  });
+  return out;
+}
+
+// spots: sync and /state carry them; the tick carries the counts only, like
+// appendDshJson(). A new spot comes as ev dsh "spot".
+function worldStateMsg(spots = false) {
   return {
     caravan: {
       q: caravan.q, r: caravan.r, active: caravan.active, inv: caravan.inv,
@@ -3927,6 +4966,10 @@ function worldStateMsg() {
     doom: { q: doom.q, r: doom.r, awareness: doom.awareness },
     kane: kaneWire(),   // Machine Gun Kane (kane.hpp)
     vac: vacWire(),     // VACANCY (vacancy.hpp)
+    lab: labWire(),     // RUNAWAY SCIENCE (lab.hpp)
+    bon: bonWire(),     // ONE-HAND BONNEY (bonney.hpp)
+    ghosts: ghostWire(),   // wasteland ghosts (ghosts.hpp)
+    dsh: dshWire(spots),   // the Dshingus (dshingus.hpp)
     fire: fireArray(),
     flood: floodArray(),
   };
@@ -3941,7 +4984,7 @@ function syncMsg(id) {
     trl: buildTrailDisk(players[id].q, players[id].r, surfaceVis(players[id])),
     p: Object.values(players).map(playerView),
     gs: { wp: weatherPhase, dc: dayCount, tc: threatClock, wt: uptimeMs() },
-    world: worldStateMsg(),
+    world: worldStateMsg(true),   // sync carries the Dshingus spots; the tick does not
     gi: groundItemsList(),
     rm: remainsList(),
     vc: VARIANT_COUNTS.vc,
@@ -3950,10 +4993,14 @@ function syncMsg(id) {
   };
 }
 
-// Mirror of firmware's collectResource — must stay in sync with survival_state.hpp
+// Mirror of firmware's collectResource — must stay in sync with survival_state.hpp.
+// Below ground it is the tunnel cell (collectResource(depth 1) from
+// moveTunnel()), bound by the same pack room; the tunnel step used to take the
+// whole pile whatever the pack held and zero the rest.
 function tryCollect(p, ws) {
-  const k = `${p.q}_${p.r}`;
-  const cell = resources[k];
+  const dp = p.dp ? 1 : 0;
+  const { q: bq, r: br } = boardPos(p);
+  const cell = dp ? tunnel[br]?.[bq] : resources[`${bq}_${br}`];
   if (!cell || cell.res === 0 || cell.amt === 0) return; // nothing to collect (and no fail event — server-side knows truly nothing here)
 
   // Canteen water is outside the pack, and water may fill its empty space
@@ -3965,31 +5012,34 @@ function tryCollect(p, ws) {
   if (room <= 0) {
     // Inv-full: send col_fail to the moving player only.
     // cap mirrors the firmware's effectiveInvSlots() — the client shows it as "(have/cap)".
-    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: p.q, r: p.r, res: cell.res, reason: 2, cap });
-    console.log(`[col] FAIL inv-full pid=${p.id} q=${p.q} r=${p.r}`);
+    send(ws, { t: 'ev', k: 'col_fail', pid: p.id, q: bq, r: br, res: cell.res, reason: 2, cap, dp });
+    console.log(`[col] FAIL inv-full pid=${p.id} q=${bq} r=${br} dp=${dp}`);
     return;
   }
   const gain = Math.min(cell.amt, room);
   if (gain === 0) return;
 
   const resType = cell.res;
-  p.inv[resType - 1] = (p.inv[resType - 1] || 0) + gain;
-  p.sc += gain * 10;
+  // A ghost riding them takes its third; the pile still loses all of it (collectResource()).
+  const kept = ghostTithe(p.id, resType - 1, gain);
+  p.inv[resType - 1] = Math.min(99, (p.inv[resType - 1] || 0) + kept);
+  p.sc += kept * 10;
   cell.amt -= gain;
   const rem = cell.amt;
   if (rem === 0) {
     cell.res = 0;
-    cell.respawnTimer = RESPAWN_TICKS;
+    if (!dp) cell.respawnTimer = respawnTicksFor(resType);   // nothing grows back in the tunnels
   }
-  console.log(`[col] OK pid=${p.id} q=${p.q} r=${p.r} res=${resType} gain=${gain} rem=${rem}`);
-  broadcast({ t: 'ev', k: 'col', pid: p.id, q: p.q, r: p.r, res: resType, amt: gain, rem });
+  console.log(`[col] OK pid=${p.id} q=${bq} r=${br} dp=${dp} res=${resType} gain=${gain} kept=${kept} rem=${rem}`);
+  broadcast({ t: 'ev', k: 'col', pid: p.id, q: bq, r: br, res: resType, amt: kept, rem, dp });
 }
 
 // Mirror of firmware's dropResource — must stay in sync with survival_state.hpp.
 // Tokens land back on the hex when it can hold them (empty, or the same
 // resource); a hex holding a different resource can't take them and they are
 // lost. The collect award is refunded off the score either way, otherwise
-// drop→collect on one hex is an infinite score pump.
+// drop→collect on one hex is an infinite score pump. Below ground the pile
+// goes on the tunnel cell (tryCollect() takes it back); no mould down there.
 function dropResource(p, res, qty) {
   if (res < 1 || res > RES_MAX_TYPE) return { dropped: 0, onGround: false, rem: 0 };
   const idx  = res - 1;
@@ -4001,17 +5051,20 @@ function dropResource(p, res, qty) {
   p.inv[idx] -= take;
   p.sc = Math.max(0, p.sc - take * 10);
 
-  const k    = `${p.q}_${p.r}`;
-  const cell = resources[k];
+  const { q: bq, r: br, dp } = boardPos(p);
+  const k    = `${bq}_${br}`;
+  const cell = dp ? tunnel[br]?.[bq] : resources[k];
   // Mould on the hex eats a pile at once (the blight, below), so it is lost.
-  const onGround = !eco.blightAt(p.q, p.r) && (!cell || cell.res === 0 || cell.res === res);
+  const onGround = (dp ? !!cell : !eco.blightAt(bq, br)) &&
+                   (!cell || cell.res === 0 || cell.res === res);
   let rem = 0;
   if (onGround) {
     const pile = (cell && cell.res === res ? cell.amt : 0) + take;
     rem = Math.min(pile, 99);
-    resources[k] = { res, amt: rem, respawnTimer: 0 };
+    if (dp) { cell.res = res; cell.amt = rem; }
+    else    resources[k] = { res, amt: rem, respawnTimer: 0 };
   }
-  console.log(`[drop_res] OK pid=${p.id} q=${p.q} r=${p.r} res=${res} qty=${take} ground=${onGround} pile=${rem} sc=${p.sc}`);
+  console.log(`[drop_res] OK pid=${p.id} q=${bq} r=${br} dp=${dp} res=${res} qty=${take} ground=${onGround} pile=${rem} sc=${p.sc}`);
   return { dropped: take, onGround, rem };
 }
 
@@ -4028,7 +5081,7 @@ setInterval(() => {
     if (eco.blightAt(bq, br)) {
       if (cell.res !== 0 && ate < 10) {
         console.log(`[eco] blight ate res=${cell.res} amt=${cell.amt} at (${bq},${br})`);
-        cell.res = 0; cell.amt = 0; cell.respawnTimer = RESPAWN_TICKS;
+        cell.respawnTimer = respawnTicksFor(cell.res); cell.res = 0; cell.amt = 0;
         eco.eaten++; ate++;
         broadcast({ t: 'ev', k: 'rsp', q: bq, r: br, res: 0, amt: 0 });
       } else if (cell.res === 0 && cell.respawnTimer > 0) {
@@ -4038,9 +5091,10 @@ setInterval(() => {
     }
     if (cell.res === 0 && cell.respawnTimer > 0) {
       if (--cell.respawnTimer === 0) {
-        cell.res = 1 + Math.floor(Math.random() * RES_MAX_TYPE);
-        cell.amt = 1 + Math.floor(Math.random() * 3);
         const [q, r] = k.split('_').map(Number);
+        if (!growsFood(terrainAt(q, r))) continue;
+        cell.res = RES_FOOD;
+        cell.amt = 1 + Math.floor(Math.random() * 3);
         console.log(`[rsp] q=${q} r=${r} res=${cell.res} amt=${cell.amt}`);
         broadcast({ t: 'ev', k: 'rsp', q, r, res: cell.res, amt: cell.amt });
       }
@@ -4135,23 +5189,43 @@ function addItemToInv(p, itemId, qty) {
   return qty - left;
 }
 
+// Starting gear, mirroring handleMsg_pick: START_PATCHES Trauma Patches, then
+// random tradeable items (grantRandomStartItem(): qty 1 each, first free slot)
+// -- two, three for the Quartermaster, five for the Mule.
+const ITEM_TRAUMA_PATCH = 1;
+const START_PATCHES     = 2;
+function grantStartItems(p) {
+  addItemToInv(p, ITEM_TRAUMA_PATCH, START_PATCHES);
+  const pool = Object.values(ITEM_DEFS).filter(d => d.id && d.category !== 'key' && d.trade).map(d => d.id);
+  const n = p.arch === 3 ? 5 : p.arch === 1 ? 3 : 2;
+  const slots = effectiveInvSlots(p);
+  for (let i = 0; i < n && pool.length; i++) {
+    const s = p.it.findIndex((t, k) => !t && k < slots);
+    if (s < 0) break;
+    p.it[s] = pool[(Math.random() * pool.length) | 0];
+    p.iq[s] = 1;
+  }
+}
+
 // Place itemId x qty into p's pack via addItemToInv(); overflow goes to the
-// ground at the player's hex. Mirrors grantItemOrDrop() in
-// network-msg-encounter.hpp.
+// ground where the player stands -- the tunnel cell, for a scene below.
+// Mirrors grantItemOrDrop() in network-msg-encounter.hpp.
 function grantItemOrDrop(p, itemId, qty) {
   if (!itemId || !qty) return false;
   qty -= addItemToInv(p, itemId, qty);
   if (!qty) return false;
-  return groundPut(p.q, p.r, itemId, qty);   // true = some of it landed on the ground
+  return groundPutHere(p, itemId, qty);   // true = some of it landed on the ground
 }
 
 // Use the item in inventory slot slotIdx. Consumables apply their stat deltas
 // and effects, then lose one charge; key items with an effect can be "read"
 // any number of times and are never spent. Mirrors useItem() in
 // inventory_items.hpp — cure_status/threat_mod are applied here; reveal_fog
-// (vis-disk resend) and narrative (client-only efxp echo) are handled by the
-// use_item switch case below since they need the pre-use item def.
+// (the ev surv band / ev rvl) and narrative (client-only efxp echo) are
+// handled by the use_item switch case below since they need the pre-use item
+// def. p._useWhy mirrors s_useWhy: why the last use was turned down.
 function useItem(p, slotIdx) {
+  p._useWhy = '';
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) return false;
   const itemId = p.it[slotIdx];
   if (!itemId) return false;
@@ -4160,6 +5234,13 @@ function useItem(p, slotIdx) {
   const hasEffect       = !!def.effect && def.effect !== 'none';
   const isKeyWithEffect = def.category === 'key' && hasEffect;
   if (def.category !== 'consumable' && !isKeyWithEffect) return false;
+  if (p.dp && itemRevealOnly(def)) { p._useWhy = 'underground'; return false; }
+
+  // Super Juice (NAR_DOUBLE_AP): today's budget, read before its LL cost.
+  const doubleAP = (def.effect === 'narrative' && def.param === NAR_DOUBLE_AP) ||
+                   (def.effect2 === 'narrative' && def.param2 === NAR_DOUBLE_AP);
+  const apDay = doubleAP ? effectiveAP(p) : 0;
+  const llBefore = p.ll;
 
   const state = { llDelta: 0 };
   if (def.food)  { const steps = def.food;  for (let i = 0; i < Math.abs(steps); i++) applyFStep(p, steps > 0 ? 1 : -1, state); }
@@ -4168,6 +5249,10 @@ function useItem(p, slotIdx) {
   if (state.llDelta) p.ll = Math.max(0, Math.min(effectiveMaxLL(p), p.ll + state.llDelta));
   if (def.rad) p.rad = Math.max(0, Math.min(10, p.rad + def.rad));
   if (def.ap)  p.ap  = Math.max(0, p.ap + def.ap);
+  if (doubleAP && p.ll > 0) p.ap = Math.min(99, p.ap + apDay);
+  // A harmful consumable that takes the last LL downs its drinker, as in
+  // useItem() (EVT_DOWNED, DC_ACTION).
+  if (llBefore > 0 && p.ll === 0) { p.ap = 0; downPlayer(p, 'action'); }
 
   for (const [fx, param] of [[def.effect, def.param], [def.effect2, def.param2]]) {
     if (fx === 'cure_status') {
@@ -4184,23 +5269,25 @@ function useItem(p, slotIdx) {
   return true;
 }
 
-// Drop qty of the item in slotIdx at the player's current hex. Mirrors
-// dropItem() in inventory_items.hpp.
+// Drop qty of the item in slotIdx at the player's current hex (the tunnel
+// cell, below). Mirrors dropItem() in inventory_items.hpp.
 function dropItem(p, slotIdx, qty) {
   if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX || qty <= 0) return false;
   if (!p.it[slotIdx] || p.iq[slotIdx] < qty) return false;
-  if (!groundPut(p.q, p.r, p.it[slotIdx], qty)) return false;
+  if (ITEM_DEFS[p.it[slotIdx]]?.cursed) return false;   // the Cursed Note will not be put down
+  if (!groundPutHere(p, p.it[slotIdx], qty)) return false;
   p.iq[slotIdx] -= qty;
   if (!p.iq[slotIdx]) p.it[slotIdx] = 0;
   return true;
 }
 
 // Pick up as much of ground item gslot as fits; player must be standing on
-// that hex, on the surface. Mirrors pickupGroundItem() in inventory_items.hpp.
+// that cell, on that board. Mirrors pickupGroundItem() in inventory_items.hpp.
 function pickupGroundItem(p, gslot) {
   if (gslot < 0 || gslot >= MAX_GROUND) return false;
   const gi = groundItems[gslot];
-  if (!gi.itemType || p.dp || gi.q !== p.q || gi.r !== p.r) return false;
+  const b = boardPos(p);
+  if (!gi.itemType || (gi.dp | 0) !== b.dp || gi.q !== b.q || gi.r !== b.r) return false;
 
   const canTake = addItemToInv(p, gi.itemType, gi.qty);
   if (!canTake) return false;
@@ -4208,20 +5295,22 @@ function pickupGroundItem(p, gslot) {
   if (!gi.qty) {
     const { q, r } = gi;
     clearPile(gi);
-    remainsPrune(q, r);   // that may have been the last thing on a grave
+    if (!b.dp) remainsPrune(q, r);   // that may have been the last thing on a grave
   }
   return true;
 }
 
 // Mirrors scoopGroundOnArrival() in inventory_items.hpp plus the send in
-// handleMsg_move: a surface step takes the remains' supplies and every pile
-// on the hex, whatever fits. The mover gets one loot_result (auto:1), everyone
-// the ground_update. Call only once the step is known to have stayed up top.
+// handleMsg_move: a step takes every pile on the cell it ended on, on that
+// board, and up top the remains' supplies too, whatever fits. The mover gets
+// one loot_result (auto:1), everyone the ground_update. Call once the step
+// has settled which board it is on (after any hatch or shaft).
 function scoopOnArrival(ws, p) {
-  if (p.dp || p.ll === 0) return;
+  if (p.ll === 0) return;
+  const b = boardPos(p);
   let got = [0, 0, 0, 0, 0], left = false, any = false;
   const items = [];
-  if (remainsIndexAt(p.q, p.r) >= 0) {
+  if (!b.dp && remainsIndexAt(p.q, p.r) >= 0) {
     const r = lootRemains(p, 0);
     got = r.got;
     if (r.out === 0) any = true;
@@ -4229,7 +5318,7 @@ function scoopOnArrival(ws, p) {
     if (i >= 0 && remainsTable[i].res.some(n => n > 0)) left = true;
   }
   groundItems.forEach((gi, g) => {
-    if (!gi.itemType || gi.q !== p.q || gi.r !== p.r) return;
+    if (!gi.itemType || (gi.dp | 0) !== b.dp || gi.q !== b.q || gi.r !== b.r) return;
     const id = gi.itemType, before = gi.qty;
     if (!pickupGroundItem(p, g)) { left = true; return; }
     if (gi.itemType) left = true;
@@ -4237,11 +5326,11 @@ function scoopOnArrival(ws, p) {
     any = true;
   });
   if (!any && !left) return;
-  console.log(`[scoop] pid=${p.id} q=${p.q} r=${p.r} got=${got} piles=${items.length} left=${left}`);
+  console.log(`[scoop] pid=${p.id} q=${b.q} r=${b.r} dp=${b.dp} got=${got} piles=${items.length} left=${left}`);
   // A full pack that took nothing still hears about it (why 2 = LOOT_FULL).
   send(ws, { t: 'loot_result', ok: any, why: any ? 0 : 2, auto: 1, left: left ? 1 : 0, pid: p.id, got, inv: p.inv,
              items, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
-  if (any) broadcast(groundUpdateMsg(p.q, p.r));
+  if (any) broadcast(groundUpdateMsg(b.q, b.r));
 }
 
 // Mirrors equipItem() in inventory_items.hpp, orphan guard included: every
@@ -4267,6 +5356,7 @@ function equipItem(ws, id, msg) {
   const itemId  = (slotIdx >= 0 && slotIdx < INV_SLOTS_MAX) ? p.it[slotIdx] : 0;
   const def     = itemId ? ITEM_DEFS[itemId] : null;
   let ok = !!def && def.category === 'equipment' && def.eslot >= 0;
+  let why = 'no_item';   // mirrors s_itemWhy (inventory_items.hpp)
   if (ok) {
     const prev = p.eq[def.eslot];
 
@@ -4277,7 +5367,7 @@ function equipItem(ws, id, msg) {
 
     // Refuse if that would strand anything past the new cap.
     for (let i = newSlots; i < INV_SLOTS_MAX; i++) {
-      if (i !== slotIdx && p.it[i]) { ok = false; break; }
+      if (i !== slotIdx && p.it[i]) { ok = false; why = 'orphan'; break; }
     }
 
     if (ok) {
@@ -4294,7 +5384,7 @@ function equipItem(ws, id, msg) {
         if (dest < 0) {
           p.eq[def.eslot] = prev;
           p.it[slotIdx] = itemId; p.iq[slotIdx] = qty0;
-          ok = false;
+          ok = false; why = 'pack_full';
         } else {
           p.it[dest] = prev; p.iq[dest] = 1;
         }
@@ -4305,7 +5395,9 @@ function equipItem(ws, id, msg) {
   // unequipItem clamps for this; equipItem did not, on either side, and the
   // survivor kept points earned under the old ceiling forever.
   if (ok) p.ll = Math.min(p.ll, effectiveMaxLL(p));
-  send(ws, { t: 'item_result', ok, act: 'equip', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
+  // "uf" and "why" mirror appendEquipTail() (network-msg-items.hpp).
+  send(ws, { t: 'item_result', ok, act: 'equip', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p),
+             inv: p.inv, uf: unfuelledMask(p), ...(ok ? {} : { why }) });
   if (ok && equipVisionBonus(p) !== visBefore) pushVisDisk(ws, p);
   if (ok) broadcast(stateMsg());
 }
@@ -4317,6 +5409,7 @@ function unequipItem(ws, id, msg) {
   const eslot  = msg.eslot | 0;
   const itemId = p.eq[eslot];
   let ok = !!itemId;
+  let why = 'no_item';
   if (ok) {
     // Pack size once this item is off — refuse if anything sits beyond it,
     // else the pack would shrink around items the player couldn't reach.
@@ -4324,15 +5417,17 @@ function unequipItem(ws, id, msg) {
     p.eq[eslot] = 0;
     const newSlots = effectiveInvSlots(p);
     p.eq[eslot] = itemId;
-    for (let i = newSlots; i < INV_SLOTS_MAX; i++) if (p.it[i]) ok = false;
+    for (let i = newSlots; i < INV_SLOTS_MAX; i++) if (p.it[i]) { ok = false; why = 'orphan'; }
     if (ok) {
       const freeSlot = p.it.findIndex((t, i) => i < newSlots && !t);
       ok = freeSlot >= 0;
+      if (!ok) why = 'pack_full';
       if (ok) { p.it[freeSlot] = itemId; p.iq[freeSlot] = 1; p.eq[eslot] = 0; }
     }
   }
   if (ok) p.ll = Math.min(p.ll, effectiveMaxLL(p));
-  send(ws, { t: 'item_result', ok, act: 'unequip', eslot, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
+  send(ws, { t: 'item_result', ok, act: 'unequip', eslot, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p),
+             inv: p.inv, uf: unfuelledMask(p), ...(ok ? {} : { why }) });
   if (ok && equipVisionBonus(p) !== visBefore) pushVisDisk(ws, p);
   if (ok) broadcast(stateMsg());
 }
@@ -4452,7 +5547,7 @@ const SND = (() => {
   const DEF = { vol: 3, mlvl: 6, mus: 0.89, sfx: 0.65, vgain: 0.39, duck: 0.55, rev: 1, noise: 1, wind: 1, lp: 4800,
                 hp: 240, comp: 20 * Math.log10(0.25), q: 3, vlp: 0, vunv: 1, vsoft: 0, vchirp: -1, dac8: -1,
                 lvl_narrator: 0.8, lvl_chant: 0.8, lvl_whisper: 0.75, lvl_doom: 0.72, lvl_barker: 0.8,
-                lvl_radio: 0.9, vmid: -37.7, vmax: -31.7, style: -1, tension: -1 };
+                lvl_radio: 0.9, vmid: -39.64, vmax: -33.64, style: -1, tension: -1 };
   for (const d of knobs) d.def = d.k in DEF ? DEF[d.k] : 0;
   const val = Object.fromEntries(knobs.map((d) => [d.k, d.def]));
   let saved = false;
@@ -4593,10 +5688,14 @@ wss.on('connection', (ws) => {
           break;
         }
         players[id] = makePlayer(id);
+        dshDays[id] = 0;   // a new survivor starts clean (dshReleaseSeat())
         trailStart(id, players[id].q, players[id].r);
         // A seat whose survivor fell: a fresh survivor, but the lifetime score
         // and steps carry over (handleMsg_pick's isDowned path).
         if (downedCarry[id]) { Object.assign(players[id], downedCarry[id]); delete downedCarry[id]; }
+        // ...and a cursed item comes with them (keepCursed() / restoreCursed()).
+        if (downedCursed[id]) { for (const it of downedCursed[id]) addItemToInv(players[id], it, 1); delete downedCursed[id]; }
+        grantStartItems(players[id]);
         sockets.set(ws, id);
         send(ws, { t: 'asgn', id });
         send(ws, syncMsg(id));
@@ -4633,20 +5732,15 @@ wss.on('connection', (ws) => {
           tunnel[nr][nq].footprints |= (1 << id);
           broadcast({ t: 'ev', k: 'mv', pid: id, q: p.tq, r: p.tr, d, radd: 0,
                       rad: p.rad, exploD: 0, ap: p.ap, trk: 0, dp: 1 });
-          const cell = tunnel[nr][nq];
-          if (cell.res && cell.amt) {
-            const gain = cell.amt;
-            p.inv[cell.res - 1] = Math.min(99, p.inv[cell.res - 1] + gain);
-            p.sc += gain * 10;
-            broadcast({ t: 'ev', k: 'col', pid: id, q: p.tq, r: p.tr,
-                        res: cell.res, amt: gain, rem: 0, dp: 1 });
-            cell.res = 0; cell.amt = 0;
-          }
+          tryCollect(p, ws);   // the tunnel cell's tokens, bound by the pack (collectResource(depth 1))
+          dshOnArrival(id);   // the Dshingus passes in the corridors too (dshingus.hpp)
           // Landing on a shaft climbs out. After the pickup, so the last thing
           // you grab on the way past still lands in the pack.
           if (stepUpIfShaft(ws, id, p)) { scoopOnArrival(ws, p); broadcast(stateMsg()); break; }
           send(ws, tunnelVisMsg(p, id));
           trapOnArrival(ws, id, p);   // after the vis disk, so the board under it is fresh
+          labOnArrival(ws, id, p);    // RUNAWAY SCIENCE: Gaunt calls; one of his rooms opens
+          scoopOnArrival(ws, p);      // any pile on this corridor cell (handleMsg_move, after the step)
           broadcast(stateMsg());
           break;
         }
@@ -4662,7 +5756,9 @@ wss.on('connection', (ws) => {
         // caravan does. Carried on the mv event (trk) so every client, not
         // just this player's own vis-disk, can stamp an already-revealed hex —
         // same reasoning as footprints (see data/network.js's _evMv).
-        const laidTrack = p.eq.some((itemId) => ITEM_DEFS[itemId]?.tracks);
+        // A stalled one is pushed, not ridden: unpaid daily-cost gear lays none.
+        const laidTrack = p.eq.some((itemId) => ITEM_DEFS[itemId]?.tracks &&
+          !(itemHasOpCost(ITEM_DEFS[itemId]) && !paidToday(p, itemId)));
         if (laidTrack) caravanTracks.add(`${p.q}_${p.r}`);
         // Which way (trails.hpp): "d" on the mv event, -1 for this mock's
         // two-hex DIR_DELTA jumps, which start a fresh pass instead.
@@ -4670,10 +5766,15 @@ wss.on('connection', (ws) => {
         // EVT_MOVE first so client position updates before col event arrives.
         broadcast({ t: 'ev', k: 'mv', pid: id, q: p.q, r: p.r, d: side, radd: 0, rad: p.rad, exploD: 0, ap: p.ap, trk: laidTrack ? 1 : 0 });
         doomNoteArrival(p);   // landing beside another survivor is felt by the Doom
-        ecoBite(p);   // bloomed Wasteland Daisies bite on entry, before the pickup, as movePlayer does
+        ecoBite(p, true);   // slime (1 LL more each step) and daisies bite on entry, before the pickup, as movePlayer does
         tryCollect(p, ws);
+        // A ghost riding them follows (or stays outside a town); one drifting
+        // here takes hold. Before the hatch, as ghostOnArrival() is.
+        ghostOnArrival(p, fromQ, fromR);
+        dshOnArrival(id);   // sharing this hex passes the Dshingus on, either way (dshOnArrival())
         // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels.
-        if (stepDownIfHatch(ws, id, p)) { broadcast(stateMsg()); break; }
+        // The scoop that follows is the shaft cell's below, never the hatch's.
+        if (stepDownIfHatch(ws, id, p)) { scoopOnArrival(ws, p); broadcast(stateMsg()); break; }
         // Visdisk reflects current resource state (post-collection).
         const svr = surfaceVis(p);
         const cells = buildVisDisk(p.q, p.r, svr, id);
@@ -4685,6 +5786,8 @@ wss.on('connection', (ws) => {
         kaneOnArrival(ws, id, p);
         // VACANCY: the town under the sign, the front desk, the corridor.
         vacOnArrival(ws, id, p);
+        // ONE-HAND BONNEY: her firelight opens the section it holds; nearby, she calls.
+        bonOnArrival(ws, id, p);
         // Whatever lies here comes with you. After the trap, as on the board:
         // handleMsg_move scoops once movePlayer() (trap included) returns.
         scoopOnArrival(ws, p);
@@ -4700,6 +5803,8 @@ wss.on('connection', (ws) => {
         // clears it. All-connected-players-resting is what ends the day early,
         // so recovery comes from dawn upkeep, not an instant buff here.
         if (msg.a === 7) {
+          // Once, like doRest(): an already-resting survivor lays no second spot.
+          if (!p.rt) dshOnRest(id);
           p.rt = 1;
         } else if (msg.a === 2) {
           // ACT_TREAT — mirrors doTreat() in actions_game_loop.hpp: the Medic
@@ -4816,48 +5921,30 @@ wss.on('connection', (ws) => {
           // outright at depth 1, silently. SURVEY is the one that matters --
           // doSurvey() writes a buffer sized for the 75x57 surface map.
           break;
+        } else if ((msg.a | 0) === 4 && !p.dp && isOasis(p.q, p.r)) {
+          // Mirrors doShelter(): a forest oasis is already full cover, so
+          // SHELTER is refused there (ABW_NOT_NEEDED = 5), AP untouched.
+          broadcast({ t: 'ev', k: 'act', pid: id, a: 4, out: 0,
+                      bw: 5, ap: p.ap, ll: p.ll });
+          break;
         } else if ((msg.a | 0) === 4 && terrainAt(p.q, p.r) === 9) {
           // Mirrors doShelter(): a Settlement is already cover, so SHELTER is
           // refused there (ABW_TERRAIN = 2), AP untouched.
           broadcast({ t: 'ev', k: 'act', pid: id, a: 4, out: 0,
                       bw: 2, ap: p.ap, ll: p.ll });
           break;
-        } else if (p.dp && (msg.a | 0) === 0) {
-          // FORAGE self-blocks underground: TERRAIN_FORAGE_DN[14] is 0.
-          // Nothing grows down there, which is what puts every dive on a
-          // food clock.
-          break;
+        } else if (GATHER_ACTS.has(msg.a | 0)) {
+          // FORAGE / WATER / SCAVENGE on the board's rules (gatherAction()).
+          // Underground FORAGE refuses on terrain there: TERRAIN_FORAGE_DN[14]
+          // is 0, which is what puts every dive on a food clock. Downed or
+          // mid-scene is refused before any of it, like handleAction().
+          if (p.ll === 0 || encounters[id]) break;
+          gatherAction(id, p, msg.a | 0, msg.ap === undefined ? 1 : (msg.ap | 0));
         } else {
-          // Generic: drain a bit, give a resource.
-          //
-          // The resource used to be inv[a % 5], which is wrong for every
-          // action there is -- FORAGE handed out water, WATER handed out
-          // food, SCAV handed out medicine. A bot drinking itself to death
-          // while its water track fell is how it was found.
-          const slot = ACT_RESOURCE[msg.a | 0];
-          // Only SCAVENGE is bound by the pack size (mirrors doScav): FORAGE
-          // and WATER are survival and may overfill, paying the encumbrance
-          // penalty in effectiveAP() instead of being refused. Capping those
-          // two let a pack full of scrap starve a survivor through a button
-          // that did nothing and said nothing.
-          if ((msg.a | 0) === 3 && tokenRoomFor(p) <= 0) {
-            broadcast({ t: 'ev', k: 'act', pid: id, a: msg.a | 0, out: 0,
-                        bw: 1, ap: p.ap, ll: p.ll });
-            break;
-          }
-          if ((msg.a | 0) === 1) {
-            // COLLECT WATER mirrors doWater(): 1-3 AP, one water per AP. It
-            // was the generic +1 for whatever AP was sent, which made water
-            // twice as dear as on the board and every bot's day a pond run.
-            const spend = Math.max(1, Math.min(3, msg.ap || 1, p.ap));
-            p.ap = Math.max(0, p.ap - spend);
-            p.inv[0] = Math.min(99, (p.inv[0] || 0) + spend);
-            p.sc += spend;
-          } else {
-            p.ap = Math.max(0, p.ap - (msg.ap || 1));
-            if (slot !== undefined) p.inv[slot] = (p.inv[slot] || 0) + 1;
-            p.sc += 1;
-          }
+          // Anything else that reaches here (SHELTER off a Settlement) is
+          // still a placeholder: the AP for a point, nothing built.
+          p.ap = Math.max(0, p.ap - (msg.ap || 1));
+          p.sc += 1;
         }
         broadcast(stateMsg());
         break;
@@ -4931,7 +6018,7 @@ wss.on('connection', (ws) => {
       case 'enc_start':  encStart(ws, sockets.get(ws), msg);  break;
       case 'enc_choice': encChoice(ws, sockets.get(ws), msg); break;
       case 'enc_bank':   encBank(ws, sockets.get(ws), msg);   break;
-      case 'enc_abort':  encAbort(sockets.get(ws), ws);       break;
+      case 'enc_abort':  encAbort(sockets.get(ws), ws, msg);  break;
       case 'enc_assist': encAssist(ws, sockets.get(ws), msg); break;
 
       case 'equip_item':   equipItem(ws, sockets.get(ws), msg);   break;
@@ -4943,28 +6030,48 @@ wss.on('connection', (ws) => {
         if (!p) break;
         const slotIdx = msg.slot | 0;
         if (slotIdx < 0 || slotIdx >= INV_SLOTS_MAX) break;
-        const preDef = p.it[slotIdx] ? ITEM_DEFS[p.it[slotIdx]] : null;
-        let narParam = 0, revealParam = 0;
+        const preType = p.it[slotIdx] | 0;
+        const preDef = preType ? ITEM_DEFS[preType] : null;
+        let narParam = 0;
+        const revealParam = itemRevealParam(preDef);
         if (preDef) {
-          if (preDef.effect  === 'reveal_fog') revealParam = preDef.param;
-          if (preDef.effect2 === 'reveal_fog') revealParam = preDef.param2;
           if (preDef.effect  === 'narrative')  narParam    = preDef.param;
           if (preDef.effect2 === 'narrative')  narParam    = preDef.param2;
         }
+        const tvBefore = p.dp ? tunnelVis(p) : -1;
         const ok = useItem(p, slotIdx);
-        send(ws, { t: 'item_result', ok, act: 'use', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, efxp: narParam, ...packFields(p) });
+        send(ws, { t: 'item_result', ok, act: 'use', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, efxp: narParam, ...packFields(p),
+                   ...(!ok && p._useWhy ? { why: p._useWhy } : {}) });
+        // Burnt the last Bile Flare below: the radius drops now, not at the
+        // next step (serviceVisRefresh() in network-msg-items.hpp).
+        if (ok && p.dp && tunnelVis(p) !== tvBefore) send(ws, tunnelVisMsg(p, id));
         if (ok) {
           broadcast(stateMsg());
-          // Surface only: this is a surface vis disk around q/r, which
-          // underground is the hatch -- a client below would apply it as
-          // its own board's view.
+          // A Bright Bad Idea is seen by everyone (data/flare-field.js): the
+          // flare itself when it is in view, a red glow on the tiles toward it
+          // when it is not. The firer's own client fires it from item_result.
+          // dp: below ground it burns in the hand, not in the sky.
+          if (preType === ITEM_BRIGHT_BAD_IDEA) {
+            broadcast({ t: 'ev', k: 'flare', pid: id, q: p.q, r: p.r, dp: p.dp ? 1 : 0 });
+          }
+          // buildItemReveal() in network-msg-items.hpp. Surface only: q/r
+          // below are the hatch, and the flare's reveal half does nothing
+          // there (a pure reveal was already refused by useItem()).
+          // 2..98: the rings from past sight out to sight + param, as the
+          // same ev surv band SURVEY sends -- not a bigger vis, whose "vr"
+          // would have set the client's live radius to the item's param.
+          // 99: the whole map's terrain as an ev rvl.
           if (revealParam >= 2 && !p.dp) {
-            // No persistent fog memory to "reveal" in the mock, so a one-shot
-            // or whole-map read just resends a bigger vis-disk — capped well
-            // under map size so the payload stays reasonable.
-            const vr = Math.min(revealParam === 99 ? 30 : revealParam, 30);
-            const cells = buildVisDisk(p.q, p.r, vr, p.id);
-            send(ws, { t: 'vis', q: p.q, r: p.r, vr, cells, trl: buildTrailDisk(p.q, p.r, vr) });
+            if (revealParam === 99) {
+              send(ws, { t: 'ev', k: 'rvl', pid: id, map: buildTerrainReveal() });
+            } else {
+              const inner = surfaceVis(p);
+              const outer = Math.min(inner + revealParam, REVEAL_R_MAX);
+              if (outer > inner) {
+                send(ws, { t: 'ev', k: 'surv', pid: id, cells: buildSurveyBand(p.q, p.r, inner, outer, id),
+                           trl: buildTrailBand(p.q, p.r, inner, outer) });
+              }
+            }
           }
         }
         break;
@@ -4976,9 +6083,12 @@ wss.on('connection', (ws) => {
         if (!p) break;
         const slotIdx = msg.slot | 0;
         const qty     = Math.max(1, msg.qty | 0);
+        const tvBefore = p.dp ? tunnelVis(p) : -1;
         const ok = dropItem(p, slotIdx, qty);
         send(ws, { t: 'item_result', ok, act: 'drop', slot: slotIdx, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
-        if (ok) { broadcast(groundUpdateMsg(p.q, p.r)); broadcast(stateMsg()); }
+        if (ok) { const b = boardPos(p); broadcast(groundUpdateMsg(b.q, b.r)); broadcast(stateMsg()); }
+        // Put the last Bile Flare down below: the light goes with it now.
+        if (ok && p.dp && tunnelVis(p) !== tvBefore) send(ws, tunnelVisMsg(p, id));
         break;
       }
 
@@ -4989,11 +6099,12 @@ wss.on('connection', (ws) => {
         const res = msg.res | 0;
         const qty = msg.qty | 0;
         const { dropped, onGround, rem } = dropResource(p, res, qty);
+        const b = boardPos(p);   // the tunnel cell, below -- "dp" says which board
         send(ws, { t: 'res_result', ok: dropped > 0, pid: id, res, qty: dropped,
-                   grd: onGround ? 1 : 0, rem, q: p.q, r: p.r, inv: p.inv, sc: p.sc });
+                   grd: onGround ? 1 : 0, rem, q: b.q, r: b.r, dp: b.dp, inv: p.inv, sc: p.sc });
         if (dropped > 0) {
           // Same event the respawn tick uses — every client updates the hex.
-          if (onGround) broadcast({ t: 'ev', k: 'rsp', q: p.q, r: p.r, res, amt: rem });
+          if (onGround) broadcast({ t: 'ev', k: 'rsp', q: b.q, r: b.r, res, amt: rem, dp: b.dp });
           broadcast(stateMsg());
         }
         break;
@@ -5006,7 +6117,7 @@ wss.on('connection', (ws) => {
         const gslot = msg.gslot | 0;
         const ok = pickupGroundItem(p, gslot);
         send(ws, { t: 'item_result', ok, act: 'pickup', gslot, pid: id, it: p.it, iq: p.iq, eq: p.eq, ...packFields(p) });
-        if (ok) { broadcast(groundUpdateMsg(p.q, p.r)); broadcast(stateMsg()); }
+        if (ok) { const b = boardPos(p); broadcast(groundUpdateMsg(b.q, b.r)); broadcast(stateMsg()); }
         break;
       }
 
@@ -5039,8 +6150,8 @@ wss.on('connection', (ws) => {
         // Test-only: {"t":"dbg_age","days":29} — age every pile and remains
         // record by N days, then run the dawn sweep as if dawn had come.
         const days = Math.max(0, msg.days | 0);
-        for (const gi of groundItems) if (gi.itemType) gi.day = (gi.day - days) & 0xFFFF;
-        for (const rm of remainsTable) if (rm.used) rm.day = (rm.day - days) & 0xFFFF;
+        for (const gi of groundItems) if (gi.itemType) gi.day = dayFold(gi.day - days);
+        for (const rm of remainsTable) if (rm.used) rm.day = dayFold(rm.day - days);
         groundAgeOut();
         broadcast(groundUpdateMsg(-1, -1, 'aged'));
         break;
@@ -5048,6 +6159,10 @@ wss.on('connection', (ws) => {
 
       case 'dbg_force':   // Test-only: {"t":"dbg_force","out":0} forces the next roll to fail (1 = succeed)
         forcedOutcome = msg.out ? 1 : 0;
+        break;
+
+      case 'dbg_drop_enc_path':   // Test-only: the next scene opens server-side but its enc_path is lost
+        dropNextEncPath = true;
         break;
 
       case 'dbg_trap': {
@@ -5119,6 +6234,15 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'dbg_day': {
+        // Test-only: {"t":"dbg_day","day":365} — set the day counter (folded
+        // onto 1..365) so the next dawn's 365 -> day 1 wrap can be watched.
+        dayCount = dayFold(msg.day | 0);
+        broadcast(stateMsg());
+        console.log(`[day] forced -> ${dayCount}`);
+        break;
+      }
+
       case 'dbg_quake': {
         // Test-only: force a quake near the sender immediately, ignoring the cooldown.
         // {"t":"dbg_quake"}
@@ -5174,6 +6298,10 @@ wss.on('connection', (ws) => {
         const p  = players[id];
         if (!p) break;
         if (msg.ll !== undefined) p.ll = Math.max(0, Math.min(effectiveMaxLL(p), msg.ll | 0));
+        // "f"/"w": the F/W tracks (1-6), so a rest heal's supply gate can be
+        // tested -- a forest oasis heals below it (docs/forest-oasis.md).
+        if (msg.f !== undefined) p.food  = Math.max(1, Math.min(6, msg.f | 0));
+        if (msg.w !== undefined) p.water = Math.max(1, Math.min(6, msg.w | 0));
         if (Array.isArray(msg.wnd)) {
           p.wnd[0] = Math.max(0, Math.min(WOUND_MAX_EACH, msg.wnd[0] | 0));
           p.wnd[1] = Math.max(0, Math.min(WOUND_MAX_EACH, msg.wnd[1] | 0));
@@ -5182,6 +6310,88 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'dbg_lab': {
+        // Test-only: RUNAWAY SCIENCE (lab.hpp). Fields combine, applied in this order:
+        //   {"t":"dbg_lab","reset":1}    a freshly placed clinic, nothing banked
+        //   {"t":"dbg_lab","here":1}     the clinic rebuilt round YOUR tunnel cell (you must be
+        //                                below): you stand in the theatre, the other two 2-4 off
+        //   {"t":"dbg_lab","at":2}       you below, one step short of room 0 ward / 1 pantry / 2 theatre;
+        //                                replies {"t":"dbg_lab","at","d","tq","tr"}: send m d to walk in
+        //   {"t":"dbg_lab","got":7}      what has been banked (1 Needlecap, 2 Brine Heart, 4 Spine Wires)
+        //   {"t":"dbg_lab","give":15}    1 Needlecap / 2 Brine Heart / 4 Spine Wires / 8 Cursed Note into your pack
+        //   {"t":"dbg_lab","pts":250}    your score (points) set
+        //   {"t":"dbg_lab","dawn":1}     run the dawn's lost-part check now
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.reset) labInit();
+        if (msg.here && p.dp) {
+          Object.assign(lab, { stage: LAB_ST_OPEN, got: 0, called: {}, taunted: {} });
+          if (!labPlaceAround(p.tq, p.tr, true) && !labPlaceAround(p.tq, p.tr, false))
+            console.log('[lab] dbg here: no floor round you fits -- clinic unchanged');
+        }
+        if (msg.at !== undefined && lab.q[2] >= 0) {
+          const k = Math.max(0, Math.min(2, msg.at | 0)), rq = lab.q[k], rr = lab.r[k];
+          let from = null, d = -1;
+          for (let s = 0; s < 6 && !from; s++) {   // the open side that leads onto plain floor (never a shaft)
+            if (!tunOpen(rq, rr, s)) continue;
+            const nq = rq + TUN_DQ[s], nr = rr + TUN_DR[s];
+            if (tunIn(nq, nr) && tunnel[nr][nq].tt === 14) { from = [nq, nr]; d = (s + 3) % 6; }
+          }
+          if (from) {
+            p.dp = 1; p.hatchIdx = 0; p.ap = Math.max(p.ap, 12);
+            p.q = bunkerHatches[0].sq; p.r = bunkerHatches[0].sr;
+            p.tq = from[0]; p.tr = from[1];
+            sendTunnelSync(ws, p);
+            send(ws, tunnelVisMsg(p, id));
+            send(ws, { t: 'dbg_lab', at: k, d, tq: p.tq, tr: p.tr });
+          }
+        }
+        if (msg.got !== undefined) lab.got = (msg.got | 0) & 7;
+        if (msg.give) {
+          [LAB_ITEM_CAP, LAB_ITEM_HEART, LAB_ITEM_WIRES, LAB_ITEM_NOTE].forEach((it, k) => { if (msg.give & (1 << k)) addItemToInv(p, it, 1); });
+          send(ws, { t: 'item_result', ok: true, act: 'dbg', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+        }
+        if (msg.pts !== undefined) p.sc = Math.max(0, msg.pts | 0);
+        if (msg.dawn) labDawn();
+        broadcast(stateMsg());
+        console.log(`[lab] dbg by pid=${id}: ${JSON.stringify(labWire())}`);
+        break;
+      }
+      case 'dbg_bonney': {
+        // Test-only: ONE-HAND BONNEY (bonney.hpp). Fields combine, applied in this order:
+        //   {"t":"dbg_bonney","reset":1}      a fresh Bonney, first placement, empty hoard
+        //   {"t":"dbg_bonney","here":1}       her fire onto the hex beside you ("dir": which side,
+        //                                     DIR_DELTA, default 0); replies {"t":"dbg_bonney","d"}:
+        //                                     send m d to walk in
+        //   {"t":"dbg_bonney","mode":1}       0 section 1 / 1 section 2 / 2 away
+        //   {"t":"dbg_bonney","give":76}      that item into your pack (something to steal)
+        //   {"t":"dbg_bonney","hoard":[37]}   her hoard: these, stolen from you
+        //   {"t":"dbg_bonney","dawn":1}       run her dawn now (an away Bonney comes back)
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.reset) bonInit();
+        if (msg.here && !p.dp) {
+          const d = Math.max(0, Math.min(5, msg.dir | 0)), [dq, dr] = DIR_DELTA[d];
+          [bon.q, bon.r] = bonWrap(p.q + dq, p.r + dr);
+          if (bon.mode === BON_AWAY) bon.mode = BON_HAND;
+          send(ws, { t: 'dbg_bonney', d, q: bon.q, r: bon.r });
+        }
+        if (msg.mode !== undefined) {
+          bon.mode = Math.max(0, Math.min(2, msg.mode | 0));
+          if (bon.mode === BON_AWAY) { bon.q = -1; bon.r = -1; }
+        }
+        if (msg.give) {
+          addItemToInv(p, msg.give | 0, 1);
+          send(ws, { t: 'item_result', ok: true, act: 'dbg', pid: id, it: p.it, iq: p.iq, ...packFields(p) });
+        }
+        if (Array.isArray(msg.hoard)) bon.hoard = msg.hoard.slice(-BON_HOARD).map((it) => ({ item: it | 0, pid: id }));
+        if (msg.dawn) bonDawn();
+        broadcast(stateMsg());
+        console.log(`[bonney] dbg by pid=${id}: ${JSON.stringify(bonWire())} hoard=${JSON.stringify(bon.hoard)}`);
+        break;
+      }
       case 'dbg_vac': {
         // Test-only: VACANCY (vacancy.hpp). Fields combine, applied in this order:
         //   {"t":"dbg_vac","reset":1}         a fresh sign over a random town, nothing read
@@ -5226,6 +6436,68 @@ wss.on('connection', (ws) => {
         console.log(`[vac] dbg by pid=${id}: ${JSON.stringify(vacWire())}`);
         break;
       }
+      case 'dbg_ghost': {
+        // Test-only: wasteland ghosts (ghosts.hpp). Fields combine, in this order:
+        //   {"t":"dbg_ghost"}                 a ghost rises 2 hexes from you, done rising
+        //   {"t":"dbg_ghost","here":1}        ...on your hex, and takes hold of you at once
+        //   {"t":"dbg_ghost","at":[q,r]}      ...on any hex ("name":"Rook" names it)
+        //   {"t":"dbg_ghost","drain":1}       the ghost riding you drains a token now
+        //   {"t":"dbg_ghost","tick":1}        run one ghost world tick now
+        //   {"t":"dbg_ghost","dawn":1}        one dawn's worth of fading ("days":n first sets theirs)
+        //   {"t":"dbg_ghost","fade":1}        every ghost fades now, leaving its hoard
+        //   {"t":"dbg_ghost","hold":1}        the world tick skips them (0 lets them go again)
+        //   {"t":"dbg_ghost","clear":1}       no ghosts at all
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p) break;
+        if (msg.clear) ghostInit();
+        if (msg.hold !== undefined) ghostHold = !!msg.hold;
+        if (msg.here || Array.isArray(msg.at) || (!msg.drain && !msg.tick && !msg.dawn && !msg.fade && !msg.clear && msg.hold === undefined && msg.days === undefined)) {
+          const [q, r] = msg.here ? [p.q, p.r] : Array.isArray(msg.at) ? kaneWrap(msg.at[0] | 0, msg.at[1] | 0)
+                                                 : kaneWrap(p.q + 2 * DIR_DELTA[2][0], p.r + 2 * DIR_DELTA[2][1]);
+          const gi = ghostRise({ id: msg.src ?? ((id + 1) % MAX_PLAYERS), name: msg.name || 'Rook', q, r });
+          ghosts[gi].rise = 0;
+          if (msg.here && ghostCanHaunt(p)) ghostLatch(gi, id);
+        }
+        if (msg.drain) { const gi = ghostHaunting(id); if (gi >= 0) ghostDrain(gi); }
+        if (msg.tick) tickGhosts();
+        if (msg.days !== undefined) for (const g of ghosts) if (g) g.daysLeft = Math.max(1, msg.days | 0);
+        if (msg.dawn && ghostDawn()) broadcast(groundUpdateMsg(-1, -1, 'aged'));
+        if (msg.fade) {
+          let ground = false;
+          for (let i = 0; i < GHOST_MAX; i++) if (ghosts[i]) ground = ghostFade(i) || ground;
+          if (ground) broadcast(groundUpdateMsg(-1, -1, 'aged'));
+        }
+        console.log(`[ghost] dbg by pid=${id}: ${JSON.stringify(ghostWire())}`);
+        broadcast(stateMsg());
+        break;
+      }
+
+      case 'dbg_dsh': {
+        // Test-only: the Dshingus (dshingus.hpp). Fields combine, in this order:
+        //   {"t":"dbg_dsh"}                 you catch it now, off the band
+        //   {"t":"dbg_dsh","pid":2}         seat 2 catches it instead
+        //   {"t":"dbg_dsh","days":n}        set that count to n (0 = over it, silently)
+        //   {"t":"dbg_dsh","spot":1}        the next REST leaves a spot (0: it does not)
+        //   {"t":"dbg_dsh","lay":1}         a spot under you now, rest or no rest (you must have it)
+        //   {"t":"dbg_dsh","dawn":1}        one dawn's worth: a day off, old spots dry up
+        //   {"t":"dbg_dsh","clear":1}       nobody has it, and no spots
+        // Answers with a state broadcast that carries the spots, as a sync would.
+        const id = sockets.get(ws);
+        if (!players[id]) break;
+        const who = msg.pid !== undefined ? (msg.pid | 0) : id;
+        const quiet = msg.days !== undefined || msg.spot !== undefined || msg.lay || msg.dawn || msg.clear;
+        if (msg.clear) { dshDays.fill(0); dshSpots = []; }
+        if (!quiet && players[who]) dshCatch(who, DSH_SRC_BAND);
+        if (msg.days !== undefined && who >= 0 && who < MAX_PLAYERS) dshDays[who] = Math.max(0, Math.min(DSH_DAYS, msg.days | 0));
+        if (msg.spot !== undefined) dshForceSpot = !!msg.spot;
+        if (msg.lay) dshOnRest(id, true);
+        if (msg.dawn) dshDawn();
+        console.log(`[dsh] dbg by pid=${id}: ${JSON.stringify(dshWire(true))}`);
+        broadcast({ ...stateMsg(), world: worldStateMsg(true) });
+        break;
+      }
+
       case 'dbg_kane': {
         // Test-only: Machine Gun Kane (kane.hpp). Fields combine:
         //   {"t":"dbg_kane"}                      the jeep 2 hexes from you, driving
@@ -5342,6 +6614,27 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      // Test-only: put the sender in forest oasis #n (default 0) -- its bed, or
+      // ring side d (0-5) -- on the surface with a full AP budget, so the safe
+      // ground can be checked without walking there (docs/forest-oasis.md).
+      //   {"t":"dbg_oasis","n":2}   {"t":"dbg_oasis","n":2,"d":4}
+      // The reply-less answer is the state broadcast; the log line names it.
+      case 'dbg_oasis': {
+        const id = sockets.get(ws);
+        const p  = players[id];
+        if (!p || !oases.length) break;
+        const o = oases[Math.max(0, Math.min(oases.length - 1, msg.n | 0))];
+        const d = Number.isInteger(msg.d) && msg.d >= 0 && msg.d < 6 ? msg.d : -1;
+        p.dp = 0; p.ap = 6;
+        p.q = d < 0 ? o.q : ((o.q + TUN_DQ[d]) % MAP_COLS + MAP_COLS) % MAP_COLS;
+        p.r = d < 0 ? o.r : ((o.r + TUN_DR[d]) % MAP_ROWS + MAP_ROWS) % MAP_ROWS;
+        send(ws, { t: 'vis', q: p.q, r: p.r, vr: surfaceVis(p), cells: buildVisDisk(p.q, p.r, surfaceVis(p), p.id),
+                   trl: buildTrailDisk(p.q, p.r, surfaceVis(p)) });
+        broadcast(stateMsg());
+        console.log(`[dbg_oasis] pid=${id} -> grove #${msg.n | 0} (${p.q},${p.r}) oasis=${inOasis(p)}`);
+        break;
+      }
+
       // Test-only: collapse the tunnel hex in front of the sender (direction d,
       // default 0), so the blocked-route behaviour can be exercised.
       // {"t":"dbg_collapse"} or {"t":"dbg_collapse","d":2}
@@ -5433,6 +6726,7 @@ wss.on('connection', (ws) => {
         //   {"t":"dbg_eco","act":"burst"}                       every fruiting colony bursts now
         //   {"t":"dbg_eco","act":"germinate"}                   every dormant spore wakes now
         //   {"t":"dbg_eco","act":"daisy","stage":3,"count":3}   a patch on the sender's hex (or q/r)
+        //   {"t":"dbg_eco","act":"slime","n":5}                 thick mould on n hexes running east of the sender (or q/r)
         //   {"t":"dbg_eco","act":"spore"}                       a spore two hexes east of the sender (or q/r), awake now
         //   {"t":"dbg_eco","act":"speed","n":20}                eco clock multiplier
         //   {"t":"dbg_eco","act":"regen","seed":123}            new species (seed 0 = random), scars cleared
@@ -5450,6 +6744,12 @@ wss.on('connection', (ws) => {
             if (q === undefined || r === undefined) { info = 'daisy: no hex'; break; }
             const d = eco.plantDaisy(q | 0, r | 0, msg.stage ?? 3, msg.count ?? 3);
             info = d ? `daisy at (${d.q},${d.r}) stage=${d.stage} count=${d.count}` : 'daisy: patch table full';
+            break;
+          }
+          case 'slime': {
+            const q = msg.q ?? (p ? (p.q + 1) % MAP_COLS : undefined), r = msg.r ?? p?.r;
+            if (q === undefined || r === undefined || !eco.species) { info = 'slime: no hex'; break; }
+            info = `slime on ${eco.paintMould(q | 0, r | 0, Math.max(1, Math.min(20, msg.n ?? 5)))} hexes east of (${q},${r})`;
             break;
           }
           case 'spore': {
@@ -5496,32 +6796,9 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      case 'car_trade': {
-        // Dedicated one-shot handler — no offer/accept round-trip, mirrors
-        // handleMsg_caravan_trade in network-msg-trade.hpp.
-        const id = sockets.get(ws);
-        const p  = players[id];
-        if (!p) break;
-        const give = (Array.isArray(msg.give) ? msg.give : [0, 0, 0, 0, 0]).map(v => Math.max(0, Math.min(99, v | 0)));
-        const want = (Array.isArray(msg.want) ? msg.want : [0, 0, 0, 0, 0]).map(v => Math.max(0, Math.min(99, v | 0)));
-        if (give.every(v => v === 0) && want.every(v => v === 0)) break;
-        const coLocated = p.q === caravan.q && p.r === caravan.r;
-        if (!p.enc && caravan.active && coLocated && hasResources(p, give) && hasResources(caravan, want)) {
-          for (let i = 0; i < 5; i++) {
-            p.inv[i]       = Math.min(99, (p.inv[i] || 0) - give[i] + want[i]);
-            caravan.inv[i] = Math.min(99, (caravan.inv[i] || 0) - want[i] + give[i]);
-          }
-          broadcast({ t: 'ev', k: 'trd_res', from: id, to: CARAVAN_PID, res: 1 });
-          broadcast(stateMsg());
-          console.log(`[caravan] trade pid=${id} give=${JSON.stringify(give)} want=${JSON.stringify(want)}`);
-        } else {
-          send(ws, { t: 'trade_fail' });
-        }
-        break;
-      }
-
       case 'car_buy': {
-        // Resource tokens → a consumable off the caravan's shelf. Mirrors
+        // Resource tokens → a consumable off the caravan's shelf — the only
+        // caravan trade (it never swaps tokens for tokens). Mirrors
         // handleMsg_caravan_buy in network-msg-trade.hpp: all-or-nothing
         // checks, then EVT_TRADE_RESULT (with item/n) for everyone plus a
         // targeted item_result so the buyer's pack updates at once.
@@ -5609,18 +6886,38 @@ function ecoInputs() {
   };
 }
 
-// Bloomed Wasteland Daisies bite whoever enters their hex: 1 LL and a `dmg`
-// event with the DC_DAISY cause, and the bite is itself an injury that seeds
-// the patch again (ecoBiteCheck in ecology.hpp). Surface only; a downed
-// survivor is not bitten twice.
-function ecoBite(p) {
-  if (!eco.species || !eco.biteOn || !p || p.dp || p.ll <= 0 || !eco.bloomAt(p.q, p.r)) return false;
-  p.ll -= 1;
-  broadcast({ t: 'ev', k: 'dmg', pid: p.id, amt: 1, cause: 'wasteland daisy', ll: p.ll });
+// What bites whoever enters a surface hex (ecoBiteCheck in ecology.hpp):
+// the slime mould, 1 LL for the first step onto it and 1 more for each step
+// after it that lands on slime too (a `dmg` with cause "slime mould"), and a
+// bloomed Wasteland Daisy, a flat 1 LL ("wasteland daisy"). Each bite is an
+// injury that seeds daisies. `step` = walked in: anything else (a respawn,
+// climbing out of a tunnel) starts the slime run again at 1. Surface only; a
+// downed survivor is not bitten twice.
+const slimeRun = new Array(MAX_PLAYERS).fill(0);   // ecoSlimeRun[]: slime steps in a row per seat
+function ecoBiteOnce(p, want, cause) {
+  const amt = Math.min(want, p.ll);
+  if (amt <= 0) return false;
+  p.ll -= amt;
+  broadcast({ t: 'ev', k: 'dmg', pid: p.id, amt, cause, ll: p.ll });
   eco.noteHurt(p.q, p.r);
-  console.log(`[eco] bite pid=${p.id} at (${p.q},${p.r}) ll=${p.ll}`);
-  if (p.ll === 0) downPlayer(p);
+  console.log(`[eco] ${cause} pid=${p.id} at (${p.q},${p.r}) -${amt} ll=${p.ll}`);
+  if (p.ll === 0) { slimeRun[p.id] = 0; downPlayer(p); }
   return true;
+}
+function ecoBite(p, step = false) {
+  if (!p) return false;
+  let run = step ? slimeRun[p.id] : 0;
+  slimeRun[p.id] = 0;
+  if (!eco.species || !eco.biteOn || p.dp || p.ll <= 0) return false;
+  if (inOasis(p)) return false;   // nothing bites in a grove; the run ends
+  let bit = false;
+  if (eco.mouldAt(p.q, p.r)) {
+    run = Math.min(255, run + 1);
+    slimeRun[p.id] = run;
+    bit = ecoBiteOnce(p, run, 'slime mould');
+  }
+  if (p.ll > 0 && eco.bloomAt(p.q, p.r)) bit = ecoBiteOnce(p, 1, 'wasteland daisy') || bit;
+  return bit;
 }
 
 function ecoPublish() {

@@ -11,7 +11,7 @@
         {
           "label": "Keep your weight on that board and ease back out under the stag",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 50,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_stag"
@@ -19,7 +19,7 @@
         {
           "label": "Follow the fishing line down to wherever it all ties off",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_bear"
@@ -44,7 +44,7 @@
         {
           "label": "Find out what DO NOT is tied to, and open the stockroom anyway",
           "cost": {},
-          "base_risk": 55,
+          "base_risk": 70,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_stockroom"
@@ -64,7 +64,7 @@
         {
           "label": "His keys are in his lap. The cabinet by his chair is locked.",
           "cost": {},
-          "base_risk": 70,
+          "base_risk": 80,
           "skill": 2,
           "success_node": "cache_3",
           "hazard_id": "the_good_chair"

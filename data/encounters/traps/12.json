@@ -11,7 +11,7 @@
         {
           "label": "Step back off the path without troubling the fisherman",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "one_gnome"
@@ -19,7 +19,7 @@
         {
           "label": "Pinch out the cord between the hats and reel the fisherman in",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_whole_step"
@@ -44,7 +44,7 @@
         {
           "label": "Climb the cleared step and try the caravan door",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_door_gnome"
@@ -65,7 +65,7 @@
   "hazards": {
     "one_gnome": {
       "text": "Your heel finds the fisherman's line on the last step back. One gnome goes — only the one, the cord burns too slow to carry it on — with a flat bang and a hot fistful of roofing nails, most of which arrive in the seat of your trousers. Three find your canteen. You leave a trail of water and a very particular limp, and behind you the rest of the step carries on smiling.",
-      "penalty": { "ll": [-1, -2], "water": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

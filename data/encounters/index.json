@@ -36,7 +36,7 @@
     "path": "mountain"
   },
   "9": {
-    "count": 23,
+    "count": 25,
     "path": "settlement"
   },
   "14": {
@@ -55,5 +55,13 @@
   "vacancy": {
     "count": 4,
     "path": "vacancy"
+  },
+  "lab": {
+    "count": 4,
+    "path": "lab"
+  },
+  "bonney": {
+    "count": 2,
+    "path": "bonney"
   }
 }

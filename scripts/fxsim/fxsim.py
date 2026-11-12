@@ -28,10 +28,10 @@ EXE = os.path.join(OUT, "fxsim.exe")
 W, H = 240, 320
 SCENES = ["quake", "strike", "dawn", "eye", "hunt", "switch", "madness", "fire", "threat",
           "chem", "storm", "join", "thrown", "act", "odds", "fog", "reprint", "below", "crafted", "crawl",
-          "tripwire", "beartrap",
-          "road_day", "road_storm", "road_night", "road_fog", "road_empty", "road_cycle",
+          "tripwire", "beartrap", "ghoul", "rough0", "rough1", "rough2", "rough_dawn",
+          "road_day", "road_storm", "road_night", "road_fog", "road_empty", "road_empty_ap", "road_cycle",
           "admired", "admired_empty",
-          "chronicle", "chronicle1", "chronicle2", "chronicle3", "chronicle_empty"] +          ["chron_g%d" % i for i in range(11)] +          ["stash", "stash_bare", "odds_win", "odds_lose", "odds_none", "waste", "figs", "figs_big", "figs_night", "stash_cast", "odds_cast", "death0", "death1", "death2"]
+          "chronicle", "chronicle1", "chronicle2", "chronicle3", "chronicle_empty"] +          ["chron_g%d" % i for i in range(12)] +          ["chron_clash", "chron_trip", "chron_kane", "chron_kane_miss"] +          ["chron_rough", "chron_rough_tree", "chron_rough_chalk"] +          ["chron_big%d" % i for i in range(36)] +          ["chron_%s_%s" % (a, o) for a in ("forage", "water", "medic", "medic_self", "salvage", "shelter") for o in ("ok", "bad")] +          ["stash", "stash_walk", "stash_scrap", "stash_moon", "stash_bare", "odds_win", "odds_lose", "odds_none", "waste", "waste_roll", "waste_collapse", "waste_shear", "waste_vram", "waste_half", "waste_dump", "figs", "figs_big", "figs_night", "stash_cast", "odds_cast", "death0", "death1", "death2"]
 
 
 def find_vcvars():

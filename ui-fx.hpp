@@ -1639,12 +1639,15 @@ enum FxKind : uint8_t {
   FXK_CRAWL,      // someone came back up, and one of the small ones came with them
   FXK_TRIPWIRE,   // someone walked onto a trap and it fired: the wire parts (section 13b)
   FXK_BEARTRAP,   // a trap went off on someone: the jaws (section 13b)
+  FXK_GHOUL,      // a ghost took hold of someone: its face, all of a sudden (section 13c)
+  FXK_ROUGH,      // someone slept with no roof, and the waste laughs (ui-scenes.hpp section 12b)
   FXK_COUNT
 };
-// Band fills. The last four are not bands at all but cut scenes: the nest
-// (section 12), the commendation (section 13), and the two traps (13b).
+// Band fills. The last six are not bands at all but cut scenes: the nest
+// (section 12), the commendation (section 13), the two traps (13b), the
+// ghoul (13c) and sleeping rough (ui-scenes.hpp section 12b).
 enum : uint8_t { FXF_FOCUS = 0, FXF_SPEED, FXF_HAZARD, FXF_KRACKLE, FXF_RAIN, FXF_SUN, FXF_EYES, FXF_DARK,
-                 FXF_NEST, FXF_MEDAL, FXF_WIRE, FXF_JAWS };
+                 FXF_NEST, FXF_MEDAL, FXF_WIRE, FXF_JAWS, FXF_GHOUL, FXF_ROUGH };
 // Impact flashes: a white-out frame, a negative frame, or both in that order.
 enum : uint8_t { FXFL_NONE = 0, FXFL_WHITE = 1, FXFL_NEG = 2, FXFL_BOTH = 3 };
 // Extras.
@@ -1682,9 +1685,13 @@ static const FxStyleDef FX_STYLE[FXK_COUNT] = {
   /* DAWN      */ { "DAY",      FXF_SUN,     2,  60, FXFL_NONE, 0, 1800, 20000, 105 },
   /* JOIN      */ { "NEW BLOOD", FXF_SPEED,  1,  90, FXFL_WHITE, FXE_CRESC, 1500, 3000, 100 },
   /* THREAT    */ { "THREAT",   FXF_HAZARD,  2, 130, FXFL_NONE, FXE_TEAR, 1700, 5000, 100 },
-  /* LONGODDS  */ { "LONG ODDS", FXF_SUN,    2, 110, FXFL_WHITE, FXE_CRESC, 1600, 4000, 100 },
+  // The two wins are asides, not events (the user, 2026-11-06: "tone down
+  // the win encounter, it's kinda obnoxious"): no white flash, no crescendo,
+  // a nudge of shake, a shorter band, and a long cooldown so a lucky streak
+  // does not take the screen over. Mirrored in data/observer-fx.js.
+  /* LONGODDS  */ { "LONG ODDS", FXF_SUN,    1,  30, FXFL_NONE, 0, 1200, 30000, 88 },
   /* THROWN    */ { "WHAM",     FXF_FOCUS,   2, 200, FXFL_NEG, FXE_SPLAT | FXE_BGLINES, 1500, 4000, 118 },
-  /* CLEARED   */ { "CLEARED",  FXF_SUN,     2,  90, FXFL_WHITE, FXE_CRESC, 1600, 4000, 100 },
+  /* CLEARED   */ { "CLEARED",  FXF_SUN,     1,  30, FXFL_NONE, 0, 1300, 20000, 92 },
   /* FIRE      */ { "FWOOSH",   FXF_FOCUS,   2, 130, FXFL_WHITE, FXE_FIRE | FXE_CRESC, 1700, 25000, 104 },
   /* FLOOD     */ { "SPLOOSH",  FXF_RAIN,    2, 150, FXFL_NONE, FXE_RAIN | FXE_DRIPS, 1600, 25000, 100 },
   // Seven seconds is a lot of screen to hand over, and survivors go up and
@@ -1702,6 +1709,12 @@ static const FxStyleDef FX_STYLE[FXK_COUNT] = {
   // minute and a half between showings and the jaws two.
   /* TRIPWIRE  */ { "SNAP!",    FXF_WIRE,    2,   0, FXFL_NONE, 0, 2900, 90000, 100 },
   /* BEARTRAP  */ { "KA-CHUNK", FXF_JAWS,    2,   0, FXFL_NONE, FXE_BLOOD | FXE_DRIPS, 4300, 120000, 100 },
+  // A jump scare: a catastrophe, so it cuts in now, over anything but a
+  // death. A haunting starts once per ghost, and the board can only hold six.
+  /* GHOUL     */ { "SKREEE",   FXF_GHOUL,   3, 255, FXFL_BOTH, FXE_VROLL | FXE_TEAR | FXE_DRIPS, 2200, 30000, 100 },
+  // Once a dawn at most (network-events.hpp picks one sleeper), but a day can
+  // be over in seconds when everyone rests: a minute between showings.
+  /* ROUGH     */ { "HA HA HA", FXF_ROUGH,   2,   0, FXFL_NONE, 0, 6800, 60000, 100 },
 };
 // A cut scene rather than a band: it holds the panel for seconds, draws no
 // band, and takes the whole screen down into the dark behind it.
@@ -1731,7 +1744,8 @@ static uint8_t  fxQn = 0;
 static const char* const FX_KIND_NAME[FXK_COUNT] = {
   "", "QUAKE", "STRIKE", "STORM", "CHEM", "FOG", "WEATHER", "DOOM_EYE", "DOOM_HUNT",
   "DOOM_ACT", "DOOM_LOST", "DOWNED", "DAWN", "JOIN", "THREAT", "LONGODDS", "THROWN",
-  "CLEARED", "FIRE", "FLOOD", "BELOW", "CRAFTED", "CRAWL", "TRIPWIRE", "BEARTRAP",
+  "CLEARED", "FIRE", "FLOOD", "BELOW", "CRAFTED", "CRAWL", "TRIPWIRE", "BEARTRAP", "GHOUL",
+  "ROUGH",
 };
 struct FxLogEnt { uint16_t n; uint8_t kind; int8_t who; uint16_t arg; char cap[56]; };
 static const int FX_LOG_N = 6;
@@ -1886,6 +1900,12 @@ static void fxWireBegin(FxCut& C);                                        // sec
 static void fxWireFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
 static void fxJawsBegin(FxCut& C);
 static void fxJawsFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
+static void fxGhoulBegin(FxCut& C);                                       // section 13c
+static void fxGhoulFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
+// Sleeping rough is drawn with the chronicle's figures, so it lives with them
+// (ui-scenes.hpp section 12b), which is always included after this file.
+static void fxRoughBegin(FxCut& C, const FxCueReq& q);
+static void fxRoughFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy);
 
 static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   const FxStyleDef& st = FX_STYLE[q.kind];
@@ -1919,7 +1939,9 @@ static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   else if (st.sfx)                   strncpy(sfx, st.sfx, sizeof(sfx) - 1), sfx[sizeof(sfx) - 1] = 0;
   C.hasWord = false;
   const bool nest = st.fill == FXF_NEST, medal = st.fill == FXF_MEDAL;
-  const bool trap = st.fill == FXF_WIRE || st.fill == FXF_JAWS;
+  // The ghoul's shriek is set at the traps' size: one noise over a whole-screen
+  // scene. So is the laugh at whoever slept rough.
+  const bool trap = st.fill == FXF_WIRE || st.fill == FXF_JAWS || st.fill == FXF_GHOUL || st.fill == FXF_ROUGH;
   if (sfx[0]) {
     const FxInk& ink = (st.extras & FXE_BLOOD) ? FX_INK_BLOOD : (st.fill == FXF_RAIN ? FX_INK_COLD : FX_INK_HOT);
     bool drips = (st.extras & FXE_DRIPS) != 0 || (q.kind == FXK_THREAT && q.arg >= 4);
@@ -1967,6 +1989,8 @@ static void fxCutBegin(const FxCueReq& q, uint32_t now) {
   if (medal) fxMedalBegin(C, q);
   if (st.fill == FXF_WIRE) fxWireBegin(C);
   if (st.fill == FXF_JAWS) fxJawsBegin(C);
+  if (st.fill == FXF_GHOUL) fxGhoulBegin(C);
+  if (st.fill == FXF_ROUGH) fxRoughBegin(C, q);
   if (q.kind == FXK_CRAWL) fxCrawlBegin(C.seed, now);
   FX.lastKind[q.kind] = now ? now : 1;
 }
@@ -2190,6 +2214,8 @@ static void fxCutFrame(uint32_t now, float shx, float shy) {
   if (st.fill == FXF_MEDAL) { fxMedalFrame(C, t, now, shx, shy); return; }
   if (st.fill == FXF_WIRE)  { fxWireFrame(C, t, now, shx, shy); return; }
   if (st.fill == FXF_JAWS)  { fxJawsFrame(C, t, now, shx, shy); return; }
+  if (st.fill == FXF_GHOUL) { fxGhoulFrame(C, t, now, shx, shy); return; }
+  if (st.fill == FXF_ROUGH) { fxRoughFrame(C, t, now, shx, shy); return; }
 
   // Speed lines across the whole screen behind a big hit, for its first beat.
   if ((st.extras & FXE_BGLINES) && t < 700)
@@ -4397,6 +4423,285 @@ static void fxJawsFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy
   }
   fxSceneCaption(C, tf, shx, shy);
   fxStip = 0;
+}
+
+// ── 13c. The ghoul ───────────────────────────────────────────────────────────
+// A ghost has taken hold of someone (ghosts.hpp). No build-up: the glass is
+// simply its face, punched in at half again its size and settling, with both
+// its hands come up over the bottom of the screen to hold on. A gaunt dead
+// face lit from above -- the sockets enormous and drooping, a white-hot point
+// in each, the nose fallen in, lank hair hanging over the lot -- and the jaw
+// drops and keeps dropping into a scream that is mostly hole, ringed in
+// broken teeth. It stutters on the glass the way a bad frame does, the tube
+// strobes negative, and then it comes at you and comes apart.
+//
+// The face is rasterised from a signed distance like the Doom's skull, on 2x2
+// blocks with the halftone per pixel, across the amber ramp; the teeth, hair
+// and fingers are drawn over it as the other rigs on this glass are.
+enum : uint16_t {             // the beats, ms into the scene; FX_STYLE's holdMs is 2200
+  FXG_SCREAM = 80,            // the jaw starts to go
+  FXG_STROBE1 = 420,          // the tube goes negative for a frame,
+  FXG_STROBE2 = 690,          // and again
+  FXG_LUNGE  = 1150,          // it comes at you
+  FXG_HIT    = 1240,          // and through the glass
+  FXG_GONE   = 1360,          // nothing left of it
+};
+struct FxGhoul { uint32_t seed; uint8_t fired; };
+static FxGhoul fxGhoul;
+
+static void fxGhoulBegin(FxCut& C) {
+  fxGhoul.seed  = fxHash(C.seed ^ 0x6A0B1E5U);
+  fxGhoul.fired = 0;
+}
+
+// The face, units of R (half the width at the temples), y down, origin
+// between the eyes. Returns the head's distance; *cav the holes' (sockets,
+// nose, mouth); *sock the sockets' alone, for the bruising round them.
+// `jaw` 0-1 is how far the scream has dropped it.
+static float fxGhoulSd(float x, float y, float jaw, float* cav, float* sock) {
+  const float cran  = fxSdEll(x, y + 0.45f, 0.92f, 1.05f, 1.0f, 0.0f);
+  const float cheek = fxSdEll(x, y - 0.08f, 1.0f, 0.40f, 1.0f, 0.0f);
+  const float jy    = 0.75f + jaw * 0.45f;
+  const float taper = 1.0f - 0.45f * fxClampF((y - 0.3f) / (0.9f + jaw * 0.5f), 0.0f, 1.0f);
+  const float jd    = fxSdBox(x / taper, y - jy, 0.62f, 0.5f + jaw * 0.4f, 0.32f) * taper;
+  const float head  = fxSmin(fxSmin(cran, cheek, 0.25f), jd, 0.3f);
+  // The sockets droop at their outer ends: not anger, grief gone bad.
+  const float C = 0.9492f, S = 0.3146f;                  // 0.32 rad
+  const float sL = fxSdEll(x + 0.36f, y + 0.02f, 0.27f, 0.22f, C, -S);
+  const float sR = fxSdEll(x - 0.36f, y + 0.02f, 0.27f, 0.22f, C, S);
+  const float nose  = fxSdEll(x, y - 0.33f, 0.085f, 0.12f, 1.0f, 0.0f);
+  const float mouth = fxSdEll(x, y - (0.78f + jaw * 0.30f), 0.36f - jaw * 0.04f, 0.10f + jaw * 0.50f, 1.0f, 0.0f);
+  *sock = fminf(sL, sR);
+  *cav  = fminf(fminf(*sock, nose), mouth);
+  return head;
+}
+
+// One amber rung for a brightness 0-1, dithered between its two neighbours on
+// the screen (the same idea as fxGasTone, on the phosphor ramp).
+static inline uint16_t fxGhoulTone(int x, int y, float lum) {
+  float v = FXP_SOOT + fxClampF(lum, 0.0f, 0.999f) * (FXP_HDR - FXP_SOOT);
+  int lo = (int)v;
+  int d = FX_DOT[((y + 3) & 7) * 8 + ((x + 5) & 7)];
+  return FX_PAL[lo + (d < (int)((v - lo) * 256.0f) ? 1 : 0)];
+}
+
+static void fxGhoulFace(float cx, float cy, float R, float jaw, uint32_t seed) {
+  const float inv = 1.0f / R;
+  const int x0 = fxMaxI(0, (int)floorf(cx - R * 1.12f)), x1 = fxMinI(FX_W, (int)ceilf(cx + R * 1.12f));
+  const int y0 = fxMaxI(0, (int)floorf(cy - R * 1.56f)), y1 = fxMinI(FX_H, (int)ceilf(cy + R * (1.35f + jaw * 0.9f)));
+  const float soft = fmaxf(0.02f, 0.9f * inv);
+  for (int sy = y0; sy < y1; sy += 2) {
+    const float y = (sy + 1.0f - cy) * inv;
+    for (int sx = x0; sx < x1; sx += 2) {
+      const float x = (sx + 1.0f - cx) * inv;
+      float cav, sock;
+      const float hd = fxGhoulSd(x, y, jaw, &cav, &sock);
+      if (hd > soft + 0.06f) continue;
+      const float cover = fxSStep(soft, -soft, hd);
+      // An ink line round it, and its holes black.
+      const bool rim  = hd > -0.05f;
+      const bool hole = cav < 0.0f;
+      // Lit from up and to the left: the brow, the cheekbones, the bridge of
+      // the nose catch it; under the cheekbones it falls in; round the sockets
+      // it bruises. The skin is mottled and cracked.
+      float lum = 0.42f - x * 0.16f - y * 0.14f;
+      lum += 0.30f * fxSStep(0.16f, 0.0f, fabsf(y + 0.30f)) * fxSStep(0.75f, 0.2f, fabsf(x));       // the brow
+      lum += 0.26f * fxSStep(0.24f, 0.0f, fabsf(y - 0.10f)) * fxSStep(0.2f, 0.55f, fabsf(x)) *
+             fxSStep(0.98f, 0.7f, fabsf(x));                                                         // the cheekbones
+      lum += 0.18f * fxSStep(0.09f, 0.0f, fabsf(x)) * fxSStep(-0.2f, 0.0f, y) * fxSStep(0.32f, 0.2f, y); // the bridge
+      const float hx = fabsf(x) - 0.55f, hy = y - 0.46f;
+      lum -= 0.34f * fxSStep(0.32f, 0.05f, sqrtf(hx * hx + hy * hy));                                 // the hollows
+      lum -= 0.30f * fxSStep(0.16f, 0.0f, sock);                                                      // the bruising
+      lum -= 0.25f * fxSStep(0.10f, 0.0f, cav) * (1.0f - fxSStep(-0.01f, -0.02f, cav));               // the lips of the holes
+      lum += (fxNoise2(x * 5.0f, y * 5.0f, seed) - 0.5f) * 0.28f;                                     // rot
+      const float rg = 1.0f - fabsf(2.0f * fxNoise2(x * 3.1f + 7.3f, y * 3.1f - 2.9f, seed + 1) - 1.0f);
+      const bool crack = rg > 0.94f && y < 0.55f;
+      for (int py = sy; py < sy + 2 && py < y1; py++)
+        for (int px = sx; px < sx + 2 && px < x1; px++) {
+          if (FX_DOT[(py & 7) * 8 + (px & 7)] >= (int)(cover * 256.0f)) continue;
+          fxPut(px, py, (rim || hole || crack) ? FX_PAL[FXP_INK] : fxGhoulTone(px, py, lum));
+        }
+    }
+  }
+}
+
+// Broken teeth round the inside of the maw, pointing in; a few gone, two long.
+static void fxGhoulTeeth(float cx, float cy, float R, float jaw, uint32_t seed) {
+  const float my = cy + (0.78f + jaw * 0.30f) * R;
+  const float rx = (0.36f - jaw * 0.04f) * R, ry = (0.10f + jaw * 0.50f) * R;
+  const int N = 7;
+  for (int row = 0; row < 2; row++) {
+    for (int k = 0; k < N; k++) {
+      uint32_t h = fxHash2((uint32_t)(row * 16 + k), seed + 41);
+      if ((h & 7) == 0) continue;                                    // that one's gone
+      const float a0 = FX_TAU * 0.5f * (0.12f + 0.76f * (float)k / (N - 1));
+      const float a  = row ? a0 : -a0;                               // top arc, then bottom
+      const float ca = cosf(a), sa = sinf(a), hw = 0.05f * R;
+      const float bx = cx + ca * rx, by = my + sa * ry;
+      const float tx = -ca, ty = -sa * (ry / rx) * 0.6f;              // toward the middle
+      const float tl = sqrtf(tx * tx + ty * ty) + 1e-4f;
+      const float len = R * (0.07f + 0.08f * fxU(h) + ((h >> 8) % 11 == 0 ? 0.12f : 0.0f));
+      const float px = -ty / tl * hw, py = tx / tl * hw;
+      const float ex = bx + tx / tl * len, ey = by + ty / tl * len;
+      fxTri(bx + px * 1.5f, by + py * 1.5f, bx - px * 1.5f, by - py * 1.5f, ex + tx / tl * 1.5f, ey + ty / tl * 1.5f,
+            FX_PAL[FXP_INK]);
+      fxTri(bx + px, by + py, bx - px, by - py, ex, ey, FX_PAL[(h >> 4) & 1 ? FXP_OK : FXP_HDR]);
+      fxLine((int)(bx + px * 0.6f), (int)(by + py * 0.6f), (int)ex, (int)ey, FX_PAL[FXP_GLOW]);
+    }
+  }
+}
+
+// Lank hair from the scalp, down past the jaw, a few strands over the brow.
+static void fxGhoulHair(float cx, float cy, float R, float t, uint32_t seed) {
+  for (int k = 0; k < 30; k++) {
+    uint32_t h = fxHash2((uint32_t)k, seed + 57);
+    const bool fringe = k < 6;
+    // The fringe from the crown; the rest from the sides, so the face shows.
+    float a = fringe ? FX_TAU * (0.69f + 0.12f * fxU(h))
+                     : FX_TAU * ((k & 1) ? 0.51f + 0.16f * fxU(h) : 0.83f + 0.16f * fxU(h));
+    float x = cx + cosf(a) * 0.86f * R, y = cy - 0.45f * R + sinf(a) * 0.98f * R;
+    const float drop = R * (fringe ? 1.0f + 0.35f * fxU(fxHash(h + 1)) : 1.3f + 1.0f * fxU(fxHash(h + 1)));
+    const float side = (x < cx) ? -1.0f : 1.0f;
+    const float w0 = 3.2f + 2.0f * fxU(fxHash(h + 2));
+    const int SEG = 8;
+    for (int s = 0; s < SEG; s++) {
+      const float u = (float)(s + 1) / SEG;
+      const float sway = (fxNoise1(t * 0.8f + k * 3.7f + u * 2.0f, seed + 61) - 0.5f) * 0.10f * R * u;
+      const float nx = cx + cosf(a) * 0.86f * R + side * R * (fringe ? 0.0f : 0.18f) * u + sway +
+                       side * (fringe ? 0.0f : 0.05f * R * sinf(u * 3.0f + k));
+      const float ny = y + drop / SEG;
+      const float w = fxLerp(w0, 0.8f, u);
+      fxStroke(x, y, nx, ny, w + 1.4f, w * 0.7f + 1.0f, FX_PAL[FXP_INK]);
+      if ((h >> (s & 7)) & 1) fxLine((int)(x - 0.8f), (int)y, (int)(nx - 0.8f), (int)ny, FX_PAL[FXP_TRACK]);
+      x = nx; y = ny;
+    }
+  }
+}
+
+// Its hands, come up over the bottom of the glass to hold on: four fingers
+// each, out of the dark below the screen and curled over its edge, gripping.
+// Knuckled and nailed, lit like every thick thing on here -- an ink outline,
+// the flesh, a lit edge toward the top-left light -- and flexing as it holds.
+static void fxGhoulHands(float shx, float shy, float t, uint32_t seed) {
+  for (int hand = 0; hand < 2; hand++) {
+    const float sd = hand ? 1.0f : -1.0f, bx = 120.0f + sd * 74.0f + shx;
+    for (int f = 0; f < 4; f++) {
+      uint32_t h = fxHash2((uint32_t)(hand * 4 + f), seed + 71);
+      const float spread = (f - 1.5f) * 17.0f;
+      const float flex = 5.0f * (fxNoise1(t * 0.004f + f * 1.7f, seed + 73) - 0.5f);
+      const float lean = sd * (4.0f + 3.0f * fxU(h));                 // the hands lean in, toward the face
+      float px[4], py[4];
+      px[0] = bx + spread;                     py[0] = FX_H + 24.0f + shy;
+      px[1] = bx + spread * 1.08f + lean * 0.5f; py[1] = FX_H - 26.0f - 8.0f * fxU(fxHash(h + 1)) + flex + shy;
+      px[2] = px[1] + lean;                    py[2] = py[1] - 22.0f + flex * 0.5f;
+      px[3] = px[2] + lean * 1.4f;             py[3] = py[2] + 11.0f;   // curled over: the tip hooks down
+      static const float WD[4] = { 14.0f, 12.0f, 10.0f, 8.0f };
+      for (int pass = 0; pass < 3; pass++) {
+        for (int k = 0; k < 3; k++) {
+          const float w0 = WD[k], w1 = WD[k + 1];
+          if (pass == 0) {
+            fxStroke(px[k], py[k], px[k + 1], py[k + 1], w0 + 3.0f, w1 + 3.0f, FX_PAL[FXP_INK]);
+            fxDisc(px[k + 1], py[k + 1], (w1 + 3.0f) * 0.5f, FX_PAL[FXP_INK]);
+          } else if (pass == 1) {
+            fxStroke(px[k], py[k], px[k + 1], py[k + 1], w0, w1, FX_PAL[FXP_RUST]);
+            fxDisc(px[k + 1], py[k + 1], w1 * 0.5f, FX_PAL[k < 2 ? FXP_BRICK : FXP_RUST]);   // the knuckles
+          } else {
+            const float dx = px[k + 1] - px[k], dy = py[k + 1] - py[k], L = sqrtf(dx * dx + dy * dy) + 1e-3f;
+            float nx = -dy / L, ny = dx / L;
+            if (nx + ny > 0) { nx = -nx; ny = -ny; }                // toward the light
+            const float o = (w0 + w1) * 0.22f;
+            fxLine((int)(px[k] + nx * o), (int)(py[k] + ny * o), (int)(px[k + 1] + nx * o), (int)(py[k + 1] + ny * o),
+                   FX_PAL[FXP_HDR]);
+          }
+        }
+      }
+      // The nail on the hooked tip, cracked and yellow.
+      const float dx = px[3] - px[2], dy = py[3] - py[2], L = sqrtf(dx * dx + dy * dy) + 1e-3f;
+      const float ux = dx / L, uy = dy / L;
+      fxTri(px[3] - uy * 4.0f, py[3] + ux * 4.0f, px[3] + uy * 4.0f, py[3] - ux * 4.0f,
+            px[3] + ux * 8.0f, py[3] + uy * 8.0f, FX_PAL[FXP_INK]);
+      fxTri(px[3] - uy * 2.6f, py[3] + ux * 2.6f, px[3] + uy * 2.6f, py[3] - ux * 2.6f,
+            px[3] + ux * 6.0f, py[3] + uy * 6.0f, FX_PAL[FXP_OK]);
+    }
+  }
+}
+
+// The eyes: a white-hot point in each socket, looking straight out of the
+// glass, darting.
+static void fxGhoulEyes(float cx, float cy, float R, float t, uint32_t seed) {
+  const float lx = (fxNoise1(t * 0.006f, seed + 81) - 0.5f) * 0.06f * R;
+  const float ly = (fxNoise1(t * 0.005f, seed + 83) - 0.5f) * 0.04f * R;
+  for (int sd = -1; sd <= 1; sd += 2) {
+    const float ex = cx + sd * 0.33f * R + lx, ey = cy + 0.01f * R + ly;
+    const float er = R * (sd < 0 ? 0.15f : 0.12f);                   // not quite a matched pair
+    for (int py = (int)floorf(ey - er); py <= (int)ceilf(ey + er); py++)
+      for (int px = (int)floorf(ex - er); px <= (int)ceilf(ex + er); px++) {
+        const float dx = px + 0.5f - ex, dy = py + 0.5f - ey, q = 1.0f - sqrtf(dx * dx + dy * dy) / er;
+        if (q <= 0.0f || FX_DOT[(py & 7) * 8 + (px & 7)] >= (int)(q * 330.0f)) continue;
+        fxPut(px, py, FX_PAL[q > 0.6f ? FXP_GLOW : q > 0.3f ? FXP_HOT : FXP_FLAME]);
+      }
+    fxDisc(ex, ey, fmaxf(1.2f, R * 0.035f), FX_PAL[FXP_WHITE]);
+  }
+}
+
+// After it is gone: the chronicle's line, in a box at the foot of the glass.
+static void fxGhoulCaption(const FxCut& C, float t, float shx, float shy) {
+  if (!C.capN || t < FXG_GONE + 80.0f) return;
+  float p = fxClampF((t - FXG_GONE - 80.0f) / 150.0f, 0.0f, 1.0f);
+  int bw = C.capW + 14, bh = C.capN * 16 + 8;
+  int x = (int)(8 + shx), y = (int)(FX_H - 12 - bh + shy + (1.0f - fxBackOut(p)) * 22.0f);
+  fxRect(x + 3, y + 3, x + bw + 3, y + bh + 3, FX_PAL[FXP_INK]);
+  fxRect(x, y, x + bw, y + bh, FX_PAL[FXP_INK]);
+  fxRect(x + 1, y + 1, x + bw - 1, y + 2, FX_PAL[FXP_EMBER]);
+  fxRect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, FX_PAL[FXP_EMBER]);
+  for (int i = 0; i < C.capN; i++) fxF2(C.cap[i], x + 7, y + 4 + i * 16, FX_PAL[FXP_OK]);
+}
+
+static void fxGhoulFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy) {
+  FxGhoul& G = fxGhoul;
+  const float tf = (float)t;
+  // The tube strobes; then the hit as it comes through.
+  if (t >= FXG_STROBE1 && !(G.fired & 1)) { G.fired |= 1; fxFlash(FXFL_NEG); fxImpact(0.25f); }
+  if (t >= FXG_STROBE2 && !(G.fired & 2)) { G.fired |= 2; fxFlash(FXFL_NEG); fxImpact(0.25f); }
+  if (t >= FXG_HIT && !(G.fired & 4)) {
+    G.fired |= 4;
+    fxImpact(0.7f);
+    fxFlash(FXFL_BOTH);
+    fxTearBurst(now, 3, 34, 300);
+  }
+  if (t < FXG_GONE) {
+    // The glass is its face: nothing of the dashboard behind it.
+    fxRect(0, 0, FX_W, FX_H, FX_PAL[FXP_INK]);
+    fxFocusLines(120.0f + shx, 150.0f + shy, 150.0f, 190.0f, 64, C.seed + 5, t / 70,
+                 FX_PAL[t < 300 ? FXP_LINE : FXP_TRACK], 4.0f);
+    // Punched in at half again its size and settling; creeping closer; then
+    // coming at you, and coming apart as it does.
+    float s;
+    if (t < 110)            s = fxLerp(1.5f, 0.95f, fxCubicOut(tf / 110.0f));
+    else if (t < 200)       s = fxLerp(0.95f, 1.0f, fxBackOut((tf - 110.0f) / 90.0f));
+    else if (t < FXG_LUNGE) s = 1.0f + 0.05f * (tf - 200.0f) / (FXG_LUNGE - 200.0f);
+    else                    s = fxLerp(1.05f, 2.4f, fxCubicIn((tf - FXG_LUNGE) / (float)(FXG_GONE - FXG_LUNGE)));
+    float jaw = 0.15f;
+    if (t >= FXG_SCREAM) jaw = fxLerp(0.15f, 1.0f, fxCubicOut(fxClampF((tf - FXG_SCREAM) / 240.0f, 0.0f, 1.0f)));
+    jaw += 0.06f * (fxNoise1(tf * 0.03f, G.seed + 3) - 0.5f);        // the shriek shakes it
+    // A bad frame: it jumps a few pixels and back, worse as it comes.
+    const uint32_t hb = fxHash2(t / 60, G.seed);
+    const float jm = t < 900 ? 3.0f : 6.0f;
+    const float jx = fxS(hb) * jm, jy = fxS(fxHash(hb + 1)) * jm;
+    const float cx = 120.0f + shx + jx, cy = 150.0f + shy + jy, R = 84.0f * s;
+    if (t >= FXG_LUNGE) {
+      fxStip = (uint8_t)fxMinI(255, (int)((tf - FXG_LUNGE) * 255.0f / (FXG_GONE - FXG_LUNGE)));
+      fxStipSeed = G.seed + (t / 40);
+    }
+    fxGhoulFace(cx, cy, R, jaw, G.seed);
+    fxGhoulTeeth(cx, cy, R, jaw, G.seed);
+    fxGhoulHair(cx, cy, R, tf, G.seed);
+    fxGhoulEyes(cx, cy, R, tf, G.seed);
+    fxStip = 0;
+    if (t < FXG_LUNGE) fxGhoulHands(shx, shy, tf, G.seed);
+    if (C.hasWord && t >= 140) fxWordSlam(C.word, (int32_t)t - 140, 120.0f + shx, 36.0f + shy, -0.08f, 45, t / 80);
+  }
+  fxGhoulCaption(C, tf, shx, shy);
 }
 
 // ── 14. Madness ──────────────────────────────────────────────────────────────

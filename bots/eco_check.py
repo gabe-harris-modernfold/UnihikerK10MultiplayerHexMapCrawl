@@ -138,20 +138,27 @@ async def main(argv=None):
         dirs = me.legal_dirs() or [0]
         d = dirs[0]
         back = (d + 3) % 6
+        # Slime on either hex bites too (1 LL, then 2 along the run), so the
+        # LL arithmetic below only holds on clean ground.
+        nq, nr = config.wrap_q(q0 + config.DQ[d]), config.wrap_r(r0 + config.DR[d])
+        slimy = bool({(q0, r0), (nq, nr)} & c.obs.slime)
+        if slimy:
+            print("       (slime under the test hexes: LL totals not checked)")
         await c.request({"t": "m", "d": d})
         await c.wait_for(lambda m: m.get("t") == "ev" and m.get("k") == "mv"
                          and m.get("pid") == c.obs.pid, 3.0)
         dmg = asyncio.create_task(c.wait_for(
-            lambda m: m.get("t") == "ev" and m.get("k") == "dmg" and m.get("pid") == c.obs.pid, 4.0))
+            lambda m: m.get("t") == "ev" and m.get("k") == "dmg" and m.get("pid") == c.obs.pid
+            and m.get("cause") == "wasteland daisy", 4.0))
         await c.request({"t": "m", "d": back})
         ev = await dmg
-        check("dmg event on re-entry", ev is not None)
+        check("daisy dmg event on re-entry", ev is not None)
         if ev is not None:
-            check("cause is the daisy", ev.get("cause") == "wasteland daisy", repr(ev.get("cause")))
-            check("bite costs 1 LL", ev.get("amt") == 1 and ev.get("ll") == ll0 - 1,
+            check("bite costs 1 LL", ev.get("amt") == 1 and (slimy or ev.get("ll") == ll0 - 1),
                   f"amt={ev.get('amt')} ll={ev.get('ll')} was {ll0}")
         await c.wait_for(lambda m: m.get("t") == "s", 3.0)
-        check("broadcast agrees", c.obs.me.ll == ll0 - 1, f"ll {c.obs.me.ll} vs {ll0 - 1}")
+        if not slimy:
+            check("broadcast agrees", c.obs.me.ll == ll0 - 1, f"ll {c.obs.me.ll} vs {ll0 - 1}")
 
     await c.close()
     print(f"{fails} failure(s)")

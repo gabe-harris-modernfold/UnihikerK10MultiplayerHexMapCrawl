@@ -8,7 +8,8 @@
 // there -- out of the old growth, over the seam, a slithering head feeling
 // its way -- and the hex swells only once it arrives; a lost cord withdraws
 // the same way. A fruiting body grows and pulses, a burst throws spores, a
-// daisy sways and turns its head toward whoever is standing next to it.
+// daisy slithers, and turns its head and flicks its tongue toward whoever is
+// standing next to it.
 //
 // Everything is drawn with math -- no image assets. The look is mycelium
 // runners in blood and bruise-purple: tapered, creased cords that fork into
@@ -150,21 +151,113 @@ function ecoBlobCtx(ctx, x, y, R, seed, lump) {
   ctx.closePath();
 }
 
-// The Wasteland Daisy's ink-and-wash palette (EcoField._drawDaisies): fixed,
-// not genome-rolled -- the daisy is always the daisy.
-const DZ_INK    = 'rgba(20,13,12,0.6)';
-const DZ_STEM   = 'rgba(92,111,71,0.95)';
-const DZ_STEMDK = 'rgba(35,45,29,0.95)';
-const DZ_LEAF   = 'rgba(83,105,63,0.97)';
-const DZ_LEAFHI = 'rgba(126,142,94,0.9)';
+// The Wasteland Daisy's palette (EcoField._drawDaisies): fixed, not
+// genome-rolled -- the daisy is always the daisy. Ink like the painted tiles,
+// olive viper skin, a hood of dried blood behind bone-white claws.
+const DZ_INK    = 'rgba(18,11,10,0.7)';
+const DZ_SKIN   = 'rgba(74,88,54,0.98)';
+const DZ_SKINHI = 'rgba(134,140,90,0.8)';
+const DZ_MARK   = 'rgba(26,29,19,0.82)';
+const DZ_LEAF   = 'rgba(60,75,45,0.97)';
+const DZ_LEAFHI = 'rgba(98,112,70,0.92)';
+const DZ_BONE   = 'rgba(222,212,190,0.99)';
+const DZ_HOOD   = 'rgba(98,33,36,0.99)';
+const DZ_TIP    = 'rgba(78,15,21,0.97)';
+const DZ_FLUSH  = 'rgba(146,38,44,0.72)';
+const DZ_MAW    = '#150608';
+const DZ_FANG   = 'rgba(236,228,210,0.97)';
+const DZ_TONGUE = 'rgba(178,42,56,0.95)';
+const DZ_VENOM  = 'rgba(170,182,72,0.92)';
 
-// A lancet: base at (0,0), tip at (L,0), widest at 35% of the length.
-function dzLancet(ctx, L, W) {
+// Scratch centreline for the coils and necks: nothing allocates per frame.
+const DZ_X = new Float32Array(24), DZ_Y = new Float32Array(24), DZ_W = new Float32Array(24);
+
+function dzSmooth(x) { return x * x * (3 - 2 * x); }
+// How far into its strike a head is (0 out, 1 at full stretch), from the
+// plant's own clock st (0..1, staggered per plant).
+function dzLunge(st) { return st < 0 || st >= 1 ? 0 : st < 0.16 ? ecoEaseOut(st / 0.16) : 1 - dzSmooth((st - 0.16) / 0.84); }
+
+// A closed tube along (xs, ys) with per-point widths and round caps, on the
+// context's current path.
+function dzTube(ctx, xs, ys, ws, n) {
+  ctx.beginPath();
+  let N0 = 0, N1 = 0;
+  for (let i = 0; i < n; i++) {
+    const a = i > 0 ? i - 1 : 0, b = i < n - 1 ? i + 1 : n - 1;
+    const tx = xs[b] - xs[a], ty = ys[b] - ys[a], tl = Math.hypot(tx, ty) || 1;
+    const hw = ws[i] / 2, nx = -ty / tl, ny = tx / tl;
+    if (i === 0) { ctx.moveTo(xs[0] + nx * hw, ys[0] + ny * hw); N0 = Math.atan2(ny, nx); }
+    else ctx.lineTo(xs[i] + nx * hw, ys[i] + ny * hw);
+    if (i === n - 1) N1 = Math.atan2(ny, nx);
+  }
+  ctx.arc(xs[n - 1], ys[n - 1], ws[n - 1] / 2, N1, N1 - Math.PI, true);
+  for (let i = n - 2; i >= 0; i--) {
+    const a = i > 0 ? i - 1 : 0, b = i + 1;
+    const tx = xs[b] - xs[a], ty = ys[b] - ys[a], tl = Math.hypot(tx, ty) || 1;
+    const hw = ws[i] / 2;
+    ctx.lineTo(xs[i] + ty / tl * hw, ys[i] - tx / tl * hw);
+  }
+  ctx.arc(xs[0], ys[0], ws[0] / 2, N0 - Math.PI, N0 - ECO_TAU, true);
+  ctx.closePath();
+}
+
+// Viper diamonds down the back of a tube, one on every other sample from i0.
+function dzMarks(ctx, xs, ys, ws, n, i0) {
+  ctx.beginPath();
+  for (let i = i0; i < n - 1; i += 2) {
+    const a = i - 1, b = i + 1;
+    let tx = xs[b] - xs[a], ty = ys[b] - ys[a];
+    const tl = Math.hypot(tx, ty) || 1;
+    const hl = tl * 0.3, hw = ws[i] * 0.3;
+    tx /= tl; ty /= tl;
+    ctx.moveTo(xs[i] + tx * hl, ys[i] + ty * hl);
+    ctx.lineTo(xs[i] - ty * hw, ys[i] + tx * hw);
+    ctx.lineTo(xs[i] - tx * hl, ys[i] - ty * hl);
+    ctx.lineTo(xs[i] + ty * hw, ys[i] - tx * hw);
+    ctx.closePath();
+  }
+}
+
+// A hooked claw of a petal: base (0,0) W wide, tip at (L, hook).
+function dzClaw(ctx, L, W, hook) {
+  ctx.beginPath();
+  ctx.moveTo(0, -W * 0.5);
+  ctx.quadraticCurveTo(L * 0.5, -W * 0.95, L, hook);
+  ctx.quadraticCurveTo(L * 0.5, W * 0.4 + hook * 0.5, 0, W * 0.5);
+  ctx.closePath();
+}
+
+// A barbed leaf: base (0,0), tip (L,0), four hooks a side raking toward the tip.
+function dzProf(u) { return u < 0.35 ? u / 0.35 : (1 - u) / 0.65; }
+function dzBarb(ctx, L, W) {
   ctx.beginPath();
   ctx.moveTo(0, 0);
-  ctx.quadraticCurveTo(L * 0.35, -W, L, 0);
-  ctx.quadraticCurveTo(L * 0.35,  W, 0, 0);
+  for (let i = 0; i < 4; i++) {
+    const u = 0.12 + i * 0.2;
+    ctx.lineTo(u * L, -W * dzProf(u) * 0.7);
+    ctx.lineTo((u + 0.13) * L, -W * dzProf(u + 0.13) * 1.2);
+  }
+  ctx.lineTo(L, 0);
+  for (let i = 3; i >= 0; i--) {
+    const u = 0.12 + i * 0.2;
+    ctx.lineTo((u + 0.13) * L, W * dzProf(u + 0.13) * 1.2);
+    ctx.lineTo(u * L, W * dzProf(u) * 0.7);
+  }
   ctx.closePath();
+}
+
+// A forked tongue from (x, y) along angle a, inked so it reads on pale ground.
+function dzTongue(ctx, x, y, a, len, lw) {
+  if (len < 1) return;
+  const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len, f = len * 0.3;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(ex, ey);
+  ctx.lineTo(ex + Math.cos(a - 0.6) * f, ey + Math.sin(a - 0.6) * f);
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(ex + Math.cos(a + 0.6) * f, ey + Math.sin(a + 0.6) * f);
+  ctx.strokeStyle = DZ_INK; ctx.lineWidth = lw + 0.9; ctx.stroke();
+  ctx.strokeStyle = DZ_TONGUE; ctx.lineWidth = lw; ctx.stroke();
 }
 
 // The board's eco tick (ECO_TICK_MS in ecology.hpp). Only a first guess: the
@@ -1406,17 +1499,19 @@ class EcoField {
     }
   }
 
-  // The Wasteland Daisy. 1-6 clumps (one per injury on the hex, so a patch
-  // runs from a few scattered flowers to a dense field), each 1-3 plants,
-  // inked like the painted tiles. Stage 1 rosettes with seed leaves, stage 2
-  // throbbing buds split by a red seam, stage 3 open flowers -- blood-flushed
-  // petals, an ochre disc and a breathing toothed mouth -- that turn toward
-  // any survivor on or next to the hex and snap shut, throwing red, when
-  // noteBite() says one just got bitten.
+  // The Wasteland Daisy, a flower with a snake in it. 1-6 clumps (one per
+  // injury on the hex, so a patch runs from a few scattered flowers to a
+  // dense field), each 1-3 plants, inked like the painted tiles. Every stem is
+  // a viper-marked neck reared out of a coil on the ground, slithering. Stage
+  // 1 sprouts curl over like hatchlings, stage 2 buds are closed viper heads,
+  // stage 3 blooms are a hood of dried blood behind hooked bone petals round a
+  // fanged mouth. Blooms turn toward any survivor on or next to the hex and
+  // flick a forked tongue at them; when noteBite() says one was just bitten,
+  // every head strikes in turn, throwing red.
   _drawDaisies(ctx, cx, cy, q, r, sz, patch, now, players, renderPos) {
     const stage = patch.stage;
     const grow = ecoEaseOut(Math.min(1, (now - patch.stageAt) / 4000));
-    const snapT = patch.snapAt ? (now - patch.snapAt) / 700 : 9;
+    const snapT = patch.snapAt ? (now - patch.snapAt) / 900 : 9;
     const snapping = snapT < 1;
     const seed = patch.seed | 0;
 
@@ -1451,13 +1546,11 @@ class EcoField {
     const by  = this._dzY || (this._dzY = new Float32Array(MAXP));
     const bg  = this._dzB || (this._dzB = new Float32Array(MAXP));
     const ord = this._dzO || (this._dzO = new Uint8Array(MAXP));
-    const ps = sz * 0.8;                        // plant scale
+    const ps = sz * 0.92;                       // plant scale
     const clumps = Math.min(6, (patch.count | 0) + 1);
     const turn = ecoHash(seed, 0, 50) * ECO_TAU;
     let n = 0;
     for (let c = 0; c < clumps; c++) {
-      // One clump sits near the middle; the rest ring it, evenly spaced with a
-      // hashed jitter so they never form a visible circle.
       const ring = clumps === 1 || (clumps >= 5 && c === 0) ? 0 : 1;
       const slots = clumps >= 5 ? clumps - 1 : clumps;
       const slot = clumps >= 5 ? c - 1 : c;
@@ -1467,8 +1560,6 @@ class EcoField {
       const ccy = cy + Math.sin(ca) * cr * 0.9 + sz * 0.04;
       const plants = 1 + ((ecoHash(seed, c, 53) * 3) | 0);
       for (let j = 0; j < plants && n < MAXP; j++, n++) {
-        // Companions scatter loosely round the clump's lead plant, spaced
-        // round it so they don't stack on each other.
         const pa = ecoHash(seed, c, 54) * ECO_TAU + (j / plants) * ECO_TAU + (ecoHash(seed, n, 1) - 0.5) * 1.2;
         const pr = j === 0 ? 0 : ps * (0.14 + 0.18 * ecoHash(seed, n, 2));
         bx[n] = ccx + Math.cos(pa) * pr;
@@ -1486,119 +1577,184 @@ class EcoField {
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    const ink = Math.max(0.6, ps * 0.011);
 
-    // The ground each clump grew from: a faint rust-dark stain.
-    ctx.fillStyle = `rgba(53,26,21,${(0.09 * grow).toFixed(3)})`;
+    // The wind (wind.js): every neck in the patch bows the same way, harder
+    // and with a flutter while a gust patch runs over the hex.
+    const wGust = typeof Wind !== 'undefined' ? Wind.gustAt(1.5 * q, SQRT3 / 2 * q + SQRT3 * r) : 0;
+    const wLean = typeof Wind !== 'undefined' ? Wind.x * (0.1 * Wind.s + 0.3 * wGust) : 0;
+
+    // The ground each clump grew from: a rust-dark, blood-soaked stain.
+    ctx.fillStyle = `rgba(58,22,19,${(0.13 * grow).toFixed(3)})`;
     for (let k = 0; k < n; k++) {
-      const rr = ps * 0.12 * bg[k];
+      const rr = ps * 0.15 * bg[k];
       ctx.beginPath();
-      ctx.ellipse(bx[k], by[k], rr, rr * 0.5, 0, 0, ECO_TAU);
+      ctx.ellipse(bx[k], by[k] + ps * 0.02, rr, rr * 0.5, 0, 0, ECO_TAU);
       ctx.fill();
     }
 
-    // Pass 1: rosettes, flat on the ground, under every stem.
+    // Pass 1, flat on the ground: barbed leaves, the bloom's shadow, and the
+    // coil each neck rears out of -- tail tucked, a slow ripple running round.
     for (let o = 0; o < n; o++) {
       const k = ord[o];
       const big = bg[k];
-      const leaves = 4 + ((ecoHash(seed, k, 4) * 3) | 0);
-      const L = ps * 0.13 * big * (stage === 1 ? 0.85 : 1) * grow;
+      const ph = ecoHash(seed, k, 3) * ECO_TAU;
+      const L = ps * 0.12 * big * (stage === 1 ? 0.8 : 1) * grow;
       if (L < 1) continue;
+      const leaves = 3 + ((ecoHash(seed, k, 4) * 2) | 0);
       for (let j = 0; j < leaves; j++) {
         const la = (j / leaves) * ECO_TAU + ecoHash(seed, k, 5) * 2;
         ctx.save();
         ctx.translate(bx[k], by[k]);
         ctx.scale(1, 0.5);
         ctx.rotate(la);
-        const LL = L * (0.8 + 0.4 * ecoHash(seed, k * 8 + j, 6));
-        dzLancet(ctx, LL, L * 0.4);
+        dzBarb(ctx, L * (0.8 + 0.45 * ecoHash(seed, k * 8 + j, 6)), L * 0.34);
         ctx.fillStyle = (j & 1) ? DZ_LEAF : DZ_LEAFHI; ctx.fill();
-        ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.6, ps * 0.01); ctx.stroke();
+        ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink * 0.9; ctx.stroke();
         ctx.restore();
+      }
+      if (stage === 3) {
+        const R = ps * 0.11 * big;
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        ctx.ellipse(bx[k] + wLean * ps * 0.15 + R * 0.35, by[k] + R * 0.15, R * 1.15, R * 0.42, 0, 0, ECO_TAU);
+        ctx.fill();
+      }
+      if (stage >= 2) {
+        const lunge = snapping && stage === 3 ? dzLunge(snapT * 1.15 - ecoHash(seed, k, 3) * 0.15) : 0;
+        const rc = ps * 0.072 * big * (stage === 2 ? 0.75 : 1) * grow * (1 - 0.3 * lunge);
+        const nw = ps * 0.044 * big * grow;
+        const dir = ecoHash(seed, k, 8) < 0.5 ? -1 : 1;
+        const ocx = bx[k], ocy = by[k] + rc * 0.42;
+        const N = 15;
+        for (let i = 0; i < N; i++) {
+          const s = i / (N - 1);
+          const a = -Math.PI / 2 + dir * (1 - s) * ECO_TAU * 0.88;
+          const rr = rc * (1 + 0.08 * (1 - s) * Math.sin(s * 9 - now * 0.003 + ph));
+          DZ_X[i] = ocx + Math.cos(a) * rr;
+          DZ_Y[i] = ocy + Math.sin(a) * rr * 0.42;
+          DZ_W[i] = nw * (0.18 + 0.82 * s);
+        }
+        dzTube(ctx, DZ_X, DZ_Y, DZ_W, N);
+        ctx.fillStyle = DZ_SKIN; ctx.fill();
+        ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink; ctx.stroke();
+        dzMarks(ctx, DZ_X, DZ_Y, DZ_W, N, 3);
+        ctx.fillStyle = DZ_MARK; ctx.fill();
       }
     }
 
-    // Pass 2: stems and heads.
-    // The wind (wind.js): every stem in the patch bows the same way, harder
-    // and with a flutter while a gust patch runs over the hex.
-    const wGust = typeof Wind !== 'undefined' ? Wind.gustAt(1.5 * q, SQRT3 / 2 * q + SQRT3 * r) : 0;
-    const wLean = typeof Wind !== 'undefined' ? Wind.x * (0.1 * Wind.s + 0.3 * wGust) : 0;
+    // Pass 2: necks and heads.
+    let fx = 0, fy = 0;
     for (let o = 0; o < n; o++) {
       const k = ord[o];
       const h3 = ecoHash(seed, k, 3);
       const ph = h3 * ECO_TAU;
       const big = bg[k];
+      const side = ecoHash(seed, k, 7) < 0.5 ? -1 : 1;
       const sway = Math.sin(now * 0.0016 + ph) * (stage >= 2 ? 1 : 0.4)
-                 + Math.sin(now * 0.0075 + ph * 1.3) * wGust * 0.4
-                 + (snapping ? Math.sin(now * 0.09 + ph) * 0.6 * (1 - snapT) : 0);
-      const H = ps * (stage === 1 ? 0.09 : stage === 2 ? 0.18 : 0.22) * big * grow;
+                 + Math.sin(now * 0.0075 + ph * 1.3) * wGust * 0.4;
+      let H = ps * (stage === 1 ? 0.12 : stage === 2 ? 0.25 : 0.31) * big * grow;
       if (H < 1) continue;
+      // Blooms rear a little higher when someone is near, and bob.
+      if (stage === 3) H *= (has ? 1.1 : 1) * (1 + 0.04 * Math.sin(now * 0.0011 + ph));
       const x0 = bx[k], y0 = by[k];
-      // Blooms bend toward whoever is near, as well as swaying.
-      let lean = sway * H * 0.22 + wLean * H;
-      if (has && stage === 3) lean += Math.max(-1, Math.min(1, (tx - (x0 - cx)) / ps)) * H * 0.2;
-      const topX = x0 + lean, topY = y0 - H;
-      const cxs = x0 + lean * 0.15, cys = y0 - H * 0.6;
-      const sw = Math.max(1, ps * 0.015 * big);
 
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.quadraticCurveTo(cxs, cys, topX, topY);
-      ctx.strokeStyle = DZ_STEMDK; ctx.lineWidth = sw + Math.max(0.7, ps * 0.012); ctx.stroke();
-      ctx.strokeStyle = DZ_STEM;   ctx.lineWidth = sw; ctx.stroke();
+      // The strike (noteBite): each head in turn lunges at the survivor with
+      // its mouth wide, clamps shut, and draws back slowly.
+      const st = snapping && stage === 3 ? snapT * 1.15 - h3 * 0.15 : -1;
+      const live = st >= 0 && st < 1;
+      const lunge = dzLunge(st);
+      const shut  = !live || st < 0.16 ? 0 : st < 0.32 ? 1 : 1 - (st - 0.32) / 0.68;
+      const gape  = live && st < 0.16 ? st / 0.16 : 0;
 
-      if (stage >= 2) {
-        // One leaf off the stem, on the side the hash picks.
-        const side = ecoHash(seed, k, 7) < 0.5 ? -1 : 1;
-        const lx = (x0 + cxs) / 2, ly = (y0 + cys) / 2;
-        ctx.save();
-        ctx.translate(lx, ly);
-        ctx.rotate(side > 0 ? -0.5 + sway * 0.1 : Math.PI + 0.5 + sway * 0.1);
-        dzLancet(ctx, H * 0.55, H * 0.16);
-        ctx.fillStyle = DZ_LEAFHI; ctx.fill();
-        ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.8, ps * 0.012); ctx.stroke();
-        ctx.restore();
+      // Necks lean toward whoever is near, as well as swaying.
+      let lean = sway * H * 0.12 + wLean * H;
+      if (has && stage === 3) lean += Math.max(-1, Math.min(1, (tx - (x0 - cx)) / ps)) * H * 0.25;
+      let topX = x0 + lean, topY = y0 - H;
+      if (lunge > 0) {
+        let dx = side * ps * 0.06, dy = ps * 0.1;
+        if (has) { dx = cx + tx - topX; dy = cy + ty - ps * 0.12 - topY; }
+        const dl = Math.hypot(dx, dy) || 1, reach = Math.min(dl, H * 0.8) / dl * lunge;
+        topX += dx * reach; topY += dy * reach;
       }
 
+      // The neck: an S that a slow wave slithers up, pulled straight by a strike.
+      const nw = ps * 0.044 * big * grow;
+      const nN = 11;
+      const sA = side * H * (stage === 1 ? 0.08 : 0.17) * (1 - 0.45 * lunge);
+      const wA = H * 0.06 * (1 - lunge);
+      for (let i = 0; i < nN; i++) {
+        const s = i / (nN - 1);
+        DZ_X[i] = x0 + (topX - x0) * dzSmooth(s) + sA * Math.sin(ECO_TAU * s)
+                + wA * Math.sin(Math.PI * s) * Math.sin(now * 0.0035 - s * 6 + ph);
+        DZ_Y[i] = y0 + (topY - y0) * s;
+        DZ_W[i] = nw * (1 - 0.45 * s);
+      }
+      let nT = nN;
       if (stage === 1) {
-        // Two seed leaves opening in a V at the tip.
-        for (let s = -1; s <= 1; s += 2) {
-          ctx.save();
-          ctx.translate(topX, topY);
-          ctx.rotate(-Math.PI / 2 + s * (0.9 + 0.15 * sway));
-          dzLancet(ctx, ps * 0.07 * big, ps * 0.03 * big);
-          ctx.fillStyle = DZ_LEAFHI; ctx.fill();
-          ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.6, ps * 0.01); ctx.stroke();
-          ctx.restore();
+        // A sprout's tip curls over like a hatchling still coiled. It breathes.
+        const turns = 1.15 + 0.15 * Math.sin(now * 0.002 + ph);
+        const rc0 = H * 0.32;
+        const ox = topX + side * rc0, a0 = side > 0 ? Math.PI : 0;
+        for (let i = 1; i <= 9; i++, nT++) {
+          const u = i / 9, a = a0 + side * u * turns * ECO_TAU, rr = rc0 * (1 - 0.75 * u);
+          DZ_X[nT] = ox + Math.cos(a) * rr;
+          DZ_Y[nT] = topY + Math.sin(a) * rr;
+          DZ_W[nT] = nw * 0.55 * (1 - 0.6 * u);
         }
-        continue;
       }
+      dzTube(ctx, DZ_X, DZ_Y, DZ_W, nT);
+      ctx.fillStyle = DZ_SKIN; ctx.fill();
+      ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink; ctx.stroke();
+      if (stage >= 2) { dzMarks(ctx, DZ_X, DZ_Y, DZ_W, nN - 1, 1); ctx.fillStyle = DZ_MARK; ctx.fill(); }
+      ctx.beginPath();
+      for (let i = 0; i < nN - 1; i++) {
+        const x = DZ_X[i] - DZ_W[i] * 0.26;
+        i ? ctx.lineTo(x, DZ_Y[i]) : ctx.moveTo(x, DZ_Y[i]);
+      }
+      ctx.strokeStyle = DZ_SKINHI; ctx.lineWidth = Math.max(0.5, nw * 0.18); ctx.stroke();
+      if (stage === 1) continue;
 
       if (stage === 2) {
-        // A pointed bud; the pale tip splits the sepals, a red seam where it
-        // will open. It throbs, slowly.
-        const R = ps * 0.055 * big;
+        // A closed head on the reared neck, cocked like a viper's: blood-dark
+        // under green scale-sepals, its jaw a seam of bone teeth, two amber
+        // eyes. It throbs, and now and then it tastes the air.
+        const R = ps * 0.065 * big;
         const throb = 1 + 0.06 * Math.sin(now * 0.004 + ph);
+        const a = Math.atan2(DZ_Y[nN - 1] - DZ_Y[nN - 3], DZ_X[nN - 1] - DZ_X[nN - 3]) + side * 0.55;
         ctx.save();
         ctx.translate(topX, topY);
-        ctx.rotate(sway * 0.25);
+        ctx.rotate(a + Math.PI / 2);
         ctx.scale(throb, throb);
+        const tin = (now + h3 * 9000) % 4200;
+        if (tin < 420) dzTongue(ctx, 0, -R * 2.1, -Math.PI / 2, R * 1.6 * Math.sin(ECO_TAU * tin / 420) ** 2, Math.max(0.7, R * 0.14));
         ctx.beginPath();
-        ctx.moveTo(0, -R * 2.0);
-        ctx.bezierCurveTo(R * 1.1, -R * 1.2, R * 1.0, R * 0.4, 0, R * 0.6);
-        ctx.bezierCurveTo(-R * 1.0, R * 0.4, -R * 1.1, -R * 1.2, 0, -R * 2.0);
-        ctx.fillStyle = 'rgba(228,222,208,0.97)'; ctx.fill();
-        ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.8, ps * 0.014); ctx.stroke();
-        ctx.strokeStyle = 'rgba(136,54,57,0.8)'; ctx.lineWidth = Math.max(0.7, ps * 0.01);
-        ctx.beginPath(); ctx.moveTo(0, -R * 1.8); ctx.lineTo(0, -R * 0.2); ctx.stroke();
-        // Sepals cupping the base.
+        ctx.moveTo(0, -R * 2.3);
+        ctx.bezierCurveTo(R * 1.15, -R * 1.5, R * 1.05, R * 0.4, 0, R * 0.6);
+        ctx.bezierCurveTo(-R * 1.05, R * 0.4, -R * 1.15, -R * 1.5, 0, -R * 2.3);
+        ctx.fillStyle = DZ_HOOD; ctx.fill();
+        ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink; ctx.stroke();
         ctx.fillStyle = DZ_LEAF;
         for (let s = -1; s <= 1; s += 2) {
           ctx.beginPath();
           ctx.moveTo(0, R * 0.7);
-          ctx.quadraticCurveTo(s * R * 1.3, R * 0.2, s * R * 0.45, -R * 0.9);
-          ctx.quadraticCurveTo(s * R * 0.3, R * 0.1, 0, R * 0.7);
+          ctx.quadraticCurveTo(s * R * 1.45, R * 0.1, s * R * 0.32, -R * 1.75);
+          ctx.quadraticCurveTo(s * R * 0.5, -R * 0.2, 0, R * 0.7);
           ctx.fill();
-          ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.7, ps * 0.01); ctx.stroke();
+          ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink * 0.9; ctx.stroke();
+        }
+        // The jaw seam, toothed.
+        ctx.beginPath();
+        ctx.moveTo(0, -R * 2.15);
+        for (let j = 1; j <= 6; j++) ctx.lineTo((j & 1 ? 1 : -1) * R * 0.2, -R * 2.15 + j * R * 0.33);
+        ctx.strokeStyle = DZ_BONE; ctx.lineWidth = Math.max(0.6, R * 0.16); ctx.stroke();
+        ctx.fillStyle = 'rgba(214,170,58,0.95)';
+        for (let s = -1; s <= 1; s += 2) {
+          ctx.beginPath(); ctx.ellipse(s * R * 0.5, -R * 0.55, Math.max(0.6, R * 0.17), Math.max(0.5, R * 0.12), s * 0.5, 0, ECO_TAU); ctx.fill();
+        }
+        ctx.fillStyle = DZ_MAW;
+        for (let s = -1; s <= 1; s += 2) {
+          ctx.beginPath(); ctx.ellipse(s * R * 0.5, -R * 0.55, Math.max(0.3, R * 0.04), Math.max(0.45, R * 0.11), s * 0.5, 0, ECO_TAU); ctx.fill();
         }
         ctx.restore();
         continue;
@@ -1607,27 +1763,18 @@ class EcoField {
       // ── Bloom ──
       // The head is a disc facing the camera, foreshortened along the line to
       // the survivor: it has turned to look at them.
-      const R = ps * 0.10 * big;
+      const R = ps * 0.11 * big;
       let lookA = 0, tilt = 0;
       if (has) {
         const vx = tx - (topX - cx), vy = ty - (topY - cy);
         lookA = Math.atan2(vy, vx);
         tilt = 0.3;
       }
-      const jit = snapping ? (ecoHash(seed, k, (now / 40) | 0) - 0.5) * ps * 0.03 * (1 - snapT) : 0;
+      const jit = live && st > 0.16 ? (ecoHash(seed, k, (now / 40) | 0) - 0.5) * ps * 0.03 * (1 - st) : 0;
       const hx = topX + Math.cos(lookA) * R * tilt * 0.3 + jit;
       const hy = topY + Math.sin(lookA) * R * tilt * 0.3;
-      // Snap: petals fold in fast, then relax back open over the rest of the
-      // 700 ms.
-      const shut = snapping ? (snapT < 0.15 ? snapT / 0.15 : 1 - (snapT - 0.15) / 0.85) : 0;
       const breathe = 0.5 + 0.5 * Math.sin(now * 0.0025 + ph * 3);
-      const openness = (1 - shut * 0.8);
-
-      // Shadow the head throws on the ground.
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.beginPath();
-      ctx.ellipse(x0 + lean * 0.5 + R * 0.3, y0 + R * 0.1, R * 1.1 * openness, R * 0.4, 0, 0, ECO_TAU);
-      ctx.fill();
+      const open = 1 + 0.2 * lunge - 0.55 * shut;
 
       ctx.save();
       ctx.translate(hx, hy);
@@ -1636,81 +1783,117 @@ class EcoField {
       ctx.rotate(-lookA);
       ctx.scale(1, 0.88);   // a touch of 3/4 view even when nobody is near
 
-      // Petals: two rings of lancets, back ring darker. Each hashed a little
-      // longer or shorter; one per plant is torn short.
+      // The hood: a back ring of broad claws in dried blood ...
       const petals = 9;
+      ctx.save();
+      ctx.scale(1.2, 0.95);
+      for (let j = 0; j < petals; j++) {
+        const L = R * 1.15 * (0.85 + 0.3 * ecoHash(seed, k * 32 + j, 12)) * open;
+        ctx.save();
+        ctx.rotate(((j + 0.5) / petals) * ECO_TAU + ph);
+        ctx.translate(R * 0.2, 0);
+        dzClaw(ctx, L, R * 0.46, R * 0.2);
+        ctx.fillStyle = DZ_HOOD; ctx.fill();
+        ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.5, ps * 0.008); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+      // ... and before it the bone ring, every petal hooked the same way like
+      // a saw blade, blackened at the point, flushed red at the root. One torn.
       const torn = (ecoHash(seed, k, 11) * petals) | 0;
-      for (let ring = 0; ring < 2; ring++) {
-        const off = ring ? Math.PI / petals : 0;
-        for (let j = 0; j < petals; j++) {
-          const pa = (j / petals) * ECO_TAU + off + ph;
-          let L = R * (ring ? 1.0 : 1.18) * (0.85 + 0.3 * ecoHash(seed, k * 32 + j, 12 + ring));
-          if (ring && j === torn) L *= 0.55;
-          L *= openness;
-          ctx.save();
-          ctx.rotate(pa);
-          ctx.translate(R * 0.22, 0);
-          dzLancet(ctx, L, R * 0.30 * (1 - shut * 0.4));
-          ctx.fillStyle = ring ? 'rgba(244,241,230,0.99)' : 'rgba(210,203,188,0.99)';
-          ctx.fill();
-          ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.5, ps * 0.008); ctx.stroke();
-          // Blood-flush at the petal root.
-          if (ring) {
-            dzLancet(ctx, L * 0.42, R * 0.16);
-            ctx.fillStyle = 'rgba(160,64,67,0.6)'; ctx.fill();
-          }
-          ctx.restore();
-        }
+      for (let j = 0; j < petals; j++) {
+        let L = R * 1.05 * (0.85 + 0.3 * ecoHash(seed, k * 32 + j, 13)) * open;
+        if (j === torn) L *= 0.55;
+        const W = R * 0.3 * (1 - shut * 0.4), hook = W * 0.9;
+        ctx.save();
+        ctx.rotate((j / petals) * ECO_TAU + ph);
+        ctx.translate(R * 0.22, 0);
+        dzClaw(ctx, L, W, hook);
+        ctx.fillStyle = DZ_TIP; ctx.fill();
+        ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.5, ps * 0.008); ctx.stroke();
+        dzClaw(ctx, L * 0.66, W * 0.92, hook * 0.4);
+        ctx.fillStyle = DZ_BONE; ctx.fill();
+        dzClaw(ctx, L * 0.4, W * 0.55, hook * 0.1);
+        ctx.fillStyle = DZ_FLUSH; ctx.fill();
+        ctx.restore();
       }
 
-      // The disc: ochre pollen ring, so it still reads "daisy" ...
-      const dR = R * 0.48;
-      ctx.fillStyle = '#B69142';
+      // The disc: a thin ochre ring, so it still reads "daisy" ...
+      const dR = R * 0.54;
+      ctx.fillStyle = '#9A7836';
       ctx.beginPath(); ctx.arc(0, 0, dR, 0, ECO_TAU); ctx.fill();
-      ctx.strokeStyle = DZ_INK; ctx.lineWidth = Math.max(0.8, ps * 0.012); ctx.stroke();
-      ctx.fillStyle = 'rgba(215,188,115,0.9)';
-      for (let j = 0; j < 7; j++) {
+      ctx.strokeStyle = DZ_INK; ctx.lineWidth = ink; ctx.stroke();
+      ctx.fillStyle = 'rgba(200,166,92,0.9)';
+      for (let j = 0; j < 6; j++) {
         const a = ecoHash(seed, k * 16 + j, 20) * ECO_TAU;
-        const d = dR * (0.72 + 0.18 * ecoHash(seed, k * 16 + j, 21));
-        ctx.beginPath(); ctx.arc(Math.cos(a) * d, Math.sin(a) * d, Math.max(0.6, R * 0.05), 0, ECO_TAU); ctx.fill();
+        const d = dR * (0.8 + 0.14 * ecoHash(seed, k * 16 + j, 21));
+        ctx.beginPath(); ctx.arc(Math.cos(a) * d, Math.sin(a) * d, Math.max(0.5, R * 0.045), 0, ECO_TAU); ctx.fill();
       }
-      // ... and in it a mouth, breathing, ringed with teeth pointing in.
-      const mR = dR * (0.66 + 0.12 * breathe) * (1 - shut * 0.85);
+      // ... nearly all of it mouth: needle teeth round a red throat, two long
+      // fangs, and venom beading on one and dropping.
+      const mR = dR * (0.78 + 0.1 * breathe) * (1 - shut * 0.85) * (1 + 0.28 * gape);
       if (mR > 0.6) {
-        ctx.fillStyle = '#180A0C';
+        ctx.fillStyle = DZ_MAW;
         ctx.beginPath(); ctx.arc(0, 0, mR, 0, ECO_TAU); ctx.fill();
-        ctx.fillStyle = `rgba(134,41,47,${(0.55 + 0.25 * breathe).toFixed(3)})`;
-        ctx.beginPath(); ctx.arc(0, mR * 0.15, mR * 0.55, 0, ECO_TAU); ctx.fill();
-        ctx.fillStyle = 'rgba(236,230,216,0.95)';
-        const teeth = 9;
+        ctx.fillStyle = `rgba(130,30,38,${(0.5 + 0.3 * breathe).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(0, mR * 0.18, mR * 0.5, 0, ECO_TAU); ctx.fill();
+        ctx.fillStyle = DZ_FANG;
         ctx.beginPath();
+        const teeth = 9;
         for (let j = 0; j < teeth; j++) {
           const a = (j / teeth) * ECO_TAU + ph;
-          const w = ECO_TAU / teeth * 0.38;
+          const w = ECO_TAU / teeth * 0.28;
           ctx.moveTo(Math.cos(a - w) * mR, Math.sin(a - w) * mR);
-          ctx.lineTo(Math.cos(a) * mR * 0.45, Math.sin(a) * mR * 0.45);
+          ctx.lineTo(Math.cos(a) * mR * 0.5, Math.sin(a) * mR * 0.5);
           ctx.lineTo(Math.cos(a + w) * mR, Math.sin(a + w) * mR);
         }
+        let vx = 0, vy = 0;
+        for (let s = -1; s <= 1; s += 2) {
+          const a = -Math.PI / 2 + s * 0.5, w = 0.3;
+          const fxp = Math.cos(a) * mR * 0.25, fyp = Math.sin(a) * mR * 0.25 + mR * 0.72;
+          ctx.moveTo(Math.cos(a - w) * mR, Math.sin(a - w) * mR);
+          ctx.quadraticCurveTo(Math.cos(a) * mR * 0.9 - s * mR * 0.1, mR * 0.1, fxp, fyp);
+          ctx.lineTo(Math.cos(a + w) * mR, Math.sin(a + w) * mR);
+          if (s > 0) { vx = fxp; vy = fyp; }
+        }
         ctx.fill();
+        const vu = ((now + h3 * 7000) % 2600) / 2600;
+        const vr = Math.max(0.5, R * 0.09 * Math.min(1, vu / 0.7));
+        const fall = vu < 0.7 ? 0 : (vu - 0.7) / 0.3;
+        ctx.fillStyle = DZ_VENOM;
+        ctx.beginPath(); ctx.arc(vx, vy + vr * 0.8 + fall * fall * R * 1.1, vr, 0, ECO_TAU); ctx.fill();
       } else {
         // Clamped shut: a dark seam.
-        ctx.strokeStyle = '#180A0C'; ctx.lineWidth = Math.max(1, R * 0.12);
+        ctx.strokeStyle = DZ_MAW; ctx.lineWidth = Math.max(1, R * 0.12);
         ctx.beginPath(); ctx.moveTo(-dR * 0.6, 0); ctx.lineTo(dR * 0.6, 0); ctx.stroke();
       }
       ctx.restore();
 
-      // Flecks of red thrown off on the snap.
-      if (snapping && k === ord[n - 1]) {
-        const e = ecoEaseOut(snapT);
-        ctx.fillStyle = `rgba(152,46,52,${(0.9 * (1 - snapT)).toFixed(3)})`;
-        for (let j = 0; j < 6; j++) {
-          const a = ecoHash(seed, j, 40) * ECO_TAU;
-          const d = ps * (0.1 + 0.25 * ecoHash(seed, j, 41)) * e;
-          ctx.beginPath();
-          ctx.arc(hx + Math.cos(a) * d, hy + Math.sin(a) * d * 0.7 + e * e * ps * 0.1,
-                  Math.max(0.8, ps * 0.018 * (1 - snapT * 0.5)), 0, ECO_TAU);
-          ctx.fill();
+      // The tongue flicks out twice, toward whoever is near, and oftener then.
+      const per = has ? 1500 : 3800, tin = (now + h3 * 9000) % per;
+      if (tin < 420 && mR > 0.6) {
+        let ta = Math.PI / 2 + side * 0.5;
+        if (has) {
+          const vx = cx + tx - hx, vy = cy + ty - ps * 0.1 - hy;
+          if (vx * vx + vy * vy > R * R) ta = Math.atan2(vy, vx);
         }
+        dzTongue(ctx, hx, hy + R * 0.1, ta, R * 1.5 * Math.sin(ECO_TAU * tin / 420) ** 2, Math.max(0.8, R * 0.1));
+      }
+      fx = has ? cx + tx : hx; fy = has ? cy + ty - ps * 0.12 : hy;
+    }
+
+    // Flecks of red thrown off where the bite landed.
+    const fT = (snapT - 0.14) / 0.86;
+    if (stage === 3 && fT >= 0 && fT < 1) {
+      const e = ecoEaseOut(fT);
+      ctx.fillStyle = `rgba(152,46,52,${(0.9 * (1 - fT)).toFixed(3)})`;
+      for (let j = 0; j < 9; j++) {
+        const a = ecoHash(seed, j, 40) * ECO_TAU;
+        const d = ps * (0.08 + 0.28 * ecoHash(seed, j, 41)) * e;
+        ctx.beginPath();
+        ctx.arc(fx + Math.cos(a) * d, fy + Math.sin(a) * d * 0.7 + e * e * ps * 0.12,
+                Math.max(0.8, ps * 0.02 * (1 - fT * 0.5)), 0, ECO_TAU);
+        ctx.fill();
       }
     }
     ctx.restore();

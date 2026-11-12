@@ -27,6 +27,7 @@ the damage record nearest to it:
 | creeping doom | `resolveDoomProximity` | `doom_act` with `llLost > 0` |
 | wasteland daisy | `ecoBiteCheck` (ecology.hpp) | `dmg` `cause == "wasteland daisy"` (protocol 3+; the flowers did not exist before) |
 | machine gun kane | `kaneFire` (kane.hpp) | `kane_fire` with `llLost > 0` (protocol 8+; he did not exist before) |
+| slime mould | `ecoBiteCheck` (ecology.hpp) | `dmg` `cause == "slime mould"`, `amt` 1, 2, 3... along a run of slime steps (protocol 11+; the mould was harmless before) |
 | encounter hazard | `handleMsg_enc_choice` fail branch | `enc_res` `out == 0`, `penLL < 0` |
 | encounter cost | `handleMsg_enc_choice` `ch.costLL` | `enc_res` `out == 1` then a death (see below) |
 | booby trap | `encRunChoice` fail branch on a trap scene (traps.hpp) | `enc_res` `out == 0`, `penLL < 0`, `trap == 1` -- never a death: the LL floor is 1 |
@@ -60,7 +61,7 @@ from collections import Counter, defaultdict
 CAUSE_ORDER = [
     "thirst", "hunger", "exposure", "bad air", "radiation",
     "fire", "lightning", "flood", "creeping doom", "wasteland daisy",
-    "machine gun kane",
+    "slime mould", "machine gun kane",
     "encounter hazard", "encounter cost", "booby trap", "action",
     "chem storm", "strangle fog", "unattributed",
 ]

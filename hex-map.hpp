@@ -52,8 +52,10 @@ static void placeTraps();
 
 // ── Group vision bonus ──────────────────────────────────────────
 // Survivors watching the same hex together see farther: +1 vision radius per
-// other connected player stacked on pid's hex, capped so a full party stack
-// stays within the wire-buffer budget buildVisDisk() callers allocate for.
+// other connected player stacked on pid's hex, capped at 3. The cap alone does
+// not keep a disk inside the wire buffers -- stacked on top of the terrain,
+// Scout and gear bonuses it can reach 12 -- so playerVisParams() also clamps
+// the total to VIS_R_MAX.
 static constexpr int GROUP_VISION_CAP = 3;
 static int groupVisionBonus(int pid) {
   int stacked = 0;
@@ -132,6 +134,38 @@ static void playerVisParams(int pid, int* outVisR, bool* outMaskRes) {
   *outVisR = max(0, *outVisR - (int)WEATHER_VIS_PENALTY[G.weatherPhase]);
   // ── Fire smoke (independent of weather) ─────────────────────────────────
   *outVisR = max(0, *outVisR - fireVisionPenalty(G.players[pid].q, G.players[pid].r));
+  // Last, so a storm still bites into the bonuses rather than the ceiling.
+  *outVisR = min(*outVisR, VIS_R_MAX);
+}
+
+// ── The sight radius each client was last told ──────────────────
+// Sight also changes while a survivor stands still: an ally steps onto or off
+// their hex (groupVisionBonus), the last Bile Flare below is burnt or put
+// down, smoke reaches their hex. Nothing used to tell the client, so it kept
+// drawing the old radius until the next step -- the same staleness the
+// equip handlers fixed with pushVisDisk(). Every place that ships a "vr"
+// notes it here, and serviceVisRefresh() (network-msg-items.hpp, GameLoop)
+// sends a fresh disk to whoever's radius has moved since.
+//
+// The weather phase rides along because a change of weather is the one change
+// that is left for the next step on purpose (see surfaceVis() in the mock): a
+// storm rolling in does not blind a survivor who is standing still.
+// Written and read under G.mutex -- except forgetVisSent(), which queueSync()
+// calls from any task: a lone bool store, and the worst a race can do is one
+// refresh too many or one tick late.
+static bool    s_visSentKnown[MAX_PLAYERS];
+static int8_t  s_visSentR[MAX_PLAYERS];
+static uint8_t s_visSentWx[MAX_PLAYERS];
+static inline void noteVisSent(int pid, int vr) {
+  if (pid < 0 || pid >= MAX_PLAYERS) return;
+  s_visSentKnown[pid] = true;
+  s_visSentR[pid]     = (int8_t)vr;
+  s_visSentWx[pid]    = G.weatherPhase;
+}
+// A new socket on the seat, or a resync on its way: wait for the sync to set
+// the baseline rather than refresh a client that has no board yet.
+static inline void forgetVisSent(int pid) {
+  if (pid >= 0 && pid < MAX_PLAYERS) s_visSentKnown[pid] = false;
 }
 
 // ── Slot management ────────────────────────────────────────────
@@ -152,45 +186,63 @@ static void enqEvt(GameEvent ev) {
 }
 
 // ── Terrain resource spawn helper ──────────────────────────────
-// Water is the binding survival constraint.  ACT_WATER needs Marsh, Flooded
-// or River terrain — about 4.7% of the map once the raft-gated River is
-// excluded — so nearly all of it has to come from piles, and bot runs
-// measured survivors carrying no water 41-54% of the time.
+// The only free pile on the surface is food: the forage animals renderer.js
+// draws on a food hex. Water, fuel, medicine and scrap are never lying about
+// on the map -- they come from actions, encounters, trade and what survivors
+// drop. The odds are the share of rolls food had in the old five-way table,
+// so the animals are exactly as common as they were.
 //
-// This upgrades a small share of non-water rolls to water, which raises the
-// water pile count ~15% without touching pile density or any other resource's
-// absolute count.  Calibrated against the shipped spawn table weighted by a
-// real generated map: water is 18.4% of spawns (predicted 18.38%, measured
-// 18.47% on hardware), and 34/1000 of the remainder takes that to 21.2%.
-static constexpr uint16_t WATER_BONUS_PERMILLE = 34;
+// The Tunnel Floor keeps its cistern seeps and bunker scrap: that is the
+// tunnel board's own loot, and no forage animal lives down there.
+static constexpr uint8_t RES_FOOD = 2;
 
-static uint8_t terrainSpawnResBase(uint8_t t, uint32_t rnd) {
+// Terrain a forage animal can turn up on.
+static inline bool terrainGrowsFood(uint8_t t) {
+  return t == 0 || t == 2 || t == 3 || t == 9;
+}
+
+static uint8_t terrainSpawnRes(uint8_t t, uint32_t rnd) {
   switch (t) {
-    case 0: return 1 + rnd % 5;
-    case 1: return (rnd & 1) ? 3 : 5;
-    case 2: return (rnd & 1) ? 2 : 5;
-    case 3: return (rnd & 1) ? 1 : 2;
-    case 4: return (rnd & 1) ? 5 : 4;
-    case 5: return 1;
-    case 6: return 5;
-    case 7: return (rnd & 1) ? 3 : 5;
-    case 8: return (rnd & 1) ? 5 : 4;
-    case 9: return 1 + rnd % 5;
+    case 0: case 9: return (rnd % 5 == 1) ? RES_FOOD : 0;  // Open Scrub, Settlement: 1 roll in 5
+    case 2: case 3: return (rnd & 1) ? RES_FOOD : 0;       // Rust Forest, Marsh: 1 in 2
     case 14: return (rnd & 1) ? 1 : 5;  // Tunnel Floor: cistern seeps / bunker scrap
     default: return 0;
   }
 }
 
-static uint8_t terrainSpawnRes(uint8_t t, uint32_t rnd) {
-  uint8_t res = terrainSpawnResBase(t, rnd);
-  // Fresh entropy rather than more bits of `rnd`: Phase 3 passes only 8 bits
-  // here, and the base table already consumes the low ones via `% 5` / `& 1`,
-  // so a derived roll would correlate with the very resource it is meant to
-  // replace.
-  if (res != 0 && res != 1 && (esp_random() % 1000) < WATER_BONUS_PERMILLE)
-    return 1;
-  return res;
+// What an emptied surface hex's respawn timer is armed to: only a hex that
+// lost food grows anything back, so the animals hold steady while a dropped
+// pile (or one an older save still has) goes for good once it is taken.
+static inline uint8_t respawnTicksFor(uint8_t lostRes) {
+  return lostRes == RES_FOOD ? RESPAWN_TICKS : 0;
 }
+
+// ── Forest oasis (docs/forest-oasis.md) ────────────────────────
+// Five 7-hex groves of Rust Forest a map: a bed in the middle (root hollow or
+// den) ringed by dense canopy. Inside one nothing from the world reaches a
+// survivor -- weather, fire, lightning, mould, the Doom, Kane, ghosts -- and a
+// night's rest heals like a Settlement's. The variant IS the flag: Rust Forest
+// cells from 6 on are pinned art (scripts/hex_sheets.py LANDMARKS), so
+// pickVariant() never deals 8-12 and a forest hex showing one of them is a
+// grove hex. No HexCell field, nothing new on the wire, and the client reads
+// the same thing off the variant nibble it already gets.
+static constexpr uint8_t OASIS_TERRAIN   = 2;    // Rust Forest
+static constexpr uint8_t OASIS_V_HOLLOW  = 8;    // 2_8: root hollow under a fallen tree (centre)
+static constexpr uint8_t OASIS_V_DEN     = 9;    // 2_9: a den under the roots (centre)
+static constexpr uint8_t OASIS_V_CANOPY  = 10;   // 2_10 .. 2_12: overhead canopy (the ring)
+static constexpr uint8_t OASIS_CANOPIES  = 3;
+static constexpr uint8_t OASIS_V_LAST    = OASIS_V_CANOPY + OASIS_CANOPIES - 1;
+static constexpr uint8_t OASIS_COUNT     = 5;
+
+static inline bool oasisCell(const HexCell& c) {
+  return c.terrain == OASIS_TERRAIN && c.variant >= OASIS_V_HOLLOW && c.variant <= OASIS_V_LAST;
+}
+static inline bool oasisAt(int q, int r) {
+  return q >= 0 && q < MAP_COLS && r >= 0 && r < MAP_ROWS && oasisCell(G.map[r][q]);
+}
+// Under the canopy: on the surface, on a grove hex. q/r stay pinned to the
+// hatch while underground, so the depth guard is not optional.
+static inline bool inOasis(const Player& p) { return !p.depth && oasisAt(p.q, p.r); }
 
 // ── Map generation data ────────────────────────────────────────
 // Image variant counts (filled from SD scan before generateMap)
@@ -268,6 +320,119 @@ static constexpr uint8_t MAX_CITY_CELLS = 22;
 struct CityInfo { uint8_t q, r, size, arch; };
 static CityInfo cities[MAX_CITIES];
 static uint8_t  cityCount = 0;
+
+// ── Forest oasis placement (Phase 5.6, and the load path) ─────────────────
+// Where the groves stand. Kept for the log only: every rule reads the variant
+// off the map (oasisCell), so nothing depends on this.
+struct OasisSite { int16_t q, r; };
+static OasisSite oases[OASIS_COUNT];
+static uint8_t   oasisCount = 0;
+
+// Ground a grove may stand on: the forest itself, or open ground it grows
+// over (Open Scrub, Ash Dunes, Rolling Hills). Never water, rock, glass, a
+// crater, a town, a city or a hatch. Nothing already on the hex either -- an
+// encounter, a trap or a built shelter would be inside the safe ring.
+static inline bool oasisGroundOk(const HexCell& c) {
+  const uint8_t t = c.terrain;
+  if (t != 0 && t != 1 && t != OASIS_TERRAIN && t != 7) return false;
+  return !c.poi && !c.trapEnc && !(c.trap & TRAP_ARMED) && !c.shelter;
+}
+
+// A grove still standing: a hollow/den centre with all six sides canopy.
+static bool oasisIntactAt(int q, int r) {
+  const HexCell& c = G.map[r][q];
+  if (c.terrain != OASIS_TERRAIN || (c.variant != OASIS_V_HOLLOW && c.variant != OASIS_V_DEN)) return false;
+  for (int d = 0; d < 6; d++) {
+    const HexCell& n = G.map[wrapR(r + DR[d])][wrapQ(q + DQ[d])];
+    if (n.terrain != OASIS_TERRAIN || n.variant < OASIS_V_CANOPY || n.variant > OASIS_V_LAST) return false;
+  }
+  return true;
+}
+
+// Tops the map up to OASIS_COUNT groves. Called at the end of Phase 5.5 on a
+// new world, and by tryLoadSave() on a loaded one -- which is how a world
+// saved before oases existed gets them, without a SAVE_VERSION bump.
+//  1. Count the groves already standing.
+//  2. Re-deal every other 8-12 on the forest. An old save dealt 8 and 9 from
+//     the pool (Rust Forest had ten), and a stale tiles.json on the card can
+//     still say so; a stray one would otherwise be a one-hex oasis.
+//  3. Pick the rest one at a time, best score first: deep forest (all seven
+//     already forest, more forest round it) against spread (distance to the
+//     nearest grove, capped, so far enough is far enough). Centres are never
+//     closer than OASIS_MIN_GAP, so two rings never touch. Any of the seven
+//     that is not forest yet becomes forest -- a map short of forest still
+//     gets its five.
+static uint8_t placeForestOases() {   // returns how many it placed
+  static constexpr int OASIS_MIN_GAP    = 4;    // centre to centre: one clear hex between rings
+  static constexpr int OASIS_SPREAD_CAP = 14;   // past this, distance buys nothing more
+  oasisCount = 0;
+  for (int r = 0; r < MAP_ROWS && oasisCount < OASIS_COUNT; r++)
+    for (int q = 0; q < MAP_COLS && oasisCount < OASIS_COUNT; q++)
+      if (oasisIntactAt(q, r)) oases[oasisCount++] = { (int16_t)q, (int16_t)r };
+  const uint8_t kept = oasisCount;
+
+  auto inKept = [&](int q, int r) {
+    for (uint8_t i = 0; i < oasisCount; i++)
+      if (hexDistWrap(q, r, oases[i].q, oases[i].r) <= 1) return true;
+    return false;
+  };
+  const uint8_t pool = min(terrainVariantCount[OASIS_TERRAIN], OASIS_V_HOLLOW);
+  int redealt = 0;
+  for (int r = 0; r < MAP_ROWS; r++)
+    for (int q = 0; q < MAP_COLS; q++)
+      if (oasisCell(G.map[r][q]) && !inKept(q, r)) {
+        G.map[r][q].variant = pool ? pickVariant(pool, esp_random()) : 0;
+        redealt++;
+      }
+
+  int grown = 0;
+  const uint32_t flip = esp_random();
+  while (oasisCount < OASIS_COUNT) {
+    int bestScore = -1, bestQ = -1, bestR = -1;
+    for (int r = 0; r < MAP_ROWS; r++) {
+      for (int q = 0; q < MAP_COLS; q++) {
+        int spread = OASIS_SPREAD_CAP;
+        for (uint8_t i = 0; i < oasisCount; i++)
+          spread = min(spread, hexDistWrap(q, r, oases[i].q, oases[i].r));
+        if (spread < OASIS_MIN_GAP) continue;
+        if (!oasisGroundOk(G.map[r][q])) continue;
+        int forest = (G.map[r][q].terrain == OASIS_TERRAIN);
+        bool ok = true;
+        for (int d = 0; d < 6 && ok; d++) {
+          const HexCell& n = G.map[wrapR(r + DR[d])][wrapQ(q + DQ[d])];
+          if (!oasisGroundOk(n)) ok = false;
+          else forest += (n.terrain == OASIS_TERRAIN);
+        }
+        if (!ok) continue;
+        int depth = 0;   // forest on the hexes two out
+        for (int dq = -2; dq <= 2; dq++)
+          for (int dr = -2; dr <= 2; dr++)
+            if (abs(dq) + abs(dq + dr) + abs(dr) == 4 &&
+                G.map[wrapR(r + dr)][wrapQ(q + dq)].terrain == OASIS_TERRAIN) depth++;
+        int score = forest * 6 + depth + spread * 3 + (int)(esp_random() % 4);
+        if (score > bestScore) { bestScore = score; bestQ = q; bestR = r; }
+      }
+    }
+    if (bestScore < 0) break;   // nowhere left: no open ground at all
+    // The bed alternates hollow / den down the list, from a random start.
+    HexCell& centre = G.map[bestR][bestQ];
+    if (centre.terrain != OASIS_TERRAIN) { centre.terrain = OASIS_TERRAIN; grown++; }
+    centre.variant = ((oasisCount + flip) & 1) ? OASIS_V_DEN : OASIS_V_HOLLOW;
+    const uint8_t off = (uint8_t)(esp_random() % OASIS_CANOPIES);
+    for (int d = 0; d < 6; d++) {
+      HexCell& n = G.map[wrapR(bestR + DR[d])][wrapQ(bestQ + DQ[d])];
+      if (n.terrain != OASIS_TERRAIN) { n.terrain = OASIS_TERRAIN; grown++; }
+      n.variant = (uint8_t)(OASIS_V_CANOPY + (off + d) % OASIS_CANOPIES);
+    }
+    oases[oasisCount++] = { (int16_t)bestQ, (int16_t)bestR };
+  }
+  Log.notice("Oasis: %d groves (%d kept, %d placed), %d hexes grown to forest, %d stray variants re-dealt",
+             (int)oasisCount, (int)kept, (int)(oasisCount - kept), grown, redealt);
+  for (uint8_t i = 0; i < oasisCount; i++)
+    Log.notice("Oasis %d at (%d,%d) %s", (int)i, (int)oases[i].q, (int)oases[i].r,
+               G.map[oases[i].r][oases[i].q].variant == OASIS_V_DEN ? "den" : "hollow");
+  return (uint8_t)(oasisCount - kept);
+}
 
 static void generateMap() {
   // ── Build cumulative thresholds for Phase 1 ─────────────────
@@ -1101,16 +1266,29 @@ static void generateMap() {
   // Glass Fields cell 15 (tiles.json poi "0_11" / "6_15"; scripts/hex_sheets.py
   // LANDMARKS keeps those cells out of the pools, so pickVariant() never deals
   // them). Its third pool, ridge/3, has no pinned tile.
+  //
+  // Rust Forest (2026-11-04): forest/2 the forester's hut -> cell 6, forest/4
+  // the Evacuation Special -> cell 7 (tiles.json poi "2_6" / "2_7"). Cells
+  // 8-12 are the forest oasis group, placed by its own phase.
   static const struct { uint8_t terrain, poi, variant; } LANDMARK_PINS[] = {
     { 0, 19, 10 },   // Jack's Chopper
     { 0, 21, 11 },   // the Perambulator on scrub
     { 6,  3, 15 },   // the Perambulator on glass
+    { 2,  2,  6 },   // the forester's hut
+    { 2,  4,  7 },   // the Evacuation Special
   };
   for (int r2 = 0; r2 < MAP_ROWS; r2++)
     for (int c2 = 0; c2 < MAP_COLS; c2++)
       for (const auto& pin : LANDMARK_PINS)
         if (G.map[r2][c2].terrain == pin.terrain && G.map[r2][c2].poi == pin.poi)
           G.map[r2][c2].variant = pin.variant;
+
+  // ── Phase 5.6: Forest oasis ──────────────────────────────────
+  // Five safe groves (docs/forest-oasis.md). After the POIs (Phase 5) and the
+  // landmark pins, so a grove never swallows an encounter or pinned art;
+  // before the hatches (Phase 6, Open Scrub only, so never on a grove) and
+  // the traps (Phase 7, which skips grove hexes).
+  placeForestOases();
 
   // ── Phase 6: bunker tunnels ──────────────────────────────────
   // Last, because it stamps hatch terrain onto finished surface hexes and
@@ -1342,19 +1520,27 @@ static int buildVisDisk(char* buf, int cap, int pq, int pr, int visR, bool maskR
   return pos;
 }
 
-// ── Build survey-ring vision disk (one hex beyond visR) ────────
-static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid) {
+// ── Build a survey band: the surface rings past sight ──────────
+// Every cell with inner < distance <= outer, as an ev surv: the client draws
+// them as a peek beyond its live disk until its next step (network.js
+// _evSurv), and keeps the terrain afterwards. SURVEY sends one ring
+// (visR, visR + 1); a one-shot reveal_fog item sends (visR, visR + param).
+//
+// maskRes is the survivor's own (playerVisParams): in Broken Urban the band
+// used to go out unmasked, so a survey showed the loot two streets away that
+// the street you stand in hides.
+static int buildSurveyBand(char* buf, int cap, int pq, int pr, int inner, int outer,
+                           bool maskRes, int pid) {
   int pos = snprintf(buf, cap, "{\"t\":\"ev\",\"k\":\"surv\",\"pid\":%d,\"cells\":\"", pid);
-  int ring = visR + 1;
-  for (int dr = -ring; dr <= ring; dr++) {
-    for (int dq = -ring; dq <= ring; dq++) {
-      int s = -(dq + dr);
-      if ((abs(dq) + abs(dr) + abs(s)) / 2 != ring) continue;
+  for (int dr = -outer; dr <= outer; dr++) {
+    for (int dq = -outer; dq <= outer; dq++) {
+      int d = (abs(dq) + abs(dr) + abs(dq + dr)) / 2;
+      if (d <= inner || d > outer) continue;
       int cq = wrapQ(pq + dq);
       int cr = wrapR(pr + dr);
       if (pos + 22 < cap) {  // closing `"}` + snprintf null, and the `","trl":"` below
         uint8_t tt, dd, vv;
-        encodeCell(G.map[cr][cq], false, pid, &tt, &dd, &vv);
+        encodeCell(G.map[cr][cq], maskRes, pid, &tt, &dd, &vv);
         buf[pos++] = HEX_CH[cq >> 4]; buf[pos++] = HEX_CH[cq & 0xF];
         buf[pos++] = HEX_CH[cr >> 4]; buf[pos++] = HEX_CH[cr & 0xF];
         buf[pos++] = HEX_CH[tt >> 4]; buf[pos++] = HEX_CH[tt & 0xF];
@@ -1363,12 +1549,39 @@ static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, int pid
       }
     }
   }
-  // The ring's trail records, as buildVisDisk() sends its disk's.
+  // The band's trail records, as buildVisDisk() sends its disk's.
   pos += snprintf(buf + pos, cap - pos, "\",\"trl\":\"");
-  for (int dr = -ring; dr <= ring; dr++) {
-    for (int dq = -ring; dq <= ring; dq++) {
-      if ((abs(dq) + abs(dr) + abs(dq + dr)) / 2 != ring) continue;
+  for (int dr = -outer; dr <= outer; dr++) {
+    for (int dq = -outer; dq <= outer; dq++) {
+      int d = (abs(dq) + abs(dr) + abs(dq + dr)) / 2;
+      if (d <= inner || d > outer) continue;
       pos += appendTrailRecs(buf + pos, cap - pos - 3, wrapQ(pq + dq), wrapR(pr + dr));
+    }
+  }
+  pos += snprintf(buf + pos, cap - pos, "\"}");
+  return pos;
+}
+
+// SURVEY's ring: one hex beyond visR.
+static int buildSurveyDisk(char* buf, int cap, int pq, int pr, int visR, bool maskRes, int pid) {
+  return buildSurveyBand(buf, cap, pq, pr, visR, visR + 1, maskRes, pid);
+}
+
+// ── The whole surface's terrain, for the Pre-War Net Map (reveal_fog 99) ──
+// {"t":"ev","k":"rvl","pid":N,"map":"..."}: 2 hex chars a cell, terrain in
+// the high nibble and art variant in the low, row-major like encodeMapFog().
+// Terrain and art only: no resources, footprints, shelters or POIs -- a
+// pre-war map knows the land, not who is on it. The client files it as
+// remembered ground (network.js _evReveal), never as live sight.
+// 4275 cells = 8550 chars; cap must hold that plus ~40. Returns 0 if not.
+static int buildTerrainReveal(char* buf, int cap, int pid) {
+  if (cap < MAP_ROWS * MAP_COLS * 2 + 48) return 0;
+  int pos = snprintf(buf, cap, "{\"t\":\"ev\",\"k\":\"rvl\",\"pid\":%d,\"map\":\"", pid);
+  for (int r = 0; r < MAP_ROWS; r++) {
+    for (int c = 0; c < MAP_COLS; c++) {
+      const HexCell& cell = G.map[r][c];
+      buf[pos++] = HEX_CH[cell.terrain & 0x0F];
+      buf[pos++] = HEX_CH[cell.variant & 0x0F];
     }
   }
   pos += snprintf(buf + pos, cap - pos, "\"}");

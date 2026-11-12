@@ -27,7 +27,7 @@ from pathlib import Path
 
 import arena
 from causes import _dedupe
-from config import DAY_TICKS, TICK_MS, WEATHER_NAME
+from config import DAY_TICKS, TICK_MS, WEATHER_NAME, unwrap_day
 from findings import Finding, FindingLog
 from record import Recorder, read as read_run
 
@@ -61,11 +61,16 @@ def soak_report(rows, findings: FindingLog | None = None, out=None) -> dict:
     minutes = span_s / 60.0
 
     # -- days: from dawn events, deduped across bots ---------------------------
-    dawns = {}
+    # The board's day goes 365 -> 1; counted on (unwrap_day) so a second year
+    # is not a repeat of the first.
+    dawns, run = {}, None
     for ts, d in _dedupe(rows, {"dawn"}):
         day = d.get("day")
-        if isinstance(day, int) and day not in dawns:
-            dawns[day] = ts
+        if not isinstance(day, int):
+            continue
+        run = unwrap_day(run, day)
+        if run not in dawns:
+            dawns[run] = ts
     days = sorted(dawns.items())
     lengths = [(b[1] - a[1]) / 60.0 for a, b in zip(days, days[1:]) if b[0] == a[0] + 1]
     mean_day = sum(lengths) / len(lengths) if lengths else None

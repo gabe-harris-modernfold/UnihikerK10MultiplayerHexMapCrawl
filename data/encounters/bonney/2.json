@@ -1,0 +1,247 @@
+{
+  "id": "bonney_2_supper",
+  "title": "Supper at Bonney's",
+  "bonney": {
+    "section": 2
+  },
+  "start_node": "the_fire",
+  "nodes": {
+    "the_fire": {
+      "text": "Bonney's fire has burned down to a deep red roar, the way a fire does when it is ready to cook on. The tyres in the pit have gone to glowing hoops, the piano is down to its iron frame, and over it all the truck axle turns on its engine blocks with a man wired to it, pink down one side and done on the other. 'Oh, hello,' says the man as he comes round. 'Don't mind me.' On the far side of the fire Bonney is stirring a hubcap of something brown with a car aerial. She sees you and her whole face splits. 'Sweetmeat! You came! Sit, sit. Supper's nearly done.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sit down at her fire.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 3,
+          "success_node": "the_spit",
+          "hazard_id": "the_heat"
+        },
+        {
+          "label": "Walk round the fire to the man on the spit.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_spit",
+          "hazard_id": "the_drip"
+        },
+        {
+          "label": "Back out of the firelight.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        }
+      ]
+    },
+    "the_spit": {
+      "text": "Close to, the man on the spit is thin and polite and very pink down one side. 'Turnbull,' he says as he comes round. 'Dennis Turnbull. Since Tuesday. She does me low and slow. She says it is the only way.' He glistens. He has been basted, with what you would rather not know. The crank on the end of the axle is being turned, round and round, by a hand. Just a hand, braced on its fingertips on the engine block, working: Pinch. And wedged in Turnbull's mouth, the way you would put an apple in a roast pig, so that he has to talk round it, is {{apple}}. 'Mm,' he says, apologetically. 'Mm-hm. Sorry. Hers.' Bonney gets up with the hubcap. 'Gravy's catching. Bonney's fetching more fat. Don't you touch Bonney's supper.' She ambles off into the dark behind the bonnet.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wave a bit of bright scrap at Pinch.",
+          "cost": {
+            "scrap": 1
+          },
+          "base_risk": 30,
+          "skill": 2,
+          "success_node": "the_wire",
+          "hazard_id": "pinch_bites"
+        },
+        {
+          "label": "Kick the crank off its block.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 4,
+          "success_node": "the_wire",
+          "hazard_id": "the_crank"
+        },
+        {
+          "label": "Ask Turnbull how she ties her knots.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 0,
+          "success_node": "the_wire",
+          "hazard_id": "the_gravy"
+        }
+      ]
+    },
+    "the_wire": {
+      "text": "With Pinch off the crank the spit stops, and Turnbull hangs there over the flames with one side crackling. 'Thank you,' he says round his mouthful. 'Very kind. The wire's at the back. Mind your hands, it has been in the fire since Tuesday.' Out in the dark something big is coming back, humming, with a bucket sloshing on its hip. 'Bonney can smell you near her supper,' it sings. 'Bonney can smell you touching it.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Cut the wire and drag him clear.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "rescued",
+          "hazard_id": "the_fat"
+        },
+        {
+          "label": "Heave the axle off the blocks, man and all.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "rescued",
+          "hazard_id": "the_fall"
+        },
+        {
+          "label": "Wait for her by the fire, and make her an offer.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 0,
+          "success_node": "the_offer",
+          "hazard_id": "the_ladle"
+        }
+      ]
+    },
+    "the_offer": {
+      "text": "Bonney comes back into the firelight with a bucket of fat on her hip and looks at you, and at her supper, and at you. 'Ohhh,' she says. 'You want him.' She sets the bucket down and thinks about it with her whole face, which takes some time. 'Fair's fair. Bonney'll swap. A toenail for the man. A big one, mind, off the big toe. And what's in his mouth, Bonney keeps. That's hers. That's afters.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Sit down in the ash and take off your boot.",
+          "cost": {
+            "ll": 1
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_bargain",
+          "sure": true
+        },
+        {
+          "label": "Go for the wire while she is still talking.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "rescued",
+          "hazard_id": "the_fat"
+        }
+      ]
+    },
+    "rescued": {
+      "text": "The wire parts and Turnbull comes off the spit all at once, lands in the ash smoking, rolls, keeps rolling, and gets up. He takes {{apple}} out of his mouth, wipes it on his underwear and hands it to you, very formally. 'I believe this is yours. Or somebody's. Thank you so much.' Bonney screams. It goes on a long time and it is not a sound a throat should make. Then it stops, and she laughs, and wipes her eyes on her sleeve. 'Spoilt it,' she says. 'Spoilt Bonney's supper.' She tips the gravy on the fire, which goes up like a bomb, and when you can see again she is loading the bonnet, with Pinch riding on top. 'Never mind. Bonney'll go where there's more people. There's always more people.' She walks off into the dark. Turnbull, half done, shakes your hand for a long time and then sets off the other way at a run, smoking gently. In her hurry Bonney has left a jar behind.",
+      "bonney_ending": "rescue",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 3,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "loot_table": "dunes_rare",
+      "choices": []
+    },
+    "the_bargain": {
+      "text": "You sit down in the ash and take off your boot, and she takes the nail, the whole nail, between two of her too-long fingers, with one quick, practised twist. It goes in the snuff tin with the others. 'Lovely,' she says, and means it. She lifts the spit off the blocks, unwinds the wire and tips Turnbull out into the ash like a tray of roast potatoes. Then she takes {{apple}} out of his mouth and eats it. All of it. It goes down with a noise like a drain taking a sock. 'Afters,' she says, and pats her stomach, and her stomach pats back. Turnbull presses his water bottle on you as he runs past. By morning the fire is out and the bonnet is gone, and there is only a ring of ash where she was. She'll be somewhere with people in it. There are always more people.",
+      "bonney_ending": "bargain",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 0,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    },
+    "walk_away": {
+      "text": "You back out of the firelight. Turnbull watches you go as he comes round. 'Fair enough,' he says. 'I would too.' Bonney waves the aerial after you. 'He'll keep,' she calls. 'Bonney does him low and slow.'",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_heat": {
+      "text": "You sit too close. Bonney likes a fire you can see bones through. The heat comes at you like a wall, your eyebrows go, and the side of your face that was nearest comes up in one long blister.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_drip": {
+      "text": "A gob of hot fat comes off the spit as it turns and lands on the back of your hand, and keeps cooking there. Turnbull says sorry. He seems to mean it.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "pinch_bites": {
+      "text": "Pinch is not interested in shiny. Pinch is interested in your thumb, which it takes hold of with its own and bends back until something gives. Then it goes back to the crank as if nothing has happened.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_crank": {
+      "text": "You kick the crank and it kicks back: a full turn of a truck axle with a man on it, straight across your shin.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_gravy": {
+      "text": "'How she what?' says Bonney, right behind you, much too close. She has come back early. She ladles something hot and brown over your head to see how you take it, then licks her finger. 'Not bad,' she says. 'Needs salt.'",
+      "penalty": {
+        "ll": -1,
+        "food": -1
+      },
+      "ends_encounter": false
+    },
+    "the_ladle": {
+      "text": "Bonney comes back in a mood and finds you standing over her supper. She hits you with the ladle, twice, without putting the bucket down, and goes on humming.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "the_fat": {
+      "text": "The wire has been in the fire since Tuesday. You let go of it a great deal faster than you took hold of it, and leave some of your palm behind.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_fall": {
+      "text": "An engine block shifts and the axle drops a foot, Turnbull and all, into the fire and out again. He says a word nobody says out here any more. You go down in the ash with your back on fire in a different way.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "apple": [
+      "an apple, a real one, red and shining, the first you have seen in your life"
+    ]
+  }
+}

@@ -374,6 +374,21 @@ int main(int argc, char** argv) {
       { { 250, FXK_TRIPWIRE, 2, "puts a foot down and hears it click.", nullptr, 0 } }, calm, false);
   if (want("beartrap")) run("beartrap", in, out, "encounters", nullptr, 0, 0, 5200,
       { { 250, FXK_BEARTRAP, 0, "is caught and held while it bites.", nullptr, 0 } }, calm, false);
+  if (want("ghoul"))    run("ghoul",    in, out, "dashboard", nullptr, 0, 0, 3400,
+      { { 400, FXK_GHOUL, 2, "has a dead survivor riding on their back.", nullptr, 0 } }, calm, false);
+  // Sleeping rough (ui-scenes.hpp section 12b): arg is the story | archetype << 4.
+  if (want("rough0"))   run("rough0",   in, out, "chronicle", nullptr, 0, 0, 7400,
+      { { 250, FXK_ROUGH, 2, "slept on the bare ground. The vultures took notes.", nullptr, 0 | (3 << 4) } }, calm, false);
+  if (want("rough1"))   run("rough1",   in, out, "chronicle", nullptr, 0, 0, 7400,
+      { { 250, FXK_ROUGH, 0, "slept in a tree. Briefly.", nullptr, 1 | (0 << 4) } }, calm, false);
+  if (want("rough2"))   run("rough2",   in, out, "chronicle", nullptr, 0, 0, 7400,
+      { { 250, FXK_ROUGH, 4, "slept out in the open and woke to their own funeral.", nullptr, 2 | (4 << 4) } }, calm, false);
+  // A morning as the board cues it: the chapter card, then the laugh
+  // ROUGH_CUE_MS behind it (network-events.hpp), which waits its turn. Cued
+  // side by side the compositor would play the card and drop the laugh.
+  if (want("rough_dawn")) run("rough_dawn", in, out, "chronicle", nullptr, 0, 0, 10600,
+      { { 250, FXK_DAWN, -1, "Day 12 comes up grey over the waste.", nullptr, 12 },
+        { 1750, FXK_ROUGH, 0, "slept in a tree. Briefly.", nullptr, 1 | (0 << 4) } }, calm, false);
   {
     SceneSnap S = baseSnap();
     S.s[0] = surv("Vera", 0, 6, 7, 5, 4, 1);
@@ -390,6 +405,8 @@ int main(int argc, char** argv) {
     if (want("road_fog"))   runScene("road_fog", out, 1, F, 5000, {}, calm);
     SceneSnap E = baseSnap(); E.dayMil = 450;
     if (want("road_empty")) runScene("road_empty", out, 1, E, 6000, {}, FxDread{});
+    SceneSnap EA = E; EA.lanUp = false; snprintf(EA.lan, sizeof(EA.lan), "searching");
+    if (want("road_empty_ap")) runScene("road_empty_ap", out, 1, EA, 6000, {}, FxDread{});
     SceneSnap B = S;
     B.s[0].score = 3160; B.s[1].score = 2440; B.s[3].score = 900; B.s[4].score = 60;
     if (want("admired"))    runScene("admired", out, 6, B, 7000, {}, calm);
@@ -410,7 +427,7 @@ int main(int argc, char** argv) {
       { "Day 13 comes up grey over the waste.",            SC_GLY_DAWN,      SC_TONE_PLAIN, -1, -1 },
       { "Mox walks into fire and wears it out.",           SC_GLY_FIRE,      SC_TONE_ILL,   3, -1 },
       { "Kell goes through a door that was shut for a reason.", SC_GLY_THRESHOLD, SC_TONE_OMEN, 4, -1 },
-      { "Vera meets something with too many teeth.",       SC_GLY_CLASH,     SC_TONE_ILL,   0, -1 },
+      { "Vera takes a hard turn and presses on.",          SC_GLY_CLASH,     SC_TONE_ILL,   0, -1 },
       { "The Doom turns its head toward Quartermaster1.",  SC_GLY_DOOM,      SC_TONE_OMEN,  1, -1 },
       { "Mox beds down and the night lets them.",          SC_GLY_REST,      SC_TONE_PLAIN, 3, -1 },
       { "A storm walks in off the flats.",                 SC_GLY_STORM,     SC_TONE_ILL,   4, -1 },
@@ -428,8 +445,8 @@ int main(int argc, char** argv) {
       Hp.logN = 3; Hp.logTotal = (uint16_t)(53 + page * 3);
       if (want(nm)) runScene(strdup(nm), out, 2, Hp, 5000, {}, calm);
     }
-    // Every picture, three to a page: chron_g0 .. chron_g10 (a contact sheet).
-    for (int pg = 0; pg < 11; pg++) {
+    // Every picture, three to a page: chron_g0 .. chron_g11 (a contact sheet).
+    for (int pg = 0; pg < 12; pg++) {
       char nm[32];
       snprintf(nm, sizeof(nm), "chron_g%d", pg);
       if (!want(nm)) continue;
@@ -445,6 +462,95 @@ int main(int argc, char** argv) {
       Hg.logN = 3; Hg.logTotal = 200;
       runScene(strdup(nm), out, 2, Hg, 1500, {}, calm);
     }
+    // The three that hurt, each the newest (big, live, one whole cycle) over
+    // the other two printed still: the place (CLASH), the wire (TRIP), Kane's
+    // gun (GUNFIRE: an ILL line is a hit, an OMEN line a miss).
+    {
+      struct Hurt { const char* nm; Ev e[3]; uint32_t ms; };
+      static const Hurt HURT[] = {
+        { "chron_clash", { { "Mox puts a foot down and hears it click.", SC_GLY_TRIP, SC_TONE_ILL, 3, -1 },
+                           { "Kell is caught in the open by Kane's gun.", SC_GLY_GUNFIRE, SC_TONE_ILL, 4, -1 },
+                           { "Vera is hurt by the place and stays in it.", SC_GLY_CLASH, SC_TONE_ILL, 0, -1 } }, 5600 },
+        { "chron_trip",  { { "Vera takes a hard turn and presses on.", SC_GLY_CLASH, SC_TONE_ILL, 0, -1 },
+                           { "Quartermaster1 hears Kane's rounds go past, close.", SC_GLY_GUNFIRE, SC_TONE_OMEN, 1, -1 },
+                           { "Mox steps on something that was waiting.", SC_GLY_TRIP, SC_TONE_ILL, 3, -1 } }, 6400 },
+        { "chron_kane",  { { "Vera takes a hard turn and presses on.", SC_GLY_CLASH, SC_TONE_ILL, 0, -1 },
+                           { "Mox finds the wire the hard way.", SC_GLY_TRIP, SC_TONE_ILL, 3, -1 },
+                           { "Kell learns why the brass is everywhere.", SC_GLY_GUNFIRE, SC_TONE_ILL, 4, -1 } }, 5200 },
+        { "chron_kane_miss", { { "Mox finds the wire the hard way.", SC_GLY_TRIP, SC_TONE_ILL, 3, -1 },
+                           { "Kell learns why the brass is everywhere.", SC_GLY_GUNFIRE, SC_TONE_ILL, 4, -1 },
+                           { "Quartermaster1 is shot at by the jeep, and missed.", SC_GLY_GUNFIRE, SC_TONE_OMEN, 1, -1 } }, 5200 },
+      };
+      for (const Hurt& c : HURT) {
+        if (!want(c.nm)) continue;
+        SceneSnap Hh = S;
+        for (int i = 0; i < 3; i++) logAt(Hh, i, c.e[i].t, c.e[i].g, c.e[i].tone, c.e[i].w, c.e[i].w2, (uint16_t)(300 + i));
+        Hh.logN = 3; Hh.logTotal = 302;
+        runScene(c.nm, out, 2, Hh, c.ms, {}, calm);
+      }
+    }
+    // Sleeping rough in the book: each of the three as the live panel, the
+    // other two printed still beside it.
+    {
+      static const Ev RG[3] = {
+        { "Mox slept on the bare ground. The vultures took notes.", SC_GLY_ROUGH, SC_TONE_ILL, 3, -1 },
+        { "Vera slept in a tree. Briefly.", SC_GLY_ROUGH_TREE, SC_TONE_ILL, 0, -1 },
+        { "Kell slept out in the open and woke to their own funeral.", SC_GLY_ROUGH_CHALK, SC_TONE_ILL, 4, -1 },
+      };
+      static const char* const NM[3] = { "chron_rough", "chron_rough_tree", "chron_rough_chalk" };
+      for (int r = 0; r < 3; r++) {
+        if (!want(NM[r])) continue;
+        SceneSnap Hr = S;
+        for (int i = 0; i < 3; i++) { const Ev& e = RG[(r + 1 + i) % 3]; logAt(Hr, i, e.t, e.g, e.tone, e.w, e.w2, (uint16_t)(700 + i)); }
+        Hr.logN = 3; Hr.logTotal = 702;
+        runScene(NM[r], out, 2, Hr, 6400, {}, calm);
+      }
+    }
+    // The work, each way it goes: chron_<work>_ok (a GOOD line) and _bad (ILL),
+    // alone as the live panel. medic is on someone else; medic_self on their own leg.
+    {
+      struct Act { const char* nm; uint8_t g; int8_t w2; const char* ok; const char* bad; };
+      static const Act ACT[] = {
+        { "forage",     SC_GLY_FORAGE,  -1, "Mox finds what the birds missed.",        "Mox turns over stones and finds only stones." },
+        { "water",      SC_GLY_WATER,   -1, "Vera fills the cans and does not hurry back.", "Vera finds the well dry to the stone." },
+        { "medic",      SC_GLY_MEDIC,    4, "Quartermaster1 patches Kell up and it holds.", "Quartermaster1 runs out of cloth before Kell stops bleeding." },
+        { "medic_self", SC_GLY_MEDIC,   -1, "Kell binds the wound and it holds.",      "Kell cannot stop the bleeding for long." },
+        { "salvage",    SC_GLY_SALVAGE, -1, "Kell finds a cache nobody else did.",     "Kell cuts a hand on rusted nothing." },
+        { "shelter",    SC_GLY_SHELTER, -1, "Vera makes a place out of the wind.",     "Vera loses the frame to the wind." },
+      };
+      static const int8_t WHO[] = { 3, 0, 1, 4, 4, 0 };
+      for (int a = 0; a < (int)(sizeof(ACT) / sizeof(ACT[0])); a++)
+        for (int good = 1; good >= 0; good--) {
+          char nm[40];
+          snprintf(nm, sizeof(nm), "chron_%s_%s", ACT[a].nm, good ? "ok" : "bad");
+          if (!want(nm)) continue;
+          SceneSnap Ha = S;
+          logAt(Ha, 0, good ? ACT[a].ok : ACT[a].bad, ACT[a].g, good ? SC_TONE_GOOD : SC_TONE_ILL, WHO[a], ACT[a].w2, (uint16_t)(600 + a * 2 + good));
+          Ha.logN = 1; Ha.logTotal = 600;
+          runScene(strdup(nm), out, 2, Ha, 5800, {}, calm);
+        }
+    }
+    // chron_big0 .. chron_big35: every picture alone, as the live panel, in
+    // the tone its real lines are logged with.
+    {
+      static const uint8_t BT[] = { SC_TONE_PLAIN, SC_TONE_PLAIN, SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_GOOD,
+        SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_PLAIN, SC_TONE_PLAIN, SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_PLAIN,
+        SC_TONE_OMEN, SC_TONE_ILL, SC_TONE_GOOD, SC_TONE_GOOD, SC_TONE_ILL, SC_TONE_ILL, SC_TONE_OMEN, SC_TONE_ILL,
+        SC_TONE_ILL, SC_TONE_ILL, SC_TONE_GOOD, SC_TONE_PLAIN, SC_TONE_ILL, SC_TONE_ILL, SC_TONE_PLAIN, SC_TONE_OMEN,
+        SC_TONE_GOOD, SC_TONE_ILL, SC_TONE_ILL, SC_TONE_ILL, SC_TONE_ILL, SC_TONE_ILL };
+      static_assert(sizeof(BT) == SC_GLY_COUNT, "a tone for every picture");
+      for (int g = 0; g < SC_GLY_COUNT; g++) {
+        char nm[32];
+        snprintf(nm, sizeof(nm), "chron_big%d", g);
+        if (!want(nm)) continue;
+        SceneSnap Hb = S;
+        char txt[64];
+        snprintf(txt, sizeof(txt), "Picture %d. Vera did a thing here, and it showed.", g);
+        logAt(Hb, 0, txt, (uint8_t)g, BT[g], 0, 1, (uint16_t)(500 + g));
+        Hb.logN = 1; Hb.logTotal = 500;
+        runScene(strdup(nm), out, 2, Hb, 5000, {}, calm);
+      }
+    }
     // The stash: a Mule with a full pack, and a Scout with nothing.
     {
       SceneSnap T = S;
@@ -455,9 +561,29 @@ int main(int argc, char** argv) {
         "Lucky Bottlecap", "Uranium Candy" };
       for (int i = 0; i < 14; i++) { snprintf(T.item[i], sizeof(T.item[i]), "%s", IT[i]); T.itemQty[i] = (uint8_t)(1 + (i * 7) % 4); }
       T.itemN = 14; T.page = 3;
+      // where everyone stands: Vera and Quartermaster1 close by, Kell far off north-east (an arrow on the rim)
+      auto place = [](SceneSnap& X) {
+        X.s[0].q = 33; X.s[0].r = 23; X.s[1].q = 21; X.s[1].r = 30; X.s[3].q = 28; X.s[3].r = 26; X.s[4].q = 52; X.s[4].r = 12;
+      };
+      place(T);
       if (want("stash")) runScene("stash", out, 3, T, 5000, {}, calm);
+      // stash_walk: Mox walks east and a little north, a hex every 0.4 s -- the sky slides with them
+      auto walk = [](SceneSnap& X, uint32_t t) { X.s[3].q = (int16_t)(28 + t / 400); X.s[3].r = (int16_t)(26 - t / 1200); };
+      if (want("stash_walk")) runScene("stash_walk", out, 3, T, 8000, {}, calm, 0, walk);
+      // stash_scrap: Mox's scrap pile from 0 to 12, one more piece every 0.5 s
+      auto scrap = [](SceneSnap& X, uint32_t t) { X.s[3].res[4] = (uint8_t)fxMinI(12, (int)(t / 500)); };
+      if (want("stash_scrap")) runScene("stash_scrap", out, 3, T, 6900, {}, calm, 0, scrap);
+      // stash_moon: eight nights, 1.6 s each, at eighths of the moon's month from new -- nightfall to dawn
+      auto moon = [](SceneSnap& X, uint32_t t) {
+        int k = (int)(t / 1600) % 8;
+        float f = (t % 1600) / 1600.0f, d = scWrapF(k / 8.0f - 0.15f, 1.0f) * (365.0f / 13.0f);
+        X.day = (uint16_t)(1 + (int)d);
+        X.dayMil = (uint16_t)(745 + f * 254);
+      };
+      if (want("stash_moon")) runScene("stash_moon", out, 3, T, 12800, {}, calm, 0, moon);
       SceneSnap U = S; U.page = 4; U.s[4].res[0] = 0; U.s[4].res[1] = 1; U.s[4].res[2] = 0; U.s[4].res[3] = 0; U.s[4].res[4] = 2;
       U.s[4].packCap = 8; U.s[4].packUsed = 0; U.itemN = 0;
+      place(U);
       if (want("stash_bare")) runScene("stash_bare", out, 3, U, 4000, {}, calm);
       // stash_cast: the same stash knelt over by each archetype in turn, 1.5 s each
       auto kneel = [](SceneSnap& X, uint32_t t) { X.s[3].arch = (uint8_t)((t / 1500) % 6); };
@@ -507,6 +633,18 @@ int main(int argc, char** argv) {
       M.doomQ = 47; M.doomR = 30; M.doomAware = 82;
       M.hatchN = 3; M.hatchQ[0] = 52; M.hatchR[0] = 12; M.hatchQ[1] = 8; M.hatchR[1] = 8; M.hatchQ[2] = 66; M.hatchR[2] = 48;
       if (want("waste")) runScene("waste", out, 5, M, 6000, {}, calm);
+      // The waste, broken: one scene per big fault, the seed found by asking
+      // the header which fault it would pick.
+      static const char* const BROKE[SCW_MAJOR_N] = { "waste_roll", "waste_collapse", "waste_shear",
+                                                      "waste_vram", "waste_half", "waste_dump" };
+      for (int m = 0; m < SCW_MAJOR_N; m++) {
+        if (!want(BROKE[m])) continue;
+        SceneSnap X = M;
+        X.wasteFault = 1 + (uint32_t)m * 7919u;
+        while (scWasteMajor(X.wasteFault) != m) X.wasteFault++;
+        X.wasteSince = 1000;   // runScene's clock starts here
+        runScene(BROKE[m], out, 5, X, 6000, {}, calm);
+      }
     }
     SceneSnap H0 = S;
     if (want("chronicle_empty")) runScene("chronicle_empty", out, 2, H0, 4000, {}, calm);

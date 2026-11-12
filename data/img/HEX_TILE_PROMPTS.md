@@ -12,7 +12,7 @@ in this folder (`hexOpenScrub0.png`, `hexSettlement3.png`, etc.), not guessed.
 |----|------------------|:-:|---------|-----|
 | 0  | Open Scrub       | 10 (+ landmarks 10-13, see "Pinned art") | `#2E2210` | done |
 | 1  | Ash Dunes        | 4  | `#201E16` | thin |
-| 2  | Rust Forest      | 10 | `#1A2808` | done |
+| 2  | Rust Forest      | 3 slots: 20 tiles + 10 pinned (2026-11-04) | `#1A2808` | done, see docs/hex-tile-art.md "Rust Forest" |
 | 3  | Marsh            | 2 real + 2 placeholder | `#081A10` | **priority** |
 | 4  | Broken Urban     | 10 | `#1A1814` | done |
 | 5  | Flooded District | 5  | `#08121E` | okay |

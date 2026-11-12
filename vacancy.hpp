@@ -61,9 +61,16 @@ struct VacancySign {
   // Runtime only -- never saved
   uint8_t hummed[MAX_PLAYERS];   // told what the sign wants since the last dawn
   bool    packChanged[MAX_PLAYERS];   // Check-Out just spent the two: owe an item_result
+  uint8_t midBanked;             // bit part-1: someone banked out of that part's middle (vacMidPaid)
   bool    saveWanted;
 };
 static VacancySign VAC;
+
+// As kaneMidPaid(): a part reopens until it is done, so a middle node's
+// tokens (the door's food, the clerk's, the cart's med) pay once a part.
+// Tokens only -- the Register and the Key are never held back.
+static inline bool vacMidPaid(uint8_t part) { return part && part <= 8 && (VAC.midBanked & (1u << (part - 1))); }
+static inline void vacMidBank(uint8_t part) { if (part && part <= 8) VAC.midBanked |= (uint8_t)(1u << (part - 1)); }
 
 static inline bool vacLive() { return VAC.townQ >= 0 && VAC.stage <= VAC_ST_OPEN; }
 
@@ -171,7 +178,22 @@ static void tickVacancy() {
 // house checks in, if anyone is connected to see it.
 static void vacDawn(bool watched) {
   memset(VAC.hummed, 0, sizeof(VAC.hummed));
-  if (!vacLive() || VAC.stage != VAC_ST_OPEN || !watched) return;
+  if (!vacLive() || VAC.stage != VAC_ST_OPEN) return;
+  // A banked Register or Key that has left the world -- dropped and aged
+  // out, vanished beside a full ground table, gone with an erased seat --
+  // opens its desk or corridor again, as labDawn() does for Gaunt's parts.
+  // Without it Check-Out could never happen and the town could only fall.
+  static const struct { uint8_t bit, item; } HALVES[2] = {
+    { VAC_GOT_REGISTER, VAC_ITEM_REGISTER }, { VAC_GOT_KEY, VAC_ITEM_KEY } };
+  for (const auto& h : HALVES) {
+    if (!(VAC.got & h.bit) || itemExistsInWorld(h.item)) continue;
+    VAC.got &= (uint8_t)~h.bit;
+    VAC.saveWanted = true;
+    Log.notice("VAC %s is gone from the world: its %s is open again",
+               h.bit == VAC_GOT_REGISTER ? "register" : "master key",
+               h.bit == VAC_GOT_REGISTER ? "desk" : "corridor");
+  }
+  if (!watched) return;
   if (VAC.rooms) VAC.rooms--;
   if (!VAC.rooms) { vacFall(true); return; }
   vacEmit(VAC_EV_ROOM, -1);

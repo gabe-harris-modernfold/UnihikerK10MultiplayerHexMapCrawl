@@ -165,82 +165,16 @@ static void handleMsg_trade_decline(AsyncWebSocketClient* client, char* data, si
   }
 }
 
-// ── Caravan trade (dedicated — not the player-to-player tradeOffers table) ──
-// One-shot: no offer/accept round-trip. The caravan side of the transaction
-// is world-system.hpp's W.caravan, not another Player slot, so this can't
-// reuse handleMsg_trade_accept's pid<MAX_PLAYERS-bounded machinery — see
-// docs/world-system-spec.md's rationale for a dedicated handler.
-static void handleMsg_caravan_trade(AsyncWebSocketClient* client, char* data, size_t len) {
-  LOG_FN();
-  uint8_t give[5] = {0}, want[5] = {0};
-  const char* gp = strstr(data, "\"give\"");
-  if (gp) { const char* gb = strchr(gp + 6, '['); if (gb) { gb++;
-    for (int i = 0; i < 5; i++) {
-      while (*gb == ' ') gb++;
-      give[i] = (uint8_t)constrain(atoi(gb), 0, 99);
-      const char* nx = strchr(gb, i < 4 ? ',' : ']'); if (!nx) break; gb = nx + 1;
-    }
-  }}
-  const char* wp = strstr(data, "\"want\"");
-  if (wp) { const char* wb = strchr(wp + 6, '['); if (wb) { wb++;
-    for (int i = 0; i < 5; i++) {
-      while (*wb == ' ') wb++;
-      want[i] = (uint8_t)constrain(atoi(wb), 0, 99);
-      const char* nx = strchr(wb, i < 4 ? ',' : ']'); if (!nx) break; wb = nx + 1;
-    }
-  }}
-
-  int total = 0;
-  for (int i = 0; i < 5; i++) total += give[i] + want[i];
-  if (total == 0) { wsNack(client, "empty"); return; }
-
-  bool valid = false;
-  const char* refused = "busy";   // G.mutex timeout unless the take below succeeds
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    int slot = findSlot(client->id());
-    refused = (slot < 0)                    ? "not_seated"
-            : encounters[slot].active       ? "in_enc"
-            : (!W.caravan.active ||
-               G.players[slot].q != W.caravan.q ||
-               G.players[slot].r != W.caravan.r) ? "no_caravan"
-            : !hasResources(slot, give)     ? "no_res"
-            : "caravan_short";              // the caravan lacks what was asked for
-    if (slot >= 0 && !encounters[slot].active && W.caravan.active &&
-        G.players[slot].q == W.caravan.q && G.players[slot].r == W.caravan.r &&
-        hasResources(slot, give)) {
-      bool caravanHas = true;
-      for (int i = 0; i < 5; i++) if (W.caravan.inv[i] < want[i]) { caravanHas = false; break; }
-      if (caravanHas) {
-        Player& p = G.players[slot];
-        for (int i = 0; i < 5; i++) {
-          p.inv[i]         = (uint8_t)min((int)p.inv[i] - give[i] + want[i], 99);
-          W.caravan.inv[i] = (uint8_t)min((int)W.caravan.inv[i] - want[i] + give[i], 99);
-        }
-        GameEvent tev = {};
-        tev.type        = EVT_TRADE_RESULT;
-        tev.pid         = (uint8_t)slot;
-        tev.tradeTo     = CARAVAN_PID;
-        tev.tradeResult = 1;
-        enqEvt(tev);
-        valid = true;
-      }
-    }
-    xSemaphoreGive(G.mutex);
-  }
-  if (!valid) {
-    char fb[48];
-    int fl = snprintf(fb, sizeof(fb), "{\"t\":\"trade_fail\"}");
-    client->text(fb, (size_t)fl);
-    wsNack(client, refused);
-  }
-}
-
 // ── Caravan purchase: resource tokens → a consumable off the shelf ────────
+// The only way to trade with the caravan: it sells, it never swaps tokens
+// for tokens (the old car_trade swap is gone, and "car_trade" now gets
+// unknown_cmd). Dedicated rather than the player-to-player tradeOffers
+// table — the caravan side is world-system.hpp's W.caravan, not a Player slot.
 // {"t":"car_buy","item":ID,"n":QTY,"give":[5]}. give[] is the payment; its
 // worth (caravanPaymentValue: food/med/scrap 1 each, fuel 2, water refused)
 // must cover caravanPrice(item) × n. Overpaying is accepted — the caravan
 // doesn't make change; the client keeps it to at most one fuel token's
-// rounding. One-shot like car_trade. Everything is checked before
+// rounding. One-shot, no offer/accept round-trip. Everything is checked before
 // anything is spent — co-location, shelf has ≥ n, the player holds give[],
 // invRoomFor() has room for all n (same all-or-nothing rule as applyRecipe()).
 // Success: EVT_TRADE_RESULT with tradeTo=CARAVAN_PID + tradeItem for every

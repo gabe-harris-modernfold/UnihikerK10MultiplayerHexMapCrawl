@@ -171,6 +171,17 @@ function move(dir) {
   if (myId >= 0 && players[myId]?.enc) return;
   if (myId >= 0 && uiAP.val <= 0) return;
   const vm = myId >= 0 ? (players[myId].vm ?? 0x3F) : 0x3F;
+  // Liquid Bread (items.cfg narrative 14): drunk feet. While drunkSteps lasts, every
+  // other step or so goes somewhere else -- usually 60° off to one side
+  // (dir +/- 1 is a ring neighbour in DQ/DR order), now and then any way at
+  // all. A stumble into a hex you can't enter doesn't happen: you go where
+  // you meant to.
+  let staggered = false;
+  if (typeof drunkSteps !== 'undefined' && drunkSteps > 0 && Math.random() < 0.5) {
+    const veer = Math.random() < 0.67 ? (dir + (Math.random() < 0.5 ? 1 : 5)) % 6
+                                      : Math.floor(Math.random() * 6);
+    if (veer !== dir && (vm & (1 << veer))) { dir = veer; staggered = true; }
+  }
   if (!(vm & (1 << dir))) return;
   const now = Date.now();
   if (now - lastMoveSent < moveCooldownMs - 30) {
@@ -182,6 +193,11 @@ function move(dir) {
     return;
   }
   lastMoveSent = now;
+  if (typeof drunkSteps !== 'undefined' && drunkSteps > 0) {
+    drunkSteps--;
+    if (staggered) addLog('<span class="log-check-fail">🍺 You stagger off course.</span>');
+    if (!drunkSteps) addLog('<span class="log-col">Your feet are your own again.</span>');
+  }
   send({ t: 'm', d: dir });
 }
 

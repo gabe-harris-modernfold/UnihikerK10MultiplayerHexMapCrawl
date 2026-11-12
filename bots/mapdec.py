@@ -166,6 +166,25 @@ class WorldMap:
                 n += 1
         return n
 
+    def fill_terrain(self, hex_str: str) -> int:
+        """Apply an 'ev rvl'.map (the Pre-War Net Map, buildTerrainReveal()
+        in hex-map.hpp): 2 hex chars a cell, terrain << 4 | variant,
+        row-major.  Only cells still fogged here -- what we have seen
+        ourselves knows more than a terrain byte does, as in network.js
+        _evReveal.  Returns the number of cells filled."""
+        if not isinstance(hex_str, str) or len(hex_str) < self.rows * self.cols * 2:
+            return 0
+        n = 0
+        for r in range(self.rows):
+            row = self.grid[r]
+            for q in range(self.cols):
+                if row[q] is not None:
+                    continue
+                i = (r * self.cols + q) * 2
+                row[q] = decode_cell(int(hex_str[i], 16), 0, int(hex_str[i + 1], 16))
+                n += 1
+        return n
+
     def known_cells(self):
         """Yield (q, r, cell) for every revealed cell."""
         for r in range(self.rows):

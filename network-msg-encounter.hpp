@@ -18,7 +18,11 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
   // the tunnel board is 16x10, not 75x57. Reject obvious garbage here.
   if (hq < 0 || hr < 0) { wsNack(client, "bad_arg"); return; }
 
-  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+  // Longer than the 5-20 ms the other handlers wait: an enc_start is sent once,
+  // on arrival, and a miss here used to be silent -- the browser asks for no
+  // reply -- so the survivor stood on the place and nothing happened. It is
+  // one message per POI, not per keypress. (The browser also asks again.)
+  if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(60)) != pdTRUE) {
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"mutex_timeout\"}");
     wsNack(client, "busy");
     return;
@@ -28,8 +32,18 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
     client->text("{\"t\":\"enc_dbg\",\"msg\":\"no_slot\"}");
     wsNack(client, "not_seated");
   } else if (encounters[pid].active) {
-    client->text("{\"t\":\"err\",\"msg\":\"Already in an encounter — abort first\"}");
-    wsNack(client, "in_enc");
+    // Already inside one: the client has lost it -- its enc_path was dropped
+    // or its /enc fetch never came back -- since a survivor who can see their
+    // scene has no way to send this. That used to be refused ("abort first",
+    // with no scene on screen to abort), and every step after it was "Cannot
+    // move during encounter" until dawn. Send the scene again, with where it
+    // is and what is on the tray, and let them carry on.
+    char resume[288];
+    const int rn = encPathJson(pid, resume, sizeof(resume), /*resume=*/true);
+    xSemaphoreGive(G.mutex);
+    Log.notice("enc_start pid=%d: already in a scene -- resent (%d B)", pid, rn);
+    if (rn > 0) client->text(resume, (size_t)rn);
+    return;
   } else if (G.players[pid].ll == 0) {
     client->text("{\"t\":\"err\",\"msg\":\"Cannot enter — you are downed\"}");
     wsNack(client, "downed");
@@ -64,12 +78,25 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
     } else if (claimed) {
       client->text("{\"t\":\"err\",\"msg\":\"Another survivor is already inside\"}");
       wsNack(client, "claimed");
-    } else if (terrain >= NUM_TERRAIN || encPools[terrain].count == 0) {
-      client->text("{\"t\":\"err\",\"msg\":\"No encounters here\"}");
-      wsNack(client, "no_pool");
     } else {
-      uint8_t idx = cell.poi;
-      const char* json = encLoadFile(terrain, idx);
+      // Ground with no scenes of its own (a tunnel cell restamped as a hatch
+      // or shaft, a terrain index.json has no folder for on this card) still
+      // has a place on it: draw from the plainest pool of its board instead
+      // of refusing one the map is showing.
+      const uint8_t fallback = below ? 14 : 0;
+      if (terrain >= NUM_TERRAIN || encPools[terrain].count == 0) {
+        Log.warning("enc_start pid=%d (%d,%d) dp=%d: terrain %d has no pool, using %d",
+                    pid, hq, hr, (int)below, (int)terrain, (int)fallback);
+        terrain = fallback;
+      }
+      // The id may belong to the terrain this hex had before a fire, flood or
+      // founding changed it (encPoolId). enc.encIdx keeps the one that
+      // loaded -- encOpenPoolFile() moves on to the next file of the pool if
+      // this one will not -- so the choices and a restored POI read the same
+      // file.
+      uint8_t idx = 0;
+      const char* json = encPools[terrain].count
+                       ? encOpenPoolFile(terrain, encPoolId(terrain, cell.poi), &idx) : nullptr;
       if (!json) {
         client->text("{\"t\":\"err\",\"msg\":\"The way in is blocked\"}");
         wsNack(client, "load_failed");
@@ -85,13 +112,15 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
         enc.depth   = below ? 1 : 0;   // which board hexQ/hexR index
         enc.terrain = terrain;
         encEnterStartNode(json, enc);
-        char pathBuf[72];
-        int pathLen = snprintf(pathBuf, sizeof(pathBuf),
-          "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d}", encPools[terrain].path, (int)idx);
+        char pathBuf[96];
+        int pathLen = encPathJson(pid, pathBuf, sizeof(pathBuf), /*resume=*/false);
         client->text(pathBuf, (size_t)pathLen);
         GameEvent ev = {};
         ev.type = EVT_ENC_START; ev.pid = (uint8_t)pid;
         ev.q = (int16_t)hq; ev.r = (int16_t)hr;
+        // "dp" on the wire: without it every client cleared the POI on the
+        // surface hex sharing a tunnel panel's coordinates instead of the panel.
+        ev.depth = enc.depth;
         enqEvt(ev);
       }
     }
@@ -101,14 +130,24 @@ static void handleMsg_enc_start(AsyncWebSocketClient* client, char* data, size_t
 
 // Place a typed item into the player's pack via addItemToInv() (stacks first,
 // then empty slots — the same rule pickups and crafting use); overflow goes
-// to the ground at the player's hex via groundPut().  Returns true when some
-// of it landed on the ground, so the caller can tell the clients.  Caller
-// holds G.mutex.
+// to the ground where the player stands -- the tunnel cell, when the scene was
+// below -- via groundPutHere().  Returns true when some of it landed on the
+// ground, so the caller can tell the clients.  Caller holds G.mutex.
 static bool grantItemOrDrop(Player& p, uint8_t itemId, uint8_t qty) {
   if (!itemId || !qty) return false;
   qty = (uint8_t)(qty - addItemToInv(p, itemId, qty));
   if (!qty) return false;
-  return groundPut(p.q, p.r, itemId, qty);   // pack full — the rest lands where they stand
+  return groundPutHere(p, itemId, qty);   // pack full — the rest lands where they stand
+}
+
+// A "spends_item" choice just took its item out of pid's pack (encRunChoice):
+// handleMsg_enc_choice owes them an item_result. Per survivor, so a flag left
+// by a path that sends no ack only ever reaches its own survivor, later.
+static bool encPackSpent[MAX_PLAYERS];
+static bool encTakePackSpent(int pid) {
+  const bool w = encPackSpent[pid];
+  encPackSpent[pid] = false;
+  return w;
 }
 
 // Resolve choice `ci` of pid's active scene: the cost, the roll, then the
@@ -141,7 +180,8 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
 
   bool canAfford = (p.ll >= ch.costLL) && (p.radiation + ch.costRad <= 10) &&
                    (p.inv[1] >= ch.costFood) && (p.inv[0] >= ch.costWat) &&
-                   (p.inv[4] >= ch.costScrap) && (p.inv[3] >= ch.costMed);
+                   (p.inv[4] >= ch.costScrap) && (p.inv[3] >= ch.costMed) &&
+                   ((int)p.score >= ch.costScore);
   if (!canAfford) {
     if (client) client->text("{\"t\":\"err\",\"msg\":\"Cannot afford cost\"}");
     return "no_res";
@@ -153,17 +193,24 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
   p.inv[0]    = (uint8_t)constrain((int)p.inv[0] - ch.costWat,   0, 99);
   p.inv[4]    = (uint8_t)constrain((int)p.inv[4] - ch.costScrap, 0, 99);
   p.inv[3]    = (uint8_t)constrain((int)p.inv[3] - ch.costMed,   0, 99);
+  // Points: the score, spent. Nothing else in the game takes it; Doctor
+  // Gaunt's clinic (lab.hpp) takes nothing else. It rides the state tick.
+  if (ch.costScore) p.score = (uint16_t)constrain((int)p.score - ch.costScore, 0, 65535);
   const bool costKilled = (p.ll == 0);   // the price of the choice took the last LL
 
   // Allies who steadied this roll (handleMsg_enc_assist, below). Their tokens
   // were spent when they offered; the help is spent here, hit or miss, so
   // every roll after this one has to be backed afresh.
-  const uint8_t helpers = enc.assistMask;
+  // A "sure" choice is paid for, not rolled: it always goes through, and
+  // whatever help was offered waits for the next roll that needs it.
+  const uint8_t helpers = ch.sure ? 0 : enc.assistMask;
   const int     nHelp   = __builtin_popcount(helpers);
-  enc.assistMask = 0;
-  uint8_t dn = computeEncounterDN(pid, (uint8_t)ch.baseRisk, ch.skill);
+  if (!ch.sure) enc.assistMask = 0;
+  uint8_t dn = ch.sure ? 0 : computeEncounterDN(pid, (uint8_t)ch.baseRisk, ch.skill);
   if (nHelp) dn = (uint8_t)max(2, (int)dn - nHelp * (int)ENC_ASSIST_DN);
-  CheckResult cr = resolveCheck(pid, ch.skill, dn, 0);
+  CheckResult cr = {};
+  if (ch.sure) cr.success = true;
+  else         cr = resolveCheck(pid, ch.skill, dn, 0);
   if (outSuccess) *outSuccess = cr.success;
   GameEvent ev = {};
   ev.type      = EVT_ENC_RESULT;
@@ -173,6 +220,7 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
   ev.encTotal  = (int8_t)cr.total;
   ev.encOut    = cr.success ? 1 : 0;
   ev.encAssist = (uint8_t)nHelp;
+  ev.encSure   = ch.sure ? 1 : 0;
   ev.amt       = enc.trap ? 1 : 0;   // EVT_ENC_RESULT-specific: a trap scene (the LCD tells it differently)
   bool encounterEnded = false;
   // A roll that came off shares its credit with whoever backed it. Score
@@ -182,10 +230,18 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
       if ((helpers & (1u << a)) && G.players[a].connected)
         G.players[a].score = (uint16_t)min((int)G.players[a].score + (int)ENC_ASSIST_SCORE, 65535);
   if (cr.success) {
-    for (int i = 0; i < 5; i++) {
+    // A trade: the gated item changes hands now, on the roll, like a cost
+    // that is only paid if it works. What it buys is the destination's loot,
+    // pending until the bank like any other.
+    if (ch.spendItem && spendItemForChoice(pid, ch.reqItem)) encPackSpent[pid] = true;
+    // Kane's chapters and VACANCY's parts reopen until read: once someone
+    // has banked out of the middle of one, its middle nodes' tokens are gone.
+    if (!ch.nextTerminal && ((enc.kane && kaneMidPaid(enc.kane)) || (enc.vac && vacMidPaid(enc.vac))))
+      memset(ch.loot, 0, sizeof(ch.loot));
+    uint8_t lootBefore[5];
+    memcpy(lootBefore, enc.pendingLoot, 5);
+    for (int i = 0; i < 5; i++)
       enc.pendingLoot[i] = (uint8_t)min(99, (int)enc.pendingLoot[i] + (int)ch.loot[i]);
-      ev.encLoot[i] = ch.loot[i];
-    }
     // Typed items: explicit "item" loot entries first, then the loot-table roll.
     uint8_t itm[3] = { ch.itemType[0], ch.itemType[1], 0 };
     uint8_t qty[3] = { ch.itemQty[0],  ch.itemQty[1],  0 };
@@ -224,6 +280,16 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     // Likewise the town's and Check-Out's last node (vacancy.hpp). The desk
     // and the corridor count on the bank instead (vacOnBank).
     if (enc.vac && ch.nextTerminal && !ch.nextEscape) vacPartRead(pid, json, ch.nextKey);
+    // And the Graft's (lab.hpp); the three buildings count on the bank (labOnBank).
+    if (enc.lab && ch.nextTerminal && !ch.nextEscape) labPartRead(pid, json, ch.nextKey);
+    // And each of Bonney's two sections (bonney.hpp): its "bonney_ending".
+    if (enc.bonney && ch.nextTerminal && !ch.nextEscape) bonneySectionRead(pid, json, ch.nextKey);
+    // What this roll put on the tray, after the hooks above: Bonney's real
+    // apple is added by bonneySectionRead(). The client builds its tray --
+    // and so the keep[] it banks with -- from this, so loot it is not told
+    // about is trimmed off at the bank.
+    for (int i = 0; i < 5; i++)
+      ev.encLoot[i] = enc.pendingLoot[i] > lootBefore[i] ? (uint8_t)(enc.pendingLoot[i] - lootBefore[i]) : 0;
     // cost_ll can take the last point of LL even on a success.
     if (p.ll == 0) encounterEnded = true;
   } else {
@@ -255,6 +321,11 @@ static const char* encRunChoice(AsyncWebSocketClient* client, int pid, int ci, b
     }
     ev.encPenWndMin = addWound(p, WOUND_MINOR, ch.hazWMin);
     ev.encPenWndMaj = addWound(p, WOUND_MAJOR, ch.hazWMaj);
+    // Dshinguest Ron's parting gift (dshingus.hpp): a hazard can give it.
+    if (ch.hazDsh) dshCatch(pid, DSH_SRC_BAND);
+    // Bonney's runaway hand (bonney.hpp): while you look at the one she has,
+    // the other goes through your pack. Once a scene.
+    if (ch.hazSteal && enc.bonney) bonneyPinch(pid);
     // A major wound costs AP for the rest of the day, not just from dawn.
     if (ev.encPenWndMaj) p.apLeft = (int8_t)max(0, (int)p.apLeft - (int)ev.encPenWndMaj);
     encounterEnded = (p.ll == 0) || ch.hazEnds;
@@ -311,9 +382,9 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
     wsNack(client, pid < 0 ? "not_seated" : !encounters[pid].active ? "no_enc" : "downed");
     return;
   }
-  // Check-Out spends the register and the key (vacPartRead): like enc_bank,
-  // that pack change is owed a targeted item_result, built here and sent
-  // after the mutex is released.
+  // Check-Out spends the register and the key (vacPartRead), and a
+  // "spends_item" choice its item: like enc_bank, that pack change is owed a
+  // targeted item_result, built here and sent after the mutex is released.
   PSRAM_STATIC(char, vacAck, [512]);   // appendPackArrays() writes INV_SLOTS_MAX-wide arrays
   vacAck[0] = '\0';
   const bool wasTrap = encounters[pid].trap != 0;
@@ -321,19 +392,30 @@ static void handleMsg_enc_choice(AsyncWebSocketClient* client, char* data, size_
   const bool ended = !encounters[pid].active;
   const bool kaneMoved = kaneTakeSaveWanted();   // a chapter was just read
   const bool vacMoved  = vacTakeSaveWanted();    // the town was read, or saved
-  if (vacTakePackChanged(pid)) {
-    int ap = appendFmt(vacAck, 512, 0, "{\"t\":\"item_result\",\"ok\":true,\"act\":\"vac_out\",\"pid\":%d,", pid);
+  const bool labMoved  = labTakeSaveWanted();    // the Graft is done (lab.hpp)
+  const bool bonMoved  = bonneyTakeSaveWanted(); // Pinch robbed someone, or a section was read (bonney.hpp)
+  const bool vacOut    = vacTakePackChanged(pid);
+  const bool labGraft  = labTakePackChanged(pid);   // three parts in, the heart and the note out
+  const char* bonAct   = bonneyTakePackAct(pid);    // Pinch took something, or gave it back
+  const bool spent     = encTakePackSpent(pid);  // a trade handed its item over
+  if (vacOut || labGraft || bonAct[0] || spent) {
+    int ap = appendFmt(vacAck, 512, 0, "{\"t\":\"item_result\",\"ok\":true,\"act\":\"%s\",\"pid\":%d,",
+                       vacOut ? "vac_out" : labGraft ? "lab_graft" : bonAct[0] ? bonAct : "enc_spend", pid);
     ap = appendPackArrays(vacAck, 512, ap, pid);
     appendFmt(vacAck, 512, ap, "}");
   }
+  int spillQ = 0, spillR = 0;
+  bool spilled = labTakeSpill(spillQ, spillR);   // the Graft's gift beside a full pack
+  if (!spilled) spilled = bonneyTakeSpill(spillQ, spillR);   // or what Bonney gave back
   const bool lit = tunnelLightsPending;          // a section of tunnel lights came on
   xSemaphoreGive(G.mutex);
   if (why) wsNack(client, why);
   if (vacAck[0]) client->text(vacAck);
+  if (spilled) broadcastGroundUpdate(spillQ, spillR);
   // Everyone below sees it, and the board changed for the save.
   if (lit) { pushLitVisDisks(); requestSave(); }
   // A trap that went off changed the board for everyone (and for the save).
-  if ((wasTrap && ended) || kaneMoved || vacMoved) requestSave();
+  if ((wasTrap && ended) || kaneMoved || vacMoved || labMoved || bonMoved) requestSave();
 }
 
 static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t len) {
@@ -402,10 +484,26 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
         requestSave();
         return;
       }
+      // Tokens carried out of the middle of a scene that reopens (kaneMidPaid,
+      // vacMidPaid): that part's middle has paid.
+      if (!fullClear && totalRes > 0) {
+        if (enc.kane) kaneMidBank(enc.kane);
+        if (enc.vac)  vacMidBank(enc.vac);
+      }
+      // A ghost riding them takes its third of the haul on the way out
+      // (ghosts.hpp). After the took-anything test: a haul the survivor
+      // carried out spends the place even if the ghost got all of it. Written
+      // back to pendingLoot for the same reason as the trim, and the score
+      // below is on what they kept.
+      totalRes = 0;
+      for (int i = 0; i < 5; i++) {
+        enc.pendingLoot[i] = ghostTithe(pid, (uint8_t)i, enc.pendingLoot[i]);
+        totalRes += enc.pendingLoot[i];
+      }
       for (int i = 0; i < 5; i++) p.inv[i] = (uint8_t)min(99, (int)p.inv[i] + (int)enc.pendingLoot[i]);
       for (int j = 0; j < enc.pendingItemCount; j++)
         spilled |= grantItemOrDrop(p, enc.pendingItemType[j], enc.pendingItemQty[j]);
-      spillQ = p.q; spillR = p.r;
+      { int16_t bq, br; boardPos(p, &bq, &br); spillQ = bq; spillR = br; }
       p.knownRecipes |= enc.pendingRecipes;
       // grantItemOrDrop() just mutated invType[]/invQty[], which — like
       // use_item/equip_item/craft — is private state never carried by the
@@ -425,6 +523,9 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       ev.type = EVT_ENC_BANK; ev.pid = (uint8_t)pid;
       ev.q = (int16_t)enc.hexQ; ev.r = (int16_t)enc.hexR;
       ev.depth = enc.depth;
+      // EVT_ENC_BANK-specific: the full-clear bonus was paid. The LCD used to
+      // infer it from scoreD >= 13, which five tokens also reach.
+      ev.amt = (fullClear && !enc.escape) ? 1 : 0;
       memcpy(ev.encLoot, enc.pendingLoot, 5);
       ev.bankedRecipes = enc.pendingRecipes;
       addScore(p, ev, scoreGain);
@@ -436,12 +537,14 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
       // A tunnel panel banked short of its switch is still a panel -- see
       // endEncounter(). The tunnel scenes never offer a bank before the
       // lights, so this is the belt to their braces.
-      if (enc.depth && !enc.trap && tunnelPanelDark(enc.hexQ, enc.hexR) &&
+      if (enc.depth && !enc.trap && !enc.lab && tunnelPanelDark(enc.hexQ, enc.hexR) &&
           G.tunnel[enc.hexR][enc.hexQ].poi == 0)
         G.tunnel[enc.hexR][enc.hexQ].poi = enc.encIdx;
       // The front desk or the corridor (vacancy.hpp): done once its item is
       // out in the world. Reads the pending haul, so before the slot clears.
       if (enc.vac) vacOnBank(pid);
+      // Likewise a clinic building (lab.hpp): done once its part is out.
+      if (enc.lab) labOnBank(pid);
       enc = {};
       banked = true;
     }
@@ -461,6 +564,9 @@ static void handleMsg_enc_bank(AsyncWebSocketClient* client, char* data, size_t 
 
 static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t len) {
   LOG_FN();
+  const char* lfp = strstr(data, "\"lf\"");
+  const char* lfv = lfp ? strchr(lfp + 4, ':') : nullptr;
+  const bool  loadFailed = lfv && atoi(lfv + 1) != 0;
   if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) != pdTRUE) { wsNack(client, "busy"); return; }
   int pid = findSlot(client->id());
   const char* why = nullptr;
@@ -504,19 +610,28 @@ static void handleMsg_enc_abort(AsyncWebSocketClient* client, char* data, size_t
         // On a failed roll encRunChoice already ended it: a trap hazard always does.
       }
     }
-  } else if (encounters[pid].kane || encounters[pid].vac) {
+  } else if (encounters[pid].kane || encounters[pid].vac || encounters[pid].lab || encounters[pid].bonney) {
     // Walking away from one of Kane's chapters leaves it where it was -- his
     // camp, the house, his fire -- and nobody chose to be there, so the
     // threat clock does not tick either. The same for VACANCY's sign and
-    // its two errands (vacancy.hpp).
+    // its two errands (vacancy.hpp), for Gaunt's clinic (lab.hpp), and for
+    // Bonney's fire (bonney.hpp) -- though whatever Pinch took stays took.
     endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);
+  } else if (loadFailed) {
+    // {"t":"enc_abort","lf":1}: the client never got the scene to show (its
+    // /enc fetch failed). Nobody walked away from anything, so the place
+    // stays and the clock holds -- what a dropped socket already gets
+    // (releaseSeatLocked), so it opens no door that was not open. It used to
+    // be taken as walking off: the POI gone for good, a tick on the clock,
+    // and "The way in is blocked" the only word of it.
+    endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/true);
   } else {
     if (G.threatClock < 20) G.threatClock++;
     endEncounter(pid, ENC_END_ABORT, /*restorePoi=*/false);  // walking away closes the place for good
   }
   xSemaphoreGive(G.mutex);
   if (why) wsNack(client, why);
-  if (trapChanged) requestSave();
+  if (trapChanged || loadFailed) requestSave();
 }
 
 // ── enc_assist: steady a teammate's next roll ────────────────────────────────

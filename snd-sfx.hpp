@@ -22,6 +22,9 @@ enum SfxId : uint8_t {
   SFX_WARNING_GRUNT, SFX_DEAD_BATTERY, SFX_ROTTEN_CHORD, SFX_SEWER_ECHO, SFX_RADIO_BLIP, SFX_WEIRD_ANOMALY,
   SFX_GEIGER, SFX_CLICK, SFX_DOOM_FAR, SFX_DOOM_NEAR, SFX_DOOM_HUNT, SFX_DOOM_LOST, SFX_SCORE_UP,
   SFX_THUNDER, SFX_QUAKE, SFX_FIRE_BURST, SFX_FLOOD, SFX_BOOT, SFX_CALLIOPE_CALL,
+  SFX_GHOUL_GROAN,
+  SFX_THUNDER_FAR, SFX_THUNDER_NEAR,   // procedural: sndSfxThunder (SFX_THUNDER is the close one)
+  SFX_KICKSTART,
   SFX_COUNT,
   SFX_TOLL = 200    // procedural: n bell strokes (sndSfxToll)
 };
@@ -113,7 +116,7 @@ static const SfxStep FX_DOOM_LOST[] = {
 static const SfxStep FX_SCORE_UP[] = {
   {0, P_MUSICBOX, 74, 500, 85, 0, 0}, {70, P_MUSICBOX, 78, 500, 85, 0, 0}, {140, P_MUSICBOX, 81, 600, 90, 0, 0},
   {210, P_MUSICBOX, 86, 1000, 100, 0, 0} };
-// Thunder: the crack, then the roll
+// Thunder, close: the crack, then the roll (the far ones: sndSfxThunder)
 static const SfxStep FX_THUNDER[] = {
   {0, P_SNARE, 60, 120, 112, 0, 0}, {0, P_CRACKLE, 60, 40, 112, 0, 0}, {30, P_RUMBLE, 45, 3000, 122, 0, 0},
   {650, P_RUMBLE, 40, 2600, 85, 0, 0} };
@@ -139,6 +142,28 @@ static const SfxStep FX_CALLIOPE_CALL[] = {
   {0, P_CALLIOPE, 69, 90, 100, 0, 0}, {90, P_CALLIOPE, 70, 90, 100, 0, 0}, {180, P_CALLIOPE, 69, 90, 100, 0, 0},
   {270, P_CALLIOPE, 68, 90, 100, 0, 0}, {360, P_CALLIOPE, 69, 360, 110, 0, 0}, {360, P_TUBA, 38, 300, 110, 0, 0},
   {360, P_PAH, 62, 150, 90, 0, 0}, {360, P_PAH, 65, 150, 90, 0, 0}, {360, P_THUMP, 45, 100, 90, 0, 0} };
+// A ghost takes hold of someone (ghosts.hpp): the groan. Two voices of the
+// choir a minor second apart moan down together and drift off each other as
+// they sink, a rasp in the throat under them, the breath going out, a thin
+// wail sliding off the top, and a hollow last gasp.
+static const SfxStep FX_GHOUL_GROAN[] = {
+  {0, P_CHOIR, 57, 2200, 112, -6, 2000}, {0, P_CHOIR, 58, 2200, 84, -8, 2100}, {0, P_GROWL, 45, 1900, 72, -4, 1800},
+  {120, P_WHOOSH, 52, 1300, 70, 0, 0}, {300, P_THEREMIN, 76, 1700, 46, -9, 1600},
+  {1750, P_HOLLOW, 50, 900, 62, -3, 800} };
+// A stalled Motorbike kick-started (EVT_REFUEL), to the client's clock
+// (renderer.js KICK_STOMPS 0.6 / 1.1 / 1.6 s): each kick is the lever's clank
+// and the stamp. The first coughs a thin pfft, the second half-fires, and the
+// third catches: a bang, firing pops coming faster, a rev that climbs, then
+// the idle throbbing under it and dying away as the bike settles.
+static const SfxStep FX_KICKSTART[] = {
+  {560, P_CHAIN, 62, 60, 60, 0, 0}, {600, P_THUMP, 36, 150, 95, 0, 0}, {630, P_SQUELCH, 60, 90, 50, 0, 0},
+  {1060, P_CHAIN, 62, 60, 60, 0, 0}, {1100, P_THUMP, 36, 150, 95, 0, 0}, {1140, P_THUMP, 43, 90, 72, 0, 0},
+  {1150, P_SNARE, 60, 70, 60, 0, 0},
+  {1560, P_CHAIN, 62, 60, 66, 0, 0}, {1600, P_THUMP, 36, 150, 105, 0, 0}, {1640, P_SNARE, 60, 90, 92, 0, 0},
+  {1640, P_THUMP, 41, 90, 112, 0, 0}, {1730, P_THUMP, 41, 90, 104, 0, 0}, {1805, P_THUMP, 41, 90, 98, 0, 0},
+  {1870, P_THUMP, 41, 90, 92, 0, 0}, {1925, P_THUMP, 41, 90, 86, 0, 0},
+  {1680, P_GROWL, 38, 520, 100, 10, 320}, {2150, P_GROWL, 45, 1100, 72, -5, 900},
+  {1660, P_RUMBLE, 45, 1500, 88, 0, 0} };
 
 static const SfxDef SFX_TABLE[SFX_COUNT] = {
   { nullptr, 0, 0 },
@@ -150,13 +175,16 @@ static const SfxDef SFX_TABLE[SFX_COUNT] = {
   SFXDEF(FX_CLICK, 0), SFXDEF(FX_DOOM_FAR, 0), SFXDEF(FX_DOOM_NEAR, 0), SFXDEF(FX_DOOM_HUNT, 0),
   SFXDEF(FX_DOOM_LOST, 0), SFXDEF(FX_SCORE_UP, 1), SFXDEF(FX_THUNDER, 0), SFXDEF(FX_QUAKE, 0),
   SFXDEF(FX_FIRE_BURST, 0), SFXDEF(FX_FLOOD, 0), SFXDEF(FX_BOOT, 1), SFXDEF(FX_CALLIOPE_CALL, 1),
+  SFXDEF(FX_GHOUL_GROAN, 0),
+  { nullptr, 0, 0 } /* thunder_far: procedural */, { nullptr, 0, 0 } /* thunder_near: procedural */,
+  SFXDEF(FX_KICKSTART, 0),
 };
 static const char* const SFX_NAME[SFX_COUNT] = {
   "none", "dark_entry", "dark_depart", "sludge", "broken_tech", "door_drag", "mutant_breath", "power_down",
   "acid_drip", "bunker_alarm", "creeping_rust", "system_fault", "distant_thud", "warning_grunt",
   "dead_battery", "rotten_chord", "sewer_echo", "radio_blip", "weird_anomaly", "geiger", "click",
   "doom_far", "doom_near", "doom_hunt", "doom_lost", "score_up", "thunder", "quake", "fire_burst",
-  "flood", "boot", "calliope_call" };
+  "flood", "boot", "calliope_call", "ghoul_groan", "thunder_far", "thunder_near", "kickstart" };
 
 // ── Players ──────────────────────────────────────────────────────────────────
 static constexpr int SFX_PLAYERS = 4;
@@ -231,6 +259,38 @@ static void sndSfxGeiger(uint32_t& rng) {
     t += 8.0f + 90.0f * sndRandF(rng) * sndRandF(rng);
   }
   sfxStartBuf(p, k, 0);
+}
+// Thunder short of close. A storm walks in (snd-engine.hpp SS_THUNDER): its
+// first bolts are miles off, then nearer, and only the close ones get
+// FX_THUNDER's crack. Each roll is drawn fresh, so no two sound alike.
+//   far   no crack -- the miles have taken the top off. Three or four dark
+//         rolls overlap, the second the loudest, each lower and quieter than
+//         the one before, the filter sagging as they go.
+//   near  a muffled boom where the crack will be, the rumble's bright tear
+//         turned down, and a longer, brighter roll behind it.
+static void sndSfxThunder(bool distant, uint32_t& rng, float delayMs) {
+  SfxPlayer* p = sfxClaim(); uint8_t k = 0;
+  float t = 0.0f;
+  if (distant) {
+    int n = 3 + sndRandI(rng, 2), note = 61 + sndRandI(rng, 3), vel = 70 + sndRandI(rng, 12);
+    for (int i = 0; i < n; i++) {
+      int v = (i == 1) ? vel + 10 : vel - 8 * (i > 1 ? i - 1 : 0) + sndRandI(rng, 6);
+      p->buf[k++] = { (uint16_t)t, P_ROLL, (int8_t)note, (uint16_t)(2200 + sndRandI(rng, 1000)), (uint8_t)v, -4, 3000 };
+      t += 450.0f + sndRandI(rng, 550);
+      note -= 1 + sndRandI(rng, 2);
+    }
+  } else {
+    p->buf[k++] = { 0, P_THUMP, 34, 380, 96, 0, 0 };
+    p->buf[k++] = { 20, P_RUMBLE, 45, 2400, (uint8_t)(78 + sndRandI(rng, 10)), 0, 0 };
+    t = 380.0f + sndRandI(rng, 300);
+    int note = 66 + sndRandI(rng, 3);
+    for (int i = 0; i < 2; i++) {
+      p->buf[k++] = { (uint16_t)t, P_ROLL, (int8_t)note, (uint16_t)(2400 + sndRandI(rng, 800)), (uint8_t)(88 - 12 * i), -5, 3000 };
+      t += 550.0f + sndRandI(rng, 550);
+      note -= 2;
+    }
+  }
+  sfxStartBuf(p, k, 0, delayMs);
 }
 // Unknown ToneStep sequences (anything k10Play is handed that has no score
 // here) still play, on the music box, with their original timing.

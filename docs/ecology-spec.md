@@ -54,9 +54,11 @@ read. It keeps its own clock.
 **It is cosmetic — with two exceptions.** Nothing the slime mould does may
 change a number a player, a bot oracle or a balance measurement can observe:
 no terrain, loot, encounter, movement cost, vision, damage or score. The two
-mechanical effects in the whole system are the **Wasteland Daisy's bite**
-(1 LL, see "Bite") and the mould's **blight** (no resource on a hex it
-covers, see "The blight"). With both switched off (`eco`/`bite` = 0 and
+mechanical effects in the whole system are **what bites on entry** — the
+slime mould itself (1 LL, then 2, 3… along a run of steps, see "The slime")
+and the Wasteland Daisy (a flat 1 LL, see "Bite") — and the mould's
+**blight** (no resource on a hex it covers, see "The blight"). With both
+switched off (`eco`/`bite` = 0 and
 `eco`/`blight` = 0, see "Determinism") or the build flag `ECO_ENABLE=0`, the
 game must be identical to one without the Understory.
 
@@ -515,6 +517,39 @@ seeds and blooms included, like the slime. They are not written to
   snap visually, no LL, no `EVT_DAMAGE`. Used by the cosmetic oracle and as
   a field toggle if the balance is wrong.
 
+### The slime
+
+**Decided (2026-10-23): the mould itself bites, harder the longer you wade.**
+
+- **Where:** a surface hex with any mould the client draws on it — the
+  blight's own test (density 1+ or a mature fruiting body; daisies are not
+  mould), read whether or not the blight switch is on (`ecoSlimeAt`).
+- **How much:** the first **step** onto slime costs 1 LL, and each step after
+  it that also lands on slime costs 1 more: 1, 2, 3… A step onto clean
+  ground ends the run. So does arriving any other way (a respawn, climbing
+  out of the tunnels, a teleport): that entry costs 1 and starts a new run.
+  Standing still costs nothing; the next step off it is what counts. Per
+  seat in `ecoSlimeRun[]`, GameLoop-owned, not saved (a reboot is clean
+  ground).
+- **With a daisy:** a bloomed patch on a slime hex bites as well, its flat
+  1 LL after the slime's, as a second `EVT_DAMAGE`.
+- **What it does:** the bite path above with cause `DC_SLIME` (`"slime
+  mould"`), `amt` = LL actually taken, an LED flash in the mould's purple and
+  the sludge motif. It can down a survivor. It is an injury, so daisies seed
+  where it happened. The K10 book gets a line for the first step and for
+  runs of 3+, not for every step.
+- **Wire:** `PROTO_VERSION` 11 for the new cause on `dmg`/`downed`/`left`.
+  The client toasts the cost and what the next step will cost.
+- **Switch:** the same NVS `eco`/`bite` as the daisy (`dbg_eco` `bite` in the
+  mock). The mock has `dbg_eco` `slime` to paint a line of it.
+- **Bots:** `state.py` decodes `v` (and mature bodies in `f`) into
+  `obs.slime` and prices each hex at `SLIME_COST` (navigate.py) in
+  `extra_cost`, added to a daisy's price when a hex has both.
+- **Balance:** unmeasured, and it is the biggest hazard the Understory has:
+  the mould covers up to the 25% coverage cap of the land at density 4+, more
+  at density 1+, and it grows along the routes survivors walk (T1). It needs
+  a bot run before it is left on for real play.
+
 ---
 
 ## The blight
@@ -803,6 +838,8 @@ internal RAM — the one internal cost.
   later, never underground, destroyed by fire.
 - Bloomed daisies **bite for 1 LL** — one of the Understory's two
   mechanical effects.
+- The slime mould **bites** too (2026-10-23): 1 LL for the first step onto
+  it, 1 more for every step after it without clean ground between.
 - The mould **blights** (2026-09-27): no resource lies on a surface hex with
   any visible mould, and none regrows until it has died back off the hex.
   Never underground.

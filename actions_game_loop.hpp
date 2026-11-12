@@ -372,7 +372,7 @@ static void tickGame() {
   bool groundAged   = false;
   if (G.dayTick >= DAY_TICKS || (connCount > 0 && allResting)) {
     G.dayTick = 0;
-    G.dayCount++;
+    G.dayCount = (G.dayCount >= DAYS_PER_YEAR) ? 1 : G.dayCount + 1;   // 365 -> day 1
     dawnOccurred = true;
     // Force-abort any active encounters at dawn.  Involuntary, so no TC
     // increment and the POI goes back on the hex for another visit.
@@ -382,6 +382,10 @@ static void tickGame() {
     }
     // VACANCY: another house checks in -- only with somebody here to see it.
     vacDawn(connCount > 0);
+    // RUNAWAY SCIENCE: Gaunt may call again, and a lost part grows back (lab.hpp).
+    labDawn();
+    // ONE-HAND BONNEY: run off yesterday, her fire is lit near another town (bonney.hpp).
+    bonneyDawn();
     duskCheck();    // end-of-day radiation Endure checks (R ≥ 7); enqueues EVT_DUSK
     updateWeatherPhase();  // advance weather once per game-day
     // Threat decays 1/day.  Without this the clock only ever climbs and every
@@ -391,6 +395,12 @@ static void tickGame() {
     // Note: shelters are now permanent and persist across days
     // Piles and remains GROUND_AGE_DAYS old go back to the dust (inventory_items.hpp).
     groundAged = groundAgeOut();
+    // Ghosts GHOST_DAYS old fade, and leave what they took (ghosts.hpp).
+    // After the age-out, so a hoard dropped this dawn starts its own 30 days.
+    if (ghostDawn()) groundAged = true;
+    // A day off every Dshingus count, and old spots dry up (dshingus.hpp).
+    // After the day count moved: a spot's age is taken off it.
+    dshDawn();
   }
 
   // ── Daily-cost items waiting on fuel ────────────────────────────────────
@@ -434,9 +444,9 @@ static void tickGame() {
         if (cell.resource != 0 && !blightAte) {
           Log.notice("eco blight ate res=%d amt=%d at (%d,%d)",
                      (int)cell.resource, (int)cell.amount, c, r);
+          cell.respawnTimer = respawnTicksFor(cell.resource);
           cell.resource     = 0;
           cell.amount       = 0;
-          cell.respawnTimer = RESPAWN_TICKS;
           ecoNoteEaten();
           // An rsp with res 0: every client clears the hex (network.js 'rsp').
           GameEvent rev = {};
@@ -450,10 +460,12 @@ static void tickGame() {
       }
       if (cell.resource == 0 && cell.respawnTimer > 0) {
         if (--cell.respawnTimer == 0) {
-          uint32_t rnd  = esp_random();
-          cell.resource = terrainSpawnRes(cell.terrain, rnd);
-          if (cell.resource == 0) { cell.respawnTimer = 0; continue; }
-          cell.amount   = 1 + (uint8_t)(rnd % 3);
+          // Only a hex that lost food is armed (respawnTicksFor), and food is
+          // what comes back -- if the terrain still carries animals. A flood
+          // may have changed it since.
+          if (!terrainGrowsFood(cell.terrain)) continue;
+          cell.resource = RES_FOOD;
+          cell.amount   = 1 + (uint8_t)(esp_random() % 3);
           GameEvent rev = {};
           rev.type = EVT_RESPAWN; rev.q = (int16_t)c; rev.r = (int16_t)r;
           rev.res  = cell.resource; rev.amt = cell.amount;
@@ -495,12 +507,16 @@ static void tickGame() {
     static constexpr float CHEM_TICK_RATE = 1.0f / 600.0f;
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
-      if (!p.connected || (p.ll == 0)) continue;
+      // Inside a scene is under cover, as for every other weather hazard
+      // (world-system.hpp): a chem death here left the scene running on a
+      // seat EVT_DOWNED had already freed.
+      if (!p.connected || (p.ll == 0) || encounters[pid].active) continue;
       if (p.depth) continue;   // weather does not reach the bunker tunnels
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
       if (G.map[p.r][p.q].shelter >= 1) continue;   // any cover is full cover
+      if (inOasis(p)) continue;                     // and so is the canopy (docs/forest-oasis.md)
       float prob = WEATHER_INTENSITY[WEATHER_CHEM][t] * CHEM_TICK_RATE;
       if (esp_random() < (uint32_t)(prob * 0xFFFFFFFFul)) {
         if (p.ll > 0) {
@@ -535,13 +551,14 @@ static void tickGame() {
     static constexpr float FOG_LL_TICK_RATE = 1.0f / 1800.0f;
     for (int pid = 0; pid < MAX_PLAYERS; pid++) {
       Player& p = G.players[pid];
-      if (!p.connected || (p.ll == 0)) continue;
+      if (!p.connected || (p.ll == 0) || encounters[pid].active) continue;   // under cover, as chem
       if (p.depth) continue;   // weather does not reach the bunker tunnels
       uint8_t t = G.map[p.r][p.q].terrain;
       if (t >= NUM_TERRAIN) t = 0;
       if (t == 9 || TERRAIN_IS_RUINS[t]) continue;
       uint8_t shelter = G.map[p.r][p.q].shelter;
       if (shelter >= 2) continue;
+      if (inOasis(p)) continue;   // the fog does not get in under the canopy: no AP, no LL
       float intensity = WEATHER_INTENSITY[WEATHER_FOG][t];
       float apProb = intensity * FOG_AP_TICK_RATE;
       float llProb = intensity * FOG_LL_TICK_RATE;
@@ -594,10 +611,15 @@ static void tickGame() {
     resolveCaravanProximity();
     tickKane();             // Machine Gun Kane: asks, fires, drives on, camps at dusk (kane.hpp)
     tickVacancy();          // VACANCY: a quake or a falling sky got to the town first (vacancy.hpp)
+    tickGhosts();           // ghosts ride, drift, take hold and feed (ghosts.hpp)
   }
   // His camp or his arc moved on: catch it in a save, like dawn does.
   const bool kaneSave = kaneTakeSaveWanted();
   const bool vacSave  = vacTakeSaveWanted();   // a house checked in, or the town fell
+  const bool labSave  = labTakeSaveWanted();   // a lost part of Gaunt's grew back
+  const bool ghostSave = ghostTakeSaveWanted();   // a ghost rose, took hold, let go or faded
+  const bool dshSave  = dshTakeSaveWanted();   // somebody caught the Dshingus, or left a spot
+  const bool bonSave  = bonneyTakeSaveWanted();   // Bonney's fire was lit somewhere new
 
   // ── Quakes ───────────────────────────────────────────────────────────────
   // Checked every tick (like the mock), not gated behind dawnOccurred — an
@@ -609,7 +631,7 @@ static void tickGame() {
 
   xSemaphoreGive(G.mutex);
   if (groundAged) broadcastGroundUpdate(-1, -1, "aged");  // takes the mutex itself
-  if (dawnOccurred || kaneSave || vacSave) requestSave();  // the Saver task writes it -- SD writes are slow
+  if (dawnOccurred || kaneSave || vacSave || ghostSave || labSave || dshSave || bonSave) requestSave();  // the Saver task writes it -- SD writes are slow
   if (quakeResult.fired) broadcastQuake(quakeResult);  // WS I/O — outside mutex too
 }
 
@@ -642,6 +664,7 @@ static void doForage(int pid, uint8_t terr, GameEvent& ev) {
     if (terr == 11 && hasNarrativeParam(pid, NAR_RIVER_FORAGE)) yield = (uint8_t)min((int)yield * 2, 99);
     // A partial always comes in strictly under a clean success.
     if (partial) yield = (uint8_t)max(1, (int)yield - 1);
+    yield       = ghostTithe(pid, 1, yield);   // a ghost riding them takes its third (ghosts.hpp)
     p.inv[1]    = (uint8_t)min((int)p.inv[1] + yield, 99);
     ev.actFoodD = (int8_t)yield;
     addScore(p, ev, partial ? 1 : 3);
@@ -659,8 +682,9 @@ static void doWater(int pid, uint8_t terr, int apParam, GameEvent& ev) {
   if (p.apLeft < 1)          { ev.actWhy = ABW_NO_AP;   return; }
   int spend = max(1, min(3, min(apParam, (int)p.apLeft)));
   spendAP(p, spend);
-  p.inv[0]     = (uint8_t)min((int)p.inv[0] + spend, 99);
-  ev.actWatD   = (int8_t)spend;
+  const uint8_t kept = ghostTithe(pid, 0, (uint8_t)spend);   // a ghost riding them takes its third (ghosts.hpp)
+  p.inv[0]     = (uint8_t)min((int)p.inv[0] + kept, 99);
+  ev.actWatD   = (int8_t)kept;
   addScore(p, ev, spend);
   ev.actOut    = AO_SUCCESS;
 }
@@ -690,6 +714,7 @@ static void doScav(int pid, uint8_t terr, GameEvent& ev) {
     // more than the pack can still hold.
     if (partial) scrapYield = (uint8_t)max(1, (int)scrapYield / 2);
     scrapYield   = (uint8_t)min((int)scrapYield, tokenRoomFor(p));
+    scrapYield   = ghostTithe(pid, 4, scrapYield);   // a ghost riding them takes its third (ghosts.hpp)
     p.inv[4]     = (uint8_t)min((int)p.inv[4] + scrapYield, 99);
     ev.actScrapD = scrapYield;
     addScore(p, ev, partial ? 2 : 5);
@@ -853,6 +878,9 @@ static void doShelter(int pid, GameEvent& ev, SettleResult& settle) {
   // taken away. It also let a Settlement stand as a corner in
   // findShelterTriangle() and be "founded" a second time for the +20.
   if (G.map[p.r][p.q].terrain == 9) { ev.actWhy = ABW_TERRAIN; return; }
+  // A forest oasis is already full cover (docs/forest-oasis.md), and a tent
+  // there could only grow into a Settlement that stamps the grove out.
+  if (oasisAt(p.q, p.r) && !p.depth) { ev.actWhy = ABW_NOT_NEEDED; return; }
   if (current >= 2) { ev.actWhy = ABW_NOT_NEEDED; return; }  // already improved
   if (p.inv[4] == 0) { ev.actWhy = ABW_NO_RES;     return; }  // no scrap
   uint8_t shelterType = (p.inv[4] >= 2 && p.apLeft >= 2) ? 2 : 1;
@@ -959,7 +987,7 @@ static void doSurvey(int pid, GameEvent& ev, char* survBuf, int survCap, int* su
   if (survBuf && survLen) {
     int visR; bool mr;
     playerVisParams(pid, &visR, &mr);
-    *survLen = buildSurveyDisk(survBuf, survCap, p.q, p.r, visR, pid);
+    *survLen = buildSurveyDisk(survBuf, survCap, p.q, p.r, visR, mr, pid);
   }
 }
 
@@ -980,6 +1008,7 @@ static void doRest(int pid, GameEvent& ev) {
       ev.actCnd    = 2;
     }
   }
+  dshOnRest(pid);   // the Dshingus may leave a spot where they lie (dshingus.hpp)
   ev.actOut = AO_SUCCESS;
 }
 

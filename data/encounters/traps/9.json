@@ -11,7 +11,7 @@
         {
           "label": "Back out of the booth, well clear of the cord",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_amen"
@@ -19,7 +19,7 @@
         {
           "label": "Reach under the curtain and find what the cord is holding",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 55,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_penance"
@@ -44,7 +44,7 @@
         {
           "label": "Shift the confessor off the box he is sitting on",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_confessor"
@@ -65,7 +65,7 @@
   "hazards": {
     "the_amen": {
       "text": "Your pack strap finds the cord on the way out. The shutter jerks open an inch — only an inch — and the cleaver comes through the lattice sideways, like a bad thought, and takes the top off your ear on its way past. Then it swings back into the dark to think about what it has done. You leave a little of yourself in the booth. Everybody does.",
-      "penalty": { "ll": [-1, -2] },
+      "penalty": { "ll": [-1, -3] },
       "wound": [1, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

@@ -38,9 +38,17 @@ REVEAL_RETRY_S = 20.0
 REVEAL_FOG_SHARE = 0.4
 
 
-def _disk(q0, r0, radius):
+# REVEAL_R_MAX in Esp32HexMapCrawl.ino: how far a one-shot reveal can reach.
+REVEAL_R_MAX = 13
+
+
+def _disk(q0, r0, radius, inner=-1):
+    """Cells within `radius`, past `inner` (exclusive): a ring band when
+    inner >= 0, the whole disk by default."""
     for dq in range(-radius, radius + 1):
         for dr in range(max(-radius, -dq - radius), min(radius, -dq + radius) + 1):
+            if (abs(dq) + abs(dr) + abs(dq + dr)) // 2 <= inner:
+                continue
             yield (q0 + dq) % MAP_COLS, (r0 + dr) % MAP_ROWS
 
 
@@ -143,7 +151,10 @@ class ItemUseMixin:
         """Read the map items where they show something: the Net Map once
         per world (it reveals all of it), the reusable Diary and Pendulum,
         and the one-shot Static Chew / Bright Bad Idea, wherever enough of
-        their disk is still fog."""
+        their band is still fog.  A reveal's radius counts from the edge of
+        sight (buildItemReveal() in network-msg-items.hpp): it shows the
+        rings from vision_r + 1 out to vision_r + radius, never the disk
+        under the bot's feet, which it can already see."""
         if not self.use_items or obs.underground:
             return None
         me = obs.me
@@ -158,7 +169,11 @@ class ItemUseMixin:
             else:
                 if fx["threat"] > 0 and obs.threat + fx["threat"] >= 5:
                     continue        # a tier of threat is not worth a peek
-                cells = list(_disk(me.q, me.r, radius))
+                vr = max(0, int(getattr(obs, "vision_r", 0) or 0))
+                outer = min(vr + radius, REVEAL_R_MAX)
+                if outer <= vr:
+                    continue
+                cells = list(_disk(me.q, me.r, outer, inner=vr))
                 fog = sum(1 for qr in cells if obs.map[qr] is None)
                 if fog < REVEAL_FOG_SHARE * len(cells):
                     continue

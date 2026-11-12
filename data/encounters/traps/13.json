@@ -11,7 +11,7 @@
         {
           "label": "Slip back out, and don't let the door swing any wider",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_door_string"
@@ -19,7 +19,7 @@
         {
           "label": "Get behind the desk and lift the string off whatever is in twelve",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_service"
@@ -44,7 +44,7 @@
         {
           "label": "Go through the STAFF ONLY door behind the key rack",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "lost_property"
@@ -66,7 +66,7 @@
   "hazards": {
     "the_door_string": {
       "text": "The door moves a finger's width too far. The string draws tight, the bell gives one bright, cheerful ding, and pigeonhole twelve answers from across the room. The door takes most of it. The rest comes round the edge as rock salt and carpet tacks, into the hand you were holding the door with and the ear you were listening with, and both of them sing about it for the rest of the day.",
-      "penalty": { "ll": [-1, -2] },
+      "penalty": { "ll": [-1, -3] },
       "wound": [1, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

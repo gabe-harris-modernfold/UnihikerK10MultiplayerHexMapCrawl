@@ -11,7 +11,7 @@
         {
           "label": "Leave it occupied and back out the way you came",
           "cost": {},
-          "base_risk": 20,
+          "base_risk": 35,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_seam"
@@ -19,7 +19,7 @@
         {
           "label": "Pick the padlock and ease the door open clear of the flint",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 45,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_whump"
@@ -43,7 +43,7 @@
         {
           "label": "Roll your sleeve up and follow the cord down into the tank",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 60,
           "skill": 4,
           "success_node": "cache_2",
           "hazard_id": "the_deep_end"
@@ -63,21 +63,21 @@
   "hazards": {
     "the_seam": {
       "text": "You turn to go and clip the corner with your hip, and a taped seam gives up with a long, low, wet noise that goes on for much longer than any noise should. Years of held breath come out of it at nose height. It is warm. It has texture. You make it as far as the door before you lose your last meal, and a little way past it before you lose the one before.",
-      "penalty": { "ll": -1, "food": -1 },
+      "penalty": { "ll": [-1, -2], "food": -1 },
       "wound": [0, 0],
       "wound_max": [0, 0],
       "ends_encounter": true
     },
     "the_whump": {
       "text": "The padlock gives, and the door, pushed from inside by years of pent-up opinion, swings wide on its own and drags right across the flint. There is a sound like a very large dog saying WHUMP. A soft blue fireball rolls out and over you, the door slams back and flattens you with the sign, and the matches in your top pocket go up in sympathy. You get up without eyebrows, smoking gently, lightly misted in something from the tank.",
-      "penalty": { "ll": [-1, -2], "fuel": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "fuel": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_deep_end": {
       "text": "You take a breath and go in to the shoulder after the cord. The tank is deeper than a tank has any right to be, and colder, and there are things in it that turn over when you touch them. Halfway down your boots go on the wet floor and you follow your arm in, face first, and for four long seconds you learn what the blue tastes like. It tastes the way it smells. You drink your canteen dry trying to rinse it out.",
-      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
+      "penalty": { "ll": [-2, -3], "water": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

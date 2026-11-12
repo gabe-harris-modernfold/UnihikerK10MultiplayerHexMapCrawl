@@ -1113,7 +1113,7 @@
 
   // ── 9. The cue catalogue: FX_STYLE in ui-fx.hpp. MIRRORED-IN ui-fx.hpp ──
   const F = { FOCUS: 0, SPEED: 1, HAZARD: 2, KRACKLE: 3, RAIN: 4, SUN: 5, EYES: 6, DARK: 7, NEST: 8, MEDAL: 9,
-              WIRE: 10, JAWS: 11 };
+              WIRE: 10, JAWS: 11, GHOUL: 12, ROUGH: 13 };
   const FL = { NONE: 0, WHITE: 1, NEG: 2, BOTH: 3 };
   const E = { CRACKS: 1, BOLT: 2, FIRE: 4, RAIN: 8, SPLAT: 16, VROLL: 32, TEAR: 64, DRIPS: 128,
               CRESC: 256, NOBAND: 512, BGLINES: 1024, BLOOD: 2048 };
@@ -1134,9 +1134,10 @@
     DAWN:      { sfx: 'DAY',       fill: F.SUN,     prio: 2, trauma: 60,  flash: FL.NONE, ex: 0, hold: 1800, cool: 20000, size: 105 },
     JOIN:      { sfx: 'NEW BLOOD', fill: F.SPEED,   prio: 1, trauma: 90,  flash: FL.WHITE, ex: E.CRESC, hold: 1500, cool: 3000, size: 100 },
     THREAT:    { sfx: 'THREAT',    fill: F.HAZARD,  prio: 2, trauma: 130, flash: FL.NONE, ex: E.TEAR, hold: 1700, cool: 5000, size: 100 },
-    LONGODDS:  { sfx: 'LONG ODDS', fill: F.SUN,     prio: 2, trauma: 110, flash: FL.WHITE, ex: E.CRESC, hold: 1600, cool: 4000, size: 100 },
+    // The wins are asides, toned down (ui-fx.hpp FX_STYLE says why).
+    LONGODDS:  { sfx: 'LONG ODDS', fill: F.SUN,     prio: 1, trauma: 30,  flash: FL.NONE, ex: 0, hold: 1200, cool: 30000, size: 88 },
     THROWN:    { sfx: 'WHAM',      fill: F.FOCUS,   prio: 2, trauma: 200, flash: FL.NEG, ex: E.SPLAT | E.BGLINES, hold: 1500, cool: 4000, size: 118 },
-    CLEARED:   { sfx: 'CLEARED',   fill: F.SUN,     prio: 2, trauma: 90,  flash: FL.WHITE, ex: E.CRESC, hold: 1600, cool: 4000, size: 100 },
+    CLEARED:   { sfx: 'CLEARED',   fill: F.SUN,     prio: 1, trauma: 30,  flash: FL.NONE, ex: 0, hold: 1300, cool: 20000, size: 92 },
     FIRE:      { sfx: 'FWOOSH',    fill: F.FOCUS,   prio: 2, trauma: 130, flash: FL.WHITE, ex: E.FIRE | E.CRESC, hold: 1700, cool: 25000, size: 104 },
     FLOOD:     { sfx: 'SPLOOSH',   fill: F.RAIN,    prio: 2, trauma: 150, flash: FL.NONE, ex: E.RAIN | E.DRIPS, hold: 1600, cool: 25000, size: 100 },
     // The cut scenes (sections 12 and 13) and the one small spider let loose.
@@ -1146,6 +1147,10 @@
     // The traps (section 13b): the wire parting, and the jaws.
     TRIPWIRE:  { sfx: 'SNAP!',     fill: F.WIRE,    prio: 2, trauma: 0,   flash: FL.NONE, ex: 0, hold: 2900, cool: 90000, size: 100 },
     BEARTRAP:  { sfx: 'KA-CHUNK',  fill: F.JAWS,    prio: 2, trauma: 0,   flash: FL.NONE, ex: E.BLOOD | E.DRIPS, hold: 4300, cool: 120000, size: 100 },
+    // A ghost took hold of someone (section 13c): the jump scare.
+    GHOUL:     { sfx: 'SKREEE',    fill: F.GHOUL,   prio: 3, trauma: 255, flash: FL.BOTH, ex: E.VROLL | E.TEAR | E.DRIPS, hold: 2200, cool: 30000, size: 100 },
+    // Somebody slept with no roof (section 13d): the waste laughs at them.
+    ROUGH:     { sfx: 'HA HA HA',  fill: F.ROUGH,   prio: 2, trauma: 0,   flash: FL.NONE, ex: 0, hold: 6800, cool: 60000, size: 100 },
   };
   // A cut scene holds the panel for seconds, draws no band, and takes the
   // whole screen down; only a catastrophe may cut one short.
@@ -1202,7 +1207,7 @@
       const ink = (st.ex & E.BLOOD) ? INK_BLOOD : (st.fill === F.RAIN ? INK_COLD : INK_HOT);
       const drips = (st.ex & E.DRIPS) !== 0 || (q.kind === 'THREAT' && (q.arg | 0) >= 4);
       const box = st.fill === F.NEST ? [W * 0.36, H * 0.14] : (st.fill === F.MEDAL ? [110, 30]
-                : ((st.fill === F.WIRE || st.fill === F.JAWS) ? [W * 0.38, H * 0.17] : [W * 0.62, C.h * 0.66]));
+                : ((st.fill === F.WIRE || st.fill === F.JAWS || st.fill === F.GHOUL || st.fill === F.ROUGH) ? [W * 0.38, H * 0.17] : [W * 0.62, C.h * 0.66]));
       C.word = buildWord(sfx, box[0], box[1], st.size / 100, ink, (st.ex & E.CRESC) !== 0, drips, seed);
     }
     if (q.cap) {
@@ -1229,6 +1234,8 @@
     if (st.fill === F.MEDAL) medalBegin(C, q);
     if (st.fill === F.WIRE) wireBegin(C);
     if (st.fill === F.JAWS) jawsBegin(C);
+    if (st.fill === F.GHOUL) ghoulBegin(C);
+    if (st.fill === F.ROUGH) roughBegin(C, q);
     if (q.kind === 'CRAWL') crawlBegin(seed, now);
     if (q.kind === 'DOWNED') laughBegin(q, now, seed);
     FX.lastKind[q.kind] = now;
@@ -1365,6 +1372,8 @@
     if (st.fill === F.MEDAL) { medalFrame(C, t, now, shx, shy); return; }
     if (st.fill === F.WIRE) { wireFrame(C, t, now, shx, shy); return; }
     if (st.fill === F.JAWS) { jawsFrame(C, t, now, shx, shy); return; }
+    if (st.fill === F.GHOUL) { ghoulFrame(C, t, now, shx, shy); return; }
+    if (st.fill === F.ROUGH) { roughFrame(C, t, now, shx, shy); return; }
     if ((st.ex & E.BGLINES) && t < 700)
       focusLines(W * 0.5 + shx, C.yc + shy, W * 0.34, H * 0.17, 64, (C.seed + 5) >>> 0, (t / 80) | 0, PAL[t < 350 ? P.LINE : P.DIM], 3);
     if (t < SPLIT) {
@@ -2696,6 +2705,1296 @@
     stip = 0;
   }
 
+  // ── 13c. The ghoul (section 13c of ui-fx.hpp) ───────────────────
+  // A ghost has taken hold of someone. The same beats as on the LCD -- its face
+  // is the glass, punched in and settling, the jaw dropping into the scream,
+  // the strobes, the lunge -- with the face sized to the height of a wide
+  // screen and its hands come up over the bottom corners. `gk` scales the
+  // LCD's pixel sizes to it.
+  const GB = { SCREAM: 80, STROBE1: 420, STROBE2: 690, LUNGE: 1150, HIT: 1240, GONE: 1360 };
+  const gk = () => H / 320;
+  let Ghoul = null;
+  function ghoulBegin(C) { Ghoul = { seed: hash((C.seed ^ 0x6A0B1E5) >>> 0), fired: 0 }; }
+  // Units of R, y down, origin between the eyes (fxGhoulSd): the head's
+  // distance, the holes' left in ghoulCav, the sockets' in ghoulSock.
+  let ghoulCav = 0, ghoulSock = 0;
+  function ghoulSd(x, y, jaw) {
+    const cran = sdEll(x, y + 0.45, 0.92, 1.05, 1, 0);
+    const cheek = sdEll(x, y - 0.08, 1.0, 0.40, 1, 0);
+    const jy = 0.75 + jaw * 0.45;
+    const taper = 1 - 0.45 * clamp((y - 0.3) / (0.9 + jaw * 0.5), 0, 1);
+    const jd = sdBox(x / taper, y - jy, 0.62, 0.5 + jaw * 0.4, 0.32) * taper;
+    const head = smin(smin(cran, cheek, 0.25), jd, 0.3);
+    const C = 0.9492, S = 0.3146;                        // the sockets droop 0.32 rad
+    const sL = sdEll(x + 0.36, y + 0.02, 0.27, 0.22, C, -S);
+    const sR = sdEll(x - 0.36, y + 0.02, 0.27, 0.22, C, S);
+    const nose = sdEll(x, y - 0.33, 0.085, 0.12, 1, 0);
+    const mouth = sdEll(x, y - (0.78 + jaw * 0.30), 0.36 - jaw * 0.04, 0.10 + jaw * 0.50, 1, 0);
+    ghoulSock = Math.min(sL, sR);
+    ghoulCav = Math.min(ghoulSock, nose, mouth);
+    return head;
+  }
+  function ghoulTone(x, y, lum) {
+    const v = P.SOOT + clamp(lum, 0, 0.999) * (P.HDR - P.SOOT), lo = v | 0;
+    const d = DOT[((y + 3) & 7) * 8 + ((x + 5) & 7)];
+    return PAL[lo + (d < (((v - lo) * 256) | 0) ? 1 : 0)];
+  }
+  function ghoulFace(cx, cy, R, jaw, seed) {
+    const inv = 1 / R;
+    const x0 = Math.max(0, Math.floor(cx - R * 1.12)), x1 = Math.min(W, Math.ceil(cx + R * 1.12));
+    const y0 = Math.max(0, Math.floor(cy - R * 1.56)), y1 = Math.min(H, Math.ceil(cy + R * (1.35 + jaw * 0.9)));
+    const soft = Math.max(0.02, 0.9 * inv);
+    for (let sy = y0; sy < y1; sy += 2) {
+      const y = (sy + 1 - cy) * inv;
+      for (let sx = x0; sx < x1; sx += 2) {
+        const x = (sx + 1 - cx) * inv;
+        const hd = ghoulSd(x, y, jaw), cav = ghoulCav, sock = ghoulSock;
+        if (hd > soft + 0.06) continue;
+        const cover = sstep(soft, -soft, hd);
+        const rim = hd > -0.05, hole = cav < 0;
+        let lum = 0.42 - x * 0.16 - y * 0.14;
+        lum += 0.30 * sstep(0.16, 0, Math.abs(y + 0.30)) * sstep(0.75, 0.2, Math.abs(x));
+        lum += 0.26 * sstep(0.24, 0, Math.abs(y - 0.10)) * sstep(0.2, 0.55, Math.abs(x)) * sstep(0.98, 0.7, Math.abs(x));
+        lum += 0.18 * sstep(0.09, 0, Math.abs(x)) * sstep(-0.2, 0, y) * sstep(0.32, 0.2, y);
+        const hx = Math.abs(x) - 0.55, hy = y - 0.46;
+        lum -= 0.34 * sstep(0.32, 0.05, Math.sqrt(hx * hx + hy * hy));
+        lum -= 0.30 * sstep(0.16, 0, sock);
+        lum -= 0.25 * sstep(0.10, 0, cav) * (1 - sstep(-0.01, -0.02, cav));
+        lum += (noise2(x * 5, y * 5, seed) - 0.5) * 0.28;
+        const rg = 1 - Math.abs(2 * noise2(x * 3.1 + 7.3, y * 3.1 - 2.9, (seed + 1) >>> 0) - 1);
+        const ink = rim || hole || (rg > 0.94 && y < 0.55);
+        const ia = (cover * 256) | 0;
+        for (let py = sy; py < sy + 2 && py < y1; py++)
+          for (let px = sx; px < sx + 2 && px < x1; px++) {
+            if (DOT[(py & 7) * 8 + (px & 7)] >= ia) continue;
+            put(px, py, ink ? PAL[P.INK] : ghoulTone(px, py, lum));
+          }
+      }
+    }
+  }
+  function ghoulTeeth(cx, cy, R, jaw, seed) {
+    const my = cy + (0.78 + jaw * 0.30) * R, rx = (0.36 - jaw * 0.04) * R, ry = (0.10 + jaw * 0.50) * R, N = 7;
+    for (let row = 0; row < 2; row++) {
+      for (let q = 0; q < N; q++) {
+        const h = hash2(row * 16 + q, (seed + 41) >>> 0);
+        if ((h & 7) === 0) continue;
+        const a0 = Math.PI * (0.12 + 0.76 * q / (N - 1)), a = row ? a0 : -a0;
+        const ca = Math.cos(a), sa = Math.sin(a), hw = 0.05 * R;
+        const bx = cx + ca * rx, by = my + sa * ry;
+        const tx = -ca, ty = -sa * (ry / rx) * 0.6, tl = Math.hypot(tx, ty) + 1e-4;
+        const len = R * (0.07 + 0.08 * U(h) + ((h >>> 8) % 11 === 0 ? 0.12 : 0));
+        const px = -ty / tl * hw, py = tx / tl * hw, ex = bx + tx / tl * len, ey = by + ty / tl * len;
+        tri(bx + px * 1.5, by + py * 1.5, bx - px * 1.5, by - py * 1.5, ex + tx / tl * 1.5, ey + ty / tl * 1.5, PAL[P.INK]);
+        tri(bx + px, by + py, bx - px, by - py, ex, ey, PAL[(h >>> 4) & 1 ? P.OK : P.HDR]);
+        line(bx + px * 0.6, by + py * 0.6, ex, ey, PAL[P.GLOW]);
+      }
+    }
+  }
+  function ghoulHair(cx, cy, R, t, seed) {
+    const k = gk();
+    for (let q = 0; q < 30; q++) {
+      const h = hash2(q, (seed + 57) >>> 0), fringe = q < 6;
+      const a = fringe ? Math.PI * 2 * (0.69 + 0.12 * U(h))
+                       : Math.PI * 2 * ((q & 1) ? 0.51 + 0.16 * U(h) : 0.83 + 0.16 * U(h));
+      let x = cx + Math.cos(a) * 0.86 * R, y = cy - 0.45 * R + Math.sin(a) * 0.98 * R;
+      const drop = R * (fringe ? 1.0 + 0.35 * U(hash(h + 1)) : 1.3 + 1.0 * U(hash(h + 1)));
+      const side = x < cx ? -1 : 1, w0 = (3.2 + 2.0 * U(hash(h + 2))) * k, SEG = 8;
+      for (let s = 0; s < SEG; s++) {
+        const u = (s + 1) / SEG;
+        const sway = (noise1(t * 0.8 + q * 3.7 + u * 2, (seed + 61) >>> 0) - 0.5) * 0.10 * R * u;
+        const nx = cx + Math.cos(a) * 0.86 * R + side * R * (fringe ? 0 : 0.18) * u + sway +
+                   side * (fringe ? 0 : 0.05 * R * Math.sin(u * 3 + q));
+        const ny = y + drop / SEG, w = lerp(w0, 0.8 * k, u);
+        stroke(x, y, nx, ny, w + 1.4 * k, w * 0.7 + 1.0 * k, PAL[P.INK]);
+        if ((h >>> (s & 7)) & 1) line(x - 0.8, y, nx - 0.8, ny, PAL[P.TRACK]);
+        x = nx; y = ny;
+      }
+    }
+  }
+  // Wider apart than on the LCD: on a wide screen they hold the bottom corners.
+  function ghoulHands(shx, shy, t, seed) {
+    const k = gk(), WD = [14 * k, 12 * k, 10 * k, 8 * k];
+    for (let hand = 0; hand < 2; hand++) {
+      const sd = hand ? 1 : -1, bx = W * 0.5 + sd * Math.max(74 * k, W * 0.3) + shx;
+      for (let f = 0; f < 4; f++) {
+        const h = hash2(hand * 4 + f, (seed + 71) >>> 0), spread = (f - 1.5) * 17 * k;
+        const flex = 5 * k * (noise1(t * 0.004 + f * 1.7, (seed + 73) >>> 0) - 0.5), lean = sd * (4 + 3 * U(h)) * k;
+        const px = [bx + spread, 0, 0, 0], py = [H + 24 * k + shy, 0, 0, 0];
+        px[1] = bx + spread * 1.08 + lean * 0.5; py[1] = H - (26 + 8 * U(hash(h + 1))) * k + flex + shy;
+        px[2] = px[1] + lean;                   py[2] = py[1] - 22 * k + flex * 0.5;
+        px[3] = px[2] + lean * 1.4;             py[3] = py[2] + 11 * k;
+        for (let pass = 0; pass < 3; pass++)
+          for (let s = 0; s < 3; s++) {
+            const w0 = WD[s], w1 = WD[s + 1];
+            if (pass === 0) {
+              stroke(px[s], py[s], px[s + 1], py[s + 1], w0 + 3 * k, w1 + 3 * k, PAL[P.INK]);
+              disc(px[s + 1], py[s + 1], (w1 + 3 * k) * 0.5, PAL[P.INK]);
+            } else if (pass === 1) {
+              stroke(px[s], py[s], px[s + 1], py[s + 1], w0, w1, PAL[P.RUST]);
+              disc(px[s + 1], py[s + 1], w1 * 0.5, PAL[s < 2 ? P.BRICK : P.RUST]);
+            } else {
+              const dx = px[s + 1] - px[s], dy = py[s + 1] - py[s], L = Math.hypot(dx, dy) + 1e-3;
+              let nx = -dy / L, ny = dx / L;
+              if (nx + ny > 0) { nx = -nx; ny = -ny; }
+              const o = (w0 + w1) * 0.22;
+              line(px[s] + nx * o, py[s] + ny * o, px[s + 1] + nx * o, py[s + 1] + ny * o, PAL[P.HDR]);
+            }
+          }
+        const dx = px[3] - px[2], dy = py[3] - py[2], L = Math.hypot(dx, dy) + 1e-3, ux = dx / L, uy = dy / L;
+        tri(px[3] - uy * 4 * k, py[3] + ux * 4 * k, px[3] + uy * 4 * k, py[3] - ux * 4 * k, px[3] + ux * 8 * k, py[3] + uy * 8 * k, PAL[P.INK]);
+        tri(px[3] - uy * 2.6 * k, py[3] + ux * 2.6 * k, px[3] + uy * 2.6 * k, py[3] - ux * 2.6 * k, px[3] + ux * 6 * k, py[3] + uy * 6 * k, PAL[P.OK]);
+      }
+    }
+  }
+  function ghoulEyes(cx, cy, R, t, seed) {
+    const lx = (noise1(t * 0.006, (seed + 81) >>> 0) - 0.5) * 0.06 * R;
+    const ly = (noise1(t * 0.005, (seed + 83) >>> 0) - 0.5) * 0.04 * R;
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const ex = cx + sd * 0.33 * R + lx, ey = cy + 0.01 * R + ly, er = R * (sd < 0 ? 0.15 : 0.12);
+      for (let py = Math.floor(ey - er); py <= Math.ceil(ey + er); py++)
+        for (let px = Math.floor(ex - er); px <= Math.ceil(ex + er); px++) {
+          const dx = px + 0.5 - ex, dy = py + 0.5 - ey, q = 1 - Math.sqrt(dx * dx + dy * dy) / er;
+          if (q <= 0 || DOT[(py & 7) * 8 + (px & 7)] >= ((q * 330) | 0)) continue;
+          put(px, py, PAL[q > 0.6 ? P.GLOW : q > 0.3 ? P.HOT : P.FLAME]);
+        }
+      disc(ex, ey, Math.max(1.2, R * 0.035), PAL[P.WHITE]);
+    }
+  }
+  function ghoulCaption(C, t, shx, shy) {
+    if (!C.cap.length || t < GB.GONE + 80) return;
+    const p = clamp((t - GB.GONE - 80) / 150, 0, 1);
+    const bw = C.capW + 14, bh = C.cap.length * 16 + 8;
+    const x = (10 + shx) | 0, y = (H - 12 - bh + shy + (1 - backOut(p)) * 22) | 0;
+    rect(x + 3, y + 3, x + bw + 3, y + bh + 3, PAL[P.INK]); rect(x, y, x + bw, y + bh, PAL[P.INK]);
+    rect(x + 1, y + 1, x + bw - 1, y + 2, PAL[P.EMBER]); rect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, PAL[P.EMBER]);
+    C.cap.forEach((l, i) => f2(l, x + 7, y + 4 + i * 16, PAL[P.OK]));
+  }
+  function ghoulFrame(C, t, now, shx, shy) {
+    const G = Ghoul;
+    if (!G) return;
+    const k = gk();
+    if (t >= GB.STROBE1 && !(G.fired & 1)) { G.fired |= 1; flash(FL.NEG); impact(0.25); }
+    if (t >= GB.STROBE2 && !(G.fired & 2)) { G.fired |= 2; flash(FL.NEG); impact(0.25); }
+    if (t >= GB.HIT && !(G.fired & 4)) { G.fired |= 4; impact(0.7); flash(FL.BOTH); tearBurst(now, 3, 34, 300); }
+    if (t < GB.GONE) {
+      rect(0, 0, W, H, PAL[P.INK]);
+      focusLines(W * 0.5 + shx, 150 * k + shy, W * 0.31, H * 0.6, 80, (C.seed + 5) >>> 0, (t / 70) | 0,
+                 PAL[t < 300 ? P.LINE : P.TRACK], 4);
+      let s;
+      if (t < 110) s = lerp(1.5, 0.95, cubicOut(t / 110));
+      else if (t < 200) s = lerp(0.95, 1, backOut((t - 110) / 90));
+      else if (t < GB.LUNGE) s = 1 + 0.05 * (t - 200) / (GB.LUNGE - 200);
+      else s = lerp(1.05, 2.4, cubicIn((t - GB.LUNGE) / (GB.GONE - GB.LUNGE)));
+      let jaw = 0.15;
+      if (t >= GB.SCREAM) jaw = lerp(0.15, 1, cubicOut(clamp((t - GB.SCREAM) / 240, 0, 1)));
+      jaw += 0.06 * (noise1(t * 0.03, (G.seed + 3) >>> 0) - 0.5);
+      const hb = hash2((t / 60) | 0, G.seed), jm = (t < 900 ? 3 : 6) * k;
+      const cx = W * 0.5 + shx + S1(hb) * jm, cy = 150 * k + shy + S1(hash(hb + 1)) * jm, R = 84 * k * s;
+      if (t >= GB.LUNGE) { stip = Math.min(255, ((t - GB.LUNGE) * 255 / (GB.GONE - GB.LUNGE)) | 0); stipSeed = (G.seed + ((t / 40) | 0)) >>> 0; }
+      ghoulFace(cx, cy, R, jaw, G.seed);
+      ghoulTeeth(cx, cy, R, jaw, G.seed);
+      ghoulHair(cx, cy, R, t, G.seed);
+      ghoulEyes(cx, cy, R, t, G.seed);
+      stip = 0;
+      if (t < GB.LUNGE) ghoulHands(shx, shy, t, G.seed);
+      if (C.word && t >= 140) wordSlam(C, C.word, t - 140, W * 0.5 + shx, 36 * k + shy, -0.08, 45, (t / 80) | 0);
+    }
+    ghoulCaption(C, t, shx, shy);
+  }
+
+  // ── 13d. Sleeping rough (ui-scenes.hpp section 12b) ──────────────
+  // Somebody slept with no roof, and the waste laughs at them. The LCD draws
+  // the three stories with the chronicle's figures, so the figures come with
+  // them: what follows is the slice of ui-scenes.hpp those stories stand on --
+  // the halftone set, the survivors' rig (scFigureDraw), the manga marks --
+  // ported line for line, then the stories, then the cartoon frame round them.
+  // MIRRORED-IN ui-scenes.hpp: a change to a figure or a story there is a
+  // change here. The one difference is the stage: landscape, k from the height.
+  const TAU = Math.PI * 2;
+  const fmodJS = (a, b) => a % b;
+  const SC_SEATS = 6;
+  const SCP_WALK = 0, SCP_SIT = 1, SCP_LIE = 2, SCP_STAND = 3, SCP_REACH = 4, SCP_CROUCH = 5, SCP_HOLD = 6, SCP_SLUMP = 7;
+  const RD_Y0 = 20;
+  let scFigT = 0, scHandX = 0, scHandY = 0, scJoltMark = 0;
+
+  // -- small hands (ui-scenes.hpp section 1) --
+  function scPx(x, y, c) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    if (colT && (y < colT[x] || y >= colB[x])) return;
+    buf[y * W + x] = c;
+  }
+  function scTone(y, x0, x1, lv) {
+    if (y < 0 || y >= H) return;
+    lv = clamp(lv, 0, 14.99);
+    const lo = lv | 0, fr = ((lv - lo) * 256) | 0, a = PAL[lo], b = PAL[lo + 1], row = y * W, d = (y & 7) * 8;
+    x0 = Math.max(0, x0 | 0); x1 = Math.min(W, x1 | 0);
+    for (let x = x0; x < x1; x++) buf[row + x] = DOT[d + (x & 7)] < fr ? b : a;
+  }
+  const scDot = (x, y, f) => DOT[(y & 7) * 8 + (x & 7)] < ((f * 256) | 0);
+  function scType(s, x, y, sc, col) { glcd(s, x + 1, y + 1, sc, PAL[P.INK]); glcd(s, x, y, sc, PAL[col]); }
+  const scTypeW = (s, sc) => s.length * 6 * sc;
+  function scBalloon(s, cx, by, tailX, tailY) {
+    const w = scTypeW(s, 1) + 8, h = 13, y0 = by - h;
+    let x0 = cx - (w >> 1);
+    if (x0 < 1) x0 = 1;
+    if (x0 + w > W - 1) x0 = W - 1 - w;
+    tri(Math.max(x0 + 3, Math.min(x0 + w - 8, tailX - 3)), by - 1, Math.max(x0 + 8, Math.min(x0 + w - 3, tailX + 3)), by - 1,
+        tailX, tailY, PAL[P.INK]);
+    rect(x0 - 1, y0 - 1, x0 + w + 1, by + 1, PAL[P.INK]);
+    rect(x0, y0, x0 + w, by, PAL[P.GLOW]);
+    tri(Math.max(x0 + 4, Math.min(x0 + w - 7, tailX - 2)), by - 1, Math.max(x0 + 7, Math.min(x0 + w - 4, tailX + 2)), by - 1,
+        tailX, tailY - 2, PAL[P.GLOW]);
+    glcd(s, x0 + 4, y0 + 3, 1, PAL[P.INK]);
+  }
+  // A narration box, typed in as it arrives; lines split on '|'.
+  function scNarration(s, x, y, since) {
+    const lines = s.split('|').slice(0, 3).map((l) => l.slice(0, 33));
+    const w = lines.reduce((m, l) => Math.max(m, l.length), 0) * 6 + 9, h = lines.length * 10 + 5;
+    rect(x + 2, y + 2, x + w + 2, y + h + 2, PAL[P.INK]);
+    rect(x - 1, y - 1, x + w + 1, y + h + 1, PAL[P.INK]);
+    rect(x, y, x + w, y + h, PAL[P.CRIT]);
+    let shown = (since / 28) | 0;
+    lines.forEach((l, i) => {
+      glcd(l.slice(0, Math.max(0, Math.min(l.length, shown))), x + 5, y + 4 + i * 10, 1, PAL[P.INK]);
+      shown -= l.length;
+    });
+  }
+  function scDither(x, y, lv) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    lv = clamp(lv, 0, 14.99);
+    const lo = lv | 0;
+    buf[y * W + x] = PAL[scDot(x, y, lv - lo) ? lo + 1 : lo];
+  }
+  // The skyline's ruins (ui-scenes.hpp scRuins).
+  function scRuins(scroll, baseY, lv, night, now, seed, cell, hMin, hMax) {
+    const k0 = Math.floor((scroll - 40) / cell), k1 = Math.floor((scroll + W + 4) / cell);
+    for (let k = k0; k <= k1; k++) {
+      const h = hash2(k, seed);
+      if (U(h) > 0.86) continue;
+      const w = 9 + (h % 18), x0 = k * cell + ((h >>> 5) % (cell >> 1)) - Math.floor(scroll), kind = (h >>> 12) % 9;
+      let bh = hMin + (hMax - hMin) * (0.35 + 0.65 * noise1(k * 0.37, seed)) * (0.6 + 0.4 * U(h >>> 3));
+      if (kind === 7) bh *= 0.45;
+      const lean = kind === 5 ? (((h >>> 22) & 1) ? 0.2 : -0.2) : 0;
+      const amp = kind === 6 ? 0 : 3 + ((h >>> 16) % 11);
+      const bite = ((h >>> 20) & 3) === 0 ? ((h >>> 23) % 3) + 1 : 0;
+      for (let lx = 0; lx < w; lx++) {
+        const tn = noise1((k * 37 + lx) * 0.55, seed + 1);
+        let top = baseY - (bh | 0) + ((tn * amp) | 0);
+        if (kind === 6) {
+          if (lx < (w >> 2) || lx >= w - (w >> 2)) top += (bh * 0.28) | 0;
+          if (lx === (w >> 1)) top -= 10;
+        }
+        if (bite) top += ((Math.max(0, lx - ((w / 3) | 0)) * bite) / 2) | 0;
+        for (let y = Math.max(top, RD_Y0); y < baseY; y++) {
+          const fy = baseY - y, x = x0 + lx + ((lean * fy) | 0);
+          let hole = false;
+          if (kind === 4) hole = !(lx % 5 === 0 || lx === w - 1 || fy % 6 === 0 || (y < top + 2 && lx % 5 < 2));
+          else if (lx > 0 && lx < w - 1 && y > top + 2 && fy > 3 && lx % 3 === 1 && fy % 5 >= 2 && fy % 5 <= 3) {
+            const wh = hash2(k * 131 + lx, (fy / 5) | 0);
+            hole = (wh & 3) !== 0;
+            if (hole && night && (wh & 255) < 3 && (((wh >>> 9) + ((now / 2300) | 0)) % 5)) { scPx(x, y, PAL[P.HOT]); continue; }
+          }
+          if (!hole) scDither(x, y, lv);
+        }
+      }
+      if (kind === 4 && ((h >>> 25) & 1)) {
+        const gx = x0 + w, gy = baseY - bh + 6;
+        stroke(gx - 2, gy, gx + 9, gy + 12, 1.4, 1.2, PAL[clamp(lv, 0, 14) | 0]);
+      }
+    }
+  }
+  // A dead tree: forks and forks again, every branch a tapering stroke.
+  function scTree(x, y, seed, len, w, depth, rim) {
+    const R = new Rng(seed), st = [{ x, y, a: -1.5708 + R.sgn() * 0.12, len, w, d: 0 }];
+    while (st.length) {
+      const b = st.pop(), ex = b.x + Math.cos(b.a) * b.len, ey = b.y + Math.sin(b.a) * b.len;
+      stroke(b.x - 0.8, b.y - 0.8, ex - 0.8, ey - 0.8, b.w + 0.8, b.w * 0.6 + 0.6, rim);
+      stroke(b.x, b.y, ex, ey, b.w, b.w * 0.6, PAL[P.INK]);
+      if (b.d < depth && st.length < 21) {
+        const kids = b.d === 0 ? 2 : 1 + (R.next() & 1);
+        for (let c = 0; c < kids; c++)
+          st.push({ x: ex, y: ey, a: b.a + (c ? -1 : 1) * (0.35 + R.u() * 0.5), len: b.len * (0.55 + R.u() * 0.2), w: b.w * 0.6, d: b.d + 1 });
+      }
+    }
+  }
+
+  // -- the party (ui-scenes.hpp section 4): the survivors' rig --
+  const scFig = (x, foot, dir, arch, pose, seat, ph, rim, lx, ly, k) =>
+    ({ x, foot, dir, arch, pose, seat, ph, rim, lx, ly, k, shadow: 0, handU: 0, handV: 0, look: 0 });
+  // Two bones to (bu,bv), bent to the `bend` side; returns [joint u, v, bu, bv]
+  // with the target pulled in when out of reach (C++ writes it back by reference).
+  function scIK(au, av, bu, bv, l1, l2, bend) {
+    const du = bu - au, dv = bv - av;
+    let L = Math.sqrt(du * du + dv * dv);
+    if (L < 0.01) return [au, av - l1, bu, bv];
+    const ux = du / L, uy = dv / L;
+    if (L > l1 + l2 - 0.02) { L = l1 + l2 - 0.02; bu = au + ux * L; bv = av + uy * L; }
+    const ca = clamp((l1 * l1 + L * L - l2 * l2) / (2 * l1 * L), -1, 1), sa = Math.sqrt(1 - ca * ca) * bend;
+    return [au + (ux * ca - uy * sa) * l1, av + (uy * ca + ux * sa) * l1, bu, bv];
+  }
+  // pass 0: the rim (fat, pushed toward the light); 1: the ink; 2: the details
+  // over the ink; 3: the shadow on the ground.
+  function scFigureDraw(F, pass) {
+    const d = F.dir, k = F.k, shade = pass === 3, fire = F.rim >= P.FLAME;
+    const g = pass === 0 ? (fire ? 0.4 : 1.3) : 0, lo = fire ? 1.6 : 1;
+    const ox = pass === 0 ? F.lx * lo : 0, oy = pass === 0 ? F.ly * lo : 0;
+    const shx = shade ? F.shadow : 0, shy = shade ? -0.09 : 1, wk = shade ? 0.55 : 1;
+    const c = PAL[pass === 0 ? F.rim : (shade ? P.SOOT : P.INK)];
+    const PX = (u, v) => F.x + d * u * k + v * k * shx + ox;
+    const PY = (u, v) => F.foot - v * k * shy + oy;
+    const S = (u0, v0, u1, v1, w0, w1) => stroke(PX(u0, v0), PY(u0, v0), PX(u1, v1), PY(u1, v1), w0 * k * wk + g, w1 * k * wk + g, c);
+    const Dd = (u, v, r) => disc(PX(u, v), PY(u, v), r * k * wk + g * 0.6, c);
+    const Pg = (us, vs) => {                     // a polygon in figure space, grown for the rim
+      const n = us.length, px = [], py = [];
+      let mx = 0, my = 0;
+      for (let i = 0; i < n; i++) { px.push(PX(us[i], vs[i])); py.push(PY(us[i], vs[i])); mx += px[i]; my += py[i]; }
+      mx /= n; my /= n;
+      for (let i = 0; g > 0 && i < n; i++) {
+        const dx = px[i] - mx, dy = py[i] - my, l = Math.sqrt(dx * dx + dy * dy);
+        if (l > 0.01) { px[i] += dx / l * g * 0.6; py[i] += dy / l * g * 0.6; }
+      }
+      poly(px, py, c);
+    };
+    const WB = (u0, v0, u1, v1) => Pg([u0, u1, u1, u0], [v0, v0, v1, v1]);
+    const Px = (u, v, col) => scPx(Math.floor(PX(u, v)), Math.floor(PY(u, v)), PAL[col]);
+
+    // -- the skeleton, in figure space: u ahead, v up from the ground --
+    const a = F.arch < 6 ? F.arch : 0, pose = F.pose, mule = a === 3, bulky = a === 5, walk = pose === SCP_WALK;
+    const upright = walk || pose === SCP_STAND || pose === SCP_REACH || pose === SCP_HOLD || pose === SCP_SLUMP;
+    const carry = walk || pose === SCP_STAND;
+    const LT = 6.6, LS = 6.6, UA = 5.0, FA = 4.8, HR = 2.5;
+    const gust = noise1(scFigT * 0.0017 + F.x * 0.011, 91), flut = Math.sin(scFigT * 0.013 + F.x * 0.21);
+    const ph = walk ? F.ph : 0;
+    let hu = 0, hv = 13.4, su = 0, sv = 0, hdA = 0;
+    const fU = [0, 0], fV = [0, 0], bA = [0, 0], hU = [0, 0], hV = [0, 0];
+    switch (pose) {
+      case SCP_WALK:
+        hv = 13.0 + 0.65 * Math.abs(Math.cos(ph));
+        su = mule ? 2.4 : 1.0; sv = hv + 8.2;
+        for (let s = 0; s < 2; s++) {
+          const la = ph + (s ? 0 : 3.14159), sw = Math.sin(la), cw = Math.cos(la);
+          fU[s] = sw * 4.4; fV[s] = 1.1 + Math.max(0, cw) * 1.9;
+          bA[s] = (sw < 0 ? 0.55 : 0.25) * sw * sw * sw;
+          hU[s] = su - 0.5 - sw * 3.3; hV[s] = sv - 9.3 + Math.abs(sw) * 1.1;
+        }
+        hdA = mule ? -0.2 : -0.05;
+        break;
+      case SCP_CROUCH:
+        hu = 0.2; hv = 6.6; su = 4.8; sv = 13.4; hdA = -0.55;
+        fU[0] = -5.4; fV[0] = 2.7; bA[0] = -1.3; fU[1] = 5.2; fV[1] = 1.1;
+        hU[0] = 6.6; hV[0] = 7.2; hU[1] = 10.4; hV[1] = 1.6;
+        break;
+      case SCP_SIT:
+        hu = 0; hv = 2.6; su = 1.2; sv = 10.9; hdA = -0.2;
+        fU[0] = 7.4; fU[1] = 8.8; fV[0] = fV[1] = 1.1;
+        hU[0] = 8.8; hV[0] = 9.2; hU[1] = 10.0; hV[1] = 10.2;
+        break;
+      case SCP_LIE:
+        hu = 0; hv = 2.3; su = -8.3; sv = 2.6; hdA = 1.5708;
+        fU[0] = 13.0; fV[0] = 1.2; bA[0] = 1.35; fU[1] = 11.4; fV[1] = 2.0; bA[1] = 1.2;
+        hU[0] = -6.2; hV[0] = 0.7; hU[1] = -2.6; hV[1] = 8.2;
+        break;
+      case SCP_SLUMP:
+        hv = 12.4; su = mule ? 2.8 : 1.9; sv = hv + 7.9; hdA = -0.75;
+        fU[0] = -1.8; fU[1] = 2.2; fV[0] = fV[1] = 1.1;
+        hU[0] = su + 0.4; hV[0] = sv - 9.6; hU[1] = su + 1.8; hV[1] = sv - 9.4;
+        break;
+      default:
+        hv = 13.0;
+        su = mule ? 1.8 : (pose === SCP_REACH ? -0.5 : 0.25); sv = hv + 8.3;
+        fU[0] = -2.3; fU[1] = 2.7; fV[0] = fV[1] = 1.1;
+        hU[0] = su - 1.4; hV[0] = sv - 9.4; hU[1] = su + 1.7; hV[1] = sv - 9.0;
+        if (pose === SCP_REACH) { hU[0] = su - 1.6; hV[0] = sv + 8.6; hU[1] = su + 3.4; hV[1] = sv + 8.4; hdA = 0.3; }
+        if (pose === SCP_HOLD) { hU[1] = su + 4.6; hV[1] = sv - 3.8; }
+        break;
+    }
+    if (F.look !== 0) hdA = F.look;
+    let tuU = su - hu, tuV = sv - hv;
+    const SP = Math.sqrt(tuU * tuU + tuV * tuV);
+    tuU /= SP; tuV /= SP;
+    const taU = tuV, taV = -tuU;
+    const TU = (x, y) => hu + taU * x + tuU * y, TV = (x, y) => hv + taV * x + tuV * y;
+    const hcU = su + tuU * (0.8 + HR) + taU * 0.5, hcV = sv + tuV * (0.8 + HR) + taV * 0.5;
+    const haU = Math.cos(hdA), haV = Math.sin(hdA);
+    const hf = { ou: hcU, ov: hcV, au: haU, av: haV, pu: -haV, pv: haU };
+    const FU = (f, x, y) => f.ou + f.au * x + f.pu * y, FV = (f, x, y) => f.ov + f.av * x + f.pv * y;
+    const FS = (f, x0, y0, x1, y1, w0, w1) => S(FU(f, x0, y0), FV(f, x0, y0), FU(f, x1, y1), FV(f, x1, y1), w0, w1);
+    const FD = (f, x, y, r) => Dd(FU(f, x, y), FV(f, x, y), r);
+    const FP = (f, xs, ys) => Pg(xs.map((x, i) => FU(f, x, ys[i])), xs.map((x, i) => FV(f, x, ys[i])));
+    const FB = (f, x0, y0, x1, y1) => FP(f, [x0, x1, x1, x0], [y0, y0, y1, y1]);
+    const tf = { ou: hu, ov: hv, au: taU, av: taV, pu: tuU, pv: tuV };
+
+    if (a === 0 && carry) { hU[1] = TU(2.8, SP - 2.8); hV[1] = TV(2.8, SP - 2.8); }
+    if (a === 0 && pose === SCP_STAND) { hU[0] = hu - 1.9; hV[0] = hv + 1.2; }
+    if (a === 1 && carry) { hU[1] = TU(7.0, SP - 6.2); hV[1] = TV(7.0, SP - 6.2); hU[0] = TU(5.0, SP - 3.8); hV[0] = TV(5.0, SP - 3.8); }
+    if (a === 3 && carry) { hU[1] = TU(1.8, SP - 3.6); hV[1] = TV(1.8, SP - 3.6); hU[0] = TU(1.0, SP - 2.6); hV[0] = TV(1.0, SP - 2.6); }
+    if (a === 4 && pose === SCP_STAND) { hU[1] = FU(hf, HR + 1.4, -0.2); hV[1] = FV(hf, HR + 1.4, -0.2); }
+    if (a === 5 && pose === SCP_STAND) { hU[0] = hu - 1.6; hV[0] = hv + 1.0; }
+    if (F.handV !== 0) { hU[1] = F.handU; hV[1] = F.handV; }
+    const kU = [0, 0], kV = [0, 0], eU = [0, 0], eV = [0, 0], rU = [0, 0], rV = [0, 0];
+    for (let s = 0; s < 2; s++) {
+      let r = scIK(hu, hv, fU[s], fV[s], LT, LS, 1);
+      kU[s] = r[0]; kV[s] = r[1]; fU[s] = r[2]; fV[s] = r[3];
+      rU[s] = TU(s ? 0.3 : -0.5, SP - 0.9); rV[s] = TV(s ? 0.3 : -0.5, SP - 0.9);
+      r = scIK(rU[s], rV[s], hU[s], hV[s], UA, FA, -1);
+      eU[s] = r[0]; eV[s] = r[1]; hU[s] = r[2]; hV[s] = r[3];
+    }
+    if (pass === 1) { scHandX = PX(hU[1], hV[1]); scHandY = PY(hU[1], hV[1]); }
+    const bagHand = (walk || pose === SCP_STAND) ? 1 : (pose === SCP_HOLD ? 0 : -1);
+
+    if (pass !== 2) {
+      if (a === 0 || a === 2) {                  // the coat, the tails on the wind
+        const flap = a === 0 ? 1.0 : 0.5, drop = a === 0 ? 8.6 : 7.0;
+        const tail = ((walk ? 1.5 : 0.4) + gust * 2.2) * flap;
+        const lift = upright ? ((walk ? 0.9 : 0.3) + flut * 0.5) * flap : 0;
+        Pg([TU(-2.2, SP - 0.5), TU(2.2, SP - 0.7), TU(2.5, 0.2), kU[1] + 0.9, TU(-3.8 - tail, -drop), TU(-2.9 - tail * 0.4, -drop * 0.35)],
+           [TV(-2.2, SP - 0.5), TV(2.2, SP - 0.7), TV(2.5, 0.2), Math.max(0.5, kV[1] - 1.4),
+            Math.max(0.5, TV(-3.8 - tail, -drop) + lift), Math.max(0.5, TV(-2.9 - tail * 0.4, -drop * 0.35))]);
+      }
+      for (let s = 0; s < 2; s++) {              // legs and boots
+        S(hu, hv, kU[s], kV[s], bulky ? 3.4 : 3.0, 2.5);
+        S(kU[s], kV[s], fU[s], fV[s], 2.5, 1.9);
+        const bc = Math.cos(bA[s]), bs = Math.sin(bA[s]), pdu = bs, pdv = -bc;
+        S(fU[s] - bc * 0.8 + pdu * 0.3, fV[s] - bs * 0.8 + pdv * 0.3, fU[s] + bc * 2.7 + pdu * 0.5, fV[s] + bs * 2.7 + pdv * 0.5, bulky ? 2.6 : 2.2, 1.2);
+        Dd(fU[s] - bc * 0.7 + pdu * 0.7, fV[s] - bs * 0.7 + pdv * 0.7, 0.85);
+      }
+      const waist = bulky ? 5.0 : (a === 1 ? 4.8 : 3.4), chest = bulky ? 6.8 : (mule ? 6.0 : 5.8);
+      FS(tf, 0, 0, 0, SP - 0.9, waist, chest);
+      FD(tf, 0, SP - 1.0, chest * 0.42);
+      Dd(hu, hv, waist * 0.52);
+      S(TU(0.3, SP - 0.4), TV(0.3, SP - 0.4), FU(hf, -0.2, -HR * 0.7), FV(hf, -0.2, -HR * 0.7), 2.1, 1.8);
+      Dd(hcU, hcV, HR);
+      FD(hf, 1.1, -1.1, 1.5);
+      for (let s = 0; s < 2; s++) {              // arms
+        S(rU[s], rV[s], eU[s], eV[s], bulky ? 2.8 : 2.4, 2.1);
+        S(eU[s], eV[s], hU[s], hV[s], 2.1, 1.7);
+        Dd(hU[s], hV[s], 1.05);
+      }
+      if (a === 0) {                             // THE GUIDE
+        if (upright) Pg([TU(-0.6, SP + 0.4), TU(-0.3, SP - 1.0), TU(-0.6, SP - 0.3) - 3.2 - gust * 1.8],
+                        [TV(-0.6, SP + 0.4), TV(-0.3, SP - 1.0), TV(-0.6, SP - 0.3) + flut * 0.5]);
+        if (carry) { FS(tf, 3.9, SP - 3.9, 1.2, SP - 1.3, 2.3, 1.7); FS(tf, 1.2, SP - 1.3, -6.6, SP + 6.2, 1.25, 0.95); }
+        else if (pose === SCP_LIE) S(-4.0, 0.7, 6.0, 0.7, 1.2, 1.0);
+        else { FS(tf, -2.9, 1.6, -2.2, 4.8, 2.2, 1.7); FS(tf, -2.2, 4.8, -0.4, SP + 5.2, 1.2, 0.95); }
+      } else if (a === 1) {                      // THE QUARTERMASTER
+        if (carry) FB(tf, 1.6, SP - 8.6, 9.2, SP - 1.2);
+        else if (pose !== SCP_LIE) WB(-9.8, 0.0, -3.8, 5.8);
+      } else if (a === 2) {                      // THE MEDIC
+        if (bagHand >= 0) { const bu = hU[bagHand], bv = hV[bagHand]; WB(bu - 2.1, bv - 3.8, bu + 2.3, bv - 0.6); }
+        else if (pose !== SCP_LIE) WB(-8.0, 0.0, -3.4, 3.6);
+      } else if (a === 3) {                      // THE MULE
+        if (pose === SCP_SIT) { WB(-15.6, 0.0, -6.6, 16.0); S(-15.0, 17.6, -7.2, 17.6, 3.6, 3.6); }
+        else if (pose === SCP_LIE) { WB(-6.0, 3.0, 4.0, 9.0); S(-5.4, 10.4, 3.4, 10.4, 3.2, 3.2); }
+        else {
+          FP(tf, [-1.6, -9.2, -10.4, -10.2, -8.4, -1.8], [-1.2, -0.6, 3.0, SP + 4.2, SP + 6.6, SP + 6.6]);
+          FS(tf, -9.4, SP + 8.1, -2.4, SP + 8.3, 3.9, 3.9);
+          FS(tf, -8.4, SP + 4.6, -5.6, SP + 11.4, 1.0, 0.9);
+          FP(tf, [-6.7, -4.4, -3.2, -3.5, -5.9], [SP + 10.6, SP + 9.7, SP + 13.2, SP + 14.9, SP + 14.4]);
+          const sw = walk ? Math.sin(ph * 2) * 0.5 : 0, pu = TU(-10.4, 5.6), pv = TV(-10.4, 5.6);
+          S(pu, pv, pu + Math.sin(sw) * 2.0, pv - Math.cos(sw) * 2.0, 0.9, 0.9);
+          Dd(pu + Math.sin(sw) * 3.8, pv - Math.cos(sw) * 3.8, 2.2);
+          const lu = TU(-2.8, -1.6) + Math.sin(sw) * 1.2, lv = TV(-2.8, -1.6) - 1.9;
+          S(TU(-2.8, -1.6), TV(-2.8, -1.6), lu, lv + 0.8, 0.7, 0.7);
+          WB(lu - 0.9, lv - 1.1, lu + 0.9, lv + 1.0);
+        }
+      } else if (a === 4) {                      // THE SCOUT
+        if (pose !== SCP_LIE) { FB(tf, -3.9, 2.2, -1.2, SP - 0.9); FS(tf, -3.2, SP - 1.2, -6.8, SP + 16.4, 1.1, 0.7); }
+        const bu = TU(-0.4, SP + 0.4), bv = TV(-0.4, SP + 0.4);
+        let pu = bu, pv = bv;
+        for (let i = 1; i <= 6; i++) {           // the scarf
+          let nu, nv;
+          if (upright) { nu = bu - i * 2.3 * (0.75 + 0.5 * gust); nv = bv - i * 0.4 + Math.sin(scFigT * 0.017 + F.x * 0.1 - i * 1.3) * 0.3 * i; }
+          else { nu = bu - i * 0.7; nv = Math.max(0.6, bv - i * 1.4); }
+          S(pu, pv, nu, nv, 3.2 - i * 0.25, 3.0 - i * 0.25);
+          pu = nu; pv = nv;
+        }
+      } else {                                   // THE ENDURER
+        const tail = (walk ? 1.0 : 0.3) + gust * 1.6, lift = upright ? flut * 0.4 : 0;
+        FP(tf, [-1.6, 1.4, 3.8, 4.4, 0.6, -4.8 - tail, -3.6], [SP + 0.8, SP + 0.6, SP - 1.2, SP - 6.6, SP - 7.6, SP - 6.6 + lift, SP - 1.0]);
+        const pu = TU(-1.4, SP - 0.9), pv = TV(-1.4, SP - 0.9);
+        for (let i = 0; i < 3; i++) {
+          const an = 2.0 + i * 0.45, cu = Math.cos(an), cv = Math.sin(an);
+          const du = taU * cu + tuU * cv, dv = taV * cu + tuV * cv, nu = -dv, nv = du, ln = i === 1 ? 6.4 : 5.4;
+          Pg([pu + du * 1.8 + nu * 0.8, pu + du * 1.8 - nu * 0.8, pu + du * ln], [pv + dv * 1.8 + nv * 0.8, pv + dv * 1.8 - nv * 0.8, pv + dv * ln]);
+        }
+        if (carry) { S(hU[1] - 1.1, hV[1] + 0.5, hU[1] + 0.2, hV[1] - 0.2, 2.0, 1.8); S(hU[1], hV[1], hU[1] + 3.4, hV[1] - 2.3, 1.5, 1.3); }
+      }
+      if (a === 0) {                             // the Guide's hat; lying down it sits over the face
+        const hat = Object.assign({}, hf);
+        if (pose === SCP_LIE) { hat.ou = FU(hf, HR - 0.4, 0); hat.ov = FV(hf, HR - 0.4, 0); hat.au = -hf.pu; hat.av = -hf.pv; hat.pu = hf.au; hat.pv = hf.av; }
+        FP(hat, [-2.4, -2.0, 0.0, 2.2, 2.6], [1.5, 4.5, 4.0, 4.4, 1.3]);
+        FS(hat, -5.0, 1.5, 5.3, 1.1, 1.3, 1.0); FS(hat, -5.0, 1.5, -5.7, 2.3, 1.0, 0.8); FS(hat, 5.3, 1.1, 5.9, 1.8, 1.0, 0.8);
+      } else if (a === 1) {
+        FD(hf, -0.1, 2.3, 2.65); FS(hf, -3.7, 1.4, 3.9, 1.3, 1.1, 1.0); FS(hf, -3.7, 1.4, -4.1, 2.0, 0.9, 0.8); FS(hf, 3.9, 1.3, 4.3, 1.9, 0.9, 0.8);
+      } else if (a === 2) {
+        FS(hf, -5.1, 1.4, 5.2, 1.4, 1.1, 1.0); FB(hf, -2.0, 1.4, 2.1, 3.3); FP(hf, [-0.4, 3.3, 1.3], [0.0, -0.5, -4.0]);
+      } else if (a === 3) {
+        FS(hf, -4.2, 0.9, 0.2, 1.7, 1.3, 1.2); FS(hf, 0.2, 1.7, 4.6, 0.5, 1.2, 1.0); FD(hf, -0.2, 2.2, 2.2);
+      } else if (a === 4) {
+        FD(hf, -0.3, 0.5, HR + 0.45); FS(hf, -0.9, -0.3, -1.1, -2.6, 1.2, 1.0); FS(hf, 0.6, 1.7, 2.9, 1.6, 1.5, 1.3);
+        if (pose === SCP_STAND) FB(hf, HR - 0.1, -0.8, HR + 2.6, 0.9);
+      } else {
+        for (let i = 0; i < 4; i++) {            // a mohawk, cut with a knife
+          const a0 = 1.2 + i * 0.42, a1 = a0 + 0.42, r = HR + 0.5, am = a0 + 0.21, tr = HR + 2.0 + (i === 1 ? 0.5 : 0);
+          FS(hf, Math.cos(a0) * r, Math.sin(a0) * r, Math.cos(a1) * r, Math.sin(a1) * r, 1.6, 1.5);
+          FP(hf, [Math.cos(a0) * r, Math.cos(a1) * r, Math.cos(am - 0.1) * tr], [Math.sin(a0) * r, Math.sin(a1) * r, Math.sin(am - 0.1) * tr]);
+        }
+        FS(hf, 0.8, -0.6, 3.3, -1.9, 3.1, 2.5);
+        FD(hf, 3.6, -2.3, 1.55);
+        S(FU(hf, 2.6, -2.6), FV(hf, 2.6, -2.6), TU(2.9, SP - 3.4), TV(2.9, SP - 3.4), 1.0, 1.0);
+      }
+      return;
+    }
+    // -- pass 2: what catches the light --
+    if (a === 0) {
+      if (pose !== SCP_LIE) {
+        for (let s = 0; s < 2; s++) { const bc = Math.cos(bA[s]), bs = Math.sin(bA[s]); Px(fU[s] - bc * 1.5, fV[s] - bs * 1.5 - 0.2, P.GLOW); }
+        const eu = FU(hf, HR + 0.9, -1.0), ev = FV(hf, HR + 0.9, -1.0);
+        Px(eu, ev, ((((scFigT / 230) | 0) + F.seat) % 5) ? P.HOT : P.GLOW);
+        for (let i = 1; i <= 3; i++) {
+          if ((((scFigT / 180) | 0) + i) % 4 === 0) continue;
+          Px(eu - i * (0.9 + gust * 0.8), ev + i * 1.3 + Math.sin(scFigT * 0.006 + i) * 0.4, i < 3 ? P.LINE : P.TRACK);
+        }
+      }
+    } else if (a === 1) {
+      if (pose !== SCP_LIE) Px(FU(hf, 1.5, 0.3), FV(hf, 1.5, 0.3), P.WHITE);
+      if (carry) {
+        line(PX(TU(1.6, SP - 5.6), TV(1.6, SP - 5.6)), PY(TU(1.6, SP - 5.6), TV(1.6, SP - 5.6)),
+             PX(TU(9.2, SP - 5.6), TV(9.2, SP - 5.6)), PY(TU(9.2, SP - 5.6), TV(9.2, SP - 5.6)), PAL[P.RUST]);
+        const sx = Math.floor(PX(TU(5.4, SP - 3.0), TV(5.4, SP - 3.0))), sy = Math.floor(PY(TU(5.4, SP - 3.0), TV(5.4, SP - 3.0)));
+        line(sx - 1, sy - 1, sx + 1, sy + 1, PAL[P.BRICK]); line(sx - 1, sy + 1, sx + 1, sy - 1, PAL[P.BRICK]);
+      }
+    } else if (a === 2) {
+      let bu = -99, bv = -99;
+      if (bagHand >= 0) { bu = hU[bagHand] + 0.1; bv = hV[bagHand] - 2.2; }
+      else if (pose !== SCP_LIE) { bu = -5.7; bv = 1.8; }
+      if (bv > -50) {
+        const x = Math.floor(PX(bu, bv)), y = Math.floor(PY(bu, bv)), w = PAL[P.WHITE];
+        scPx(x, y, w); scPx(x - 1, y, w); scPx(x + 1, y, w); scPx(x, y - 1, w); scPx(x, y + 1, w);
+      }
+    } else if (a === 3) {
+      if (pose !== SCP_SIT && pose !== SCP_LIE) {
+        const sw = walk ? Math.sin(ph * 2) * 0.5 : 0, lu = TU(-2.8, -1.6) + Math.sin(sw) * 1.2, lv = TV(-2.8, -1.6) - 1.9;
+        Px(lu, lv, (((scFigT / 150) | 0) % 7) ? P.HOT : P.GLOW);
+      }
+    } else if (a === 4) {
+      if (pose !== SCP_LIE) {
+        Px(FU(hf, 1.4, 1.7), FV(hf, 1.4, 1.7), P.GLOW); Px(FU(hf, 2.4, 1.6), FV(hf, 2.4, 1.6), P.GLOW);
+        if (pose === SCP_STAND) Px(FU(hf, HR + 2.5, 0.1), FV(hf, HR + 2.5, 0.1), P.WHITE);
+        if (((scFigT / 420) | 0) & 1) Px(TU(-2.5, SP - 2.2), TV(-2.5, SP - 2.2), P.CRIT);
+        const wu = TU(-6.8, SP + 16.4), wv = TV(-6.8, SP + 16.4), bu0 = TU(-6.0, SP + 12.8), bv0 = TV(-6.0, SP + 12.8);
+        const fl = noise1(scFigT * 0.004 + F.x * 0.1, 3) * 2;
+        tri(PX(wu, wv), PY(wu, wv), PX(bu0, bv0), PY(bu0, bv0), PX(wu - 5 - fl, wv - 1.6 + fl * 0.3), PY(wu - 5 - fl, wv - 1.6 + fl * 0.3), PAL[P.HOT]);
+      }
+    } else {
+      if (pose !== SCP_LIE) {
+        const ec = fire || F.rim < P.BRICK ? P.CRIT : P.GLOW;
+        Px(FU(hf, 1.4, 0.5), FV(hf, 1.4, 0.5), ec); Px(FU(hf, 1.9, 0.5), FV(hf, 1.9, 0.5), ec);
+      }
+      for (let i = 0; i < 4; i++) Px(TU(-3.0 + i * 1.7, SP - 6.2 - (i & 1) * 0.6), TV(-3.0 + i * 1.7, SP - 6.2 - (i & 1) * 0.6), P.RUST);
+    }
+    if (pose !== SCP_LIE && F.seat < SC_SEATS) {  // whose they are
+      const HAT = [4.5, 4.9, 3.3, 3.9, 3.5, 4.6];
+      let top = FV(hf, 0, HAT[a]);
+      if (mule && pose !== SCP_SIT) top = Math.max(top, TV(-6.0, SP + 10.0));
+      top = Math.max(top, Math.max(hV[0], hV[1]) + 1.0);
+      scType(String.fromCharCode(49 + F.seat), (PX(hcU, 0) | 0) - 2, (PY(0, top) | 0) - 9, 1, P.HOT);
+    }
+  }
+  function scFigure(F, pass) {
+    if (pass === 0 && F.shadow !== 0) scFigureDraw(F, 3);
+    scFigureDraw(F, pass);
+  }
+  // Roughly where a figure's head is, per pose: [x, y].
+  function scHeadAt(F) {
+    let u = 0.85, v = 24.6;
+    switch (F.pose) {
+      case SCP_WALK: u = 1.9; v = 24.8; break;
+      case SCP_CROUCH: u = 7.1; v = 15.9; break;
+      case SCP_SIT: u = 2.2; v = 14.1; break;
+      case SCP_SLUMP: u = 3.2; v = 23.4; break;
+      case SCP_LIE: u = -11.6; v = 3.2; break;
+    }
+    return [F.x + F.dir * u * F.k, F.foot - v * F.k];
+  }
+
+  // -- the manga marks and set pieces (ui-scenes.hpp section 8) --
+  function scBang(w, cx, cy, r, seed, sc) {
+    const N = 14, px = [], py = [], R = new Rng(seed);
+    r = Math.max(r, scTypeW(w, sc) * 0.42 + 3 * sc);
+    for (let i = 0; i < N; i++) {
+      const a = i * (TAU / N) + R.sgn() * 0.12, rr = (i & 1) ? r * (0.55 + 0.1 * R.u()) : r * (0.95 + 0.3 * R.u());
+      px.push(cx + Math.cos(a) * rr * 1.35); py.push(cy + Math.sin(a) * rr);
+    }
+    for (let pass = 0; pass < 2; pass++) {
+      const g = pass ? 1.0 : 1.22, c = PAL[pass ? P.GLOW : P.INK];
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N;
+        tri(cx, cy, cx + (px[i] - cx) * g, cy + (py[i] - cy) * g, cx + (px[j] - cx) * g, cy + (py[j] - cy) * g, c);
+      }
+    }
+    const tw = scTypeW(w, sc);
+    glcd(w, ((cx - tw * 0.5) | 0) + 1, ((cy - 4 * sc) | 0) + 1, sc, PAL[P.HDR]);
+    glcd(w, (cx - tw * 0.5) | 0, (cy - 4 * sc) | 0, sc, PAL[P.INK]);
+  }
+  function scLump(x, y, a, s, seed, rimLv) {
+    const R = new Rng(seed), px = [], py = [], qx = [], qy = [], ca = Math.cos(a), sa = Math.sin(a);
+    for (let i = 0; i < 6; i++) {
+      const b = i * (TAU / 6) + R.sgn() * 0.3, rr = s * (0.7 + 0.4 * R.u()), lu = Math.cos(b) * rr * 1.3, lv = Math.sin(b) * rr;
+      px.push(x + lu * ca - lv * sa); py.push(y + lu * sa + lv * ca);
+      qx.push(px[i] - 0.8); qy.push(py[i] - 1.0);
+    }
+    poly(qx, qy, PAL[rimLv]);
+    poly(px, py, PAL[P.INK]);
+    if (s > 3) stroke(x + Math.cos(a - 2.2) * s * 0.6, y + Math.sin(a - 2.2) * s * 0.6, x + Math.cos(a - 2.2) * s * 1.9, y + Math.sin(a - 2.2) * s * 1.9, 1.0, 0.8, PAL[P.RUST]);
+  }
+  function scJolt(St, lt, at, amt) {
+    if (!St.live || lt < at || lt > at + 500 || scJoltMark === St.t0 + at + 1) return;
+    scJoltMark = St.t0 + at + 1;
+    impact(amt);
+  }
+  function scFocus(St, x, y, r, col, wMax, n) {
+    n = n || 28;
+    const boil = St.live ? (St.now / 90) | 0 : 0, far = (St.x1 - St.x0) * 1.2;
+    for (let i = 0; i < n; i++) {
+      const h = hash2(i, St.seed + 71), hb = hash2(i, ((St.seed + 71) ^ boil) >>> 0);
+      if (U((h ^ 0x5bd1e995) >>> 0) < 0.2) continue;
+      const a = (i + S1(hb) * 0.45) * TAU / n, ca = Math.cos(a), sa = Math.sin(a);
+      const r0 = r * (0.8 + 0.5 * U(hash(h + 1)) + 0.12 * S1(hb >>> 3)), w = 0.6 + wMax * U(hash(h + 2)) * U(hash(h + 3));
+      tri(x + ca * r0, y + sa * r0 * 0.85, x + ca * far - sa * w, y + sa * far + ca * w, x + ca * far + sa * w, y + sa * far - ca * w, PAL[col]);
+    }
+  }
+  function scSpeed(St, x, y, dx, dy, len, spread, n, col) {
+    const d = Math.max(0.001, Math.sqrt(dx * dx + dy * dy)), ux = dx / d, uy = dy / d, nx = -uy, ny = ux;
+    const boil = St.live ? (St.now / 70) | 0 : 0;
+    for (let i = 0; i < n; i++) {
+      const h = hash2(i, St.seed + 73), hb = hash2(i, boil + 5);
+      const off = S1(h) * spread, back = (0.1 + 0.5 * U(hb)) * len, l = len * (0.4 + 0.6 * U(h >>> 8));
+      const x0 = x - ux * back + nx * off, y0 = y - uy * back + ny * off;
+      stroke(x0, y0, x0 - ux * l, y0 - uy * l, 0.5 + St.k * (0.4 + 0.6 * U(h >>> 16)), 0.3, PAL[col]);
+    }
+  }
+  function scStar(x, y, r, col) {
+    for (let i = 0; i < 5; i++) {
+      const a = -1.5708 + i * (TAU / 5);
+      for (let sd = -1; sd <= 1; sd += 2)
+        tri(x, y, x + Math.cos(a + sd * 0.63) * r * 0.42, y + Math.sin(a + sd * 0.63) * r * 0.42, x + Math.cos(a) * r, y + Math.sin(a) * r, col);
+    }
+  }
+  function scStartle(hx, hy, k, age) {
+    const s = k * (age < 140 ? 1.4 : 1.0), x = hx + 6 * k, y = hy - 7 * k;
+    stroke(x, y - 7 * s, x, y - 2.6 * s, 2.6 * s, 1.4 * s, PAL[P.INK]); disc(x, y, 1.4 * s, PAL[P.INK]);
+    stroke(x, y - 7 * s, x, y - 2.6 * s, 1.6 * s, 0.8 * s, PAL[P.GLOW]); disc(x, y, 0.85 * s, PAL[P.GLOW]);
+    for (let i = 0; i < 3; i++) {
+      const a = -2.7 + i * 0.5, r0 = 4.6 * k, r1 = (age < 140 ? 8.5 : 7.0) * k;
+      stroke(hx + Math.cos(a) * r0, hy + Math.sin(a) * r0, hx + Math.cos(a) * r1, hy + Math.sin(a) * r1, 1.1 * k, 0.4, PAL[P.GLOW]);
+    }
+  }
+  function scSweat(hx, hy, k, age, side) {
+    const x = hx + side * 3.6 * k, y = hy - 2.5 * k + Math.min(age * 0.004, 3.0) * k;
+    disc(x, y, 1.5 * k, PAL[P.INK]);
+    tri(x - 1.35 * k, y - 0.5 * k, x + 1.35 * k, y - 0.5 * k, x + side * 0.3 * k, y - 3.8 * k, PAL[P.INK]);
+    disc(x, y, 0.95 * k, PAL[P.GLOW]);
+    tri(x - 0.8 * k, y - 0.4 * k, x + 0.8 * k, y - 0.4 * k, x + side * 0.25 * k, y - 2.9 * k, PAL[P.GLOW]);
+    scPx((x - 0.4 * k) | 0, (y - 0.3 * k) | 0, PAL[P.WHITE]);
+  }
+  function scGloom(hx, hy, k, age, now) {
+    const grow = clamp(age / 500, 0, 1);
+    for (let i = 0; i < 7; i++) {
+      const h = hash2(i, 0x6100), x = hx + (i - 3) * 1.8 * k, top = hy - 15 * k, len = (7 + 8 * U(h)) * k * grow;
+      for (let y = top | 0; y < ((top + len) | 0); y++) {
+        const lx = (x + Math.sin(y * 0.45 + now * 0.005 + i * 1.3) * 0.6) | 0;
+        scPx(lx + 1, y, PAL[P.RUST]); scPx(lx, y, PAL[P.INK]);
+      }
+    }
+  }
+  const scKira = (x, y, r, now, ph) => sparkle(x, y, r * (0.5 + 0.5 * Math.sin(now * 0.011 + ph * 1.9)));
+  function scDizzy(hx, hy, k, now) {
+    for (let i = 0; i < 3; i++) {
+      const a = now * 0.008 + i * (TAU / 3), s = Math.sin(a);
+      scStar(hx + Math.cos(a) * 6.5 * k, hy - 5 * k + s * 1.8 * k, (s > 0 ? 2.2 : 1.5) * k, PAL[s > 0 ? P.GLOW : P.HDR]);
+    }
+  }
+  function scGhost(F, dx, dy, col) {
+    const G = Object.assign({}, F);
+    G.x += dx; G.foot += dy; G.rim = col; G.lx = G.ly = 0;
+    scFigureDraw(G, 0);
+  }
+  function scImpactFrame(St, x, y) {
+    for (let yy = St.y0; yy < St.y1; yy++) scTone(yy, St.x0, St.x1, 13.5);
+    scFocus(St, x, y, 11 * St.k, P.INK, 2.6 * St.k, 36);
+  }
+  // The broken moon (ui-scenes.hpp scMoon).
+  function scMoon(cx, cy, r, ph, low, now) {
+    const th = ph * TAU, lx = Math.sin(th), lz = -Math.cos(th), full = (1 - Math.cos(th)) * 0.5;
+    const BX = 0.48, BY = -0.82, BITE_R = 0.4;
+    const LIT = low > 0.55 ? P.FLAME : P.GLOW, HI = low > 0.55 ? P.HOT : P.WHITE;
+    for (let y = Math.floor(cy - r * 2); y <= Math.ceil(cy + r * 2); y++)
+      for (let x = Math.floor(cx - r * 2); x <= Math.ceil(cx + r * 2); x++) {
+        const d = Math.sqrt((x + 0.5 - cx) * (x + 0.5 - cx) + (y + 0.5 - cy) * (y + 0.5 - cy)) / r;
+        if (d > 1.05 && d < 1.7 && scDot(x, y, (1.7 - d) * 0.2 * full)) scPx(x, y, PAL[P.EMBER]);
+      }
+    const CRATER = [[-0.32, 0.18, 0.24], [0.12, 0.48, 0.16], [-0.52, -0.28, 0.13]];
+    for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++)
+      for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
+        const u = (x + 0.5 - cx) / r, v = (y + 0.5 - cy) / r, d2 = u * u + v * v;
+        if (d2 > 1) continue;
+        const bu = u - BX, bv = v - BY, bd = Math.sqrt(bu * bu + bv * bv);
+        const jag = BITE_R * (0.8 + 0.4 * noise1(Math.atan2(bv, bu) * 2.4 + 3.0, 77));
+        if (bd < jag) continue;
+        const z = Math.sqrt(1 - d2), lit = u * lx + z * lz;
+        let c;
+        if (bd < jag + 0.17) c = lit > 0 ? P.EMBER : P.RUST;
+        else if (lit > 0.06) {
+          c = lit > 0.42 && d2 < 0.72 ? HI : LIT;
+          for (let k = 0; k < 3; k++) {
+            const cu = u - CRATER[k][0], cv = v - CRATER[k][1];
+            if (cu * cu + cv * cv < CRATER[k][2] * CRATER[k][2]) c = c === HI ? LIT : P.HDR;
+          }
+        } else if (lit > -0.05) c = scDot(x, y, 0.5) ? P.HDR : P.DIM;
+        else c = P.DIM;
+        const pu = u - (BX - 0.1), pv = v - (BY + 0.4), t1 = clamp((pu * -0.4 + pv * 0.82) / (0.16 + 0.6724), 0, 1);
+        const ex = pu + 0.4 * t1, ey = pv - 0.82 * t1;
+        if (ex * ex + ey * ey < 0.0085 && lit > -0.05) c = P.BRICK;
+        scPx(x, y, PAL[c]);
+      }
+    const dx = 0.505, dy = -0.863;
+    for (let k = 0; k < 5; k++) {
+      const h = hash2(k, 0xB0C3), dist = 1.08 + k * 0.36 + 0.1 * Math.sin(now * 0.0007 + k * 1.7), side = S1(h) * 0.4;
+      const fx = Math.round(cx + r * (dx * dist - dy * side)), fy = Math.round(cy + r * (dy * dist + dx * side));
+      const c = PAL[full > 0.2 ? ((k & 1) ? LIT : P.HDR) : P.LINE];
+      scPx(fx, fy, c);
+      if (k < 2) { scPx(fx + 1, fy, c); scPx(fx, fy + 1, PAL[P.DIM]); scPx(fx + 1, fy + 1, PAL[P.DIM]); }
+    }
+  }
+
+  // -- the three stories (ui-scenes.hpp section 8, "Sleeping rough") --
+  const SCR_DAWN = 1800, SCR_LIGHT = 2500, SCR_MOCK = 4000, SCR_CYC = 5900;
+  function scRoughSet(St, dawn) {
+    const sw = St.x1 - St.x0, k = St.k, sky = St.gy - St.y0;
+    const top = lerp(0.5, 2.8, dawn), hor = lerp(3.6, 12.0, dawn);
+    for (let y = St.y0; y < (St.gy | 0); y++) {
+      const v = (y - St.y0) / Math.max(1, sky);
+      scTone(y, St.x0, St.x1, lerp(top, hor, v * v * 0.8 + v * 0.2));
+    }
+    for (let i = 0; i < (sw >> 2); i++) {
+      const h = hash2(i, St.seed + 17);
+      if (U(hash(h)) < dawn * 1.5) continue;
+      if (St.live && (hash2(i, (St.now / 450) | 0) & 7) === 0) continue;
+      scPx(St.x0 + (h % sw), St.y0 + 2 + ((h >>> 9) % Math.max(1, (sky * 0.6) | 0)), PAL[((h >>> 20) % 5) === 0 ? P.GLOW : P.LINE]);
+    }
+    if (dawn < 0.75) scMoon(St.x0 + sw * 0.3, St.y0 + sky * (0.34 + 0.3 * dawn), 6.0 * k, 0.42, dawn, St.now);
+    if (dawn > 0.05) {
+      const r = 11 * k, sx = St.x0 + sw * 0.82, sy = St.gy + r * 0.7 - (dawn - 0.05) * r * 1.4, hr = r * 2.4;
+      for (let y = (sy - hr) | 0; y < (Math.min(St.gy, sy + hr) | 0); y++)
+        for (let x = (sx - hr) | 0; x < ((sx + hr) | 0); x++) {
+          const ddx = x + 0.5 - sx, ddy = y + 0.5 - sy, d2 = (ddx * ddx + ddy * ddy) / (r * r);
+          if (d2 <= 1 || d2 >= 5.76) continue;
+          if (scDot(x, y, (2.4 - Math.sqrt(d2)) * 0.43 * dawn)) scPx(x, y, PAL[P.HOT]);
+        }
+      disc(sx, sy, r, PAL[P.GLOW]);
+      disc(sx - 1, sy - 1, r * 0.65, PAL[P.WHITE]);
+    }
+    scRuins(St.seed % 3000, St.gy | 0, clamp(hor - 3, 0.8, 8), dawn < 0.5, St.now, St.seed,
+            Math.max(12, (16 * k) | 0), (4 * k) | 0, Math.min(sky * 0.3, 14 * k) | 0);
+    for (let y = St.gy | 0; y < St.y1; y++) {
+      const v = (y - (St.gy | 0)) / Math.max(1, St.y1 - (St.gy | 0));
+      scTone(y, St.x0, St.x1, lerp(lerp(1.6, 4.5, dawn), 0.6, v));
+    }
+  }
+  const scSay = (s, x, y, sc, col) => { scType(s, (x | 0) + 1, (y | 0) + 1, sc, P.INK); scType(s, x | 0, y | 0, sc, col); };
+  function scZzz(x, y, k, now) {
+    const big = k > 2.5 ? 3 : (k > 1.6 ? 2 : 1);
+    for (let i = 0; i < 3; i++) {
+      const ph = fmodJS(now * 0.0005 + i / 3, 1);
+      scSay(ph > 0.55 ? 'Z' : 'z', x + ph * 8 * k + Math.sin(ph * 9 + i) * 1.4 * k, y - ph * 14 * k, ph > 0.5 ? big : Math.max(1, big - 1),
+            ph > 0.8 ? P.LINE : P.GLOW);
+    }
+  }
+  function scNoseBubble(x, y, k, now, pop) {
+    if (pop >= 0) {
+      if (pop > 260) return;
+      const p = pop / 260;
+      for (let i = 0; i < 7; i++) {
+        const a = i * (TAU / 7) + 0.4, r = (1.5 + 5 * cubicOut(p)) * k;
+        disc(x + Math.cos(a) * r, y - 2.5 * k + Math.sin(a) * r, (1 - p) * 0.8 * k, PAL[P.GLOW]);
+      }
+      if (pop < 170) scSay('POP', x + 3 * k, y - 9 * k, k > 2.5 ? 2 : 1, P.WHITE);
+      return;
+    }
+    const br = 0.5 + 0.5 * Math.sin(now * 0.0042), r = (0.7 + 2.4 * br) * k, bx = x + r * 0.5, by = y - r * 0.9;
+    disc(bx, by, r + Math.max(0.8, 0.35 * k), PAL[P.INK]);
+    disc(bx, by, r, PAL[P.LINE]);
+    disc(bx + r * 0.15, by + r * 0.15, r * 0.72, PAL[P.DIM]);
+    disc(bx - r * 0.38, by - r * 0.38, Math.max(0.6, r * 0.2), PAL[P.WHITE]);
+  }
+  function scShiver(xl, xr, y, k, now) {
+    const jit = ((now / 90) | 0) & 1;
+    for (let s = 0; s < 2; s++) {
+      const x = s ? xr : xl, dir = s * 2 - 1;
+      for (let j = 0; j < 2; j++) {
+        const bx = x + dir * (1.5 + j * 1.8) * k, by = y - (2.0 + j * 1.6) * k, o = (((jit ^ j) << 1) - 1) * 0.7 * k;
+        stroke(bx, by - 2 * k, bx + o, by - 1 * k, 0.5 * k, 0.4 * k, PAL[P.GLOW]);
+        stroke(bx + o, by - 1 * k, bx - o, by, 0.5 * k, 0.4 * k, PAL[P.GLOW]);
+        stroke(bx - o, by, bx, by + 1 * k, 0.5 * k, 0.3 * k, PAL[P.GLOW]);
+      }
+    }
+  }
+  function scVein(x, y, k, now) {
+    const s = k * (1 + 0.18 * Math.sin(now * 0.02));
+    for (let pass = 0; pass < 2; pass++) {
+      const c = PAL[pass ? P.CRIT : P.INK], w = pass ? 0.6 * s : 1.3 * s;
+      for (let q = 0; q < 4; q++) {
+        const qa = q * 1.5708 + 0.785, ax = x + Math.cos(qa) * 2.3 * s, ay = y + Math.sin(qa) * 2.3 * s;
+        let px = 0, py = 0;
+        for (let i = 0; i <= 4; i++) {
+          const a = qa + 3.14159 + (i - 2) * 0.42, ex = ax + Math.cos(a) * 1.9 * s, ey = ay + Math.sin(a) * 1.9 * s;
+          if (i) stroke(px, py, ex, ey, w, w, c);
+          px = ex; py = ey;
+        }
+      }
+    }
+  }
+  function scVulture(x, y, dir, k, wing, beat, peck, rim) {
+    const d = dir, X = (u) => x + d * u * k, Y = (v) => y - v * k;
+    const hu = lerp(4.4, 8.2, peck), hv = lerp(14.0, 2.4, peck), lift = lerp(-0.35, 1.25, 0.5 + 0.5 * Math.sin(beat)), ba = -0.45 * d;
+    const wingAt = (su, sv, ang, span, o, g, c) => {
+      const wu = -Math.cos(ang), wv = Math.sin(ang), pu = -Math.sin(ang), pv = -Math.cos(ang), tu = su + wu * span, tv = sv + wv * span;
+      poly([X(su) + o, X(tu) + o, X(tu + pu * 2.6) + o, X(su + pu * 4.6) + o], [Y(sv) + o, Y(tv) + o, Y(tv + pv * 2.6) + o, Y(sv + pv * 4.6) + o], c);
+      for (let f = 0; f < 4; f++) {
+        const fu = tu + pu * (0.3 + f * 0.72), fv = tv + pv * (0.3 + f * 0.72);
+        stroke(X(fu) + o, Y(fv) + o, X(fu + wu * 2.6 - pu * 0.35 * f) + o, Y(fv + wv * 2.6 - pv * 0.35 * f) + o, 0.9 * k + g, 0.4 * k + g, c);
+      }
+    };
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.8, g = pass ? 0 : 1.1, c = PAL[pass ? P.INK : rim];
+      if (wing > 0.02) wingAt(1.4, 11.2, lift + 0.2, 11 * wing, o, g, c);
+      for (let s = 0; s < 2; s++) {
+        const lu = s ? 1.1 : -0.9;
+        stroke(X(lu * 0.7) + o, Y(6.0) + o, X(lu), Y(0.3), 1.2 * k + g, 0.7 * k + g, c);
+        stroke(X(lu) - d * 1.3 * k, Y(0.2), X(lu) + d * 1.9 * k, Y(0.2), 0.7 * k + g, 0.5 * k + g, c);
+      }
+      blob(X(-0.6) + o, Y(8.4) + o, Math.cos(ba), Math.sin(ba), 5.6 * k + g, 3.9 * k + g, 7, c);
+      tri(X(-5.2) + o, Y(7.6) + o, X(-9.6) + o, Y(3.6) + o, X(-5.6) + o, Y(5.0) + o, c);
+      stroke(X(2.0) + o, Y(11.2) + o, X(hu) + o, Y(hv) + o, 1.4 * k + g, 1.0 * k + g, c);
+      disc(X(hu) + o, Y(hv) + o, 1.55 * k + g, c);
+      const pa = -peck * 1.1, bu = Math.cos(pa), bv = Math.sin(pa);
+      tri(X(hu + 0.5) + o, Y(hv + 0.8) + o, X(hu + 0.5) + o, Y(hv - 0.8) + o, X(hu + bu * 3.6) + o, Y(hv + bv * 3.6 - 0.3) + o, c);
+      if (wing > 0.02) wingAt(0.4, 10.6, lift, 11 * wing, o, g, c);
+    }
+    for (let i = 0; i < 10; i++) {               // the ruff, pale
+      const a = i * (TAU / 10) + 0.3, ca = Math.cos(a), sa = Math.sin(a);
+      tri(X(2 + ca), Y(11 + sa), X(2 + ca - sa * 0.9), Y(11 + sa + ca * 0.9), X(2 + ca * 2.7), Y(11 + sa * 2.7), PAL[P.LINE]);
+    }
+    stroke(X(2.6), Y(11.6), X(hu), Y(hv), 1.0 * k, 0.8 * k, PAL[P.INK]);
+    disc(X(hu), Y(hv), 1.1 * k, PAL[P.DIM]);
+    scPx(X(hu + 0.5) | 0, Y(hv + 0.4) | 0, PAL[P.HOT]);
+    if (wing > 0.02) {
+      const tu = 0.4 - Math.cos(lift) * 11 * wing, tv = 10.6 + Math.sin(lift) * 11 * wing;
+      line(X(0.4), Y(10.6) - 1, X(tu), Y(tv) - 1, PAL[rim]);
+    }
+  }
+  function scVultureSoar(x, y, k, tilt, rim) {
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.6, g = pass ? 0 : 0.8, c = PAL[pass ? P.INK : rim];
+      for (let s = 0; s < 2; s++) {
+        const sd = s * 2 - 1, tx = x + sd * 10 * k, ty = y - 1.4 * k - sd * tilt * k;
+        stroke(x + o, y + o, tx + o, ty + o, 3.0 * k + g, 1.8 * k + g, c);
+        for (let f = 0; f < 3; f++) stroke(tx + o, ty + o, tx + sd * 2.4 * k + o, ty + (f - 1) * 0.9 * k + o, 0.6 * k + g, 0.4 * k + g, c);
+      }
+      blob(x + o, y + o, 1, 0, 2.2 * k + g, 1.2 * k + g, 3, c);
+      tri(x - 0.9 * k + o, y + 0.6 * k + o, x + 0.9 * k + o, y + 0.6 * k + o, x + o, y + 3.2 * k + o, c);
+    }
+  }
+  function scCrowFlap(x, y, k, now, dir) {
+    const up = Math.sin(now * 0.03) * 3.5 * k;
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.7, c = PAL[pass ? P.INK : P.RUST];
+      blob(x + o, y + o, 1, 0, 3.0 * k, 1.6 * k, 5, c);
+      stroke(x - 0.8 * k + o, y + o, x - 8 * k + o, y - up + o, 2.2 * k, 0.6 * k, c);
+      stroke(x + 0.8 * k + o, y + o, x + 8 * k + o, y - up + o, 2.2 * k, 0.6 * k, c);
+      disc(x + dir * 3.2 * k + o, y - 0.9 * k + o, 1.4 * k, c);
+      tri(x + dir * 4.2 * k + o, y - 1.4 * k + o, x + dir * 4.2 * k + o, y - 0.4 * k + o, x + dir * 6.4 * k + o, y - 0.9 * k + o, c);
+    }
+  }
+  function scCrowCaw(x, y, dir, k, now, caw) {
+    const open = caw ? ((now / 130) | 0) & 1 : 0, back = 0.7 * open, bob = open * 0.6 * k;
+    const hx = x + dir * (3.4 - back) * k, hy = y - (7.6 + back) * k - bob;
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.8, c = PAL[pass ? P.INK : P.BRICK];
+      line(x - k, y - 2 * k, x - k, y, c); line(x + k, y - 2 * k, x + k, y, c);
+      blob(x + o, y - 4.2 * k - bob + o, 1, 0, 4.2 * k, 2.8 * k, 11, c);
+      tri(x - dir * 3 * k + o, y - 5 * k - bob + o, x - dir * 9 * k + o, y - 2.4 * k + o, x - dir * 3 * k + o, y - 2.2 * k - bob + o, c);
+      disc(hx + o, hy + o, 2.2 * k, c);
+      const bx = hx + dir * 1.6 * k, lift = 1.1 * k * open;
+      tri(bx + o, hy - 0.8 * k + o, bx + o, hy + 0.2 * k + o, bx + dir * 3.4 * k + o, hy - 0.4 * k - lift + o, c);
+      tri(bx + o, hy + 0.2 * k + o, bx + o, hy + 0.9 * k + o, bx + dir * 3.0 * k + o, hy + 0.5 * k + lift + o, c);
+    }
+    scPx((hx + dir * 0.6 * k) | 0, (hy - 0.6 * k) | 0, PAL[P.HOT]);
+  }
+  const shiverX = (t, k) => ((((t / 70) | 0) & 1) * 2 - 1) * k;
+  // THE GROUND. Returns where the sleeper's head is now.
+  function scRoughGround(St, arch, seat, u) {
+    const G = St.gy, k = St.k, cx = St.cx, T = St.y0, t = St.now;
+    const LAND = SCR_LIGHT, HOP = LAND + 200, LOOK = LAND + 550, PECK = LAND + 650, POP = LAND + 800;
+    const UP = LAND + 900, SHOO = LAND + 950, WAIT = LAND + 1300;
+    const dawn = clamp((u - SCR_DAWN) / (SCR_LIGHT - SCR_DAWN), 0, 1);
+    scRoughSet(St, dawn);
+    const rim = P.BRICK + ((dawn * 2) | 0);
+    const F = scFig(cx - 2 * k, G + 1 * k, 1, arch, SCP_LIE, seat, 0, rim, lerp(-0.7, 0.7, dawn), -0.7, k);
+    const [px, py] = scHeadAt(F);
+    scLump(px - 0.4 * k, G + 0.8 * k, 0.25, 2.5 * k, St.seed + 3, rim);
+    const ccx = cx + 4 * k, ccy = T + (G - T) * 0.3, ct = St.live ? t : 2000;
+    for (let i = 0; i < 2; i++) {
+      if (i === 0 && u >= SCR_DAWN) continue;
+      const a = ct * 0.0011 + i * 3.14159;
+      scVultureSoar(ccx + Math.cos(a) * 17 * k, ccy + Math.sin(a) * 4 * k, 0.42 * k, Math.cos(a) * 0.8, rim);
+    }
+    const kv = 0.74 * k, vy0 = G + 1.5 * k;
+    let vx = cx + 24 * k, vy = vy0, vk = kv, wing = 0, beat = 0, peck = 0;
+    if (u >= SCR_DAWN && u < LAND) {
+      const p = (u - SCR_DAWN) / (LAND - SCR_DAWN), a0 = (ct - (u - SCR_DAWN)) * 0.0011;
+      vx = lerp(ccx + Math.cos(a0) * 17 * k, cx + 24 * k, smooth(p));
+      vy = lerp(ccy + Math.sin(a0) * 4 * k, vy0, p * p);
+      vk = lerp(0.38 * k, kv, p);
+      wing = 1; beat = u * 0.018;
+    } else if (u >= LAND && u < HOP) {
+      wing = 1 - (u - LAND) / (HOP - LAND); beat = 1.2;
+    } else if (u >= HOP && u < LOOK) {
+      const p = (u - HOP) / (LOOK - HOP), q = fmodJS(p * 2, 1);
+      vx = lerp(cx + 24 * k, cx + 17.5 * k, (Math.floor(p * 2) + smooth(q)) * 0.5);
+      vy -= Math.sin(q * 3.14159) * 2.4 * k;
+    } else if (u >= LOOK && u < SHOO) {
+      vx = cx + 17.5 * k;
+      if (u < PECK) peck = 0.25;
+      else if (u < PECK + 120) peck = 1;
+      else peck = Math.max(0, 1 - (u - PECK - 120) / 150);
+    } else if (u >= SHOO) {
+      const p = Math.min(1, (u - SHOO) / 220);
+      vx = lerp(cx + 17.5 * k, cx + 25 * k, cubicOut(p));
+      vy -= Math.sin(p * 3.14159) * 3 * k;
+      if (u < WAIT) { wing = 0.75 * (1 - clamp((u - SHOO - 150) / (WAIT - SHOO - 150), 0, 1)); beat = 0.9; }
+    }
+    if (u >= LAND && u < LAND + 700) dustDraw(cx + 24 * k, vy0, u - LAND, 8 * k, St.seed + 7, 700);
+    if (u >= SCR_DAWN) scVulture(vx, vy, -1, vk, wing, beat, peck, rim);
+    if (u >= UP) F.pose = SCP_SIT;
+    else if (u < SCR_LIGHT) F.x += shiverX(t, 0.3 * k);
+    for (let p = 0; p < 3; p++) scFigure(F, p);
+    const [hx, hy] = scHeadAt(F);
+    if (u < SCR_LIGHT) scShiver(F.x - 15 * k, F.x + 14 * k, F.foot, k, t);
+    scNoseBubble(px + 0.6 * k, py - 2.4 * k, k, t, u < POP ? -1 : u - POP);
+    if (u < POP) scZzz(px + 3 * k, py - 6 * k, k, t);
+    if (u >= PECK && u < PECK + 250) scBang('PECK!', vx + 2 * k, vy - 30 * vk, 6 * k, St.seed + 1, k > 1.3 ? 2 : 1);
+    scJolt(St, u, PECK, 0.15);
+    if (u >= POP + 50 && u < UP + 500) scStartle(hx, hy, k, u - POP - 50);
+    if (u >= UP + 100) scSweat(hx, hy, k, u - UP - 100, -1);
+    if (u >= WAIT + 100) scGloom(hx, hy, k, u - WAIT - 100, t);
+    if (u >= SHOO - 30 && u < SHOO + 450) scStartle(vx - 4.4 * vk, vy - 14 * vk, vk * 1.3, u - SHOO + 30);
+    if (u >= WAIT + 150 && k > 1.5) scBalloon("I'LL WAIT.", (vx + 2 * k) | 0, (vy - 19 * vk) | 0, (vx - 3 * vk) | 0, (vy - 16 * vk) | 0);
+    return [hx, hy];
+  }
+  // THE TREE.
+  function scRoughTree(St, arch, seat, u) {
+    const G = St.gy, k = St.k, cx = St.cx, T = St.y0, R = St.x1, t = St.now;
+    const INCOMING = SCR_DAWN + 150, PERCH = SCR_LIGHT - 200, CREAK = SCR_LIGHT - 50, SNAP = SCR_LIGHT + 200;
+    const WHAM = SNAP + 240, BONK = WHAM + 280, STUB = SNAP + 800, kc = 0.8 * k;
+    const dawn = clamp((u - SCR_DAWN) / (SCR_LIGHT - SCR_DAWN), 0, 1);
+    scRoughSet(St, dawn);
+    const rim = P.BRICK + ((dawn * 2) | 0), sc = k > 1.3 ? 2 : 1;
+    if ((u >= SNAP && u < SNAP + 70) || (u >= WHAM && u < WHAM + 70)) scImpactFrame(St, cx, G - 12 * k);
+    const tx = cx - 15 * k, bx0 = tx + 1.4 * k, by0 = G - 24 * k;
+    let sag = (1.4 + 0.7 * Math.sin(t * 0.0042)) * k;
+    if (u >= PERCH) sag += 2.6 * k * cubicOut(Math.min(1, (u - PERCH) / 200));
+    if (u >= CREAK && u < SNAP) sag += (((u / 60) | 0) & 1) * 0.7 * k;
+    const bx1 = cx + 22 * k, by1 = G - 22 * k + sag;
+    const twx = tx + 1.9 * k, twy = G - 31.5 * k, twigOn = u < WHAM + 80;
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.9, g = pass ? 0 : 1.2, c = PAL[pass ? P.INK : rim];
+      stroke(tx + o, G + o, tx + 1.4 * k + o, G - 31 * k + o, 4.8 * k + g, 2.6 * k + g, c);
+      stroke(tx + o, G - 1 * k + o, tx - 5 * k + o, G + 0.6 * k + o, 2.0 * k + g, 0.8 * k + g, c);
+      stroke(tx + o, G - 1 * k + o, tx + 4.5 * k + o, G + 0.8 * k + o, 1.8 * k + g, 0.7 * k + g, c);
+      if (twigOn) stroke(twx + o, twy + o, twx + 5 * k + o, twy - 4 * k + o, 1.3 * k + g, 0.6 * k + g, c);
+    }
+    scTree(tx + 1.4 * k, G - 30 * k, St.seed + 9, 8.5 * k, 2.4 * k, 3, PAL[rim]);
+    disc(tx + 0.4 * k, G - 13 * k, 1.1 * k, PAL[P.SOOT]);
+    const ff = u < SNAP ? 0 : Math.min(1, (u - SNAP) / (WHAM - SNAP)), fall = ff * ff;
+    let ax = bx0, ay = by0, ex = bx1, ey = by1;
+    if (u >= SNAP) {
+      ax = lerp(bx0 + 2.5 * k, bx0 + 4 * k, fall); ay = lerp(by0, G - 0.6 * k, fall);
+      ex = lerp(bx1, bx1 + 2 * k, fall); ey = lerp(by1 + 2 * k, G + 0.6 * k, fall);
+    }
+    const mx = (ax + ex) * 0.5, my = (ay + ey) * 0.5 + (u < SNAP ? sag * 0.5 : 0);
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.8, g = pass ? 0 : 1.1, c = PAL[pass ? P.INK : rim];
+      stroke(ax + o, ay + o, mx + o, my + o, 3.0 * k + g, 2.2 * k + g, c);
+      stroke(mx + o, my + o, ex + o, ey + o, 2.2 * k + g, 1.0 * k + g, c);
+      stroke(mx + 3 * k + o, my - 0.3 * k + o, mx + 6 * k + o, my - 4 * k + o, 0.9 * k + g, 0.5 * k + g, c);
+      if (u >= SNAP) stroke(bx0 + o, by0 + o, bx0 + 2.4 * k + o, by0 + 0.3 * k + o, 3.0 * k + g, 2.6 * k + g, c);
+    }
+    if (u >= SNAP)
+      for (let i = 0; i < 3; i++) line(bx0 + 2.4 * k, by0 - 1.0 * k + i * k, bx0 + 3.6 * k, by0 - 1.4 * k + i * 1.4 * k, PAL[P.GLOW]);
+    const F = scFig(cx + 4 * k, my - 1.2 * k, 1, arch, SCP_LIE, seat, 0, rim, lerp(-0.7, 0.7, dawn), -0.7, k);
+    if (u < SNAP) { F.handU = -3.0; F.handV = -5.0; if (u < SCR_LIGHT) F.x += shiverX(t, 0.25 * k); }
+    else if (u < WHAM) { F.foot = lerp((by0 + by1 + sag) * 0.5 - 1.2 * k, G + 1 * k, fall); F.handU = -4.0; F.handV = 9.0; }
+    else F.foot = G + 1 * k;
+    const [px, py] = scHeadAt(F);
+    if (u >= SNAP && u < WHAM) {
+      scGhost(F, 0, -9 * k * ff, P.DIM);
+      scGhost(F, 0, -4.5 * k * ff, P.LINE);
+      scSpeed(St, F.x - 2 * k, F.foot - 3 * k, 0, 1, 22 * k, 14 * k, 12, P.WHITE);
+    }
+    for (let p = 0; p < 3; p++) scFigure(F, p);
+    const [hx, hy] = scHeadAt(F);
+    if (u >= INCOMING && u < PERCH) {
+      const p = (u - INCOMING) / (PERCH - INCOMING);
+      scCrowFlap(lerp(R + 6 * k, ex - 2 * k, smooth(p)), lerp(T + (G - T) * 0.25, ey - 4 * k, p), kc, t, -1);
+    } else if (u >= PERCH && u < SNAP) {
+      scCrowCaw(ex - 2.5 * k, ey - 0.9 * k, -1, kc, t, false);
+    } else if (u >= SNAP && u < STUB) {
+      const p = (u - SNAP) / (STUB - SNAP);
+      scCrowFlap(lerp(bx1 - 2 * k, bx0 + 2.4 * k, smooth(p)), lerp(by1 - 3 * k, by0 - 1.5 * k, p) - Math.sin(p * 3.14159) * 10 * k, kc, t, -1);
+    } else if (u >= STUB) {
+      const caw = u >= STUB + 150;
+      scCrowCaw(bx0 + 2.2 * k, by0 - 1.4 * k, 1, kc, t, caw);
+      if (caw && (((t / 260) | 0) & 1)) scSay('KAW', bx0 + (4 + (((t / 520) | 0) & 1) * 3) * k, by0 - 12 * k, sc, P.GLOW);
+    }
+    if (!twigOn) {                               // the bit of the crown, onto the head and off it
+      let qx, qy, a;
+      const hgx = px, hgy = G + 1 * k - 3.2 * k;
+      if (u < BONK) {
+        const p = (u - WHAM - 80) / (BONK - WHAM - 80);
+        qx = lerp(twx + 2.5 * k, hgx, p); qy = lerp(twy - 2 * k, hgy - 2.5 * k, p * p); a = -0.7 + p * 5;
+      } else {
+        const p = Math.min(1, (u - BONK) / 260);
+        qx = lerp(hgx, hgx - 7 * k, p); qy = lerp(hgy - 2.5 * k, G + 0.4 * k, p) - Math.sin(p * 3.14159) * 5 * k; a = 4.3 + p * 1.9;
+      }
+      const ca = Math.cos(a) * 3 * k, sa = Math.sin(a) * 3 * k;
+      stroke(qx - ca - 0.8, qy - sa - 0.8, qx + ca - 0.8, qy + sa - 0.8, 1.3 * k + 1.1, 0.6 * k + 1.1, PAL[rim]);
+      stroke(qx - ca, qy - sa, qx + ca, qy + sa, 1.3 * k, 0.6 * k, PAL[P.INK]);
+    }
+    if (u < CREAK) {
+      scNoseBubble(px + 0.6 * k, py - 2.4 * k, k, t, -1);
+      scZzz(px + 3 * k, py - 6 * k, k, t);
+      if ((u >= 600 && u < 1000) || (u >= 1250 && u < 1650)) scSay('creak', bx0 + 2 * k, by0 - 7 * k, 1, P.LINE);
+    } else if (u < SNAP) {
+      scNoseBubble(px + 0.6 * k, py - 2.4 * k, k, t, u - CREAK);
+      for (let i = 0; i < 3; i++) line(bx0 + 1 * k, by0 - 0.5 * k + i * 0.6 * k, bx0 + (2.2 + i * 0.5) * k, by0 - (1.6 - i * 1.2) * k, PAL[P.WHITE]);
+      scSay('crk', bx0 + 3 * k, by0 - 8 * k, sc, P.GLOW);
+      if (u >= CREAK + 60) scStartle(hx, hy, k, u - CREAK - 60);
+      if (u >= CREAK + 120) scSweat(hx, hy, k, u - CREAK - 120, 1);
+    }
+    if (u >= SNAP && u < SNAP + 240) scBang('SNAP!', bx0 + 15 * k, by0 - 23 * k, 8 * k, St.seed, sc);
+    if (u >= WHAM && u < WHAM + 300) scBang('WHAM!', F.x + 15 * k, G - 9 * k, 8 * k, St.seed + 2, sc);
+    if (u >= WHAM) dustDraw(F.x, G + 1 * k, u - WHAM, 14 * k, St.seed + 4, 700);
+    if (u >= BONK && u < BONK + 300) scBang('BONK', hx - 5 * k, hy - 23 * k, 6 * k, St.seed + 3, sc);
+    if (u >= BONK) scDizzy(hx, hy, k, t);
+    scJolt(St, u, SNAP, 0.25); scJolt(St, u, WHAM, 0.5); scJolt(St, u, BONK, 0.2);
+    return [hx, hy];
+  }
+  // The chalk outline, squashed low across the ground; chalk goes on dry.
+  function scChalk(x, g, k, seed) {
+    const CU = [-9.0, -6.5, -5.0, -3.0, -3.6, 2.0, 13.8, 15.6, 5.0, 15.6, 14.0, 2.0, -3.6, -2.6, -4.6, -6.5, -9.0, -11.0, -14.8, -16.2, -14.8, -11.0];
+    const CW = [1.9, 3.0, 8.4, 8.0, 2.8, 3.0, 6.0, 4.4, 0.4, -3.8, -5.6, -3.0, -2.8, -8.2, -8.8, -3.0, -1.9, -3.6, -3.0, 0.0, 3.0, 3.6];
+    const [ou, ov] = curve(CU, CW, 4), m = ou.length, stip0 = stip, seed0 = stipSeed;
+    for (let pass = 0; pass < 2; pass++) {
+      stip = pass ? 150 : 40; stipSeed = seed + pass * 7;
+      const dx = pass * 0.35 * k, dy = pass * 0.25 * k, w = Math.max(1.2, 0.65 * k);
+      for (let i = 0; i < m; i++) {
+        const j = (i + 1) % m;
+        stroke(x + ou[i] * k + dx, g + ov[i] * 0.55 * k + dy, x + ou[j] * k + dx, g + ov[j] * 0.55 * k + dy, w, w, PAL[P.WHITE]);
+      }
+    }
+    stip = stip0; stipSeed = seed0;
+  }
+  function scGraveCross(x, g, k, rim) {
+    const rip = k > 2.4, th = rip ? 10 : 2.4 * k;
+    blob(x, g + 0.2 * k, 1, 0, 4.4 * k, 1.4 * k, 19, PAL[P.TRACK]);
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -0.9, gr = pass ? 0 : 1.2, c = PAL[pass ? P.INK : rim];
+      stroke(x + o, g + o, x + 0.3 * k + o, g - 13 * k + o, 1.6 * k + gr, 1.3 * k + gr, c);
+      stroke(x - 4.2 * k + o, g - 9.7 * k + o, x + 4.4 * k + o, g - 9.3 * k + o, th + gr, th + gr, c);
+    }
+    if (rip) glcd('RIP', (x - 8) | 0, (g - 9.5 * k - 3) | 0, 1, PAL[P.GLOW]);
+  }
+  function scToeTag(x, y, k, now) {
+    const tx = x + 1.6 * k + Math.sin(now * 0.003) * 0.5 * k, ty = y + 2.2 * k;
+    line(x, y, tx, ty, PAL[P.GLOW]);
+    const x0 = tx | 0, y0 = ty | 0, x1 = ((tx + 2.8 * k) | 0) + 1, y1 = ((ty + 1.7 * k) | 0) + 1;
+    rect(x0 - 1, y0 - 1, x1 + 1, y1 + 1, PAL[P.INK]);
+    rect(x0, y0, x1, y1, PAL[P.GLOW]);
+    if (k > 1.6) line(x0 + 2, (y0 + y1) >> 1, x1 - 2, ((y0 + y1) >> 1) - 1, PAL[P.INK]);
+  }
+  function scWiltFlower(x, y, k, flat) {
+    const hx = flat ? x + 5 * k : x + 2.2 * k, hy = flat ? y - 0.5 * k : y - 3.4 * k;
+    if (flat) stroke(x, y, hx, hy, 0.7 * k, 0.5 * k, PAL[P.RUST]);
+    else { stroke(x, y, x + 0.5 * k, y - 4.2 * k, 0.7 * k, 0.5 * k, PAL[P.RUST]); stroke(x + 0.5 * k, y - 4.2 * k, hx, hy, 0.5 * k, 0.4 * k, PAL[P.RUST]); }
+    for (let i = 0; i < 4; i++) { const a = i * 1.5708 + 0.4; disc(hx + Math.cos(a) * 0.9 * k, hy + Math.sin(a) * 0.9 * k, 0.75 * k, PAL[P.HOT]); }
+    disc(hx, hy, 0.5 * k, PAL[P.INK]);
+  }
+  function scTape(St, y, k, now) {
+    const words = k > 2.4, th = words ? 10 : 2.2 * k, half = (St.x1 - St.x0) * 0.5, mid = St.x0 + half;
+    const at = (x) => { const q = (x - mid) / half; return y + 2.2 * k * (1 - q * q) + Math.sin(now * 0.004 + x * 0.05) * 0.4 * k; };
+    for (let x = St.x0; x < St.x1; x += 2) {
+      const yc = at(x + 1);
+      rect(x, ((yc - th * 0.5) | 0) - 1, x + 2, ((yc + th * 0.5) | 0) + 1, PAL[P.INK]);
+      rect(x, (yc - th * 0.5) | 0, x + 2, (yc + th * 0.5) | 0, PAL[P.HOT]);
+    }
+    const TXT = 'DO NOT CROSS  ';
+    for (let x = St.x0 + 2, i = 0; x < St.x1 - 4; x += words ? 6 : ((4 * k) | 0), i++) {
+      const yc = at(x + 2.5);
+      if (words) glcd(TXT[i % 14], x, (yc - 3.5) | 0, 1, PAL[P.INK]);
+      else if (i & 1) rect(x, (yc - th * 0.5) | 0, x + ((1.6 * k) | 0), (yc + th * 0.5) | 0, PAL[P.INK]);
+    }
+  }
+  // THE CHALK.
+  function scRoughChalk(St, arch, seat, u) {
+    const G = St.gy, k = St.k, cx = St.cx, t = St.now;
+    const BLINK = SCR_LIGHT + 300, JOLT = BLINK + 150, SIT = BLINK + 260, READ = BLINK + 500, CHEAP = BLINK + 950;
+    const morning = u >= SCR_DAWN;
+    scRoughSet(St, morning ? 1 : 0);
+    if (morning && u < SCR_DAWN + 70) scImpactFrame(St, cx, G - 8 * k);
+    const rim = morning ? P.HDR : P.BRICK;
+    const F = scFig(cx + 3 * k, G + 2 * k, 1, arch, SCP_LIE, seat, 0, rim, morning ? 0.7 : -0.7, -0.7, k);
+    const [px, py] = scHeadAt(F);
+    if (morning) { scChalk(F.x, F.foot, k, St.seed); scGraveCross(F.x - 21 * k, G, k, rim); }
+    if (u >= SIT) F.pose = SCP_SIT;
+    else if (!morning) F.x += shiverX(t, 0.3 * k);
+    if (u >= READ) F.look = -0.6;
+    for (let p = 0; p < 3; p++) scFigure(F, p);
+    const [hx, hy] = scHeadAt(F);
+    if (morning) {
+      const sat = u >= SIT;
+      scToeTag(F.x + (sat ? 11.3 : 12.4) * k, F.foot - (sat ? 1.6 : 4.4) * k, k, t);
+      if (sat) scWiltFlower(F.x - 6 * k, G + 2.4 * k, k, true);
+      else scWiltFlower(F.x - 5 * k, F.foot - 5.2 * k, k, false);
+    } else {
+      scShiver(F.x - 15 * k, F.x + 14 * k, F.foot, k, t);
+      scZzz(px + 3 * k, py - 6 * k, k, t);
+      for (let i = 0; i < 4; i++) scKira(F.x + (-10 + i * 7) * k, F.foot - (3 + (i & 1) * 2) * k, 1.6 * k, t, i);
+    }
+    scNoseBubble(px + 0.6 * k, py - 2.4 * k, k, t, u < BLINK ? -1 : u - BLINK);
+    if (u >= BLINK && u < SIT) disc(px + 0.7 * k, py - 1.4 * k, Math.max(0.8, 0.6 * k), PAL[P.WHITE]);
+    if (u >= JOLT && u < JOLT + 600) scStartle(hx, hy, k, u - JOLT);
+    scJolt(St, u, JOLT, 0.15);
+    if (u >= READ + 150) scSweat(hx, hy, k, u - READ - 150, -1);
+    if (u >= CHEAP && k > 1.5) scBalloon('NOT DEAD. JUST CHEAP.', (hx - 10 * k) | 0, (hy - 8 * k) | 0, (hx - 1 * k) | 0, (hy - 4 * k) | 0);
+    if (morning) scTape(St, G + 5.5 * k, k, t);
+    return [hx, hy];
+  }
+
+  // -- the cartoon round them (ui-scenes.hpp section 12b) --
+  function scPointer(ox, oy, tx, ty, k, rim) {
+    const dx = tx - ox, dy = ty - oy, L = Math.max(1, Math.sqrt(dx * dx + dy * dy)), ux = dx / L, uy = dy / L;
+    const up = ux >= 0 ? 1 : -1, nx = uy * up, ny = -ux * up, fist = 3.2 * k, fing = 6.5 * k;
+    const fx = tx - ux * (fing + fist * 0.6), fy = ty - uy * (fing + fist * 0.6), wx = fx - ux * fist * 1.3, wy = fy - uy * fist * 1.3;
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass ? 0 : -1, g = pass ? 0 : 1.4, c = PAL[pass ? P.INK : rim];
+      stroke(ox + o, oy + o, wx + o, wy + o, 6.4 * k + g, 5.2 * k + g, c);
+      stroke(wx - ux * 1.6 * k + o, wy - uy * 1.6 * k + o, wx + o, wy + o, 6.8 * k + g, 6.8 * k + g, c);
+      blob(fx + o, fy + o, ux, uy, fist + g, fist * 0.82 + g, 41, c);
+      for (let i = 0; i < 3; i++)
+        disc(fx + ux * (i - 0.6) * 1.2 * k - nx * fist * 0.75 + o, fy + uy * (i - 0.6) * 1.2 * k - ny * fist * 0.75 + o, 1.15 * k + g * 0.6, c);
+      stroke(fx + ux * fist * 0.5 + o, fy + uy * fist * 0.5 + o, tx + o, ty + o, 1.9 * k + g, 1.5 * k + g, c);
+      disc(tx + o, ty + o, 0.75 * k + g * 0.5, c);
+      stroke(fx + nx * fist * 0.6 + o, fy + ny * fist * 0.6 + o, fx + ux * 2 * k + nx * fist * 1.05 + o, fy + uy * 2 * k + ny * fist * 1.05 + o,
+             1.6 * k + g, 1.2 * k + g, c);
+    }
+    const cx0 = wx - ux * 0.8 * k, cy0 = wy - uy * 0.8 * k;
+    line(cx0 + nx * 3.2 * k, cy0 + ny * 3.2 * k, cx0 - nx * 3.2 * k, cy0 - ny * 3.2 * k, PAL[rim]);
+    scPx((tx + nx * 0.4 * k) | 0, (ty + ny * 0.4 * k) | 0, PAL[P.GLOW]);
+  }
+  function scIris(cx, cy, r) {
+    const ink = PAL[P.INK];
+    for (let y = 0; y < H; y++) {
+      const dy = y + 0.5 - cy, h = r * r - dy * dy;
+      if (h <= 0) { span(y, 0, W, ink); continue; }
+      const w = Math.sqrt(h);
+      span(y, 0, Math.ceil(cx - w - 0.5), ink);
+      span(y, Math.ceil(cx + w - 0.5), W, ink);
+    }
+    if (r > 3 && r < 400) {
+      const n = Math.min(900, (r * 3) | 0);
+      for (let i = 0; i < n; i++) { const a = i * TAU / n; put((cx + Math.cos(a) * (r - 0.5)) | 0, (cy + Math.sin(a) * (r - 0.5)) | 0, PAL[P.RUST]); }
+    }
+  }
+  function scReview(l1, l2, cx, cy, rot, scl, seed) {
+    const n = Math.max(l1.length, l2.length), cw = n * 11 + 30, ch = 84, c = Math.cos(rot), s = Math.sin(rot);
+    const at = (u, v) => [cx + (u * c - v * s) * scl, cy + (u * s + v * c) * scl];
+    const CU = [-1, 1, 1, -1], CV = [-1, -1, 1, 1];
+    for (let pass = 0; pass < 3; pass++) {
+      const m = pass === 2 ? 0 : 3, off = pass === 0 ? 5 : 0, qx = [], qy = [];
+      for (let i = 0; i < 4; i++) { const q = at(CU[i] * (cw * 0.5 + m), CV[i] * (ch * 0.5 + m)); qx.push(q[0] + off); qy.push(q[1] + off); }
+      poly(qx, qy, PAL[pass === 2 ? P.GLOW : P.INK]);
+    }
+    const sp = at(0, -12);
+    stampDraw(l1, l2, sp[0], sp[1], rot, scl, seed, true);
+    for (let i = 0; i < 5; i++) {
+      const q = at((i - 2) * 16, 27);
+      scStar(q[0], q[1], 6.5 * scl, PAL[P.INK]);
+      scStar(q[0], q[1], 3.6 * scl, PAL[P.GLOW]);
+    }
+  }
+  const RB = { IN: 380, STAMP: SCR_MOCK + 450, CAP: SCR_MOCK + 700, OUT: 6200, HOLD: 6600, SHUT: 6720 };
+  const ROUGH_OPEN = ['NIGHT. NO ROOF.|THE GROUND IT IS, THEN.', 'NIGHT. NO ROOF.|UP A TREE. WHAT COULD|POSSIBLY GO WRONG.',
+                      'NIGHT. NO ROOF.|FLAT OUT IN THE OPEN.|NOT A MUSCLE MOVES.'];
+  const ROUGH_REVIEW = [['DIRT MOTEL', 'ZERO STARS'], ['BRANCH OFFICE', 'CLOSED'], ['FUNERAL', 'POSTPONED']];
+  let Rough = null;
+  function roughBegin(C, q) {
+    const arg = q.arg | 0, seat = (arg >> 8) & 15;
+    Rough = { v: (arg & 15) % 3, arch: ((arg >> 4) & 15) % 6, seat: seat < SC_SEATS ? seat : 255, seed: hash((C.seed ^ 0x5EE9) >>> 0), stamped: false };
+  }
+  // The TV is landscape: the stage is the whole overlay, scaled off its height
+  // as the LCD's is off its 320, and the cartoon's pieces are laid out across
+  // the width -- the laugh over the left, the review over the right.
+  function roughFrame(C, t, now, shx, shy) {
+    const Rg = Rough;
+    if (!Rg) return;
+    if (t >= RB.SHUT) { rect(0, 0, W, H, PAL[P.INK]); return; }
+    const v = Rg.v, k = 2.9 * H / 320, u = Math.min(t, SCR_CYC - 1);
+    const St = { x0: 0, y0: 0, x1: W, y1: H, k, gy: Math.round(H * 0.706 + shy), cx: W * 0.5 + shx, tone: 2, rim: P.HDR,
+                 seed: Rg.seed, now, live: true, night: false, t0: C.t0 };
+    scFigT = now;
+    const art = v === 1 ? scRoughTree : (v === 2 ? scRoughChalk : scRoughGround);
+    const [hx, hy] = art(St, Rg.arch, Rg.seat, u);
+    if (t >= 150 && t < SCR_DAWN + (v === 2 ? 0 : 500)) scNarration(ROUGH_OPEN[v], 8, 8, (t - 150) * 2);
+    if (v === 2 && t >= SCR_DAWN + 60 && t < SCR_DAWN + 1500) scNarration('THE NEXT MORNING...', 8, 8, (t - SCR_DAWN - 60) * 2);
+    if (t >= SCR_MOCK) {
+      const m = t - SCR_MOCK, hk = k / 2.9;
+      // In off whichever side the story left empty: on a wide screen an arm
+      // crosses the whole of it, and must not cross the bird or the balloon.
+      const ORG = v === 0 ? [[-40, hy + 6 * hk], [-40, hy - 120 * hk], [hx + 40 * hk, H + 30]]
+                : v === 1 ? [[W + 40, hy - 10 * hk], [W + 40, hy - 100 * hk], [hx + 30 * hk, H + 30]]
+                :           [[W + 40, hy + 20 * hk], [W + 40, hy - 40 * hk], [hx + 40 * hk, H + 30]];
+      for (let i = 0; i < 3; i++) {
+        const a = clamp((m - i * 110) / 220, 0, 1);
+        if (a <= 0) continue;
+        const ox = ORG[i][0], oy = ORG[i][1], ddx = hx - ox, ddy = hy - oy, L = Math.sqrt(ddx * ddx + ddy * ddy), ux = ddx / L, uy = ddy / L;
+        const jab = 5 * hk * Math.max(0, Math.sin(m * 0.028 + i * 2.1));
+        const reach = (L - (26 + 6 * i) * hk) * backOut(a) + jab, tx = ox + ux * reach, ty = oy + uy * reach;
+        scPointer(ox - ux * 60, oy - uy * 60, tx, ty, 3.0 * hk, P.HDR);
+        if (a >= 1) scSay(i === 1 ? 'HA!' : 'HA', tx - ux * 44 * hk - 10, ty - uy * 44 * hk - 26 * hk - ((((t / 110) | 0) + i) & 1) * 2, 2, P.GLOW);
+      }
+      if (t >= SCR_MOCK + 300) scVein(hx + 4.5 * k, hy - 4.2 * k, k * 0.9, now);
+      if (C.word) wordSlam(C, C.word, t - SCR_MOCK - 80, W * 0.34 + shx, 34 * hk + shy + Math.sin(m * 0.025) * 3, -0.07, 55, (t / 80) | 0);
+    }
+    if (t >= RB.STAMP) {
+      const p = clamp((t - RB.STAMP) / 110, 0, 1);
+      if (p >= 1 && !Rg.stamped) { Rg.stamped = true; impact(0.35); }
+      scReview(ROUGH_REVIEW[v][0], ROUGH_REVIEW[v][1], W * 0.76 + shx, H * 0.27 + shy, -0.12, lerp(2.4, 1.0, cubicIn(p)), Rg.seed);
+    }
+    if (C.cap.length && t >= RB.CAP) {
+      const p = clamp((t - RB.CAP) / 150, 0, 1), bw = C.capW + 14, bh = C.cap.length * 16 + 8;
+      const x = (8 + shx) | 0, y = (H - 10 - bh + shy + (1 - backOut(p)) * 24) | 0;
+      rect(x + 3, y + 3, x + bw + 3, y + bh + 3, PAL[P.INK]); rect(x, y, x + bw, y + bh, PAL[P.INK]);
+      rect(x + 1, y + 1, x + bw - 1, y + 2, PAL[P.EMBER]); rect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, PAL[P.EMBER]);
+      C.cap.forEach((l, i) => f2(l, x + 7, y + 4 + i * 16, PAL[P.OK]));
+    }
+    const far = Math.hypot(W, H);
+    if (t < RB.IN) scIris(hx, hy, 2 + far * cubicOut(t / RB.IN));
+    else if (t >= RB.OUT && t < RB.HOLD) scIris(hx, hy, lerp(far, 30 * k / 2.9, smooth((t - RB.OUT) / (RB.HOLD - RB.OUT))));
+    else if (t >= RB.HOLD) scIris(hx, hy, t < RB.HOLD + 120 ? 30 * k / 2.9 : lerp(30 * k / 2.9, 0, (t - RB.HOLD - 120) / (RB.SHUT - RB.HOLD - 120)));
+  }
+
   // ── 14. Madness (section 14 of ui-fx.hpp) ───────────────────────
   const WHISPER = [
     ['KEEP WALKING', 'WE SEE YOU', 'STAY'],
@@ -3228,6 +4527,12 @@
     BELOW: ['goes down into the dark.', 'climbs down. Something below moves.', 'drops through the hatch, into the dark.'],
     TRIPWIRE: ['puts a foot down and hears it click.', 'finds the wire the hard way.', 'steps on something that was waiting.'],
     BEARTRAP: ['is caught and held while it bites.', 'sets it off, and it does what it was built for.', 'gets out of it. Most of them does.'],
+    GHOUL: ['feels a cold hand settle on their pack.', 'has a dead survivor riding on their back.'],
+    ROUGH: [['slept on the bare ground. The vultures took notes.', 'spent the night in the dirt. The dirt won.',
+             'slept rough and woke up being measured by a vulture.'],
+            ['slept in a tree. Briefly.', 'tried sleeping up a tree. The tree said no.', 'slept in a tree and came down the fast way.'],
+            ['slept so rough that somebody drew the chalk outline.', 'slept out in the open and woke to their own funeral.',
+             'slept on the ground. The locals held a small service.']],
   };
   const WX_PROSE = ['The sky clears. Small mercy, and brief.', 'Rain comes in thin and cold.', 'A storm walks in off the flats.',
                     'The rain turns wrong. Chem burn.', 'Strangle fog settles in the low ground.', "Fog closes the world to arm's length."];
@@ -3326,6 +4631,45 @@
       else cue('CRAWL', p.name || '', '');
     }
   }
+  // Without the ring, /state's `ghosts` ([slot,q,r,haunt,state,hoard,src,name],
+  // ghosts.hpp) says who each one rides: one that was drifting last poll and
+  // rides somebody now has just taken hold of them -- the jump scare. Keyed by
+  // slot and name, so a new ghost in an old slot starts from what it is.
+  const ghostSeen = new Map();
+  function fromGhosts(raw) {
+    const live = new Set();
+    for (const g of (raw && Array.isArray(raw.ghosts) ? raw.ghosts : [])) {
+      if (!Array.isArray(g)) continue;
+      const key = g[0] + ':' + g[7], haunt = g[3] | 0, was = ghostSeen.get(key);
+      live.add(key);
+      ghostSeen.set(key, haunt);
+      if (was === undefined || was >= 0 || haunt < 0) continue;
+      const p = ((raw && raw.players) || []).find((x) => x.pid === haunt);
+      cue('GHOUL', p ? p.name || '' : '', say(LINES.GHOUL));
+    }
+    for (const key of ghostSeen.keys()) if (!live.has(key)) ghostSeen.delete(key);
+  }
+  // Without the ring, /state's `view` is the one survivor the camera is on:
+  // at dawn they slept rough if their own hex had no shelter and less cover
+  // than SV 2 -- survival_state.hpp's exposure test, less the Bear Skin Cape
+  // the observer cannot see. Up a tree in the Rust Forest, else the vulture
+  // and the chalk turn about. Held ROUGH_CUE_MS behind the dawn's card, as
+  // the board holds it (network-events.hpp): queued beside DAWN it would be
+  // dropped when the card was picked.
+  let roughTurn = 0;
+  function fromRough(events, raw) {
+    if (!events.some((e) => e.kind === 'DAWN')) return;
+    const view = raw && raw.view, c = view && (view.cells || []).find((x) => x.dq === 0 && x.dr === 0);
+    const p = c && ((raw && raw.players) || []).find((x) => x.pid === view.pid);
+    if (!p || !p.conn || (p.ll | 0) === 0 || (p.dp | 0) || (p.arch | 0) === 5) return;
+    const terr = (typeof TERRAIN !== 'undefined' && TERRAIN[c.terrain]) || null;
+    if ((c.shelter | 0) > 0 || (terr && (terr.sv | 0) >= 2)) return;
+    // A forest oasis is cover too (docs/forest-oasis.md): nobody sleeps rough there.
+    if (c.terrain === 2 && (c.variant | 0) >= 8 && (c.variant | 0) <= 12) return;
+    const v = c.terrain === 2 ? 1 : ((roughTurn++ & 1) ? 2 : 0), arg = v | (((p.arch | 0) % 6) << 4) | ((p.pid & 15) << 8);
+    const name = p.name || '', cap = say(LINES.ROUGH[v]);
+    setTimeout(() => cue('ROUGH', name, cap, '', arg), 1500);
+  }
   // The observer's own reading of the board's dread, the inputs publishDread()
   // uses, from what /state shows. The Doom only if the board says (`doom`).
   function dreadFrom(snap, raw) {
@@ -3347,7 +4691,7 @@
   // Called by observer.js handle() once per poll, after the roster has had its say.
   function onPoll(events, snap, raw) {
     if (FX.level === 0 || !mount()) return;
-    if (!fromRing(raw && raw.fx, snap)) { fromTrap(raw); fromEvents(events, snap); fromDepth(raw); }
+    if (!fromRing(raw && raw.fx, snap)) { fromTrap(raw); fromEvents(events, snap); fromDepth(raw); fromGhosts(raw); fromRough(events, raw); }
     setDread(dreadFrom(snap, raw));
     FX.takeover = !!(D.getElementById('takeover') && root.getComputedStyle(D.getElementById('takeover')).display !== 'none');
     kick();
@@ -3369,6 +4713,10 @@
     ['BELOW', 'Mox', 'goes down into the dark.'], ['CRAWL', 'Vera', ''],
     ['CRAFTED', 'Quartermaster1', 'Sock Puppet Bandage', '', 2],
     ['TRIPWIRE', 'Mox', 'puts a foot down and hears it click.'], ['BEARTRAP', 'Vera', 'is caught and held while it bites.'],
+    ['GHOUL', 'Mox', 'has a dead survivor riding on their back.'],
+    ['ROUGH', 'Mox', 'slept on the bare ground. The vultures took notes.', '', 0 | (3 << 4) | (2 << 8)],
+    ['ROUGH', 'Vera', 'slept in a tree. Briefly.', '', 1 | (0 << 4) | (0 << 8)],
+    ['ROUGH', 'Kell', 'slept out in the open and woke to their own funeral.', '', 2 | (4 << 4) | (4 << 8)],
   ];
   function reel(i) {
     if (!mount()) { setTimeout(() => reel(i), 500); return; }

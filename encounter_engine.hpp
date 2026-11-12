@@ -45,10 +45,14 @@ static const char* jsSkip(const char* p) {
       if (!p) return nullptr;
     }
   }
-  // number / true / false / null
+  // number / true / false / null. An empty one is malformed: a stray closing
+  // bracket of the wrong kind ("[1, 2}") stops here without moving, and the
+  // object/array loop above -- and jsonArrLen's -- would spin on it forever,
+  // on async_tcp with G.mutex held.
+  const char* s = p;
   while (*p && *p != ',' && *p != '}' && *p != ']' && *p != ' ' &&
          *p != '\t' && *p != '\r' && *p != '\n') p++;
-  return p;
+  return p == s ? nullptr : p;
 }
 
 // obj points at '{'.  Returns pointer to the value of `key` at this object's
@@ -141,9 +145,20 @@ static bool jsonCopyStr(const char* v, char* out, int cap) {
 }
 
 // ── Encounter file access ────────────────────────────────────────────────────
-// One PSRAM buffer, reused for every load.  Encounter files are ~2–7 KB.
+// One PSRAM buffer, reused for every load.  Encounter files are ~2–12 KB.
 static constexpr size_t ENC_FILE_CAP = 16384;
 static char* encFileBuf = nullptr;
+
+// Taken at boot (setupWiFiAndServer), before PSRAM fragments: taken lazily at
+// the first scene, late in a session, it could find no 16 KB PSRAM block and
+// sit on the internal heap for good. encLoadFile() still calls it, for a boot
+// that loads a scene before the server is up.
+static void encAllocFileBuf() {
+  if (encFileBuf) return;
+  encFileBuf = (char*)ps_malloc(ENC_FILE_CAP);
+  if (!encFileBuf) encFileBuf = (char*)malloc(ENC_FILE_CAP);
+  if (!encFileBuf) Log.error("encLoadFile: buffer alloc FAIL");
+}
 
 // Load /data/encounters/<biome>/<id>.json into encFileBuf.  Returns the buffer
 // (NUL-terminated) or nullptr.  Caller holds G.mutex, which guards encFileBuf.
@@ -154,27 +169,121 @@ static char* encFileBuf = nullptr;
 // refuse anything >= 10, which quietly made the bunker tunnel pool (14)
 // unloadable even once index.json defined it -- any pool index.json actually
 // filled in is legal now.
+//
+// Every roll re-reads its scene's file (encRunChoice), so the buffer remembers
+// which file it holds: with one survivor in a scene that is the same file
+// every time, and the card is not touched again. A file that will not open,
+// or comes back short, is asked for again before giving up -- an intermittent
+// SD open failure used to refuse the scene ("The way in is blocked") or the
+// choice ("That choice is not open to you") outright.
+static uint8_t       encFilePool = 0xFF, encFileIdx = 0;   // what encFileBuf holds (0xFF: nothing)
+static volatile bool encFileStale = false;                 // /upload wrote something: re-read
+
+// /upload (game-server.hpp) calls this once a file has landed: the copy in
+// encFileBuf may be the one it just replaced.
+static void encFileCacheDrop() { encFileStale = true; }
+
 static const char* encLoadFile(uint8_t pool, uint8_t idx) {
   if (pool >= ENC_POOL_COUNT || idx == 0) return nullptr;
   if (encPools[pool].count == 0 || !encPools[pool].path[0]) return nullptr;
-  if (!encFileBuf) {
-    encFileBuf = (char*)ps_malloc(ENC_FILE_CAP);
-    if (!encFileBuf) encFileBuf = (char*)malloc(ENC_FILE_CAP);
-    if (!encFileBuf) { Log.error("encLoadFile: buffer alloc FAIL"); return nullptr; }
-  }
+  encAllocFileBuf();
+  if (!encFileBuf) return nullptr;
+  if (encFileStale) { encFileStale = false; encFilePool = 0xFF; }
+  if (pool == encFilePool && idx == encFileIdx) return encFileBuf;
+  encFilePool = 0xFF;   // the buffer is about to be overwritten
   char path[56];
   snprintf(path, sizeof(path), "/data/encounters/%s/%d.json", encPools[pool].path, (int)idx);
-  File f = SD.open(path, FILE_READ);
-  if (!f) { Log.error("encLoadFile: SD OPEN FAIL %s", path); return nullptr; }
-  size_t sz = f.size();
-  if (sz >= ENC_FILE_CAP) {
-    Log.error("encLoadFile: %s too large (%u B)", path, (unsigned)sz);
-    f.close(); return nullptr;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (attempt) vTaskDelay(pdMS_TO_TICKS(4));
+    File f = SD.open(path, FILE_READ);
+    if (!f) {
+      Log.error("encLoadFile: SD OPEN FAIL %s (try %d)", path, attempt + 1);
+      // Not there at all: asking again will not put it there.
+      if (!SD.exists(path)) return nullptr;
+      continue;
+    }
+    size_t sz = f.size();
+    if (sz == 0 || sz >= ENC_FILE_CAP) {
+      Log.error("encLoadFile: %s bad size (%u B)", path, (unsigned)sz);
+      f.close(); return nullptr;
+    }
+    size_t got = f.read((uint8_t*)encFileBuf, sz);
+    f.close();
+    encFileBuf[got] = 0;
+    if (got != sz) { Log.error("encLoadFile: %s short read %u/%u (try %d)", path, (unsigned)got, (unsigned)sz, attempt + 1); continue; }
+    encFilePool = pool; encFileIdx = idx;
+    return encFileBuf;
   }
-  size_t got = f.read((uint8_t*)encFileBuf, sz);
-  f.close();
-  encFileBuf[got] = 0;
-  return encFileBuf;
+  return nullptr;
+}
+
+// A surface POI is a file id in the pool of the terrain its hex had at
+// worldgen (hex-map.hpp Phase 5, one hex per file). The terrain can change
+// under it at runtime and none of those paths touch poi: a burnout turns
+// Scrub, Forest, Marsh, Urban, Ridge and Settlement into Ash Dunes (8 files),
+// a flood turns Scrub/Ridge into Marsh and Marsh into Flooded, a founding
+// makes a Settlement, a quake unmakes one. An Urban 17 that burned then asked
+// for dunes/17.json, which does not exist -- "The way in is blocked", and the
+// POI stayed on the map to refuse every visit. Fold the id into the pool the
+// hex is in now: the scene matches the ground the survivor is standing on.
+static uint8_t encPoolId(uint8_t pool, uint8_t idx) {
+  const uint8_t n = pool < ENC_POOL_COUNT ? encPools[pool].count : 0;
+  if (!n || idx <= n) return idx;
+  return (uint8_t)((idx - 1) % n + 1);
+}
+
+// Open a scene for a surface or tunnel POI: file `want` of `pool`, and if that
+// one will not load (missing off this card, a sync that lagged index.json,
+// a card that keeps failing it), the next one in the pool that does. A POI is
+// "a place worth going into", not a promise of one file: any scene of the
+// ground it stands on keeps the place open, where refusing it left the POI on
+// the map to refuse every visit. *outIdx is the file that loaded, which the
+// scene keeps (enc.encIdx) so its choices and the client read the same one.
+static const char* encOpenPoolFile(uint8_t pool, uint8_t want, uint8_t* outIdx) {
+  const uint8_t n = pool < ENC_POOL_COUNT ? encPools[pool].count : 0;
+  if (!n) return nullptr;
+  if (want < 1 || want > n) want = 1;
+  for (uint8_t k = 0; k < n; k++) {
+    const uint8_t idx = (uint8_t)((want - 1 + k) % n + 1);
+    const char* json = encLoadFile(pool, idx);
+    if (json) {
+      if (k) Log.warning("encOpenPoolFile: %s/%d would not load, opened %d", encPools[pool].path, (int)want, (int)idx);
+      *outIdx = idx;
+      return json;
+    }
+  }
+  return nullptr;
+}
+
+// The enc_path that tells pid's client which file its scene is. Every kind
+// of scene sends it (enc_start, and a step that opened a trap, a Kane chapter,
+// a VACANCY part, a clinic room or Bonney's fire). `resume`: the scene is
+// already under way -- the client lost it (its enc_path dropped, its /enc
+// fetch hung) and asked again -- so it also says where it is and what is on
+// the tray: "rs":1, "node", "pl" (tokens), "pi" ([item, qty] pairs), "pr"
+// (recipe bits), "as" (allies behind the next roll). Returns the length, 0
+// when pid is in no scene. Caller holds G.mutex.
+static int encPathJson(int pid, char* buf, int cap, bool resume) {
+  const ActiveEncounter& e = encounters[pid];
+  if (!(e.active & 1) || e.terrain >= ENC_POOL_COUNT) { if (cap) buf[0] = 0; return 0; }
+  int n = appendFmt(buf, cap, 0, "{\"t\":\"enc_path\",\"biome\":\"%s\",\"id\":%d",
+                    encPools[e.terrain].path, (int)e.encIdx);
+  if      (e.trap)   n = appendFmt(buf, cap, n, ",\"trap\":1");
+  else if (e.kane)   n = appendFmt(buf, cap, n, ",\"kane\":%d", (int)e.kane);
+  else if (e.vac)    n = appendFmt(buf, cap, n, ",\"vac\":%d", (int)e.vac);
+  else if (e.lab)    n = appendFmt(buf, cap, n, ",\"lab\":%d", (int)e.lab);
+  else if (e.bonney) n = appendFmt(buf, cap, n, ",\"bonney\":%d,\"apple\":%d,\"own\":%d", (int)e.bonney,
+                                   (int)e.bonApple, (e.bonApple && e.bonFrom == pid) ? 1 : 0);
+  if (resume) {
+    n = appendFmt(buf, cap, n, ",\"rs\":1,\"node\":\"%s\",\"tm\":%d,\"pl\":[%d,%d,%d,%d,%d],\"pi\":[",
+                  e.nodeKey, (e.active & (1 << 7)) ? 1 : 0, e.pendingLoot[0], e.pendingLoot[1],
+                  e.pendingLoot[2], e.pendingLoot[3], e.pendingLoot[4]);
+    for (int j = 0; j < e.pendingItemCount && j < ENC_MAX_ITEMS; j++)
+      n = appendFmt(buf, cap, n, j ? ",[%d,%d]" : "[%d,%d]", (int)e.pendingItemType[j], (int)e.pendingItemQty[j]);
+    n = appendFmt(buf, cap, n, "],\"pr\":%lu,\"as\":%d", (unsigned long)e.pendingRecipes,
+                  (int)__builtin_popcount(e.assistMask));
+  }
+  return appendFmt(buf, cap, n, "}");
 }
 
 // nodes[key] for the loaded file.
@@ -187,7 +296,10 @@ struct EncChoice {
   int      baseRisk;
   uint8_t  skill;
   uint8_t  reqItem;                       // "requires_item": open only to a survivor who has it (0 = anyone)
+  bool     spendItem;                     // "spends_item": true -- a success hands one reqItem over (a trade)
   int      costLL, costRad, costFood, costWat, costScrap, costMed;
+  int      costScore;                     // cost "score": points (the score) spent -- RUNAWAY SCIENCE's currency
+  bool     sure;                          // "sure": true -- a price paid, not a gamble: never rolled, always through
   char     nextKey[ENC_KEY_LEN];
   bool     nextCanBank;
   bool     nextTerminal;
@@ -201,6 +313,8 @@ struct EncChoice {
   uint8_t  hazRes[5];                     // resources taken on failure (amounts)
   uint8_t  hazWMin, hazWMaj;
   bool     hazEnds;
+  bool     hazDsh;                        // hazard carries "dshingus": true -- the failure gives it (dshingus.hpp)
+  bool     hazSteal;                      // hazard penalty "steal": 1 -- Pinch lifts one thing (bonney.hpp)
 };
 
 // Resolve choice `ci` of node `nodeKey` in the loaded file.  Returns false if
@@ -218,6 +332,10 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
   // playerHasForChoice() (inventory_items.hpp) -- worn for equipment, in the
   // pack for anything else (docs/null-meridian-group.md).
   out.reqItem  = (uint8_t)constrain(jsonNum(jsonObjGet(ch, "requires_item"), 0), 0, 255);
+  // ...unless the choice also says "spends_item": true. Then it is a trade:
+  // a successful roll takes one of it out of the pack (spendItemForChoice).
+  // A failed roll keeps it. Never on equipment, which the gate wants worn.
+  out.spendItem = out.reqItem && jsonBool(jsonObjGet(ch, "spends_item"));
 
   const char* cost = jsonObjGet(ch, "cost");
   out.costLL    = jsonNum(jsonObjGet(cost, "ll"));
@@ -226,6 +344,8 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
   out.costWat   = jsonNum(jsonObjGet(cost, "water"));
   out.costScrap = jsonNum(jsonObjGet(cost, "scrap"));
   out.costMed   = jsonNum(jsonObjGet(cost, "med"));
+  out.costScore = jsonNum(jsonObjGet(cost, "score"));
+  out.sure      = jsonBool(jsonObjGet(ch, "sure"));
 
   // Destination node: loot lives there.
   jsonCopyStr(jsonObjGet(ch, "success_node"), out.nextKey, ENC_KEY_LEN);
@@ -298,6 +418,8 @@ static bool encResolveChoice(const char* json, const char* nodeKey, int ci, EncC
     out.hazWMin = (uint8_t)wlo[0];
     out.hazWMaj = (uint8_t)wlo[1];
     out.hazEnds = jsonBool(jsonObjGet(haz, "ends_encounter"));
+    out.hazDsh  = jsonBool(jsonObjGet(haz, "dshingus"));
+    out.hazSteal = jsonNum(jsonObjGet(pen, "steal")) > 0;
   }
   return true;
 }
@@ -344,11 +466,15 @@ static void endEncounter(int pid, uint8_t reason, bool restorePoi) {
   // A Kane chapter (kane.hpp) never took a POI: its camp is world state and
   // stays put until somebody reads to the end.
   // Nor a VACANCY part (vacancy.hpp): the sign and its sites are world state.
-  if (enc.kane || enc.vac) restorePoi = false;
+  // Nor a RUNAWAY SCIENCE part (lab.hpp): the clinic is world state too.
+  // Nor a ONE-HAND BONNEY section (bonney.hpp): her fire is.
+  if (enc.kane || enc.vac || enc.lab || enc.bonney) restorePoi = false;
   // A tunnel control panel is a fixture, not a cache (tunnels.hpp, "Section
   // lights"): the scene only closes for good once its section is lit. Driven
   // out, downed or walked away short of the switch, the panel stays.
-  if (enc.depth && !enc.trap && reason != ENC_END_REGEN && tunnelPanelDark(hq, hr)) restorePoi = true;
+  // Not a clinic room (lab.hpp): every cell of a dark section reads as a dark
+  // panel here, and a lab scene must never leave a panel's POI behind.
+  if (enc.depth && !enc.trap && !enc.lab && reason != ENC_END_REGEN && tunnelPanelDark(hq, hr)) restorePoi = true;
   // Put the POI back on the board it came from. Without enc.depth a tunnel
   // encounter ended involuntarily (dawn, disconnect, hazard) would restore
   // its POI onto a surface hex that happens to share those coordinates.

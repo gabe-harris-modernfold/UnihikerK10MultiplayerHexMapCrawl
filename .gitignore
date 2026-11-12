@@ -20,3 +20,4 @@ __pycache__/
 
 # pinned Arduino libraries (scripts/setup_libs.ps1)
 /.arduino
+/art/hex-sheets/forest-candidates

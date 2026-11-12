@@ -15,7 +15,7 @@ further tuning.
 
 | File | What |
 |---|---|
-| [snd-core.hpp](../snd-core.hpp) | The synth: oscillators (sine, tri, polyBLEP saw/pulse, band-limited wavetables, 2-op FM, noise), TPT state-variable filters, envelopes, the 18-voice pool, FDN reverb, tape echo, the master chain, and all 33 instruments (`sndPatchesInit`). |
+| [snd-core.hpp](../snd-core.hpp) | The synth: oscillators (sine, tri, polyBLEP saw/pulse, band-limited wavetables, 2-op FM, noise), TPT state-variable filters, envelopes, the 18-voice pool, FDN reverb, tape echo, the master chain, and all 45 instruments (`sndPatchesInit`). |
 | [snd-lpc.hpp](../snd-lpc.hpp) | TMS5220 / TMS5100 LPC speech — the Speak & Spell chip as one more voice, with a phrase queue and six speaking styles. |
 | [snd-vocab.h](../snd-vocab.h) | **Generated.** The LPC vocabulary (85 lines). Edit [scripts/lpc/phrases.txt](../scripts/lpc/phrases.txt) and re-run the generator. |
 | [snd-music.hpp](../snd-music.hpp) | The composer: styles, progressions, the melody generator, leitmotifs, the soundscape, tape wow and lurches. |
@@ -62,7 +62,7 @@ game ──sndStory()──┐                      ┌── music voices [0,12
   (the ear rebuilds the fundamental from the harmonics), drums are lifted into
   range (`xpose`), the master high-passes at 240 Hz, 4th order.
 * **Nothing is ever clipped or saturated.** The limiter looks one block ahead;
-  volume sits after it (-49.7 dB at 1, -37.7 at 5, -31.7 at 9 by default; see
+  volume sits after it (-51.6 dB at 1, -39.6 at 5, -33.6 at 9 by default; see
   below), so the mix is equally clean
   at every setting.
 
@@ -81,12 +81,13 @@ game ──sndStory()──┐                      ┌── music voices [0,12
 | tunnels | every survivor underground | a fourth below the day, cavern reverb, water dripping in the key |
 | threshold | an encounter in progress | a tritone drone, a heartbeat, a clock, glass — the world holds its breath |
 | elegy | someone just went down | the music box plays the dead survivor's signature at half speed and winds down; a bell |
-| dawn | a new day | a hollow call, then the **roll call**; the chronicler chants "day N" on the tonic |
-| idle | nobody connected | a carnival somewhere over the hill (muffled, echoing), sixteen bars on, thirty-two off |
+| dawn | a new day | the chronicler chants "day N" on the tonic, then the **roll call** (no bugle call: it was cut 2026-11-07) |
+| idle | nobody connected | **the frontier**: a western nobody is left to star in, E minor, 56-66 bpm. It drifts a phrase at a time (a Markov table, `FR_NEXT`) between the open wind (coyotes howling and answering, a windmill, a rattlesnake, a horse walking past far off), a tremolo guitar over a drone (the Andalusian line walking down, the whammy dipping at phrase ends), someone whistling the party theme to an empty plain over a choir, and a harmonica's call over a far drum; a mission bell now and then. Under all of it the wind gusts (`fr.gust`: the main wind swells and a whistle in the wires, `P_GUST`, rides on top -- the part this speaker can play), and faint, on their own dice: something loose knocking in the gusts, gunfire a long way off (sometimes answered), somebody yelling into the wind, a car alarm streets away whose battery half the time dies mid-cycle. `musGenFrontier()` / `musFrontierTex()`. Audition: `sndsim.py idle`, `idle_join`, `plain` (the wind alone with each noise on cue) |
+| overhill | nobody connected, every 3-6 minutes of frontier (`OVERHILL_GAP_S`) | the old idle: a carnival somewhere over the hill (muffled, echoing) for sixteen bars, after a bar of wind; then the frontier comes back on the wind. Audition: `sndsim.py idle_overhill` (due in 30 s) |
 
 Switches wait for a phrase boundary (day/night), a two-bar boundary (weather,
 caravan, tunnels) or happen on the next bar (danger, grief, dawn). Leaving an
-urgent style is itself urgent.
+urgent style is itself urgent, and so is leaving idle: somebody has come.
 
 **Tension** (0..1) folds the threat clock, the Doom, the worst body in the
 party (attrition, wounds, hunger, thirst, radiation), fire, weather and night.
@@ -148,7 +149,9 @@ every tick, rad, chem, flood) have cooldowns, longer for the voice.
 | encounter | `EVT_ENC_*` | into the dark / the one major chord / spark-and-fail / picked clean |
 | caravan | `EVT_CARAVAN_TRADE` + proximity | calliope flourish, barker; the carnival while it is near |
 | Doom taunt | `EVT_DOOM_TAUNT` | the whisper, and at tier 3 the Doom's own voice |
-| thunder | `updateLEDs()` lightning | thunder 0.25-1.6 s after the flash |
+| thunder | `updateLEDs()` lightning | a storm walks in, counted in bolts: the first 4 are far off, a dark roll with no crack 2.2-4 s after the flash; the next 4 boom 1-2 s after; then every flicker cracks 0.25-1.6 s after (`FX_THUNDER`). A strike on a survivor brings it overhead; any other weather resets it. `thunder_far` / `thunder_near` / `thunder` on the desk |
+| ghost | `EVT_GHOST` latch (ghosts.hpp) | the ghoul's groan; 2.2 s later the narrator's joke (one of three) |
+| kick-start | `EVT_REFUEL` (a stalled bike or Rust Rocket found fuel) | two kicks that cough, a third that catches: firing pops, a rev, the idle dying away, to the map's clock (renderer.js `KICK_STOMPS`); 2.5 s cooldown. Audition: `sndsim.py kickstart_dry` |
 | quake, fire, flood, tunnel, regen, score | their events | their effects |
 
 `k10Play(MOTIF_*)` still works everywhere: each motif maps to its
@@ -223,6 +226,8 @@ could not have shown. All of them are fixed in the current build.
   content, far below digital full scale (the amp's rail, or the PC's USB
   sagging), so 6-8 now share the way up to a ceiling that is a desk knob
   (`vmax`, default -31.7 dB), set by ear just below the clip; `vmid` moves 5.
+  2026-11-06: every level cut 20% (x0.8, -1.94 dB on both knobs), so the
+  defaults are now `vmid` -39.64 and `vmax` -33.64.
   Nothing may bypass the volume -- a measurement sequence that did (exact
   levels up to -10 dBFS) was painful.
 * **The steady hiss that remains is the amp's, not the signal's.** It barely

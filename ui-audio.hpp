@@ -204,7 +204,8 @@ static bool sndI2sInit(uint8_t fmt = 0) {
 // clipping on loud content (its rail, or the PC's USB sagging), so the top
 // defaults to -31.7 dB and is a desk knob, set by ear just below the clip.
 // Both ends are knobs (vmid, vmax); nothing the engine writes can exceed 9.
-static float sndVolMidDb = -37.7f, sndVolMaxDb = -31.7f;
+// 2026-11-06: every level 20% lower (x0.8 = -1.94 dB on both ends).
+static float sndVolMidDb = -39.64f, sndVolMaxDb = -33.64f;
 static float sndVolGain(uint8_t v) {
   if (v == 0) return 0.0f;
   if (v > 9) v = 9;

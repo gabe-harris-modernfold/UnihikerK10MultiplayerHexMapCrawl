@@ -29,7 +29,7 @@ from config import (ACT_CRAFT, ACT_FORAGE, ACT_REST, ACT_SCAV, ACT_SHELTER,
                     RES_WATER, MAP_COLS, MAP_ROWS, DQ, DR,
                     NUM_TERRAIN, TERRAIN_IS_RUINS, WEATHER_CHEM,
                     ascend_cost, can_forage, gear_score, ground_days_left,
-                    has_water, is_exposed, is_hatch_terrain,
+                    has_water, is_exposed, is_hatch_terrain, is_oasis,
                     KANE_CAMP, KANE_GONE, KANE_RANGE, neighbor,
                     VAC_ITEM_KEY, VAC_ITEM_REGISTER, VAC_PART_DESK, VAC_PART_KEYS,
                     VAC_PART_OUT, VAC_PART_SIGN, VAC_ST_OPEN, VAC_ST_SIGN)
@@ -639,9 +639,10 @@ class SurvivorPolicy(ItemUseMixin, Policy):
     @staticmethod
     def covered_from_weather(cell) -> bool:
         """Where the chem storm cannot reach (tickGame): any shelter, a
-        Settlement, a ruin.  Underground is the caller's to know."""
+        Settlement, a ruin, a forest oasis.  Underground is the caller's to
+        know."""
         t = cell.terrain
-        return (cell.shelter > 0 or t == TERR_SETTLEMENT
+        return (cell.shelter > 0 or t == TERR_SETTLEMENT or is_oasis(cell)
                 or (0 <= t < NUM_TERRAIN and bool(TERRAIN_IS_RUINS[t])))
 
     def weather_action(self, obs) -> Action | None:
@@ -680,9 +681,10 @@ class SurvivorPolicy(ItemUseMixin, Policy):
 
     @staticmethod
     def covered_at_night(cell) -> bool:
-        """Where dawnUpkeep charges no exposure: a shelter or SV >= 2
-        terrain (Settlement, Broken Urban, Flooded District...)."""
-        return cell.shelter > 0 or not is_exposed(cell.terrain)
+        """Where dawnUpkeep charges no exposure: a shelter, SV >= 2
+        terrain (Settlement, Broken Urban, Flooded District...), or a forest
+        oasis."""
+        return cell.shelter > 0 or not is_exposed(cell.terrain) or is_oasis(cell)
 
     def bed_action(self, obs) -> Action | None:
         """Hurt, or near the end of the day: sleep under cover if cover is
@@ -710,7 +712,9 @@ class SurvivorPolicy(ItemUseMixin, Policy):
             if (cost <= 0 or cost > ap or c is None or not self.covered_at_night(c)
                     or is_hatch_terrain(c.terrain)):
                 return None
-            return 10.0 / cost
+            # A grove heals whatever the tracks say, and nothing reaches in:
+            # worth twice the walk of any other roof.
+            return (20.0 if is_oasis(c) else 10.0) / cost
 
         target = best_target(obs.map, me.q, me.r, value, max_cost=ap,
                              stop_at=ends_journey)
@@ -1370,8 +1374,8 @@ class SurvivorPolicy(ItemUseMixin, Policy):
         if me.ap > 1 and me.ll > self.rest_below_ll:
             return None
         cell = obs.here()
-        if cell is None or cell.shelter > 0 or not is_exposed(cell.terrain):
-            return None
+        if cell is None or cell.shelter > 0 or not is_exposed(cell.terrain) or is_oasis(cell):
+            return None   # (doShelter() refuses a grove: ABW_NOT_NEEDED)
         # Once per hex per day.  A shelter that lands shows on the act
         # event's cnd, so the cell.shelter check above stops the next one; a
         # refusal the bot did not predict changes nothing, and at low LL this
@@ -1592,6 +1596,16 @@ class SurvivorPolicy(ItemUseMixin, Policy):
             self.run.kane = int(enc.get("kane") or 0)
             # A VACANCY part (enc_path "vac": n, vacancy.hpp): the same.
             self.run.vac = int(enc.get("vac") or 0)
+            # "rs" (PROTO 16): the board re-sent a scene already under way --
+            # an enc_start from inside one is answered with it -- so it starts
+            # at the board's node, holding the board's tray.
+            if enc.get("rs"):
+                node = enc.get("node")
+                if node and node in (self.run.enc.get("nodes") or {}):
+                    self.run.node_key = node
+                pl = list(enc.get("pl") or [])[:5]
+                self.run.pending_tokens = [int(v) for v in pl] + [0] * (5 - len(pl))
+                self.run.pending_items = [(int(i), int(q)) for i, q in (enc.get("pi") or [])]
             self.stats["traps" if self.run.trap else
                        "kane_scenes" if self.run.kane else
                        "vac_scenes" if self.run.vac else "encounters_opened"] += 1

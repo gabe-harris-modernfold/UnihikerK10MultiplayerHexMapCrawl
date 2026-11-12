@@ -35,7 +35,6 @@ static void handleMessage(AsyncWebSocketClient* client, char* data, size_t len) 
   else if (CMD_IS("trade_offer")  ) handleMsg_trade_offer(client, data, len);
   else if (CMD_IS("trade_accept") ) handleMsg_trade_accept(client, data, len);
   else if (CMD_IS("trade_decline")) handleMsg_trade_decline(client, data, len);
-  else if (CMD_IS("car_trade")    ) handleMsg_caravan_trade(client, data, len);
   else if (CMD_IS("car_buy")      ) handleMsg_caravan_buy(client, data, len);
   else if (CMD_IS("use_item")     ) handleMsg_use_item(client, data, len);
   else if (CMD_IS("equip_item")   ) handleMsg_equip_item(client, data, len);

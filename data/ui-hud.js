@@ -23,6 +23,24 @@ function updateTerrainCard() {
 // the real weather phase is once it clears.
 let quakeHudUntil = 0;
 
+// Phones have no weather chip (style.css, max-width 480px: the status row
+// could not hold it), so a change of weather is told once as a toast
+// instead. Starts at Clear, so joining under a clear sky says nothing and
+// joining into a storm says so. Underground nothing is told -- the weather
+// does not reach you -- and surfacing into a new sky tells it then.
+const WX_PHONE = window.matchMedia('(max-width:480px)');
+let wxToldPhase = 0;
+
+function toastWeatherChange(phase, icon) {
+  if (phase === wxToldPhase) return;
+  wxToldPhase = phase;
+  if (!WX_PHONE.matches) return;
+  const vis = WEATHER_VIS_PENALTY?.[phase] ?? 0;
+  const mv  = WEATHER_MOVE_PENALTY?.[phase] ?? 0;
+  const fx  = [vis ? `sight −${vis}` : '', mv ? `moves +${mv} AP` : ''].filter(Boolean).join(' · ');
+  showToast(`${icon} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}${fx ? ' — ' + fx : ''}`);
+}
+
 function updateWeatherHUD() {
   const el = document.getElementById('hud-weather');
   if (!el) return;
@@ -42,6 +60,7 @@ function updateWeatherHUD() {
   const phase = (typeof weatherPhase === 'undefined') ? 0 : weatherPhase;
   el.textContent = `${icons[phase] ?? ''} ${WEATHER_PHASE_NAMES?.[phase] ?? ''}`;
   el.className = 'hud-weather ' + (classes[phase] ?? '');
+  toastWeatherChange(phase, icons[phase] ?? '');
 }
 
 // ── Depth chip ────────────────────────────────────────────────────

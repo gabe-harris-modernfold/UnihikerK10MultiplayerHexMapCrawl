@@ -12,6 +12,22 @@ MAX_PLAYERS = 6         # seats, one per archetype -- sizes per-seat tables
 MAX_SEATED  = 5         # at most this many seated at once (the table is full)
 TICK_MS     = 100
 DAY_TICKS   = 3000      # TICK_MS * DAY_TICKS = 5 real minutes per game-day
+DAYS_PER_YEAR = 365     # dayCount runs 1..365, then day 1 again
+
+
+def unwrap_day(prev, wire: int) -> int:
+    """The board's day (`dc`, a dawn's `day`) goes 365 -> 1; a bot measures
+    time in days elapsed, so it keeps a running count instead.  `prev` is the
+    running count so far (None for the first sighting, taken at face value).
+    The count moves by the shortest way round the year, so 365 -> 1 is one
+    dawn and a stale message a day behind steps back one.  A regen restarts
+    the board at day 1, which this cannot tell from time passing -- whoever
+    sees the regen passes prev=None.  The result is always == wire mod 365,
+    so ground_days_left() can still compare it with a pile's wire stamp."""
+    if prev is None:
+        return wire
+    d = (wire - prev) % DAYS_PER_YEAR
+    return prev + (d if d <= DAYS_PER_YEAR // 2 else d - DAYS_PER_YEAR)
 
 # The map is a torus: moving off one edge wraps to the other (wrapQ/wrapR,
 # hex-map.hpp:7).  Any pathing the policies do must wrap too.
@@ -92,6 +108,24 @@ def is_exposed(terrain: int) -> bool:
     terrain only, and it is a *surface* terrain question."""
     return 0 <= terrain < NUM_TERRAIN and TERRAIN_SV[terrain] < 2
 
+
+# ── Forest oasis (docs/forest-oasis.md) ──────────────────────────────────────
+# Five 7-hex groves a map: Rust Forest pinned to variant 8..12 (a hollow or a
+# den in the middle, canopy round it).  Inside one nothing from the world
+# hurts -- no exposure, chem, fog, fire, lightning, Doom, Kane, ghosts or
+# mould -- and a night's rest heals like a Settlement, whatever F/W are.
+# Food and water are still eaten.  oasisCell() in hex-map.hpp; the variant is
+# the whole flag (mapdec.Cell.variant).
+OASIS_TERRAIN = 2
+OASIS_VARIANTS = range(8, 13)
+
+
+def is_oasis(cell) -> bool:
+    """A surface cell that is part of a forest oasis.  Tunnel cells are never
+    terrain 2, so the board does not matter."""
+    return (cell is not None and cell.terrain == OASIS_TERRAIN
+            and getattr(cell, "variant", 0) in OASIS_VARIANTS)
+
 # ── Bunker tunnels (tunnels.hpp; the sizes live in Esp32HexMapCrawl.ino) ─────
 # A second, much smaller hex board reached by stepping onto a hatch.  Two
 # things about it break assumptions the surface code is allowed to make:
@@ -156,8 +190,9 @@ GROUND_AGE_DAYS = 30
 
 def ground_days_left(day_now: int, day_left: int) -> int:
     """Dawns before the sweep takes something stamped `day_left`: at 1 it goes
-    at the next dawn.  dayCount is a uint16 on the board, so the age wraps."""
-    return max(0, GROUND_AGE_DAYS - ((day_now - day_left) & 0xFFFF))
+    at the next dawn.  The day goes 365 -> 1 (DAYS_PER_YEAR), so the age is
+    taken mod the year; day_now may be an unwrap_day() running count."""
+    return max(0, GROUND_AGE_DAYS - ((day_now - day_left) % DAYS_PER_YEAR))
 
 
 def _parse_items(path=None):

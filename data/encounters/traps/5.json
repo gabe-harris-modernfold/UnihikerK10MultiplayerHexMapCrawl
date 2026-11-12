@@ -11,7 +11,7 @@
         {
           "label": "Leave the cake under its glass and back out the way you came",
           "cost": {},
-          "base_risk": 15,
+          "base_risk": 35,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_tablecloth"
@@ -19,7 +19,7 @@
         {
           "label": "Lift the cloth an inch at a time and spring them with a fork",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 45,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_ring"
@@ -43,7 +43,7 @@
         {
           "label": "Untie the ribbon on the present",
           "cost": {},
-          "base_risk": 45,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_present"
@@ -64,21 +64,21 @@
   "hazards": {
     "the_tablecloth": {
       "text": "Your hip snags the hem on the way past and you drag the cloth six inches, and six inches is plenty. The whole ring goes off like a string of firecrackers. Most of them snap shut on nothing. One leaves the table entirely, turns over twice in the air, and closes on your earlobe with total commitment. You wear it all the way to the door.",
-      "penalty": { "ll": -1 },
+      "penalty": { "ll": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_ring": {
       "text": "There are more traps than lumps. The first goes off under the fork and the second under your wrist, and you jerk back and take the tablecloth with you, and the rest go off in a rolling crackle up both arms. You sit down hard. There was one on the chair as well. You get up wearing seven rat traps and, somehow, the paper hat, and spend most of a roll of bandage on your fingers.",
-      "penalty": { "ll": [-1, -2], "med": -1 },
+      "penalty": { "ll": [-1, -3], "med": -1 },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_present": {
       "text": "The ribbon was holding the lid down, and the lid was holding in a rat. A fat one, who has been living in the present for some time. It comes out at face height, goes over your shoulder and down the back of your shirt, and in the thrashing your hand goes into the box and finds the trap the rat was too clever for. You scrub the thumb until your canteen is dry. You can still feel the rat.",
-      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
+      "penalty": { "ll": [-2, -3], "water": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 1],
       "ends_encounter": true

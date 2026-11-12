@@ -11,7 +11,7 @@
         {
           "label": "Back out along the path the way you came, between the elves",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 50,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "stocking_filler"
@@ -19,7 +19,7 @@
         {
           "label": "Crawl to the throne and pull a clamp off the battery",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_carol"
@@ -44,7 +44,7 @@
         {
           "label": "The tree is still humming. Go through the presents under it.",
           "cost": {},
-          "base_risk": 55,
+          "base_risk": 70,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_fairy_lights"
@@ -64,7 +64,7 @@
         {
           "label": "Santa has a sack on his lap. Lift it off him.",
           "cost": {},
-          "base_risk": 70,
+          "base_risk": 80,
           "skill": 2,
           "success_node": "cache_3",
           "hazard_id": "the_big_man"

@@ -17,7 +17,12 @@ static constexpr uint16_t WORLD_TICK_INTERVAL   = 150;  // game ticks between wo
 static constexpr uint8_t  CARAVAN_RESTOCK_TICKS = 40;   // world ticks between caravan restocks
 static constexpr uint8_t  CARAVAN_PID           = 254;  // sentinel tradeTo for EVT_TRADE_RESULT on caravan trades
 static constexpr uint8_t  CARAVAN_STOCK_MAX     = 3;    // max units of one consumable on the shelf (CARAVAN_STOCK_SLOTS lives in the .ino — SaveHeader needs it)
-static constexpr uint8_t  CARAVAN_STUCK_LIMIT   = 6;    // world ticks of no progress toward the waypoint before the caravan gives up and re-routes (river divide / mountain wedge)
+static constexpr uint8_t  CARAVAN_STUCK_LIMIT   = 6;    // world ticks of no progress toward the waypoint before the caravan gives up and re-routes (crater field / collapsed tunnel wedge)
+// The caravan fords the River Channel. Survivors need the raft or waders to
+// cross it (TERRAIN_MC is 255 for them), but the trader's wagons wade it --
+// otherwise the one channel the generator lays (hex-map.hpp Phase 2.7) walls
+// half the settlements off its route for the life of the world.
+static constexpr uint8_t  CARAVAN_FORD_TERRAIN  = 11;   // River Channel
 static constexpr uint8_t  CARAVAN_TRADE_HOLD    = 4;    // world ticks the caravan waits while a survivor shares its hex (~60s) before rolling on regardless
 
 static constexpr uint8_t  TRACK_AP_SCALE        = 2;    // heat added = apSpent * TRACK_AP_SCALE
@@ -90,15 +95,17 @@ struct Caravan {
                            // hex so two mutually-nearest settlements don't
                            // leave the caravan bouncing between just those two.
   bool     active;
-  uint8_t  inv[5];        // water/food/fuel/med/scrap — matches Player.inv
+  uint8_t  inv[5];        // water/food/fuel/med/scrap — the till: tokens paid in at the
+                           // shelf. Never paid back out (the caravan doesn't swap tokens).
   uint8_t  restockTimer;  // world ticks until inventory refills
   uint8_t  holdTicks;     // consecutive world ticks spent waiting on a co-located
                           // trader (tickCaravan). Runtime only — a reboot just
                           // restarts the wait, so it stays out of SaveHeader.
   uint8_t  stuckTicks;    // consecutive world ticks with no progress toward the
-                          // waypoint. The river divide can leave a settlement on
-                          // the far bank that greedy stepping can never reach, so
-                          // past CARAVAN_STUCK_LIMIT the route is re-picked.
+                          // waypoint. A crater field can still wedge greedy
+                          // stepping short of a settlement (the river can't --
+                          // it fords that), so past CARAVAN_STUCK_LIMIT the
+                          // route is re-picked.
                           // Runtime only, same as holdTicks.
   // Consumable shelf — what the trader sells for resource tokens (car_buy).
   // Parallel arrays, stockItem 0 = empty slot. The asking price isn't stored:
@@ -156,8 +163,10 @@ static void pickPassableHex(int16_t& q, int16_t& r) {
 // most reduces hexDistWrap. Skips impassable terrain unless ignoreTerrainCost
 // is set (Creeping Doom at awareness >=76 "ignores terrain cost" per spec) —
 // no-op (returns false) if boxed in by impassable terrain on every side and
-// not ignoring it.
-static bool moveOneStep(int16_t& q, int16_t& r, int16_t tq, int16_t tr, bool ignoreTerrainCost = false) {
+// not ignoring it. fordRiver lets the walker enter the River Channel (the
+// caravan, CARAVAN_FORD_TERRAIN) while everything else impassable still blocks.
+static bool moveOneStep(int16_t& q, int16_t& r, int16_t tq, int16_t tr,
+                        bool ignoreTerrainCost = false, bool fordRiver = false) {
   int bestDist = hexDistWrap(q, r, tq, tr);
   int bestD    = -1;
   int sideD    = -1;
@@ -165,7 +174,8 @@ static bool moveOneStep(int16_t& q, int16_t& r, int16_t tq, int16_t tr, bool ign
   for (int d = 0; d < 6; d++) {
     int nq = wrapQ(q + DQ[d]);
     int nr = wrapR(r + DR[d]);
-    if (!ignoreTerrainCost && TERRAIN_MC[G.map[nr][nq].terrain] == 255) continue;
+    const uint8_t nt = G.map[nr][nq].terrain;
+    if (!ignoreTerrainCost && TERRAIN_MC[nt] == 255 && !(fordRiver && nt == CARAVAN_FORD_TERRAIN)) continue;
     int dist = hexDistWrap(nq, nr, tq, tr);
     if (dist < bestDist) { bestDist = dist; bestD = d; }
     // Equal-distance sidestep, reservoir-sampled so no direction is favoured.
@@ -225,8 +235,14 @@ static inline bool isWashoutEligible(uint8_t terrain) {
 // already burning) under FIRE_CAP. No-op on immune terrain or once the cap
 // is reached — an already-burning hex can still be raised in intensity by a
 // fresh strike/spread since it doesn't consume a new cap slot.
+// A forest oasis never catches (docs/forest-oasis.md): fire would burn it out
+// to Ash Dunes, and the grove with it.
+static inline bool isFlammableAt(int q, int r) {
+  return isFlammable(G.map[r][q].terrain) && !oasisCell(G.map[r][q]);
+}
+
 static void wIgnite(int16_t q, int16_t r, uint8_t intensity = 1) {
-  if (!isFlammable(G.map[r][q].terrain)) return;
+  if (!isFlammableAt(q, r)) return;
   HexDynamic& cell = W_hex[r][q];
   bool wasUnlit = (cell.fire == 0);
   if (wasUnlit) {
@@ -301,12 +317,21 @@ static void maybeIgniteLightning() {
   // So the direct hit is now its own explicit probability, and the jitter
   // only decides where the *near* misses land (and therefore where fires
   // start, which is the other half of what lightning is for).
-  static constexpr uint8_t LIGHTNING_DIRECT_CHANCE = 30;  // % of strikes that land ON the survivor
+  //
+  // High ground draws the bolt: a survivor standing on Rolling Hills is the
+  // tallest thing around, so a strike that picked them lands ON them 2.5x as
+  // often. Mountain is left out on purpose -- its caves and overhangs are the
+  // shelter the terrain card promises.
+  static constexpr uint8_t LIGHTNING_DIRECT_CHANCE       = 30;  // % of strikes that land ON the survivor
+  static constexpr uint8_t LIGHTNING_DIRECT_CHANCE_HILLS = 75;  // ...when they are standing on Rolling Hills
+  static constexpr uint8_t TERRAIN_HILLS                 = 7;
   static constexpr int     LIGHTNING_JITTER        = 2;
   static constexpr int     LIGHTNING_SPAN          = LIGHTNING_JITTER * 2 + 1;
   int pick = (int)(esp_random() % connectedCount);
+  int directChance = G.map[refR[pick]][refQ[pick]].terrain == TERRAIN_HILLS
+                       ? LIGHTNING_DIRECT_CHANCE_HILLS : LIGHTNING_DIRECT_CHANCE;
   int16_t q, r;
-  if ((int)(esp_random() % 100) < LIGHTNING_DIRECT_CHANCE) {
+  if ((int)(esp_random() % 100) < directChance) {
     q = refQ[pick];
     r = refR[pick];
   } else {
@@ -331,6 +356,7 @@ static void maybeIgniteLightning() {
     // `G.connectedCount--` and appends to lobbyIds. Two of them corrupts the
     // seat count, which handleConnect uses to decide when the board is full.
     if (p.ll == 0) continue;
+    if (inOasis(p)) continue;   // the canopy takes the bolt (docs/forest-oasis.md)
     p.ll = (uint8_t)max(0, (int)p.ll - 2);
     ledFlash(255, 255, 140);
     k10Play(MOTIF_BUNKER_ALARM);
@@ -429,7 +455,7 @@ static void spreadFire() {
           int nq = wrapQ(q + DQ[d]);
           int nr = wrapR(r + DR[d]);
           if (next[nr][nq].fire > 0) continue;              // already burning this tick
-          if (!isFlammable(G.map[nr][nq].terrain)) continue; // immune terrain
+          if (!isFlammableAt(nq, nr)) continue;              // immune terrain, or a grove
           if ((int)(esp_random() % 100) >= chance[d]) continue;   // downwind catches, upwind mostly doesn't
           if (fireCount >= FIRE_CAP) continue;
           next[nr][nq].fire = 1;
@@ -710,6 +736,7 @@ static void resolveDoomProximity() {
   for (int i = 0; i < MAX_PLAYERS; i++) {
     Player& p = G.players[i];
     if (!p.connected || encounters[i].active || p.depth) continue;
+    if (inOasis(p)) continue;   // it cannot reach under the canopy (docs/forest-oasis.md)
     if (hexDistWrap(p.q, p.r, W.creepingDoom.q, W.creepingDoom.r) > 1) continue;
 
     if (W.creepingDoom.awareness < 76) {
@@ -729,13 +756,14 @@ static void resolveDoomProximity() {
     // Mirrors collectResource()'s own drained-to-zero branch (clear
     // `resource` + arm `respawnTimer`) — leaving `resource` non-zero would
     // never satisfy the dawn respawn loop's `resource==0` gate, so the node
-    // would stay dead forever instead of eventually respawning. No-op if
-    // the hex had nothing to destroy.
+    // would stay dead forever instead of eventually respawning. Only food
+    // is armed to come back (respawnTicksFor). No-op if the hex had nothing
+    // to destroy.
     HexCell& cell = G.map[p.r][p.q];
     if (cell.resource != 0) {
+      cell.respawnTimer = respawnTicksFor(cell.resource);
       cell.resource     = 0;
       cell.amount       = 0;
-      cell.respawnTimer = RESPAWN_TICKS;
     }
     uint8_t llLost = 0;
     if (W.creepingDoom.awareness >= 100 && p.ll > 0) {
@@ -959,11 +987,8 @@ static int caravanStockSlot(uint8_t itemId) {
 
 static void restockCaravan() {
   W.caravan.restockTimer = CARAVAN_RESTOCK_TICKS;
-  // Terrain-weighted restock amounts are an unspecified v2 tuning knob (see
-  // spec); v1 refills every slot by a flat random amount so the caravan is
-  // never left fully dry after a restock.
-  for (int i = 0; i < 5; i++)
-    W.caravan.inv[i] = (uint8_t)min(99, (int)W.caravan.inv[i] + 4 + (int)(esp_random() % 5));
+  // Only the shelf restocks. The caravan sells and never swaps, so its own
+  // tokens (W.caravan.inv) are just what it has been paid — nothing to refill.
   // Shelf: one occupied slot is swapped for something new every restock so
   // the stock still rotates for a party that never buys; empty slots get a
   // fresh roll; everything else gains a unit up to CARAVAN_STOCK_MAX.
@@ -1004,18 +1029,22 @@ static void tickCaravan() {
   } else if (W.caravan.q != W.caravan.wq || W.caravan.r != W.caravan.wr) {
     W.caravan.holdTicks = 0;
     // Track progress, not merely movement: moveOneStep can sidestep along an
-    // obstacle forever without ever closing on the waypoint. A settlement on
-    // the far side of the river is simply unreachable by greedy stepping, so
-    // after CARAVAN_STUCK_LIMIT fruitless ticks the route is abandoned rather
-    // than parking the trader against the bank for the rest of the world's life.
+    // obstacle forever without ever closing on the waypoint. The caravan fords
+    // the river, but a crater field can still wedge greedy stepping, so after
+    // CARAVAN_STUCK_LIMIT fruitless ticks the route is abandoned rather than
+    // parking the trader against the obstacle for the rest of the world's life.
     int before = hexDistWrap(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr);
     const int fromQ = W.caravan.q, fromR = W.caravan.r;
-    if (moveOneStep(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr)) {
+    if (moveOneStep(W.caravan.q, W.caravan.r, W.caravan.wq, W.caravan.wr,
+                    /*ignoreTerrainCost=*/false, /*fordRiver=*/true)) {
       clearCaravanDebounce();
       // Tire tracks — same "mark the hex I just entered" idiom as player
       // footprints (survival_state.hpp), but one shared bit instead of a
-      // per-player mask since there's only one caravan.
-      G.map[W.caravan.r][W.caravan.q].tireTrack = 1;
+      // per-player mask since there's only one caravan. Water keeps no ruts:
+      // a ford leaves the bank hexes rutted to the edge and the channel clean
+      // (the trail record is still kept, it just never goes out unmarked).
+      if (G.map[W.caravan.r][W.caravan.q].terrain != CARAVAN_FORD_TERRAIN)
+        G.map[W.caravan.r][W.caravan.q].tireTrack = 1;
       // Its own trail-sides slot (trails.hpp), so the ruts point its way.
       int side = trailSideTo(fromQ, fromR, W.caravan.q, W.caravan.r);
       if (side >= 0) trailStep(TRAIL_CARAVAN, fromQ, fromR, side, true);
@@ -1060,6 +1089,7 @@ static void resolveFireDamage() {
     if (!p.connected || encounters[i].active || p.depth) continue;
     uint8_t fireHere = W_hex[p.r][p.q].fire;
     if (fireHere < 2 || p.ll == 0) continue;
+    if (inOasis(p)) continue;   // a grove never burns (isFlammableAt); belt and braces
     p.ll = (uint8_t)max(0, (int)p.ll - (int)fireDamageFor(fireHere));
     if (fireHere == 3) p.radiation = (uint8_t)min(255, (int)p.radiation + 1);
     ledFlash(255, 60, 0);
@@ -1116,6 +1146,10 @@ static void wInit() {
   restockCaravan();
   kaneInit();   // Machine Gun Kane's jeep, and his arc unread (kane.hpp)
   vacInit();    // VACANCY: the sign goes up over a random town (vacancy.hpp)
+  labInit();    // RUNAWAY SCIENCE: Doctor Gaunt's clinic, three rooms in the tunnels (lab.hpp)
+  ghostInit();  // no ghosts walk a new map (ghosts.hpp)
+  dshInit();    // nobody has the Dshingus, and no spots (dshingus.hpp)
+  bonneyInit(); // ONE-HAND BONNEY: her fire on the dunes near a town (bonney.hpp)
 }
 
 // ── Minimap markers ────────────────────────────────────────────────────────

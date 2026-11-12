@@ -1,0 +1,60 @@
+{
+ "_source": "Rust Forest (terrain 2), 2026-11-04. The user's six image-gen sheets hexforrest1..6.png (OneDrive Desktop): flat-top hexes on magenta / grey / white, matte by border flood, vertex fit + outline inset, centre-fan affine onto R=128*1.035, graded to L* 33 (spread x0.4) and a*/b* 0.6 to the set mean, ink kept. The user picked 30 of 36 (art/hex-sheets/forest-candidates/contact.png, pick ids in cells[]). The old green pixel-art forest is retired; git HEAD keeps it. Pool 3, landmark sentinel 6: 2_6/2_7 encounter pins, 2_8..2_12 the forest oasis group, 2_13..2_15 unassigned.",
+ "cells": [
+  "pick 25, slot 0 filler A: crowded trunks, ferns + bracken",
+  "pick 21, slot 1 filler B: dead conifer spires in ranks",
+  "pick 3, slot 2 feature: fallen trunk over a gully, shelf fungus",
+  "pick 2, alt 0: skeletal trunks in rusty undergrowth",
+  "pick 5, alt 0: twisted fungus-streaked trees",
+  "pick 11, alt 0: knotted roots heaving through litter",
+  "pick 14, pin 2_6: forester's hut (forest/2)",
+  "pick 16, pin 2_7: passenger car on a siding (forest/4 Evacuation Special)",
+  "pick 13, oasis 2_8: root hollow under a fallen tree",
+  "pick 15, oasis 2_9: den under roots, gnawed bones",
+  "pick 20, oasis 2_10: overhead canopy, dark crowns + rust skeletons",
+  "pick 23, oasis 2_11: overhead canopy, squat drooping crowns",
+  "pick 24, oasis 2_12: overhead canopy round a dim clearing",
+  "pick 12, special 2_13: light shaft on a stump (unassigned)",
+  "pick 17, special 2_14: rusted lookout tower (unassigned)",
+  "pick 18, special 2_15: mushroom ring (unassigned)",
+  "pick 26, alt 0: moss + shelf fungus on every trunk",
+  "pick 33, alt 0: dead saplings under oak-like canopy",
+  "pick 36, alt 0: moss-covered root hummocks",
+  "pick 22, alt 0: low tangled rust thicket",
+  "pick 27, alt 0: tangled branch litter",
+  "pick 28, alt 0: dense grey trunks",
+  "pick 8, alt 1: dead spires over bramble",
+  "pick 29, alt 1: bone-white lichen trunks",
+  "pick 30, alt 1: mossy root hummocks, patchy canopy",
+  "pick 34, alt 1: crowded trunks, rust litter",
+  "pick 35, alt 1: lichen-crusted stand",
+  "pick 9, alt 2: fallen trunk, orange fungus",
+  "pick 6, alt 2: light shaft on a stump",
+  "pick 7, alt 2: dark tunnel through the canopy"
+ ],
+ "alts": {
+  "0": [
+   3,
+   4,
+   5,
+   16,
+   17,
+   18,
+   19,
+   20,
+   21
+  ],
+  "1": [
+   22,
+   23,
+   24,
+   25,
+   26
+  ],
+  "2": [
+   27,
+   28,
+   29
+  ]
+ }
+}

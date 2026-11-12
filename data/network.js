@@ -167,6 +167,13 @@ function connect() {
     console.warn('%c[WS ▼] Closed', 'color:#fa0;font-weight:bold', `code=${ev.code} wasClean=${ev.wasClean} reason="${ev.reason}" msSinceEncStart=${msSinceEnc}`);
     showToast(CONN_LOST_QUIPS[Math.floor(Math.random() * CONN_LOST_QUIPS.length)]);
     Diag.onDisconnect(); setStatus('Reconnecting...');
+    // The server ends any scene on a dropped socket (releaseSeatLocked) and
+    // this client never hears that enc_end: left open, the old scene took
+    // choices nobody answered, and a bank from it vanished.
+    globalThis._onEncEnd?.();
+    _encVisHex = '';
+    _encStartSettled();
+    _encLostSince = 0;
     // Exponential backoff + proportional jitter — spreads out up to 5 clients
     // reconnecting at once (e.g. right after a board reboot) instead of
     // hammering it in lockstep on a flat interval.
@@ -245,6 +252,15 @@ function _clearPickTimeout() {
   if (pickTimeoutId) { clearTimeout(pickTimeoutId); pickTimeoutId = null; }
 }
 
+// The survivor whose day maxAP measured is gone (fell, or the world was
+// remade under them). The next sync's ap is a fresh survivor's whole budget
+// (resetSurvivor), and _msgSync only ever raises maxAP, so without this a
+// Motorbike's +5 outlived the bike: the respawn's AP track kept its boxes
+// until dawn.
+function _forgetDayBudget() {
+  maxAP = 0; uiMaxAP.val = 0;
+}
+
 // Catch stale downed state on reconnect: if server shows ll:0 we are dead.
 // Close the socket so the server resets the slot (p.connected=false) and re-adds us
 // to the lobby on reconnect — otherwise a second pick is rejected as "not in lobby".
@@ -252,9 +268,11 @@ function _checkDownedState() {
   if (myId >= 0 && !pendingLobbyRedirect && players[myId].ll === 0) {
     _fallenPid = myId;
     myId = -1;
+    _forgetDayBudget();
     pendingLobbyRedirect = true;
     addLog('<span class="log-check-fail">☠ DOWNED — the wasteland claims you.</span>');
     showToast('☠ The wasteland claims you. Your story ends in the dust.');
+    globalThis._onEncEnd?.();  // as _evDowned: the "downed" event that would close it is dropped now
     socket.close();  // triggers server slot reset + auto-reconnect → re-enter lobby
     setTimeout(() => { pendingLobbyRedirect = false; showCharSelect(); }, 3500);
   }
@@ -291,6 +309,8 @@ function _applyWorldState(world) {
   }
   if (world.kane) kaneApplyWorld();   // his ruts, the same way (kane-jeep.js)
   if (world.vac) vacApplyWorld();     // a new sign over a new town gets a line (vacancy.js)
+  if (world.ghosts) ghostApplyWorld();   // who walks, who they ride (ghosts.js)
+  if (world.dsh) dshApplyWorld();        // who has the Dshingus; the spots, from sync (dshingus.js)
 }
 
 function _msgAsgn(msg) {
@@ -300,6 +320,7 @@ function _msgAsgn(msg) {
   }
   console.log('%c[ASGN] Assigned slot %d', 'color:#09f;font-weight:bold', msg.id, `(prev myId=${myId})`);
   myId = msg.id;
+  if (typeof drunkSteps !== 'undefined') drunkSteps = 0;   // a new survivor is sober (Liquid Bread)
   _clearPickTimeout();
   uiPickPending.val = false;
   uiResting.val = false;  // clear any stale resting state from the previous survivor
@@ -494,6 +515,11 @@ function _msgState(msg) {
   globalThis.maybeAutoOpenCaravanTrade?.();
 }
 
+// The hex (board:q:r) the last vis frame found us on, so _handleSelfVis can
+// tell an arrival from a frame sent for some other reason. Cleared when the
+// socket drops: the first frame after a reconnect is an arrival.
+let _encVisHex = '';
+
 function _handleSelfVis() {
   const _me = players[myId];
   const _here = playerViewPos(myId) ?? { q: _me.q, r: _me.r };
@@ -520,12 +546,104 @@ function _handleSelfVis() {
   // Auto-trigger encounter: vis fires after applyVisDisk so the board is fresh.
   // Coordinates are whichever board we are on — handleMsg_enc_start() reads
   // the player's own depth server-side, so nothing extra rides the message.
-  if (_cell?.poi) {
-    globalThis._lastEncStartT = Date.now();
-    console.log('%c[ENC] POI detected — sending enc_start', 'color:#c0f;font-weight:bold', `q=${_here.q} r=${_here.r} dp=${myDepth} t=${globalThis._lastEncStartT}`);
-    send({ t: 'enc_start', q: _here.q, r: _here.r });
+  // Only on arriving: vis frames also come for a lit tunnel section, a fog
+  // reveal or a vision-changing equip, and one of those pulled a survivor
+  // straight back into a panel they had just walked away from (its POI goes
+  // back under them, endEncounter()).
+  const _hereKey = `${myDepth ? 1 : 0}:${_here.q}:${_here.r}`;
+  const _arrived = _hereKey !== _encVisHex;
+  _encVisHex = _hereKey;
+  if (_arrived) _encLfRetryKey = '';
+  if (_arrived && _cell?.poi) {
+    console.log('%c[ENC] POI detected — sending enc_start', 'color:#c0f;font-weight:bold', `q=${_here.q} r=${_here.r} dp=${myDepth}`);
+    _encSendStart(_here.q, _here.r, _hereKey);
   }
 }
+
+// ── Getting into a scene, and back into one ──────────────────────────────────
+// enc_start goes once, on arrival, and nothing about the board promises it an
+// answer: a busy G.mutex refuses it in silence (the browser asks for no
+// reply), and a full send queue can drop the enc_path that answers it. Lose
+// the first and the survivor stood on the place with nothing happening; lose
+// the second and they were inside a scene they could not see -- every step
+// "Cannot move during encounter" until dawn. So the start is asked again
+// until its enc_path comes, and a scene the board says we are in (the state
+// tick's "enc") that is not on screen is asked for: the board answers an
+// enc_start from inside a scene with that scene, where it is and what is on
+// its tray (handleMsg_enc_start, PROTO 16).
+const ENC_START_RETRY_MS = 1800, ENC_START_TRIES = 3;
+const ENC_LOST_GRACE_MS  = 2500, ENC_LOST_RETRY_MS = 4000;
+// The refusals that answer an enc_start (handleMsg_enc_start; encStart in the mock).
+const ENC_START_REFUSALS = ['Already looted', 'Another survivor is already inside', 'No encounters here',
+                            'Not at that hex', 'Cannot enter', 'The way in is blocked', 'No such hex'];
+let _encStartWait  = null;   // { key, q, r, tries, timer } -- an enc_start waiting on its enc_path
+let _encLostSince  = 0;      // when the board was first seen holding us in a scene that is not on screen
+let _encLostAskT   = 0;      // ...and when we last asked for it
+let _encLfRetryKey = '';     // the hex a failed load already re-tried this visit (_encRetryAfterLoadFail)
+
+function _encSendStart(q, r, key) {
+  _encStartSettled();
+  const st = { key, q, r, tries: 1, timer: 0 };
+  _encStartWait = st;
+  globalThis._lastEncStartT = Date.now();
+  send({ t: 'enc_start', q, r });
+  const again = () => {
+    st.timer = setTimeout(() => {
+      if (_encStartWait !== st) return;
+      // Walked on, a scene opened after all, or the place is gone: done.
+      if (_encVisHex !== st.key || globalThis._encSceneBusy?.() || !boardCell(st.q, st.r)?.poi
+          || st.tries >= ENC_START_TRIES) { _encStartWait = null; return; }
+      st.tries++;
+      console.warn(`[ENC] no enc_path for enc_start — asking again (${st.tries}/${ENC_START_TRIES})`);
+      globalThis._lastEncStartT = Date.now();
+      send({ t: 'enc_start', q: st.q, r: st.r });
+      again();
+    }, ENC_START_RETRY_MS);
+  };
+  again();
+}
+function _encStartSettled() {
+  if (!_encStartWait) return;
+  clearTimeout(_encStartWait.timer);
+  _encStartWait = null;
+}
+
+// Ask the board for the scene it has us in. Rate-limited: the answer is an
+// enc_path, which a slow /enc fetch can take a few seconds to turn into a panel.
+function _encAskForScene(why) {
+  const me = players[myId];
+  if (!me || _encStartWait || globalThis._encSceneBusy?.()) return false;
+  const now = Date.now();
+  if (now - _encLostAskT < ENC_LOST_RETRY_MS) return false;
+  _encLostAskT = now;
+  const here = playerViewPos(myId) ?? { q: me.q, r: me.r };
+  console.warn(`[ENC] in a scene with nothing on screen (${why}) — asking for it again`);
+  send({ t: 'enc_start', q: here.q, r: here.r });
+  return true;
+}
+
+function _encLostSceneCheck() {
+  const me = myId >= 0 ? players[myId] : null;
+  if (!me?.enc || _encStartWait || globalThis._encSceneBusy?.()) { _encLostSince = 0; return; }
+  const now = Date.now();
+  if (!_encLostSince) { _encLostSince = now; return; }
+  if (now - _encLostSince >= ENC_LOST_GRACE_MS) _encAskForScene('state says enc');
+}
+setInterval(_encLostSceneCheck, 1000);
+
+// A scene's file would not load (ui-encounter.js gave up and sent the "lf"
+// abort, which keeps the place): try the door once more on this visit,
+// rather than make the survivor step off and back on to find out.
+globalThis._encRetryAfterLoadFail = function() {
+  const key = _encVisHex;
+  if (!key || _encLfRetryKey === key) return;
+  _encLfRetryKey = key;
+  setTimeout(() => {
+    if (_encVisHex !== key || players[myId]?.enc || globalThis._encSceneBusy?.()) return;
+    const [, q, r] = key.split(':').map(Number);
+    if (boardCell(q, r)?.poi) _encSendStart(q, r, key);
+  }, 4000);
+};
 
 function _msgVis(msg) {
   if (msg.vr !== undefined) myVisionR = msg.vr;
@@ -691,18 +809,43 @@ function handleMsg(msg) {
       console.log('%c[ENC] enc_path received', 'color:#c0f;font-weight:bold', `biome=${msg.biome} id=${msg.id} msSinceEncStart=${globalThis._lastEncStartT ? Date.now()-globalThis._lastEncStartT : '—'}`);
       // "trap": a booby trap under the step we just took opened this scene
       // unasked (traps.hpp) -- the panel has no walk-away at its start.
-      globalThis._startEncounterFetch?.(msg.biome, msg.id, !!msg.trap);
+      // Bonney's section 2 says what is in Turnbull's mouth (bonney.js fills {{apple}}).
+      globalThis._bonEncPath = msg.bonney ? { sec: msg.bonney | 0, apple: msg.apple | 0, own: msg.own | 0 } : null;
+      _encStartSettled();
+      _encLostSince = 0;
+      // "rs": the board re-sent a scene already under way (we asked: see
+      // _encAskForScene), with its node and tray -- the panel picks up there.
+      globalThis._startEncounterFetch?.(msg.biome, msg.id, !!msg.trap, msg.rs ? msg : null);
       break;
     case 'enc_dbg':
       console.warn('[ENC] Server diagnostic:', msg.msg);
       break;
-    case 'err':
+    case 'err': {
       console.error('[ERR] Server error:', msg);
+      const errText = msg.msg || '';
+      // The answer to a pending enc_start: stop asking. "Already looted"
+      // means the eye on the map is stale -- take it off, or the next visit
+      // asks again for a place that is gone.
+      if (_encStartWait && ENC_START_REFUSALS.some(s => errText.startsWith(s))) {
+        const st = _encStartWait;
+        _encStartSettled();
+        if (errText.startsWith('Already looted')) {
+          const grid = st.key.startsWith('1:') ? tunnelMap : gameMap;
+          if (grid[st.r]?.[st.q]) grid[st.r][st.q] = { ...grid[st.r][st.q], poi: 0 };
+        }
+      }
+      // The board has us in a scene and nothing is on screen: open it
+      // rather than just say no (handleMsg_enc_start re-sends it).
+      if (/^Cannot (move|act|trade) during encounter/.test(errText) && _encAskForScene('step refused')) {
+        showToast('⊙ You are still inside — picking up where you left off.');
+        break;
+      }
       // _onEncError unlocks the encounter dialog if a choice was refused; for
       // any other rejection (e.g. a blocked trade/move/act) it returns false
       // so the player still sees *something* instead of the error vanishing.
-      if (!globalThis._onEncError?.(msg.msg)) showToast(msg.msg || 'Action failed.');
+      if (!globalThis._onEncError?.(errText)) showToast(errText || 'Action failed.');
       break;
+    }
     case 'trade_fail': {
       // `why` only comes back from car_buy (handleMsg_caravan_buy): 1 the
       // caravan left / the item sold out, 2 can't cover the price, 3 no pack
@@ -837,8 +980,8 @@ function _handleRadiation(ev, pm) {
 
 function _narrateMove(ev) {
   const cell = gameMap[ev.r]?.[ev.q];
-  const tName = TERRAIN[cell?.terrain ?? 0]?.name ?? 'Unknown';
-  const shelterNote = cell?.shelter ? ' Shelter present.' : '';
+  const tName = cellTerrainName(cell ?? { terrain: 0 });
+  const shelterNote = cell?.shelter ? ' Shelter present.' : isOasisCell(cell) ? ' Safe rest spot.' : '';
   const exploNote   = ev.exploD > 0 ? ` +${ev.exploD}pt.` : '';
   narrateState(`Moved to ${tName} at q:${ev.q},r:${ev.r}. AP:${ev.ap}.${shelterNote}${exploNote}`);
 }
@@ -889,6 +1032,12 @@ function _evMv(ev) {
   // Exploration bonus: log first-visit score
   if (ev.exploD && ev.exploD > 0 && ev.pid === myId)
     addLog(`<span class="log-mv">\u2605 New hex \u2014 +${ev.exploD} exploration pt</span>`);
+  // Into a forest oasis from outside one: the safe rest spot says what it is.
+  if (ev.pid === myId && !ev.dp && isOasisCell(gameMap[ev.r]?.[ev.q])
+      && (fromDp || !isOasisCell(gameMap[fromR]?.[fromQ]))) {
+    showToast(`${TERRAIN[2].icon} FOREST OASIS \u2014 ${OASIS_HINT}`);
+    addLog(`<span class="log-mv">${TERRAIN[2].icon} Forest oasis \u2014 ${OASIS_HINT}</span>`);
+  }
   if (!ev.dp) _noteGathering(ev);
   // Narrate position for accessibility / AI agents
   if (ev.pid === myId) _narrateMove(ev);
@@ -917,6 +1066,7 @@ function _evDowned(ev) {
   // Server has reset our slot — show death message then redirect to char selection
   _fallenPid = myId;
   myId = -1;
+  _forgetDayBudget();
   pendingLobbyRedirect = true;
   console.log('%c[DOWNED] Received — starting 3.5s redirect timer', 'color:#f44;font-weight:bold', `lobbyAvail=${JSON.stringify(lobbyAvail.val)}`);
   globalThis._onEncEnd?.();  // close encounter overlay if open when player is downed
@@ -992,13 +1142,23 @@ function _toastDawnSelf(ev) {
   else if (ev.dll > 0) dawnMsg = `☀ Day ${ev.day} — you wake mended. The sun feels kind for once.`;
   else                 dawnMsg = `☀ Day ${ev.day} — the sun returns. The wastes endure, and so do you.`;
   showToast(dawnMsg);
+  // A bike that could not be fuelled this dawn (applyDawnItemCosts' "unf").
+  // The map fades it out; this says why, and how it comes back.
+  const eq = players[myId]?.eq ?? [];
+  for (let s = 0; s < eq.length; s++) {
+    if (!eq[s] || !((ev.unf | 0) & (1 << s))) continue;
+    const name = getItemById?.(eq[s])?.name ?? 'Your engine';
+    showToast(`⛽ No fuel at dawn — the ${name} won’t start. It kicks over the moment you pick some up.`);
+    addLog(`<span class="log-check-fail">⛽ No fuel at dawn: the ${escHtml(name)} is stalled, and its AP with it.</span>`);
+  }
   // Dawn restores AP and clears the rest flag — relight the action deck.
   setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
 
 // A bike that stalled at dawn found fuel and started (kickStartItems,
 // inventory_items.hpp): the fuel is gone and the bike's AP is on today's
-// budget. The fade back in is the tick's "uf"; this is the rider's news.
+// budget. The kick-start on the map runs off the tick's "uf" (easeBikes(),
+// renderer.js); this is the rider's news.
 function _evRefuel(ev) {
   const p = players[ev.pid];
   if (!p) return;
@@ -1009,9 +1169,10 @@ function _evRefuel(ev) {
   // The day's budget grew, so the AP track and the time-of-day fade (both
   // measured against maxAP) take the bonus in rather than overflowing.
   maxAP += ev.apd | 0; uiMaxAP.val = maxAP;
+  // Not "again": a bike put on mid-day starts here too, for the first time.
   const name = escHtml(getItemById?.(ev.it)?.name ?? 'The engine');
-  addLog(`<span class="log-check-ok">\u26FD Fuel in the tank: the ${name} kicks back to life. +${ev.apd} AP today.</span>`);
-  showToast(`\u26FD ${name} running again: +${ev.apd} AP`);
+  addLog(`<span class="log-check-ok">\u26FD Fuel in the tank: the ${name} kicks over. +${ev.apd} AP today.</span>`);
+  showToast(`\u26FD ${name} kicks over: +${ev.apd} AP today`);
   updateSidebar();
   setTimeout(() => globalThis.renderActionDeck?.(), 0);
 }
@@ -1131,6 +1292,35 @@ function _evSurv(ev) {
   } catch(e) { console.error('[SURV] Event processing error:', e); }
 }
 
+// The Pre-War Net Map (reveal_fog 99, buildTerrainReveal() in hex-map.hpp):
+// the whole surface's terrain, 2 hex chars a cell -- terrain << 4 | variant,
+// row-major. It is the land, not live sight, so it goes into the explored
+// memory (map-decoder.js) as remembered ground and nowhere else. Only ground
+// this client has never seen: what it has seen itself knows more (shelter,
+// POI, a trap) than a terrain byte does.
+function _evReveal(ev) {
+  if (ev.pid !== myId || typeof ev.map !== 'string') return;
+  if (ev.map.length < MAP_ROWS * MAP_COLS * 2) {
+    console.warn('[RVL] short map', ev.map.length);
+    return;
+  }
+  let added = 0;
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let q = 0; q < MAP_COLS; q++) {
+      const key = `${q}_${r}`;
+      if (gameMap[r]?.[q] || memoryCells.has(key)) continue;
+      const i = (r * MAP_COLS + q) * 2;
+      const t = Number.parseInt(ev.map[i], 16);
+      const v = Number.parseInt(ev.map[i + 1], 16);
+      if (Number.isNaN(t) || Number.isNaN(v)) continue;
+      rememberCell(key, { terrain: t, variant: v, shelter: 0, poi: 0, trap: 0 });
+      added++;
+    }
+  }
+  if (added) scheduleMemorySave();
+  console.log('%c[RVL] whole-map terrain', 'color:#09f', `${added} cells newly remembered`);
+}
+
 function _evDusk(ev) {
   // End-of-day radiation Endure check (R ≥ 7) — §6.2
   const pd = ev.pid >= 0 && ev.pid < MAX_PLAYERS ? players[ev.pid] : null;
@@ -1215,18 +1405,37 @@ function _evFireDamage(ev) {
 }
 
 // Protocol 2+ damage with no event of its own: the chem-storm and Strangle
-// Fog per-tick hazards, and the Wasteland Daisy's bite (ecology.hpp). The
-// storm hazards stay as silent here as they always were -- a line per tick
-// would bury the log -- but a bite is a moment, and the flowers snap.
+// Fog per-tick hazards, the Wasteland Daisy's bite and the slime mould's
+// (ecology.hpp). The storm hazards stay as silent here as they always were --
+// a line per tick would bury the log -- but a bite is a moment, and the
+// flowers snap.
 function _evDmg(ev) {
   const p = players[ev.pid];
   if (p && typeof ev.ll === 'number') p.ll = ev.ll;
+  if (ev.cause === 'slime mould') { _evSlime(ev, p); return; }
   if (ev.cause !== 'wasteland daisy') return;
   const who = ev.pid === myId ? 'You' : (players[ev.pid]?.nm || `P${ev.pid}`);
   if (p) ecoField?.noteBite(p.q, p.r);
   addLog(`<span class="log-check-fail">\u273F ${escHtml(who)} walk${ev.pid === myId ? '' : 's'} into the flowers, and they bite</span>`);
   if (ev.pid === myId) {
     showToast('\u273F The daisies snap shut on your ankle.');
+    updateSidebar();
+  }
+}
+
+// The slime mould (ecoBiteCheck): 1 LL for the first step onto it and 1 more
+// for every step after it without clean ground between, so the toast says
+// what the next step will cost.
+function _evSlime(ev, p) {
+  const me = ev.pid === myId;
+  const who = me ? 'You' : (p?.nm || `P${ev.pid}`);
+  const amt = ev.amt | 0;
+  const verb = amt > 1 ? `wade${me ? '' : 's'} deeper into` : `step${me ? '' : 's'} in`;
+  addLog(`<span class="log-check-fail">☣ ${escHtml(who)} ${verb} the slime: -${amt} LL</span>`);
+  if (me) {
+    showToast(amt > 1
+      ? `☣ The slime takes ${amt} LL. The next step in it takes ${amt + 1}.`
+      : '☣ The slime takes 1 LL. Every step deeper costs one more.');
     updateSidebar();
   }
 }
@@ -1385,21 +1594,99 @@ function _evResResult(ev) {
   _packFullRearmCheck();   // the pack just shrank — re-arm the pack-full notice
 }
 
+// A refused equip/unequip used to be a console.warn and nothing else: "Tear
+// Off" on a Motorbike with loaded saddlebags just did not happen. The board
+// says why ("why", equipItem()/unequipItem()); a board older than that does
+// not, so the reason is read off the pack the same way the server would.
+const ITEM_COST_INV = { waterCost: 0, foodCost: 1, fuelCost: 2, medCost: 3, scrapCost: 4 };
+
+function _itemRefusalWhy(ev) {
+  if (ev.why) return ev.why;
+  if (ev.act !== 'unequip') return '';
+  const me = players[myId];
+  const id = me?.eq?.[ev.eslot];
+  const cap = (me?.is ?? 0) - (getItemMods?.(id)?.slots ?? 0);
+  if ((me?.it ?? []).some((t, i) => t && i >= cap)) return 'orphan';
+  return 'pack_full';
+}
+
+function _toastItemRefusal(ev) {
+  // A reveal item read below ground (useItem() refuses it there, "why":
+  // "underground"): it shows surface ground, and there is none to show.
+  if (ev.act === 'use') {
+    if (_itemRefusalWhy(ev) === 'underground') {
+      const name = getItemById?.(players[myId]?.it?.[ev.slot])?.name ?? 'That';
+      showToast(`${name} shows you the ground up top. Read it on the surface.`);
+    }
+    return;
+  }
+  if (ev.act !== 'equip' && ev.act !== 'unequip') return;
+  const me   = players[myId];
+  const id   = ev.act === 'unequip' ? me?.eq?.[ev.eslot] : me?.it?.[ev.slot];
+  const name = getItemById?.(id)?.name ?? 'that';
+  const why  = _itemRefusalWhy(ev);
+  if (why === 'orphan' && ev.act === 'unequip')
+    showToast(`The ${name} is holding pack slots that are still loaded. Empty your last pack slots first.`);
+  else if (why === 'orphan')
+    showToast(`Putting on the ${name} would shrink your pack around what’s in it. Empty your last pack slots first.`);
+  else if (why === 'pack_full')
+    showToast(`No free pack slot to take the ${ev.act === 'unequip' ? name : 'old gear'} off into.`);
+  else
+    showToast(`You can’t ${ev.act === 'unequip' ? 'take off' : 'put on'} the ${name} right now.`);
+}
+
+// Put on a daily-cost item (the Motorbike) the pack cannot pay for: it sits
+// stalled, and a freshly built bike usually does -- the craft ate the fuel.
+// Only when the pack is short: with fuel there, the next tick pays and
+// _evRefuel tells the kick-start instead.
+function _toastDryTank(eqBefore, p, ev) {
+  const inv = ev.inv ?? p.inv ?? [];
+  (p.eq ?? []).forEach((id, s) => {
+    if (!id || id === eqBefore[s] || !((ev.uf | 0) & (1 << s))) return;
+    const m = getItemMods?.(id) ?? {};
+    const short = Object.entries(ITEM_COST_INV).some(([k, i]) => (m[k] | 0) > (inv[i] | 0));
+    if (!short) return;
+    const name = getItemById?.(id)?.name ?? 'It';
+    showToast(`⛽ The ${name}’s tank is dry. It kicks over the moment you pick up fuel.`);
+  });
+}
+
+// The Bright Bad Idea goes up (flare-field.js). The ack carries the pack as
+// it is AFTER the use -- the last one leaves the slot empty -- so this reads
+// the slot before _evItemResult applies it. Below ground it burns in the hand.
+function _flareOnUse(ev) {
+  if (typeof flareField === 'undefined' || !flareField || ev.pid !== myId) return;
+  const p = players[ev.pid];
+  if (!p || p.it?.[ev.slot] !== ITEM_BRIGHT_BAD_IDEA) return;
+  flareField.fire(p.q, p.r, { pid: ev.pid, held: !!myDepth });
+}
+
 function _evItemResult(ev) {
   console.log('%c[INV] _evItemResult', 'color:#fc0;font-weight:bold', `act=${ev.act} ok=${ev.ok} pid=${ev.pid} efxp=${ev.efxp ?? 'none'}`, ev);
   // Server ack for use_item / equip_item / unequip_item
   if (ev.ok) {
     // Dispatch client-side narrative effects
     if (ev.act === 'use' && ev.efxp) handleNarrativeEffect(ev.efxp);
+    if (ev.act === 'use') _flareOnUse(ev);
   } else {
     console.warn('[INV] item action rejected by server', `act=${ev.act} pid=${ev.pid}`);
+    if (ev.pid === myId) _toastItemRefusal(ev);
   }
   // Always apply server ground-truth state (server sends current state regardless of ok/fail)
   if (ev.pid !== undefined && ev.pid >= 0 && ev.pid < MAX_PLAYERS) {
     const p = players[ev.pid];
+    const eqBefore = p.eq ?? [];
     if (ev.it) { console.log('[INV] applying server inv state', ev.it); p.it = ev.it; }
     if (ev.iq) p.iq = ev.iq;
     if (ev.eq) { console.log('[INV] applying server eq state', ev.eq); p.eq = ev.eq; }
+    // Equip/unequip carry the fuel state as of the swap (appendEquipTail,
+    // network-msg-items.hpp): a bike put on with a dry tank is stalled from
+    // the first frame, not ridden for a tick and then faded.
+    if (ev.uf !== undefined) {
+      p.uf = ev.uf;
+      if (ev.pid === myId) uiUnfuelled.val = ev.uf;
+    }
+    if (ev.ok && ev.act === 'equip' && ev.pid === myId) _toastDryTank(eqBefore, p, ev);
     // Equipping a Backpack changes the pack size and equipping a Dent Absorber
     // changes the LL ceiling — both in the same message that reports the equip,
     // so the grid and the LIFE track move immediately instead of at next sync.
@@ -1414,7 +1701,7 @@ function _evItemResult(ev) {
       if (ev.kr !== undefined) p.kr = ev.kr;
       if (ev.pid === myId) {
         if (ev.act === 'craft') {
-          const outName = getItemById?.(getRecipeById(ev.recipe)?.outputItem)?.name ?? 'something';
+          const outName = recipeOutputName(getRecipeById(ev.recipe));
           addLog?.(`<span class="log-col">⚒ Crafted ${escHtml ? escHtml(outName) : outName}.</span>`);
         }
         updateSidebar?.();
@@ -1431,7 +1718,9 @@ function _evEncRes(ev) {
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
   const outClass = ev.out ? 'log-col' : 'log-check-fail';
   const backed = ev.as ? ` (${ev.as} ${ev.as === 1 ? 'ally' : 'allies'} behind them)` : '';
-  _clearEncAssist(ev.pid);   // the roll spent whatever help was behind it
+  // The roll spent whatever help was behind it -- unless it was not rolled:
+  // a "sure" choice leaves the help for the next roll (encRunChoice).
+  if (!ev.sure) _clearEncAssist(ev.pid);
   addLog(`<span class="${outClass}">\u2299 ${escHtml(who)}: ${ev.out ? 'through.' : 'setback.'}${backed}</span>`);
   if (ev.pid === myId) {
     const p = players[myId];
@@ -1474,6 +1763,7 @@ function _evEncAssist(ev) {
 }
 
 function _evEncBank(ev) {
+  _clearEncAssist(ev.pid);   // the scene is over; no enc_end follows a bank
   const who = players[ev.pid]?.nm || `P${ev.pid}`;
   const lootSum = (ev.loot ?? []).reduce((a, b) => a + b, 0);
   addLog(`<span class="log-col">\u25a0 ${escHtml(who)} secured loot (${lootSum} items, +${ev.scoreD} pts)</span>`);
@@ -1521,7 +1811,9 @@ function _evEncEnd(ev) {
       regen:      '☠ The ground shifts. The place you were exploring no longer exists.',
       escaped:    '⚠ You back out with nothing, and every limb you came in with.',
     };
-    showToast(ENC_END_FLAVOR[ev.reason] ?? `☠ The scene closes: ${reasonTxt}.`);
+    // A scene that never loaded already said so ("The way in is blocked").
+    if (!globalThis._encTakeQuietEnd?.())
+      showToast(ENC_END_FLAVOR[ev.reason] ?? `☠ The scene closes: ${reasonTxt}.`);
     globalThis._onEncEnd?.(ev);
     updateSidebar();
   }
@@ -1583,11 +1875,15 @@ function handleEvent(ev) {
   switch (ev.k) {
     case 'col':         _evCol(ev);        break;
     case 'col_fail':    _evColFail(ev);    break;
-    case 'rsp':
-      if (gameMap[ev.r]?.[ev.q])
-        gameMap[ev.r][ev.q] = { ...gameMap[ev.r][ev.q], resource: ev.res, amount: ev.amt };
-      collectedCells.delete(`${ev.q}_${ev.r}`);
+    case 'rsp': {
+      // dp:1 = tokens set down on the tunnel board (drop_res below ground);
+      // q/r are then tunnel cells. The respawn tick is surface-only.
+      const grid = ev.dp ? tunnelMap : gameMap;
+      if (grid[ev.r]?.[ev.q])
+        grid[ev.r][ev.q] = { ...grid[ev.r][ev.q], resource: ev.res, amount: ev.amt };
+      if (!ev.dp) collectedCells.delete(`${ev.q}_${ev.r}`);
       break;
+    }
     case 'mv':          _evMv(ev);         break;
     case 'tun_in':      _evTunIn(ev);      break;
     case 'tun_out':     _evTunOut(ev);     break;
@@ -1608,6 +1904,7 @@ function handleEvent(ev) {
       addLog('<span class="log-mv">☠ The world has been remade. Find your bearings, survivor.</span>');
       ecoField?.reset();   // the species died with its world; the next eco message regrows it
       trailField?.clear(); // and every trail with it -- these coordinates are new ground
+      _forgetDayBudget();  // every seated survivor starts over (resetSurvivor); the sync behind this seeds it
       break;
     case 'downed':      _evDowned(ev);     break;
     case 'left':
@@ -1624,7 +1921,8 @@ function handleEvent(ev) {
     case 'dawn':        _evDawn(ev);       break;
     case 'refuel':      _evRefuel(ev);     break;
     case 'act':         _evAct(ev);        break;
-    case 'surv':        _evSurv(ev);       break;
+    case 'surv':        _evSurv(ev);       break;   // SURVEY's ring, or a reveal item's band
+    case 'rvl':         _evReveal(ev);     break;   // Pre-War Net Map: the whole map's terrain
     case 'dusk':        _evDusk(ev);       break;
     case 'trd_off':     _evTrdOff(ev);     break;
     case 'trd_res':     _evTrdRes(ev);     break;
@@ -1636,7 +1934,11 @@ function handleEvent(ev) {
     case 'kane_call':   _evKaneCall(ev);   break;   // Machine Gun Kane (kane-jeep.js)
     case 'kane_fire':   _evKaneFire(ev);   break;
     case 'kane_arc':    _evKaneArc(ev);    break;
+    case 'ghost':       _evGhost(ev);      break;   // wasteland ghosts (ghosts.js)
+    case 'dsh':         _evDsh(ev);        break;   // the Dshingus (dshingus.js)
     case 'vac':         _evVac(ev);        break;   // VACANCY (vacancy.js)
+    case 'lab':         _evLab(ev);        break;   // RUNAWAY SCIENCE (lab.js)
+    case 'bonney':      _evBonney(ev);     break;   // ONE-HAND BONNEY (bonney.js)
     case 'tun_lit':     _evTunLit(ev);     break;
     case 'trap':        _evTrap(ev);       break;
     case 'fire_spread':   _evFireSpread(ev);   break;
@@ -1652,6 +1954,19 @@ function handleEvent(ev) {
         // the desk, the corridor, Check-Out. No POI was taken: leave the hex be.
         const VAC_WHERE = ['', 'walked in under the sign', 'found the front desk', 'found the corridor', 'opened the register under the sign'];
         addLog(`<span class="log-col">⌂ ${escHtml(ev.pid === myId ? 'You' : encWho)} ${VAC_WHERE[ev.vac] || 'walked in under the sign'}</span>`);
+        updateSidebar();
+        break;
+      }
+      if (ev.lab) {
+        // One of Gaunt's rooms opened on arrival, below (lab.hpp). No POI
+        // was taken: leave the cell be.
+        labOnEncStart(ev);
+        updateSidebar();
+        break;
+      }
+      if (ev.bonney) {
+        // A section opened at Bonney's fire (bonney.hpp). No POI was taken.
+        bonneyOnEncStart(ev);
         updateSidebar();
         break;
       }
@@ -1713,6 +2028,18 @@ function handleEvent(ev) {
         const n = ev.converted.length;
         addLog(`<span class="log-check-fail">▪ ${n} settlement${n > 1 ? 's' : ''} leveled to open scrub.</span>`);
         showToast('☠ The quake swallows a settlement whole. Nothing left but scrub.');
+      }
+      break;
+    }
+    case 'flare': {
+      // Someone's Bright Bad Idea (flare-field.js): overhead it is the flare
+      // itself, from across the map a faint red glow on the tiles toward it.
+      // The firer's own phone already fired it from item_result (_flareOnUse).
+      if (ev.pid === myId) break;
+      flareField?.fire(ev.q, ev.r, { pid: ev.pid, held: !!ev.dp });
+      if (!ev.dp) {
+        const who = players[ev.pid]?.nm || `P${ev.pid}`;
+        addLog(`<span class="log-check-fail">▪ A red flare goes up over the waste. ${typeof escHtml === 'function' ? escHtml(who) : who} wants to be seen.</span>`);
       }
       break;
     }

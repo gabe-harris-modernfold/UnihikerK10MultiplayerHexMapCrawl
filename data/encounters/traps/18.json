@@ -11,7 +11,7 @@
         {
           "label": "Step back out through the door without touching the velvet",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 50,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "queue_jumping"
@@ -19,7 +19,7 @@
         {
           "label": "Find where the chain meets the posts and take the weight off it",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_counterweight"
@@ -44,7 +44,7 @@
         {
           "label": "Crawl under the raised vault door while the pipe holds",
           "cost": {},
-          "base_risk": 55,
+          "base_risk": 70,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_pipe"
@@ -64,7 +64,7 @@
         {
           "label": "Open the big box at the back, the one with his name on it",
           "cost": {},
-          "base_risk": 70,
+          "base_risk": 80,
           "skill": 2,
           "success_node": "cache_3",
           "hazard_id": "the_last_box"

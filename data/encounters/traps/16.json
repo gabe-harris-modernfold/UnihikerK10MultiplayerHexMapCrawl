@@ -11,7 +11,7 @@
         {
           "label": "Work the wall, feet on the skirting, and get back to the door",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 50,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_edge"
@@ -19,7 +19,7 @@
         {
           "label": "Find the plate's edge and pin it before it can travel",
           "cost": {},
-          "base_risk": 40,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_floor"
@@ -43,7 +43,7 @@
         {
           "label": "Cross the pinned plate to the surgery door",
           "cost": {},
-          "base_risk": 55,
+          "base_risk": 70,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_hinge"
@@ -62,7 +62,7 @@
         {
           "label": "There is a second cabinet behind the first. There is always a second cabinet.",
           "cost": {},
-          "base_risk": 70,
+          "base_risk": 80,
           "skill": 2,
           "success_node": "cache_3",
           "hazard_id": "the_appointment"

@@ -1,0 +1,106 @@
+{
+  "id": "settlement_jack_chicken_01",
+  "title": "Jack's Friend Chicken",
+  "start_node": "stand",
+  "nodes": {
+    "stand": {
+      "text": "The queue is the first thing you see: eleven survivors, a goat, and a man in a welding mask, all standing in the respectful silence of people who can smell something frying. At the front, under a hand-painted sign that reads FRIEND CHICKEN, a hubcap of oil bubbles over a burning tyre. Behind it, in a very pink romper and an apron that says KISS THE COOK with KISS crossed out and RESPECT written over it, is Jack the Romper. He has the Intimidating Mask pushed up on his head like a chef's hat. 'Keeps the health inspectors away,' he tells the goat. There have been no health inspectors for sixty years. It is working.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Get in line.",
+          "cost": {},
+          "base_risk": 10,
+          "skill": 4,
+          "success_node": "menu",
+          "hazard_id": "line_cut"
+        },
+        {
+          "label": "Rev the Motorbike he built you.",
+          "requires_item": 26,
+          "cost": {},
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "regular",
+          "hazard_id": "backfire"
+        }
+      ]
+    },
+    "menu": {
+      "text": "When you reach the front, Jack wipes his hands on the romper, which explains a lot about the romper. 'Menu's simple,' he says. 'Chicken.' You ask about the sign. 'The D is correct,' he says, with tremendous dignity. 'Every one of them was a friend. I named them all. I'm not going to tell you their names.' A long pause. 'That one was {{chicken_name}}.' He does not point at anything in particular. His eyes are wet. 'It's the onions,' he says. There are no onions.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Order a box. Do not ask which one it was.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 1,
+          "success_node": "fryer",
+          "hazard_id": "the_names"
+        }
+      ]
+    },
+    "regular": {
+      "text": "Jack's head snaps up at the sound of the engine. He knows that engine. He built that engine, out of a helicopter, in a romper. He dabs his eyes with the apron and waves you past the whole queue — past the welding mask, past the goat. 'Regulars don't wait,' he says, and you are fairly sure you are the first regular he has ever had. A box's worth of chicken is in the oil before you have the kickstand down. 'How's she running?' he asks, and listens to every word of the answer.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Tell him she runs beautifully.",
+          "cost": {},
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "boxed",
+          "hazard_id": "grease_pop"
+        }
+      ]
+    },
+    "fryer": {
+      "text": "Jack lowers the chicken into the hubcap with a pair of salad tongs and the reverence of a man launching a ship. The oil has been cooking for nine years. It is no longer clear whether he is frying the chicken or the oil is frying everything near it, including you, a little. While it spits, he tells you he once fought a deathclaw for this recipe. 'It was a draw,' he says. 'We share custody.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Wait. Say something nice about the romper.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 4,
+          "success_node": "boxed",
+          "hazard_id": "grease_pop"
+        }
+      ]
+    },
+    "boxed": {
+      "text": "He hands the box over with both hands, the way you would hand someone a baby or a bomb. The cardboard is already see-through with grease, and FRIEND CHICKEN is written on the lid in red crayon, with a small heart. Then, after a visible struggle, he reaches under the counter and adds a bottle of something the colour of a warning light. 'Romper Red. My own,' he says. 'Five doses. One drop a dose. Not two. Never two.' The label is a hand-drawn skull and, under it, after what must have been some thought, a smaller skull. He waves off payment. 'Just tell people about the romper,' he says. 'Good things.'",
+      "can_bank": true,
+      "loot": [
+        { "item": 77, "qty": [1, 1] },
+        { "item": 78, "qty": [5, 5] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "line_cut": {
+      "text": "A man in a welding mask cuts in front of you, then a second man in a second welding mask, then the goat. Jack serves them in order of arrival, which by his count is correct. You stand in the sun a while longer.",
+      "penalty": { "water": -1 },
+      "ends_encounter": false
+    },
+    "backfire": {
+      "text": "The Motorbike backfires like a rifle shot. The queue hits the dirt. Jack hits the dirt. Somewhere a chicken that was not yet a friend hits the dirt and keeps going. When everybody gets up you are at the back of the line, and the goat is looking at you.",
+      "penalty": {},
+      "ends_encounter": false
+    },
+    "the_names": {
+      "text": "You do not ask. He tells you anyway: all forty-one names, in order, with a short story for each. Mrs. Pecksworth was afraid of thunder. Kevin was not afraid of anything, and that was Kevin's whole problem. By the end the sun has moved, and so, in some way, have you. You are hungrier than when you arrived.",
+      "penalty": { "food": -1 },
+      "ends_encounter": false
+    },
+    "grease_pop": {
+      "text": "The hubcap spits a coin of hot oil onto your forearm. Jack says 'Ooh,' with real sympathy, and then, 'That's the flavour trying to get out.' It leaves a little scar shaped like a drumstick.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "chicken_name": ["Doug", "Big Linda", "Mrs. Pecksworth", "Kevin", "Sergeant Nugget", "The Colonel (no relation)"]
+  }
+}

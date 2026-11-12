@@ -316,6 +316,7 @@ static void gameLoopTask(void* param) {
     }
     broadcastState();
     serviceSyncQueue();   // at most one pick's sync per turn (network-sync.hpp)
+    serviceVisRefresh();  // sight that moved under a survivor standing still (network-msg-items.hpp)
     // Refresh per-slot WS liveness so handleConnect's stale-slot reap only
     // fires on a slot that has been unverifiable for the whole grace window,
     // not on one bad ws.client() look (see network-session.hpp).
@@ -499,6 +500,37 @@ static bool admitAssetRequest(AsyncWebServerRequest* req) {
   return true;
 }
 
+// ── /enc reply block ────────────────────────────────────────────
+// handleMsg_enc_start has already opened the scene by the time the client
+// asks /enc for its file, so this reply must not hang on PSRAM luck. It used
+// to ps_malloc(file size) per request, which never falls back to the internal
+// heap: on 2026-11-07, 38 minutes into a session, PSRAM had 160 KB free but
+// no block over 6 KB (mem.psramMax), and every scene file over ~4 KB -- most
+// of them -- came back 404: "encounter failed to load".
+//
+// One ENC_FILE_CAP block (every file the engine can run fits) is taken at boot
+// for it, before PSRAM fragments. The player and the observer TV fetch the
+// same file at once, so it is first come; a request that finds it busy tries
+// PSRAM, then the internal heap while that keeps ENC_REPLY_INTERNAL_SPARE free
+// for the Wi-Fi driver. Async_tcp task only -- the handler and the response's
+// teardown both run there, like g_activeAssetReqs -- so the flag needs no lock.
+static uint8_t* g_encReplyBuf  = nullptr;
+static bool     g_encReplyBusy = false;
+static constexpr size_t ENC_REPLY_INTERNAL_SPARE = 32768;
+
+static std::shared_ptr<uint8_t> encReplyBlock(size_t n) {
+  if (!n) n = 1;
+  if (g_encReplyBuf && !g_encReplyBusy && n <= ENC_FILE_CAP) {
+    g_encReplyBusy = true;
+    return std::shared_ptr<uint8_t>(g_encReplyBuf, [](uint8_t*) { g_encReplyBusy = false; });
+  }
+  uint8_t* p = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!p && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >= n + ENC_REPLY_INTERNAL_SPARE)
+    p = (uint8_t*)heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!p) return nullptr;
+  return std::shared_ptr<uint8_t>(p, free);
+}
+
 // Serve webFiles[i] (PSRAM) for one request: 304 on ETag match, else 200 with
 // the cached bytes. Runs on the async_tcp task — keep it allocation-light.
 static void sendWebFile(AsyncWebServerRequest* req, int i) {
@@ -642,6 +674,9 @@ static void uploadChunk(AsyncWebServerRequest* request, const String& filename,
       Log.notice("UPLOAD complete dest=%s total=%u ok=%d",
                  g_uploadDest.c_str(), (unsigned)g_uploadTotal, (int)g_uploadOk);
     }
+    // The engine keeps the last scene file it read (encLoadFile): this may
+    // have been that file.
+    encFileCacheDrop();
     UploadUI::end(g_uploadOk);
   }
 }
@@ -652,6 +687,14 @@ static void setupWiFiAndServer() {
   Log.notice("Starting WiFi/HTTP/WS setup");
   splashAdd("Starting WiFi...");
   heap_caps_register_failed_alloc_callback(netAllocFailed);   // counted, reported by NETWD
+  // Both scene-file buffers, while PSRAM still has big blocks: the engine's
+  // (encFileBuf) and the /enc reply's (encReplyBlock). The asset cache has
+  // already taken what it will by now.
+  encAllocFileBuf();
+  if (!g_encReplyBuf) g_encReplyBuf = (uint8_t*)ps_malloc(ENC_FILE_CAP);
+  Log.notice("Enc buffers: engine=%s reply=%s",
+             encFileBuf ? (esp_ptr_external_ram(encFileBuf) ? "PSRAM" : "internal") : "FAIL",
+             g_encReplyBuf ? "PSRAM" : "FAIL (per-request)");
   {
     // Proof that setup()'s heap_caps_malloc_extmem_enable() took: where a
     // plain 2 KB malloc lands now (it used to be internal).
@@ -944,6 +987,30 @@ static void setupWiFiAndServer() {
         char vb[160];
         if (appendVacJson(vb, sizeof(vb))) j += vb;   // carries its own leading comma
       }
+      // RUNAWAY SCIENCE (lab.hpp): st 0 open / 1 grafted, g what has been
+      // banked, and the three buildings (ward, pantry, theatre).
+      {
+        char lb[128];
+        if (appendLabJson(lb, sizeof(lb))) j += lb;   // carries its own leading comma
+      }
+      // ONE-HAND BONNEY (bonney.hpp): her fire, m 0 section 1 / 1 section 2 /
+      // 2 away, n passes finished, the ash ring she left.
+      {
+        char bb[96];
+        if (appendBonneyJson(bb, sizeof(bb))) j += bb;   // carries its own leading comma
+      }
+      // Wasteland ghosts (ghosts.hpp): [slot,q,r,haunt,state,hoard,src,name]
+      // per live ghost, the same array sync and the tick broadcast carry.
+      {
+        char gb[400];
+        if (appendGhostJson(gb, sizeof(gb))) j += gb;   // carries its own leading comma
+      }
+      // The Dshingus (dshingus.hpp): days left per seat and every spot, the
+      // same object sync carries. 48 spots at most, ~14 B each.
+      {
+        char db[760];
+        if (appendDshJson(db, sizeof(db), true)) j += db;   // carries its own leading comma
+      }
 
       int shelters = 0, impShelters = 0, poiCount = 0, trapCount = 0, trapKnown = 0;
       int resCnt[6] = {0,0,0,0,0,0};
@@ -1069,6 +1136,27 @@ static void setupWiFiAndServer() {
         j += "]";
         j += ",\"q\":";           j += p.q;
         j += ",\"r\":";           j += p.r;
+        // The ground right round them, for the observer's per-survivor
+        // panels: the 19 hexes within 2, row by row (dr -2..2, dq -2..2,
+        // the same walk as "view"), as flat triples terrain, variant,
+        // shelter | 4 if a POI. ?pid= only ever gives the ONE camera
+        // subject's disk; this is what lets the TV show everybody at once.
+        if (p.connected) {
+          j += ",\"near\":[";
+          bool nf = true;
+          for (int dr = -2; dr <= 2; dr++) {
+            for (int dq = -2; dq <= 2; dq++) {
+              if (abs(dq) + abs(dr) + abs(dq + dr) > 4) continue;
+              const HexCell& nc = G.map[wrapR(p.r + dr)][wrapQ(p.q + dq)];
+              if (!nf) j += ",";
+              nf = false;
+              j += (nc.terrain < NUM_TERRAIN ? nc.terrain : 0); j += ",";
+              j += nc.variant; j += ",";
+              j += (nc.shelter & 3) | (nc.poi ? 4 : 0);
+            }
+          }
+          j += "]";
+        }
         j += ",\"ll\":";          j += p.ll;
         j += ",\"food\":";        j += p.food;
         j += ",\"water\":";       j += p.water;
@@ -1175,10 +1263,11 @@ static void setupWiFiAndServer() {
     char path[56];
     snprintf(path, sizeof(path), "/data/encounters/%s/%s.json", biome.c_str(), id.c_str());
     uint32_t t0 = millis();
-    // One f.read() into a PSRAM block. f.readString() grew a String one byte
-    // at a time -- thousands of reallocs, every one under 4 KB landing on the
+    // One f.read() into one block (encReplyBlock: the one reserved at boot,
+    // else PSRAM, else internal). f.readString() grew a String one byte at a
+    // time -- thousands of reallocs, every one under 4 KB landing on the
     // internal heap. The response owns the block (shared_ptr captured by the
-    // filler) and frees it once sent.
+    // filler) and gives it back once sent.
     //
     // No G.mutex: it only ever kept this read off the card while saveGame()
     // wrote to it under the mutex. Saves write outside it now
@@ -1187,7 +1276,7 @@ static void setupWiFiAndServer() {
     // as long as a save's writes take.
     std::shared_ptr<uint8_t> body;
     size_t bodyLen = 0;
-    bool found = false;
+    bool found = false, noRoom = false;
     {
       uint32_t tsd = millis();
       bool exists = SD.exists(path);
@@ -1195,13 +1284,15 @@ static void setupWiFiAndServer() {
         File f = SD.open(path, FILE_READ);
         if (f) {
           size_t fsz = f.size();
-          uint8_t* blk = (uint8_t*)ps_malloc(fsz ? fsz : 1);
-          if (blk) {
-            body.reset(blk, free);
-            bodyLen = f.read(blk, fsz);
+          body = encReplyBlock(fsz);
+          if (body) {
+            bodyLen = f.read(body.get(), fsz);
             found = true;
           } else {
-            Log.error("HTTP /enc: ps_malloc(%u) failed", (unsigned)fsz);
+            noRoom = true;
+            Log.error("HTTP /enc: no room for %u B (psramMax=%u internalMax=%u)", (unsigned)fsz,
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
           }
           f.close();
           Log.notice("SD READ: %s size=%u took=%ums",
@@ -1212,6 +1303,14 @@ static void setupWiFiAndServer() {
       } else {
         Log.warning("SD MISSING: %s (via /enc)", path);
       }
+    }
+    // Out of memory is not "not found": 503, and the client asks again
+    // (_startEncounterFetch retries any non-200).
+    if (noRoom) {
+      AsyncWebServerResponse* r = req->beginResponse(503, "text/plain", "Busy");
+      r->addHeader("Retry-After", "1");
+      r->addHeader("Cache-Control", "no-store");
+      req->send(r); return;
     }
     if (!found) {
       Log.warning("HTTP /enc 404 path=%s", path);

@@ -32,6 +32,7 @@
   const BACKOFF_MAX  = 8000;
   const STALL_MS     = 6000;    // abort rather than let a dead socket hold the slot
   const DAY_TICKS    = 3000;    // matches Esp32HexMapCrawl.ino — the time-of-day arc
+  const DAYS_PER_YEAR = 365;    // matches Esp32HexMapCrawl.ino — the day goes 365 -> 1
   const SAMPLES_MAX  = 30;      // shadow-roster window, per player
   const TC_MAX       = 20;      // threat clock ceiling, escalating at 5/9/13/17
   const TC_STEPS     = [5, 9, 13, 17];
@@ -73,10 +74,25 @@
     WEATHER: (typeof WEATHER_PHASE_NAMES !== 'undefined') ? WEATHER_PHASE_NAMES : [],
     admiredPassed: (typeof admiredPassed === 'function') ? admiredPassed : null,
     admiredNextAbove: (typeof admiredNextAbove === 'function') ? admiredNextAbove : null,
+    COLS: (typeof MAP_COLS !== 'undefined') ? MAP_COLS : 75,
+    ROWS: (typeof MAP_ROWS !== 'undefined') ? MAP_ROWS : 57,
+    ARCH: (typeof ARCHETYPES !== 'undefined') ? ARCHETYPES : [],
+    ARCH_COLORS: (typeof ARCHETYPE_COLORS !== 'undefined') ? ARCHETYPE_COLORS : [],
   };
   const terrainOf = (t) => GD.TERRAIN[t] || null;
   const terrainName = (t) => { const x = terrainOf(t); return x ? x.name : 'ground'; };
+  // A forest oasis (docs/forest-oasis.md): Rust Forest pinned to 8..12, as
+  // oasisCell() in hex-map.hpp reads it. Inline rather than game-data.js's
+  // isOasisCell(), so a TV without that file still knows one.
+  const isGrove = (c) => !!c && c.terrain === 2 && (c.variant | 0) >= 8 && (c.variant | 0) <= 12;
+  const cellName = (c) => (isGrove(c) ? 'Forest Oasis' : terrainName(c && c.terrain));
   const weatherName = (w) => GD.WEATHER[w] || 'CLEAR';
+  // Dawns from day `a` to day `b`. The day goes 365 -> 1, so 365 to 1 is one
+  // dawn; a jump back (a regen restarts at day 1) is none.
+  const daysPassed = (a, b) => {
+    const d = (((b - a) % DAYS_PER_YEAR) + DAYS_PER_YEAR) % DAYS_PER_YEAR;
+    return d < DAYS_PER_YEAR / 2 ? d : 0;
+  };
 
   // ══ State ══════════════════════════════════════════════════════
   const ST = {
@@ -107,6 +123,8 @@
         conn: !!p.conn,
         name: p.name || ('P' + p.pid), arch: p.arch | 0, archName: p.archName || '?',
         q: p.q | 0, r: p.r | 0,
+        // The 19 hexes round them (game-server.hpp "near"), for their panel.
+        near: Array.isArray(p.near) ? p.near : null,
         ll: p.ll | 0, llCap: Math.max(1, p.llCap | 0),
         food: p.food | 0, water: p.water | 0, rad: p.rad | 0, ap: p.ap | 0,
         wounds: [(p.wounds || [0, 0])[0] | 0, (p.wounds || [0, 0])[1] | 0],
@@ -172,7 +190,7 @@
         e = {
           key: p.key, pid: p.pid, connectMs: p.connectMs,
           name: p.name, archName: p.archName, arch: p.arch,
-          firstSeen: Date.now(), lastSeen: Date.now(), firstDay: 0,
+          firstSeen: Date.now(), lastSeen: Date.now(), lastDay: null,
           samples: [],
           // Encounters are not just beats, they are the CAUSES every later
           // beat pays off. Four LL bought in a pharmacy on day 6 is what
@@ -193,13 +211,15 @@
     push(snap) {
       for (const p of snap.live) {
         const e = this.entry(p);
-        if (!e.firstDay) e.firstDay = snap.day;
+        if (e.lastDay == null) e.lastDay = snap.day;
         e.name = p.name; e.archName = p.archName;
         e.lastSeen = snap.t;
         e.last = p;
         e.peakScore = Math.max(e.peakScore, p.score);
         e.tally.steps = p.steps;
-        e.tally.days = Math.max(0, snap.day - e.firstDay);
+        // Summed dawn by dawn: the day itself starts over after 365.
+        e.tally.days += daysPassed(e.lastDay, snap.day);
+        e.lastDay = snap.day;
         e.samples.push({
           t: snap.t, day: snap.day,
           ll: p.ll, llCap: p.llCap, llFrac: p.llFrac,
@@ -373,7 +393,7 @@
       (p) => p.encActive && !(prev.byKey.get(p.key) || {}).encActive);
 
     // ── World ────────────────────────────────────────────────
-    if (next.day > prev.day) ev(out, 'DAWN', null, 'mid', { day: next.day });
+    if (daysPassed(prev.day, next.day)) ev(out, 'DAWN', null, 'mid', { day: next.day });
     if (next.weather !== prev.weather) {
       ev(out, 'WEATHER_TURN', null, 'mid', { weather: next.weather, name: weatherName(next.weather) });
     }
@@ -556,7 +576,7 @@
     // disappearance pass above has already fired VANISHED. The obituary is
     // the beat, not the exit.
     if (landed)              return Object.assign(base, { reason: 'banked', gained: dRes.map((n) => Math.max(0, n)), score: dScore });
-    if (next.day > prev.day) return Object.assign(base, { reason: 'dawn' });
+    if (daysPassed(prev.day, next.day)) return Object.assign(base, { reason: 'dawn' });
     if (dLL > 0)             return Object.assign(base, { reason: 'hazard', hazard: h });
     if (tcHint)              return Object.assign(base, { reason: 'abort' });
     // No damage, no clock. If nothing on this node could have thrown them
@@ -1080,7 +1100,7 @@
       score: p ? p.score : (entry ? entry.peakScore : 0),
       n: p ? p.ll : 0,
       terrain: snap && snap.view && p && snap.view.pid === p.pid
-        ? terrainName((centreCell(snap.view) || {}).terrain) : 'ground',
+        ? cellName(centreCell(snap.view) || {}) : 'ground',
       scene: json ? OBS.Scene.title(json) : 'somewhere',
       room: p ? OBS.Scene.roomName(p.encNode) : 'room',
       haul: p ? OBS.Scene.haulText(p.encLoot) : 'nothing',
@@ -1390,13 +1410,15 @@
       // The stage. Everything the audience is meant to look at is here, big.
       +   '<main id="stage">'
       +     '<div id="disk-bg"><canvas id="s-disk"></canvas><canvas id="s-air"></canvas></div>'
+      +     '<canvas id="s-cams"></canvas>'
       +     '<div id="who">'
       +       '<h1 id="w-name">—</h1>'
       +       '<div id="w-bar"><i></i></div>'
       +       '<div id="w-cond">—</div>'
       +     '</div>'
-      +     '<aside id="admired"><h4>THE ADMIRED</h4><ol id="adm-rows"></ol>'
-      +       '<div id="adm-next"></div></aside>'
+      +     '<aside id="admired"><canvas id="adm-plate"></canvas>'
+      +       '<h4><canvas id="adm-medal"></canvas><span>THE ADMIRED</span></h4><div id="adm-sub"></div>'
+      +       '<ol id="adm-rows"></ol><div id="adm-next"></div><div id="adm-stamp"></div></aside>'
       +     '<div id="place"><span id="w-place"></span></div>'
       +     '<div id="greed">'
       +       '<div id="g-bank">THE DOOR OUT IS OPEN</div>'
@@ -1417,7 +1439,7 @@
       +   '<div id="takeover"><div class="to-kicker"></div><div class="to-name"></div><div class="to-line"></div></div>'
       + '</div>';
     for (const id of ['strip', 'w-day', 'w-weather', 'w-alive', 'w-threat', 'w-status',
-      'stage', 'disk-bg', 's-disk', 's-air', 'who', 'w-name', 'w-bar', 'w-cond', 'adm-next',
+      'stage', 'disk-bg', 's-disk', 's-air', 's-cams', 'who', 'w-name', 'w-bar', 'w-cond', 'adm-next', 'adm-medal', 'adm-stamp', 'adm-plate', 'adm-sub',
       'place', 'w-place', 'greed', 'g-bank', 'g-haul', 'doors', 'admired', 'adm-rows',
       'voice', 'line', 'cast', 'takeover']) {
       EL[id] = D.getElementById(id);
@@ -1450,14 +1472,14 @@
     const p = entry && !entry.gone ? snap.byKey.get(Director.subject) : null;
     const inScene = !!(p && p.encActive);
     EL.stage.className = inScene ? 'scene' : 'open';
+    Glide.note(snap, now);
 
     if (!p) {
       EL['w-name'].textContent = snap.live.length ? 'THE WASTELAND' : 'NOBODY LEFT';
       EL['w-cond'].textContent = '';
       EL['w-place'].textContent = '';
       EL.doors.innerHTML = '';
-      EL['s-disk'].innerHTML = '';
-      Air.setDisk(null);
+      renderDisk(snap, null);
       EL.greed.className = '';
     } else {
       EL['w-name'].textContent = p.name.toUpperCase();
@@ -1467,12 +1489,15 @@
       EL['w-cond'].className = conditionClass(p);
       if (inScene) renderScene(snap, p);
       else renderOpen(snap, p);
+      renderDisk(snap, p);   // in a scene too: their panel says INSIDE
     }
+    renderCams(snap, p);
 
     renderAdmired(snap, now);
     renderCast(snap);
     renderVoice(now);
     fitStage();
+    fitAdmired();
   }
 
   // ── In a scene: the stakes ────────────────────────────────────
@@ -1513,72 +1538,48 @@
   }
 
   // ── Out in the open ───────────────────────────────────────────
-  // No meters. The hex disk goes behind everything as scenery, the terrain
-  // names the place, and the survivor's own state is the condition word.
+  // No meters. The terrain names the place and the survivor's own state is
+  // the condition word; the ground itself is in their panel (renderDisk).
   function renderOpen(snap, p) {
     const view = snap.view && snap.view.pid === p.pid ? snap.view : null;
-    const t = view ? (centreCell(view) || {}).terrain : undefined;
-    EL['w-place'].textContent = (t == null ? 'the open' : terrainName(t)).toUpperCase();
+    const here = view ? (centreCell(view) || {}) : {};
+    const t = here.terrain;
+    EL['w-place'].textContent = (t == null ? 'the open'
+      : isGrove(here) ? 'Forest Oasis \u00b7 safe rest' : terrainName(t)).toUpperCase();
     EL.doors.innerHTML = '';
     EL.greed.className = '';
-    renderDisk(snap, p);
   }
 
-  // The vision disk from ?pid=, drawn with the board's own hand-painted tiles.
-  //
-  // A canvas rather than SVG, for the same reason the game uses one: this is
-  // 61 bitmaps, and rebuilding 61 <image> elements every second would churn
-  // the DOM for a picture that only changes when somebody walks. It redraws
-  // on a signature change (or when a tile finishes decoding), not per poll.
-  //
+  // ── The ground, as the game draws it ──────────────────────────
   // hexToPixel here is the game renderer's own formula (renderer.js:79), so
   // the ground sits the same way round as the map in the players' hands, and
-  // the image is drawn as a 2*size square centred on the hex exactly like
-  // renderHexContent() -- the PNGs are hex-shaped with transparent corners.
-  let diskSig = '';
-  function renderDisk(snap, p) {
-    const view = snap.view && snap.view.pid === p.pid ? snap.view : null;
-    const cv = EL['s-disk'];
-    if (!view) { diskSig = ''; Air.setDisk(null); const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); return; }
-    const box = EL['disk-bg'].getBoundingClientRect();
-    const sig = view.pid + ':' + view.q + ',' + view.r + ':' + view.visR + ':'
-      + Math.round(box.width) + 'x' + Math.round(box.height) + ':'
-      + view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('')
-      + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm
-                  + ',' + snap.vac.dq + ',' + snap.vac.dr + ',' + snap.vac.kq + ',' + snap.vac.kr : '')
-      + (snap.kane ? ':k' + snap.kane.gq + ',' + snap.kane.gr : '');   // the quest tiles (questTileKey)
-    if (sig === diskSig) { Air.kick(); return; }
-    diskSig = sig;
-    Art.onload = () => { diskSig = ''; };   // a late decode redraws on the next poll
+  // each tile lands on the hex exactly like renderHexContent() -- the PNGs
+  // are hex-shaped with transparent corners.
+  //
+  // One painter for both pictures on this stage: the camera subject's vision
+  // disk (renderDisk) and everybody's panel (renderCams). The caller has
+  // already translated the context to where the camera is looking. `k` is a
+  // glide still to run, in hexes (Glide): the ground is drawn that far back
+  // along the step so the survivor walks into the middle instead of jumping.
+  const SQ3 = Math.sqrt(3);
+  const hexXY = (dq, dr, size) => [size * 1.5 * dq, size * (SQ3 / 2 * dq + SQ3 * dr)];
+  const hexLen = (dq, dr) => (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+  // q, r wrap independently on the torus (renderer.js:131 measures it so).
+  const wrapDelta = (d, n) => { d = ((d % n) + n) % n; return d > n / 2 ? d - n : d; };
+  const torusOff = (q1, r1, q2, r2) => [wrapDelta(q2 - q1, GD.COLS), wrapDelta(r2 - r1, GD.ROWS)];
 
-    const dpr = Math.min(root.devicePixelRatio || 1, 2);
-    const W = Math.max(1, Math.round(box.width)), H = Math.max(1, Math.round(box.height));
-    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
-    const ctx = cv.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';   // the tiles are 110px; a 4K TV upscales them
-    ctx.translate(W / 2, H / 2);
-
-    const SQ3 = Math.sqrt(3);
-    const R = Math.max(1, view.visR);
-    // COVER the frame: a 61-cell disk shrunk to fit a wide panel is a diagram
-    // floating in the middle of the screen. Oversized and bleeding off the
-    // edges, it is a place the survivor is standing in.
-    const size = Math.max(W / (3 * R + 2), H / (2 * SQ3 * R + 2));
+  function drawGround(ctx, snap, cells, size, k) {
     const host = ST.host;
-
+    const kq = k ? k[0] : 0, kr = k ? k[1] : 0;
     // Back to front, as renderHexTerrain() does it: a diorama atlas's tiles
     // stand up into the hex behind, so a row has to land on top of the row
     // behind it. (Flat sheet tiles don't care.)
-    const cells = view.cells.slice().sort((a, b) => (a.dr - b.dr) || (a.dq - b.dq));
-    const airCells = [];
+    cells = cells.slice().sort((a, b) => (a.dr - b.dr) || (a.dq - b.dq));
+    const out = [];
     for (const c of cells) {
-      const x = size * 1.5 * c.dq;
-      const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
+      const [x, y] = hexXY(c.dq + kq, c.dr + kr, size);
       const tile = Art.tile(host, c.terrain, c.variant, snap.vc, c.q, c.r, questTileKey(snap, c.q, c.r, c.terrain));
-      airCells.push({ cx: W / 2 + x, cy: H / 2 + y, q: c.q, r: c.r, terrain: c.terrain, tile });
+      out.push({ x, y, q: c.q, r: c.r, terrain: c.terrain, tile });
       // Masked to the hex, as renderHexContent() does it (drawTileInHex): the
       // sheet tiles carry bleed past the rim, and unmasked it spilled onto the
       // neighbours. Only a diorama atlas (not flat) stands up into the hex
@@ -1588,9 +1589,9 @@
       if (tile && tile.m) {
         // An atlas cell, anchored at the hex centre. A flat sheet cell (anchor
         // = centre of a square cell) lands on the same 2*size square as below.
-        const m = tile.m, k = size / m.radius;
+        const m = tile.m, s = size / m.radius;
         ctx.drawImage(tile.img, tile.sx, tile.sy, m.cell[0], m.cell[1],
-          x - m.anchor[0] * k, y - m.anchor[1] * k, m.cell[0] * k, m.cell[1] * k);
+          x - m.anchor[0] * s, y - m.anchor[1] * s, m.cell[0] * s, m.cell[1] * s);
       } else if (tile) {
         // A per-file tile: a 2*size square centred on the hex, as ever.
         ctx.drawImage(tile.img, x - size, y - size, size * 2, size * 2);
@@ -1618,34 +1619,712 @@
     // neighbours trace the same pixels and the coverage doesn't stack. Width
     // keeps the game's 1px-at-56px ratio: the TV's hexes are far bigger.
     ctx.beginPath();
-    for (const c of cells) {
-      const x = size * 1.5 * c.dq;
-      const y = size * (SQ3 / 2 * c.dq + SQ3 * c.dr);
+    for (const o of out) {
       for (let i = 0; i < 6; i++) {
         const a = Math.PI / 3 * i;
-        const px = x + size * Math.cos(a), py = y + size * Math.sin(a);
+        const px = o.x + size * Math.cos(a), py = o.y + size * Math.sin(a);
         if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
       }
       ctx.closePath();
     }
     ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(1, size / 56); ctx.stroke();
-    // VACANCY's sign, when its town is in the disk.
+    // A forest oasis: a soft green ring just inside each grove hex, so the
+    // safe ground reads at TV distance over the canopy art.
+    const groves = cells.filter(isGrove);
+    if (groves.length) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(150, 220, 120, 0.55)'; ctx.lineWidth = Math.max(2, size * 0.045);
+      for (const c of groves) {   // hexPath() starts its own path, so one stroke each
+        const [x, y] = hexXY(c.dq + kq, c.dr + kr, size);
+        hexPath(ctx, x, y, size * 0.86);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // VACANCY's sign, when its town is on this patch of ground.
     const vac = snap.vac;
-    const town = vac && vac.q >= 0 ? view.cells.find((c) => c.q === vac.q && c.r === vac.r) : null;
-    if (town) drawVacSign(ctx, size * 1.5 * town.dq, size * (SQ3 / 2 * town.dq + SQ3 * town.dr), size, vac);
-    // Where the camera subject is standing.
-    ctx.strokeStyle = '#E8A828'; ctx.lineWidth = Math.max(2, size * 0.035);
-    ctx.beginPath(); ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2); ctx.stroke();
+    const town = vac && vac.q >= 0 ? cells.find((c) => c.q === vac.q && c.r === vac.r) : null;
+    if (town) { const [x, y] = hexXY(town.dq + kq, town.dr + kr, size); drawVacSign(ctx, x, y, size, vac); }
+    return out;
+  }
 
-    // The camera the game renderer would have for this disk: map hex (q, r)
-    // lands at size * world(q, r) + (ox, oy), so the wind's torus-tiled
-    // clouds and gusts sit on the same ground they do in the players' hands.
+  // ── The survivors on it ───────────────────────────────────────
+  // The game's pawn (renderer.js drawCharIcon) cut down to what reads from
+  // across a room: a ground shadow, the archetype's portrait in its ring and,
+  // for anybody but the one the picture is about, a call sign over it.
+  function pawnImg(arch) {
+    const a = GD.ARCH[arch];
+    return a && a.name ? Art.get(ST.host + '/img/survivors/' + a.name.toLowerCase() + 'Pawn.jpg') : null;
+  }
+  const STENCIL = "Impact, 'Arial Narrow', 'Arial Black', sans-serif";
+  function drawPawn(ctx, x, y, size, p, tag) {
+    // The one the picture is about stands a size up from company.
+    const r = Math.max(8, size * (tag ? 0.3 : 0.38));
+    const cy = y - size * 0.1;
+    const color = GD.ARCH_COLORS[p.arch] || '#E8A828';
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.ellipse(x, cy + r * 0.95, r * 0.72, r * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+    const img = pawnImg(p.arch);
+    ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2);
+    if (img && img.ok) { ctx.save(); ctx.clip(); ctx.drawImage(img, x - r, cy - r, r * 2, r * 2); ctx.restore(); }
+    else { ctx.fillStyle = color; ctx.fill(); }
+    const ring = Math.max(1.5, r * 0.13);
+    ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2);
+    ctx.lineWidth = ring; ctx.strokeStyle = color; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, cy, r + ring, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, r * 0.05); ctx.strokeStyle = '#000'; ctx.stroke();
+    if (tag) {
+      const fs = Math.max(9, Math.round(r * 0.62));
+      ctx.font = fs + 'px ' + STENCIL;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      const label = p.name.substring(0, 10).toUpperCase();
+      const tw = ctx.measureText(label).width, ty = cy - r - fs * 0.35;
+      ctx.fillStyle = 'rgba(6,4,3,0.82)';
+      ctx.fillRect(x - tw / 2 - fs * 0.3, ty - fs * 1.05, tw + fs * 0.6, fs * 1.15);
+      ctx.fillStyle = color; ctx.fillText(label, x, ty);
+    }
+    ctx.restore();
+  }
+
+  // Everybody standing within R of `owner`, as hex offsets from where the
+  // owner is drawn: their own glide folded in, the owner's added by the
+  // caller. Two on one hex step apart a little, or the second portrait hides
+  // the first.
+  function drawPawns(ctx, snap, owner, R, size, k, now) {
+    const kq = k ? k[0] : 0, kr = k ? k[1] : 0;
+    const list = [];
+    for (const o of snap.live) {
+      const [dq, dr] = torusOff(owner.q, owner.r, o.q, o.r);
+      if (hexLen(dq, dr) > R) continue;
+      const me = o.key === owner.key;
+      const g = me ? null : Glide.off(o.key, now);
+      list.push({ p: o, me, dq: me ? 0 : dq - (g ? g[0] : 0) + kq, dr: me ? 0 : dr - (g ? g[1] : 0) + kr });
+    }
+    const seen = new Map();
+    for (const w of list.slice().sort((a, b) => b.me - a.me)) {
+      const h = Math.round(w.dq) + ',' + Math.round(w.dr);
+      const n = seen.get(h) || 0;
+      seen.set(h, n + 1);
+      if (n) { w.dq += 0.3 * Math.cos(n * 2.1); w.dr += 0.3 * Math.sin(n * 2.1); }
+    }
+    // Back to front, like the tiles, so a pawn in the row in front overlaps.
+    list.sort((a, b) => (a.dr + a.dq / 2) - (b.dr + b.dq / 2));
+    for (const w of list) {
+      const [x, y] = hexXY(w.dq, w.dr, size);
+      drawPawn(ctx, x, y, size, w.p, !w.me);
+    }
+  }
+
+  // ── Walking, not teleporting ──────────────────────────────────
+  // /state is a snapshot a second, so a step arrives as a jump. A survivor who
+  // moved one to three hexes since the last poll glides there instead, the
+  // ground sliding under them the way the game's camera follows its pawn
+  // (lerpPlayerPositions). Paced by timers, like the air: a TV browser that
+  // never ticks rAF still has to walk.
+  const GLIDE_MS = 520;
+  const Glide = {
+    pos: new Map(),   // key -> { q, r } last seen
+    runs: new Map(),  // key -> { dq, dr, t0 }: the step still to animate
+    timer: 0,
+
+    note(snap, now) {
+      for (const p of snap.live) {
+        const was = this.pos.get(p.key);
+        this.pos.set(p.key, { q: p.q, r: p.r });
+        if (!was || (was.q === p.q && was.r === p.r)) continue;
+        const [dq, dr] = torusOff(was.q, was.r, p.q, p.r);
+        const n = hexLen(dq, dr);
+        if (n >= 1 && n <= 3) this.runs.set(p.key, { dq, dr, t0: now });
+        else this.runs.delete(p.key);
+      }
+    },
+
+    // -> [dq, dr] of the step not yet walked, or null once they have arrived.
+    off(key, now) {
+      const g = this.runs.get(key);
+      if (!g) return null;
+      const t = (now - g.t0) / GLIDE_MS;
+      if (t >= 1) return null;
+      const left = 1 - t * t * (3 - 2 * t);
+      return [g.dq * left, g.dr * left];
+    },
+
+    // Anybody still mid-step? Finished runs are dropped here, once their
+    // last frame has been asked for.
+    moving(now) {
+      for (const [key, g] of this.runs) if (now - g.t0 >= GLIDE_MS) this.runs.delete(key);
+      return this.runs.size > 0;
+    },
+
+    // Keep redrawing while anybody is mid-step, then once more at rest.
+    kick() {
+      if (this.timer) return;
+      this.timer = setTimeout(() => {
+        this.timer = 0;
+        if (!ST.snap) return;
+        const more = this.moving(Date.now());
+        renderDisk(ST.snap, diskSubject, true);
+        renderCams(ST.snap, diskSubject, true);
+        if (more) this.kick();
+      }, 40);
+    },
+  };
+
+  // ══════════════════════════════════════════════════════════════
+  // Grime
+  //
+  // Salvage, drawn procedurally in the house palette (FX_PAL's soot, rust
+  // and brick rungs): plate steel mottled and rusting, scratched, riveted
+  // with the stains running down from every rivet, shot through, taped up,
+  // spray-painted and left to drip. The rule from the LCD holds -- generated
+  // by maths, never looking like it: the shapes come off value noise and a
+  // hash, so nothing is a clean circle or a straight line. THE ADMIRED is
+  // painted on one plate; the panels are framed in it.
+  // ══════════════════════════════════════════════════════════════
+  const Grime = (() => {
+    // lowbias32 and value noise, as observer-fx.js and the board have them
+    const hash = (x) => { x >>>= 0; x ^= x >>> 16; x = Math.imul(x, 0x7feb352d); x ^= x >>> 15; x = Math.imul(x, 0x846ca68b); x ^= x >>> 16; return x >>> 0; };
+    const h2 = (a, b) => hash((Math.imul(a >>> 0, 0x9E3779B1) + hash(b)) >>> 0);
+    const U = (h) => (h >>> 8) / 16777216;
+    const sm = (t) => t * t * (3 - 2 * t);
+    function n2(x, y, s) {
+      const fx = Math.floor(x), fy = Math.floor(y);
+      const tx = sm(x - fx), ty = sm(y - fy);
+      const s0 = h2(fy, s), s1 = h2(fy + 1, s);
+      const a = U(h2(fx, s0)), b = U(h2(fx + 1, s0)), c = U(h2(fx, s1)), d = U(h2(fx + 1, s1));
+      const ab = a + (b - a) * tx, cd = c + (d - c) * tx;
+      return ab + (cd - ab) * ty;
+    }
+    function fbm(x, y, s) {
+      let v = 0, a = 0.5, f = 1;
+      for (let i = 0; i < 4; i++) { v += a * n2(x * f, y * f, s + i * 101); f *= 2.03; a *= 0.5; }
+      return v / 0.9375;
+    }
+    function rng(seed) {
+      let s = seed >>> 0;
+      return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return U(hash(s)); };
+    }
+
+    // The steel itself, at half resolution and smoothed up: dark mottled
+    // plate, rust blooming where the noise runs high (stretched downward,
+    // because rust runs), bright worn edges, grain, soot settling at the foot.
+    function steel(ctx, w, h, seed, o) {
+      const sw = Math.max(2, Math.ceil(w / 2)), sh = Math.max(2, Math.ceil(h / 2));
+      const lo = D.createElement('canvas'); lo.width = sw; lo.height = sh;
+      const lc = lo.getContext('2d'), im = lc.createImageData(sw, sh), d = im.data;
+      const k = 1 / 26, dark = o.dark || 1, rustAmt = o.rust == null ? 0.5 : o.rust;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const m = fbm(x * k, y * k, seed);
+          const r = fbm(x * k * 0.8 + 9.1, y * k * 0.35, seed + 7);
+          const g = U(h2(x + y * 4099, seed));
+          const e = Math.min(x, y, sw - 1 - x, sh - 1 - y) / Math.min(sw, sh);
+          let R = 26 + 40 * m, G = 12 + 18 * m, B = 4 + 7 * m;
+          const rust = sm(Math.max(0, Math.min(1, (r - (0.66 - rustAmt * 0.22)) / 0.14)));
+          const rg = 0.55 + 0.45 * g;
+          R += rust * (128 * rg - R); G += rust * (46 * rg - G); B += rust * (12 - B);
+          // a dark rim round each bloom, where the paint lifts
+          const rim = Math.max(0, 1 - Math.abs(r - (0.6 - rustAmt * 0.22)) / 0.03) * 0.35;
+          R *= 1 - rim; G *= 1 - rim; B *= 1 - rim;
+          const wear = e < 0.045 ? (1 - e / 0.045) * sm(n2(x * 0.35, y * 0.35, seed + 3)) : 0;
+          R += wear * 70; G += wear * 34; B += wear * 10;
+          const gr = (g - 0.5) * 16; R += gr; G += gr * 0.5; B += gr * 0.2;
+          const soot = o.soot ? sm(Math.max(0, Math.min(1, (y / sh - 0.5) / 0.5))) * 0.6 * (0.55 + 0.45 * m) : 0;
+          const f = (1 - soot) * dark;
+          const i = (y * sw + x) * 4;
+          d[i] = R * f; d[i + 1] = G * f; d[i + 2] = B * f; d[i + 3] = 255;
+        }
+      }
+      lc.putImageData(im, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(lo, 0, 0, w, h);
+    }
+
+    // Scratches: short wandering strokes, a bright gouge with a dark lip.
+    function scratches(ctx, w, h, rnd, n) {
+      ctx.save();
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (let i = 0; i < n; i++) {
+        let x = rnd() * w, y = rnd() * h, a = rnd() * Math.PI * 2;
+        const segs = 3 + (rnd() * 7 | 0), len = 4 + rnd() * 16;
+        const pts = [[x, y]];
+        for (let s = 0; s < segs; s++) { a += (rnd() - 0.5) * 0.5; x += Math.cos(a) * len; y += Math.sin(a) * len; pts.push([x, y]); }
+        for (const [dx, col] of [[1, 'rgba(0,0,0,0.35)'], [0, 'rgba(255,200,120,' + (0.07 + rnd() * 0.16).toFixed(3) + ')']]) {
+          ctx.strokeStyle = col; ctx.lineWidth = 0.6 + rnd() * 0.8;
+          ctx.beginPath();
+          pts.forEach(([px, py], j) => (j ? ctx.lineTo(px + dx, py + dx) : ctx.moveTo(px + dx, py + dx)));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // A rivet: a dome lit from the top left, its shadow, and the rust it has
+    // been weeping down the plate for twenty years.
+    function rivet(ctx, x, y, r, rnd, weep) {
+      if (weep) {
+        const len = r * (3 + rnd() * 9);
+        const g = ctx.createLinearGradient(x, y, x, y + len);
+        g.addColorStop(0, 'rgba(140,58,18,0.55)'); g.addColorStop(1, 'rgba(140,58,18,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(x - r * 0.7, y);
+        ctx.quadraticCurveTo(x - r * 0.5 + (rnd() - 0.5) * r, y + len * 0.6, x + (rnd() - 0.5) * r, y + len);
+        ctx.quadraticCurveTo(x + r * 0.5 + (rnd() - 0.5) * r, y + len * 0.6, x + r * 0.7, y);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.beginPath(); ctx.ellipse(x + r * 0.25, y + r * 0.3, r * 1.05, r * 0.95, 0, 0, Math.PI * 2); ctx.fill();
+      const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+      g.addColorStop(0, '#D88A30'); g.addColorStop(0.35, '#7A4214'); g.addColorStop(1, '#1E0A00');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // A bullet hole: torn steel curling outward round a black hole, the paint
+    // flaked off in a ring, a couple of cracks running away from it.
+    function hole(ctx, x, y, r, rnd) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(168,74,20,0.35)';
+      ctx.beginPath();
+      for (let i = 0; i <= 14; i++) {
+        const a = i / 14 * Math.PI * 2, rr = r * (2.1 + rnd() * 0.9);
+        const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+        if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,190,110,0.55)'; ctx.lineWidth = Math.max(1, r * 0.22);
+      for (let i = 0; i < 7; i++) {
+        const a = rnd() * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(a) * r * 0.8, y + Math.sin(a) * r * 0.8);
+        ctx.lineTo(x + Math.cos(a + 0.2) * r * (1.4 + rnd() * 0.5), y + Math.sin(a + 0.2) * r * (1.4 + rnd() * 0.5));
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      for (let i = 0; i <= 10; i++) {
+        const a = i / 10 * Math.PI * 2, rr = r * (0.8 + rnd() * 0.35);
+        const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+        if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1;
+      for (let i = 0; i < 2; i++) {
+        let a = rnd() * Math.PI * 2, px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+        ctx.beginPath(); ctx.moveTo(px, py);
+        for (let s = 0; s < 5; s++) { a += (rnd() - 0.5) * 0.9; px += Math.cos(a) * r * 0.9; py += Math.sin(a) * r * 0.9; ctx.lineTo(px, py); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Duct tape: a torn strip, the weave showing, dirt in the glue.
+    function tape(ctx, x, y, len, wid, ang, rnd) {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(ang);
+      const jag = () => (rnd() - 0.5) * wid * 0.32;
+      ctx.beginPath();
+      ctx.moveTo(-len / 2 + jag(), -wid / 2);
+      ctx.lineTo(len / 2 + jag(), -wid / 2);
+      for (let i = 1; i <= 6; i++) ctx.lineTo(len / 2 + jag(), -wid / 2 + wid * i / 6);
+      ctx.lineTo(-len / 2 + jag(), wid / 2);
+      for (let i = 5; i >= 1; i--) ctx.lineTo(-len / 2 + jag(), -wid / 2 + wid * i / 6);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(132,118,92,0.9)';
+      ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(40,30,18,0.25)'; ctx.lineWidth = 0.7;
+      for (let i = -len; i < len; i += 3) { ctx.beginPath(); ctx.moveTo(i, -wid); ctx.lineTo(i + wid, wid); ctx.stroke(); }
+      for (let i = 0; i < 14; i++) {
+        ctx.fillStyle = 'rgba(30,14,4,' + (0.1 + rnd() * 0.25).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc((rnd() - 0.5) * len, (rnd() - 0.5) * wid, 0.6 + rnd() * 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+      const sheen = ctx.createLinearGradient(0, -wid / 2, 0, wid / 2);
+      sheen.addColorStop(0, 'rgba(255,235,200,0.25)'); sheen.addColorStop(0.4, 'rgba(255,235,200,0)');
+      ctx.fillStyle = sheen; ctx.fillRect(-len, -wid, len * 2, wid * 2);
+      ctx.restore();
+    }
+
+    // Spray paint left to run: drips hanging off the underside of a line of
+    // lettering, each a thin run ending in a bead.
+    function drips(ctx, x0, x1, y, rnd, n, maxLen, col) {
+      ctx.save();
+      ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineCap = 'round';
+      for (let i = 0; i < n; i++) {
+        const x = x0 + rnd() * (x1 - x0), len = maxLen * (0.15 + rnd() * rnd()), w = 1 + rnd() * 2.2;
+        ctx.lineWidth = w;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (rnd() - 0.5) * 1.5, y + len); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(x, y + len, w * 0.9, w * 1.25, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Cracked glass from one strike: crooked spokes, and the rings that join
+    // them, each line with a dark twin so it reads as a break, not a drawing.
+    function cracks(ctx, cx, cy, R, rnd) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      const spokes = [], n = 7 + (rnd() * 4 | 0);
+      for (let i = 0; i < n; i++) {
+        let a = i / n * Math.PI * 2 + (rnd() - 0.5) * 0.5, x = cx, y = cy;
+        const pts = [[x, y]];
+        const steps = 6 + (rnd() * 5 | 0);
+        for (let s = 0; s < steps; s++) {
+          a += (rnd() - 0.5) * 0.35;
+          const l = R / steps * (0.6 + rnd() * 0.9);
+          x += Math.cos(a) * l; y += Math.sin(a) * l;
+          pts.push([x, y]);
+        }
+        spokes.push(pts);
+      }
+      const line = (pts, col, wd, off) => {
+        ctx.strokeStyle = col; ctx.lineWidth = wd;
+        ctx.beginPath();
+        pts.forEach(([x, y], j) => (j ? ctx.lineTo(x + off, y + off) : ctx.moveTo(x + off, y + off)));
+        ctx.stroke();
+      };
+      for (const p of spokes) { line(p, 'rgba(0,0,0,0.5)', 1.6, 1); line(p, 'rgba(255,236,200,0.6)', 0.9, 0); }
+      for (const ring of [2, 4]) {
+        for (let i = 0; i < n; i++) {
+          if (rnd() < 0.3) continue;
+          const a = spokes[i][Math.min(ring, spokes[i].length - 1)], b = spokes[(i + 1) % n][Math.min(ring, spokes[(i + 1) % n].length - 1)];
+          const mid = [(a[0] + b[0]) / 2 + (rnd() - 0.5) * 6, (a[1] + b[1]) / 2 + (rnd() - 0.5) * 6];
+          line([a, mid, b], 'rgba(0,0,0,0.4)', 1.3, 1); line([a, mid, b], 'rgba(255,236,200,0.45)', 0.7, 0);
+        }
+      }
+      // the white star where it was hit
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.12);
+      g.addColorStop(0, 'rgba(255,240,210,0.7)'); g.addColorStop(1, 'rgba(255,240,210,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R * 0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    // A tile of plain plate for patterns (the panel frames), cached.
+    let tileCv = null;
+    function tile() {
+      if (tileCv) return tileCv;
+      tileCv = D.createElement('canvas'); tileCv.width = tileCv.height = 224;
+      const c = tileCv.getContext('2d');
+      steel(c, 224, 224, 913, { rust: 0.75 });
+      scratches(c, 224, 224, rng(77), 26);
+      return tileCv;
+    }
+
+    return { steel, scratches, rivet, hole, tape, drips, cracks, tile, rng, hash };
+  })();
+
+  // ── Where everything goes ─────────────────────────────────────
+  // The survivors' ground is the show: everybody on the board gets a panel,
+  // the camera subject's first (nearest the type) and marked, and between
+  // them they take the whole stage right of the type -- THE ADMIRED steps
+  // out of the way for them (observer.css). The area is cut into whichever
+  // grid leaves each panel biggest, so one survivor gets all of it, two
+  // split it, and five share a 3 x 2.
+  function gridIn(z, n, gap) {
+    let best = null;
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols);
+      const cw = (z.w - (cols - 1) * gap) / cols, ch = (z.h - (rows - 1) * gap) / rows;
+      if (cw <= 0 || ch <= 0) continue;
+      // Scored by the smaller side, height counted a little long: the foot
+      // takes some of it, and a panel wider than tall shows more ground.
+      const score = Math.min(cw, ch * 1.15);
+      if (!best || score > best.score) best = { cols, rows, cw: Math.min(cw, ch * 1.8), ch, score };
+    }
+    if (!best) return [];
+    // Centred in the area, so a grid that does not fill it is not jammed
+    // into one corner of it.
+    const x0 = z.x + (z.w - best.cols * best.cw - (best.cols - 1) * gap) / 2;
+    const used = Math.min(n, best.cols);
+    const panels = [];
+    for (let i = 0; i < n; i++) {
+      const c = i % best.cols, r = Math.floor(i / best.cols);
+      // A short last row is centred under the full rows above it.
+      const inRow = r === best.rows - 1 ? n - r * best.cols : used;
+      const rx = x0 + (best.cols - inRow) * (best.cw + gap) / 2;
+      panels.push({ x: Math.round(rx + c * (best.cw + gap)), y: Math.round(z.y + r * (best.ch + gap)),
+                    w: Math.round(best.cw), h: Math.round(best.ch) });
+    }
+    return panels;
+  }
+
+  // Right edge of the type actually on the stage, in stage px: the text
+  // itself, not its 60%-wide boxes.
+  function typeRight(stLeft) {
+    let right = 0;
+    const range = D.createRange();
+    for (const el of [EL.who, EL.place, EL.greed, EL.doors, EL.admired]) {
+      if (!el || !el.offsetParent) continue;
+      if (el === EL.admired) { right = Math.max(right, el.getBoundingClientRect().right); continue; }
+      const bar = el.querySelector('#w-bar');
+      if (bar) right = Math.max(right, bar.getBoundingClientRect().right);
+      const walk = D.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+        if (!t.nodeValue.trim()) continue;
+        range.selectNodeContents(t);
+        const b = range.getBoundingClientRect();
+        if (b.width) right = Math.max(right, b.right);
+      }
+    }
+    return right - stLeft;
+  }
+
+  // Everybody's panel, the subject's first. -> [{ o, b }]
+  function camLayout(snap, p) {
+    const st = EL.stage.getBoundingClientRect();
+    const W = st.width, H = st.height;
+    const gap = Math.max(6, Math.round(H * 0.022));
+    const who = snap.live.slice();
+    if (p) { const i = who.findIndex((o) => o.key === p.key); if (i > 0) who.unshift(who.splice(i, 1)[0]); }
+    // Never narrower than the right 52%, whatever the type does.
+    const L = Math.min(W * 0.48, Math.max(W * 0.3, typeRight(st.left) + gap * 2));
+    const panels = gridIn({ x: L, y: gap, w: W - gap - L, h: H - 2 * gap }, who.length, gap);
+    return who.map((o, i) => ({ o, b: panels[i] }));
+  }
+
+  // ── One survivor's panel ──────────────────────────────────────
+  // Zoomed in on its owner the way their own phone is: the ground round
+  // them, the pawn in the middle, anybody near on their own hex, and the
+  // name and the condition word along the foot. The subject's comes off the
+  // full vision disk (?pid=); everybody else's off /state's "near"
+  // (game-server.hpp), the 19 hexes within 2.
+  function footOf(b) { return Math.max(16, Math.round(Math.min(b.h * 0.14, b.w * 0.1))); }
+  // Ring 1 whole and ring 2 cut by the frame: close enough to see what they
+  // are standing on, wide enough to see what is next to it.
+  function camSize(b) { return Math.min(b.w / 4.4, (b.h - footOf(b)) / (2 * SQ3 * 1.1)); }
+
+  // What the TV has decided about each of them, on a strip of tape stuck to
+  // their panel. Picked by state, then by seat and day, so it holds for a
+  // while and changes at dawn instead of flickering every poll.
+  const EPITHETS = {
+    inside: ['WENT IN. NOTED.', 'DOOR SHUT BEHIND THEM', 'NOT WAVING', 'INSIDE. REGRETTABLY.', 'GONE LOOKING FOR TROUBLE'],
+    crit:   ['MEASURE FOR A BOX', 'CALL IT', 'SAYING GOODBYES', 'ON THE WAY OUT', 'ASK FOR THEIR BOOTS'],
+    warn:   ['LEAKING', 'SEEN BETTER DAYS', 'HOLDING. BARELY.', 'MOSTLY INTACT', 'STILL HAS MOST FINGERS'],
+    dry:    ['DRY AS A BONE, SOON', 'EYEING THE OTHERS', 'LICKING ROCKS', 'WOULD KILL FOR A DRINK'],
+    fine:   ['NOT DEAD YET', 'ALIVE, ALLEGEDLY', 'STILL TECHNICALLY FINE', 'UNREMARKABLE', 'TOO STUBBORN TO DIE', 'NOTHING TO REPORT. YET.'],
+  };
+  function epithet(o, day) {
+    const cls = conditionClass(o);
+    const k = o.encActive ? 'inside' : (o.water === 0 || o.food === 0) ? 'dry'
+      : cls === 'crit' ? 'crit' : cls === 'warn' ? 'warn' : 'fine';
+    const list = EPITHETS[k];
+    return list[(o.pid * 7 + (day | 0) * 3) % list.length];
+  }
+  const camSeed = (o) => Grime.hash(o.pid * 977 + (o.connectMs | 0));
+
+  function drawCam(ctx, snap, o, b, now, cells, R, focus) {
+    const color = GD.ARCH_COLORS[o.arch] || '#E8A828';
+    const foot = footOf(b), size = camSize(b);
+    const seed = camSeed(o), rnd = Grime.rng(seed);
+    const t = Math.max(6, Math.round(Math.min(b.w, b.h) * 0.032));   // the frame's steel
+    ctx.save();
+    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+    ctx.fillStyle = '#060403'; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.save();
+    ctx.translate(b.x + b.w / 2, b.y + (b.h - foot) / 2);
+    const k = Glide.off(o.key, now);
+    const out = cells ? drawGround(ctx, snap, cells, size, k) : [];
+    drawPawns(ctx, snap, o, R, size, k, now);
+    ctx.restore();
+    // Soot in the corners: a picture through a dirty window, not a map.
+    const gx = b.x + b.w / 2, gy = b.y + (b.h - foot) / 2;
+    const vg = ctx.createRadialGradient(gx, gy, Math.min(b.w, b.h) * 0.3, gx, gy, Math.max(b.w, b.h) * 0.72);
+    vg.addColorStop(0, 'rgba(6,4,3,0)'); vg.addColorStop(1, 'rgba(6,4,3,0.7)');
+    ctx.fillStyle = vg; ctx.fillRect(b.x, b.y, b.w, b.h - foot);
+    // Somebody on their last legs gets the glass cracked over them.
+    if (!o.encActive && conditionClass(o) === 'crit') {
+      Grime.cracks(ctx, b.x + b.w * (0.25 + rnd() * 0.5), b.y + (b.h - foot) * (0.2 + rnd() * 0.5), Math.max(b.w, b.h) * 0.55, rnd);
+    }
+    // The foot: a strip of the same plate, darker, names stencilled on it.
+    ctx.fillStyle = ctx.createPattern(Grime.tile(), 'repeat');
+    ctx.fillRect(b.x, b.y + b.h - foot, b.w, foot);
+    ctx.fillStyle = 'rgba(6,4,3,0.55)'; ctx.fillRect(b.x, b.y + b.h - foot, b.w, foot);
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(b.x, b.y + b.h - foot, b.w, 2);
+    const fs = Math.round(foot * 0.66);
+    ctx.font = fs + 'px ' + STENCIL;
+    ctx.textBaseline = 'middle';
+    const pad = Math.round(t + foot * 0.25), my = b.y + b.h - foot / 2 - t * 0.3;
+    ctx.shadowColor = '#000'; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 2;
+    ctx.textAlign = 'left'; ctx.fillStyle = color;
+    ctx.fillText((focus ? '▶ ' : '') + o.name.toUpperCase(), b.x + pad, my);
+    const cls = conditionClass(o);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = o.encActive ? '#E8A828' : cls === 'crit' ? '#D8502A' : cls === 'warn' ? '#E09A20' : '#A07828';
+    ctx.fillText(o.encActive ? 'INSIDE' : conditionWord(o), b.x + b.w - pad, my);
+    ctx.shadowColor = 'transparent';
+    // The epithet, in marker on a strip of tape over the top-left corner.
+    const tf = Math.max(10, Math.round(foot * 0.46));
+    ctx.font = tf + 'px ' + STENCIL;
+    const label = epithet(o, snap.day);
+    const tw = ctx.measureText(label).width + tf * 1.4, ang = -0.05 + rnd() * 0.06;
+    const tx = b.x + t + tw / 2 + tf * 0.2, ty = b.y + t + tf * 0.9;
+    Grime.tape(ctx, tx, ty, tw, tf * 1.5, ang, rnd);
+    ctx.save();
+    ctx.translate(tx, ty); ctx.rotate(ang);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(14,8,4,0.92)';
+    ctx.fillText(label, 0, tf * 0.06);
+    ctx.restore();
+    ctx.restore();
+    drawFrame(ctx, b, t, focus ? '#E8A828' : color, focus, rnd);
+    return { out, size, foot };
+  }
+
+  // The frame: a band of salvaged plate, a lip of shadow inside it, a stripe
+  // of their colour painted round it and mostly chipped off, and rivets.
+  function drawFrame(ctx, b, t, color, focus, rnd) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(b.x, b.y, b.w, b.h);
+    ctx.rect(b.x + t, b.y + t, b.w - 2 * t, b.h - 2 * t);
+    ctx.fillStyle = ctx.createPattern(Grime.tile(), 'repeat');
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 2;
+    ctx.strokeRect(b.x + t + 1, b.y + t + 1, b.w - 2 * t - 2, b.h - 2 * t - 2);
+    ctx.strokeStyle = 'rgba(255,200,120,0.18)'; ctx.lineWidth = 1;
+    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+    const i = t * 0.5;
+    ctx.strokeStyle = color; ctx.globalAlpha = focus ? 0.95 : 0.75;
+    ctx.lineWidth = Math.max(1.5, t * (focus ? 0.45 : 0.3)); ctx.lineCap = 'butt';
+    const sides = [[b.x + i, b.y + i, b.x + b.w - i, b.y + i], [b.x + b.w - i, b.y + i, b.x + b.w - i, b.y + b.h - i],
+                   [b.x + b.w - i, b.y + b.h - i, b.x + i, b.y + b.h - i], [b.x + i, b.y + b.h - i, b.x + i, b.y + i]];
+    ctx.beginPath();
+    for (const [x0, y0, x1, y1] of sides) {
+      const L = Math.hypot(x1 - x0, y1 - y0), ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+      let p = 0;
+      while (p < L) {
+        const seg = L * (0.04 + rnd() * (focus ? 0.4 : 0.22));
+        const q = Math.min(L, p + seg);
+        ctx.moveTo(x0 + ux * p, y0 + uy * p); ctx.lineTo(x0 + ux * q, y0 + uy * q);
+        p = q + L * (rnd() < 0.6 ? rnd() * (focus ? 0.03 : 0.07) : 0);
+      }
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    const rr = Math.max(2, t * 0.3);
+    for (const [x, y] of [[b.x + i, b.y + i], [b.x + b.w - i, b.y + i], [b.x + i, b.y + b.h - i], [b.x + b.w - i, b.y + b.h - i],
+                          [b.x + b.w / 2, b.y + i], [b.x + b.w / 2, b.y + b.h - i]]) {
+      Grime.rivet(ctx, x, y, rr, rnd, false);
+    }
+    ctx.restore();
+  }
+
+  function nearCells(o) {
+    const n = o.near;
+    if (!n || n.length < 57) return null;   // an older board: the pawn alone
+    const out = [];
+    let i = 0;
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dq = -2; dq <= 2; dq++) {
+        if (hexLen(dq, dr) > 2) continue;
+        const s = n[i + 2] | 0;
+        out.push({ dq, dr, q: (o.q + dq + GD.COLS) % GD.COLS, r: (o.r + dr + GD.ROWS) % GD.ROWS,
+                   terrain: n[i] | 0, variant: n[i + 1] | 0, shelter: s & 3, poi: !!(s & 4), resource: 0 });
+        i += 3;
+      }
+    }
+    return out;
+  }
+
+  function fitCanvas(cv, box) {
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    const W = Math.max(1, Math.round(box.width)), H = Math.max(1, Math.round(box.height));
+    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';   // the tiles are 110px; a 4K TV upscales them
+    return { ctx, W, H, dpr };
+  }
+
+  // ── The camera subject's panel ────────────────────────────────
+  // On its own canvas (#s-disk), because the air (wind-driven water, heat,
+  // cloud shadows: Air below) is drawn over this one panel and its shimmer
+  // reads the picture under it in place. Redrawn on a signature change (or
+  // when a tile finishes decoding), not per poll, and every frame only while
+  // somebody is mid-step.
+  let diskSig = '';
+  let diskSubject = null;
+  function renderDisk(snap, p, anim) {
+    diskSubject = p;
+    const cv = EL['s-disk'];
+    const view = p && snap.view && snap.view.pid === p.pid ? snap.view : null;
+    const slot = p ? camLayout(snap, p).find((s) => s.o.key === p.key) : null;
+    if (!slot || !slot.b) {
+      if (diskSig !== 'empty') { diskSig = 'empty'; Air.setDisk(null); cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); }
+      return;
+    }
+    const b = slot.b, now = Date.now();
+    const box = EL['disk-bg'].getBoundingClientRect();
+    const moving = Glide.runs.size > 0;
+    const sig = p.key + ':' + p.q + ',' + p.r + ':' + (view ? view.visR : -1) + ':'
+      + Math.round(box.width) + 'x' + Math.round(box.height) + ':' + b.x + ',' + b.y + ',' + b.w + ',' + b.h + ':'
+      + (view ? view.cells.map((c) => c.terrain + '.' + (c.variant | 0) + '.' + c.shelter + (c.poi ? 'P' : '') + (c.resource || '')).join('')
+              : (p.near || []).join('.'))
+      + ':' + conditionWord(p) + (p.encActive ? 'E' : '') + ':d' + snap.day
+      + ':' + snap.live.map((o) => o.pid + '@' + o.q + ',' + o.r).join(';')
+      + (snap.vac ? ':v' + snap.vac.q + ',' + snap.vac.r + ',' + snap.vac.st + ',' + snap.vac.rm
+                  + ',' + snap.vac.dq + ',' + snap.vac.dr + ',' + snap.vac.kq + ',' + snap.vac.kr : '')
+      + (snap.kane ? ':k' + snap.kane.gq + ',' + snap.kane.gr : '');   // the quest tiles (questTileKey)
+    if (sig === diskSig && !moving && !anim) { Air.kick(); return; }
+    diskSig = moving ? '' : sig;
+    Art.onload = artLoaded;
+
+    const { ctx, W, H, dpr } = fitCanvas(cv, box);
+    // The view while it is the subject's own; "near" for the poll or two
+    // after a cut, before the new pid's disk has come back.
+    const cells = view ? view.cells : nearCells(p);
+    const R = view ? Math.max(1, view.visR) : 2;
+    const { out, size, foot } = drawCam(ctx, snap, p, b, now, cells, R, true);
+
+    if (moving || !view || EL.stage.className !== 'open') { Air.setDisk(null); if (moving) Glide.kick(); return; }
+    // The camera the game renderer would have for this panel: map hex
+    // (q, r) lands at size * world(q, r) + (ox, oy), so the wind's
+    // torus-tiled clouds and gusts sit on the same ground they do in the
+    // players' hands. Clipped to the panel above its foot.
+    const cx = b.x + b.w / 2, cy = b.y + (b.h - foot) / 2;
+    const clip = { x: b.x, y: b.y, w: b.w, h: b.h - foot };
     Air.setDisk({
-      W, H, dpr, size, q: view.q, r: view.r, cells: airCells,
-      cam: { ox: W / 2 - size * 1.5 * view.q, oy: H / 2 - size * (SQ3 / 2 * view.q + SQ3 * view.r),
+      W, H, dpr, size, q: view.q, r: view.r, clip,
+      cells: out.filter((c) => Math.abs(c.x) < b.w / 2 + size && Math.abs(c.y) < clip.h / 2 + size)
+        .map((c) => ({ cx: cx + c.x, cy: cy + c.y, q: c.q, r: c.r, terrain: c.terrain, tile: c.tile })),
+      cam: { ox: cx - size * 1.5 * view.q, oy: cy - size * (SQ3 / 2 * view.q + SQ3 * view.r),
              meRp: { q: view.q, r: view.r } },
     });
   }
+
+  // ── Everybody else's panels ───────────────────────────────────
+  // On #s-cams. Both canvases sit over the plinth, so the panels stay up
+  // through a scene as well -- the room is the subject's, the board is
+  // still running.
+  let camsSig = '';
+  function renderCams(snap, p, anim) {
+    const cv = EL['s-cams'];
+    if (!cv) return;
+    const now = Date.now();
+    const box = EL.stage.getBoundingClientRect();
+    const slots = camLayout(snap, p).filter((s) => s.b && (!p || s.o.key !== p.key));
+    const moving = Glide.runs.size > 0;
+    const sig = Math.round(box.width) + 'x' + Math.round(box.height) + '|'
+      + slots.map((s) => s.b.x + ',' + s.b.y + ',' + s.b.w + ',' + s.b.h + ':' + s.o.pid + '@' + s.o.q + ',' + s.o.r
+                        + ':' + (s.o.near || []).join('.') + ':' + conditionWord(s.o) + (s.o.encActive ? 'E' : '')).join('|')
+      + '|' + snap.live.map((o) => o.pid + '@' + o.q + ',' + o.r).join(';') + '|d' + snap.day;
+    if (sig === camsSig && !moving && !anim) return;
+    camsSig = moving ? '' : sig;
+    Art.onload = artLoaded;
+
+    const { ctx } = fitCanvas(cv, box);
+    for (const s of slots) drawCam(ctx, snap, s.o, s.b, now, nearCells(s.o), 2, false);
+    if (moving) Glide.kick();
+  }
+
+  // A tile or a portrait finished decoding: both pictures redraw next poll.
+  function artLoaded() { diskSig = ''; camsSig = ''; }
 
   // ── The air over the disk ─────────────────────────────────────
   // The game's own wind.js and ground-fx.js: water that sways and glitters,
@@ -1687,17 +2366,20 @@
         const ctx = cv.getContext('2d');
         ctx.setTransform(d.dpr, 0, 0, d.dpr, 0, 0);
         ctx.clearRect(0, 0, d.W, d.H);
+        // Only over the subject's panel, never its foot or its neighbours.
+        ctx.save();
+        if (d.clip) { ctx.beginPath(); ctx.rect(d.clip.x, d.clip.y, d.clip.w, d.clip.h); ctx.clip(); }
         Wind.update(now, snap.weather, 0, d.q, d.r);
         const g = this.gfx;
         g.beginFrame();
-        // Hexes sunk under the near-solid left of the plinth (#stage::after)
-        // can't be seen; animating them is wasted work on a TV's GPU.
-        const hidden = d.W * 0.42;
-        for (const c of d.cells) if (c.cx + d.size > hidden) g.collect(c.cx, c.cy, c, c.q, c.r, c.tile, 0);
+        // Only the hexes inside the panel (renderDisk filtered them):
+        // animating the rest would be wasted work on a TV's GPU.
+        for (const c of d.cells) g.collect(c.cx, c.cy, c, c.q, c.r, c.tile, 0);
         const sun = airSun(snap);
         g.drawGround(ctx, d.cam, now, d.size, d.W, d.H, sun, snap.weather);
         g.drawDevils(ctx, d.cam, now, d.size, d.W, d.H, sun, snap.weather);
         g.drawClouds(ctx, d.cam, d.size, d.W, d.H, sun, snap.weather);
+        ctx.restore();
       } catch (e) {
         // Scenery must never take the screen down with it.
         console.warn('[observer] air:', e);
@@ -1844,7 +2526,7 @@
     for (const k of st.children) {
       // disk-bg is absolute scenery and admired is pinned to the corner;
       // neither is in the column whose height has to fit.
-      if (k.id === 'disk-bg' || k.id === 'admired') continue;
+      if (k.id === 'disk-bg' || k.id === 'admired' || k.id === 's-cams') continue;
       if (getComputedStyle(k).display === 'none') continue;
       content += k.getBoundingClientRect().height;
       rows++;
@@ -1892,23 +2574,219 @@
       .sort((a, b) => b.last.score - a.last.score)
       .slice(0, ADM_MAX)
       .map((e) => ({ e, trend: trendOf(e, now) }));
+    drawMedal();
+    paintAdmired();
+    EL['adm-sub'].textContent = ADM_SUBS[(snap.day | 0) % ADM_SUBS.length];
     const sig = rows.map((r) => r.e.key + ':' + r.e.last.score + ':' + r.trend
       + (r.e.key === Director.subject ? '*' : '')).join('|') + '|' + (Director.subject || '');
     if (sig === admSig) return;
     admSig = sig;
     EL.admired.style.display = rows.length ? '' : 'none';
     const sub = Director.subject ? (snap.byKey.get(Director.subject) || null) : null;
-    const nextUp = standingLine(sub);
-    EL['adm-next'].textContent = nextUp;
-    EL['adm-next'].style.display = nextUp ? '' : 'none';
-    EL['adm-rows'].innerHTML = rows.map((r, i) =>
-      '<li class="' + (r.e.key === Director.subject ? 'on' : '') + '">'
-      + '<span class="a-n">' + (i + 1) + '</span>'
-      + '<span class="a-name">' + esc(r.e.name) + '</span>'
-      + '<span class="a-sc">' + r.e.last.score.toLocaleString() + '</span>'
-      + '<span class="a-t t-' + r.trend + '">'
-      + (r.trend === 'up' ? '\u25b4' : r.trend === 'dn' ? '\u25be' : '\u00b7')
-      + '</span></li>').join('');
+    typeNext(standingLine(sub));
+
+    // The ladder moves. Each row is compared with where it stood last time:
+    // a climb slides up from its old place, a drop slides down and shakes,
+    // and points gained float up off the score while it rolls to the new
+    // number. The very first draw has nothing to compare with and just sits.
+    const first = !admPrev.size;
+    const lead = rows.length ? rows[0].e.key : '';
+    const rolls = [];
+    EL['adm-rows'].innerHTML = rows.map((r, i) => {
+      const was = admPrev.get(r.e.key);
+      const moved = was ? was.rank - i : 0;
+      const gain = was ? r.e.last.score - was.score : 0;
+      const cls = (r.e.key === Director.subject ? 'on ' : '') + (i === 0 ? 'top ' : '')
+        + (moved > 0 ? 'climb' : moved < 0 ? 'drop' : '');
+      if (gain > 0) rolls.push({ i, from: was.score, to: r.e.last.score });
+      return '<li class="' + cls.trim() + '"' + (moved ? ' style="--from:' + moved + '"' : '') + '>'
+        + '<span class="a-n">' + (i + 1) + '</span>'
+        + '<span class="a-name">' + esc(r.e.name) + '</span>'
+        + '<span class="a-sc' + (gain > 0 ? ' bump' : '') + '">'
+        +   (gain > 0 ? was.score : r.e.last.score).toLocaleString() + '</span>'
+        + '<span class="a-t t-' + r.trend + '">'
+        + (r.trend === 'up' ? '▴' : r.trend === 'dn' ? '▾' : '·')
+        + '</span>'
+        + (gain > 0 ? '<i class="a-plus">+' + gain.toLocaleString() + '</i>' : '')
+        + (moved > 0 ? '<i class="a-tag">CLAWING UP</i>' : moved < 0 ? '<i class="a-tag">SLIPPING</i>' : '')
+        + '</li>';
+    }).join('');
+    admPrev.clear();
+    rows.forEach((r, i) => admPrev.set(r.e.key, { rank: i, score: r.e.last.score }));
+    for (const r of rolls) rollScore(EL['adm-rows'].children[r.i], r.from, r.to);
+    // A new name at the top of the ladder gets the stamp.
+    if (!first && lead && lead !== admLead) stamp(rows[0].e.name);
+    admLead = lead;
+  }
+
+  // Out in the open the ladder shares the type column with the name and the
+  // place; when it would run up into them it shrinks from its bottom-left
+  // corner instead, never below 55%.
+  function fitAdmired() {
+    const a = EL.admired;
+    if (!a || !a.offsetHeight || EL.stage.className !== 'open') return;
+    a.style.transform = '';
+    const st = EL.stage.getBoundingClientRect(), place = EL.place.getBoundingClientRect();
+    const room = st.bottom - place.bottom - st.height * 0.03 - (parseFloat(getComputedStyle(a).bottom) || 0);
+    const k = clamp(room / a.offsetHeight, 0.55, 1);
+    if (k < 0.995) { a.style.transformOrigin = '0 100%'; a.style.transform = 'scale(' + k.toFixed(3) + ')'; }
+  }
+
+  const admPrev = new Map();   // key -> { rank, score } as last drawn
+  // Under the title, one a day: the small print on the honour.
+  const ADM_SUBS = [
+    'STANDINGS OF THE NOT YET DEAD', 'RANKED WHILE STOCKS LAST', 'POINTS DO NOT PASS TO NEXT OF KIN',
+    'NO REFUNDS ON SURVIVAL', 'ENVY IS FREE. FOOD IS NOT.', 'ORDER OF DEPARTURE, REVERSED',
+  ];
+  let admLead = '';
+
+  // The score counts up to its new value, an odometer and not a swap.
+  // setTimeout-paced, like everything here that moves.
+  function rollScore(li, from, to) {
+    const el = li && li.querySelector('.a-sc');
+    if (!el) return;
+    const t0 = Date.now(), DUR = 700;
+    const step = () => {
+      if (!el.isConnected) return;
+      const t = Math.min(1, (Date.now() - t0) / DUR);
+      el.textContent = Math.round(from + (to - from) * (1 - (1 - t) * (1 - t))).toLocaleString();
+      if (t < 1) setTimeout(step, 40);
+    };
+    step();
+  }
+
+  // The stamp across the ladder when the lead changes hands. The copy is the
+  // ladder's own voice: an honour nobody asked for.
+  const STAMP_LINES = ['NEW FAVOURITE (FOR NOW)', 'PROVISIONALLY ADMIRED', 'MOST LIKELY TO BE ROBBED',
+    'PROMOTED. CONDOLENCES.', "TOP OF THE HEAP. DON'T LOOK DOWN."];
+  let stampN = 0;
+  function stamp(name) {
+    const el = EL['adm-stamp'];
+    if (!el) return;
+    el.innerHTML = esc(STAMP_LINES[stampN++ % STAMP_LINES.length]) + '<b>' + esc(name.toUpperCase()) + '</b>';
+    el.classList.remove('go');
+    void el.offsetWidth;   // restart the animation
+    el.classList.add('go');
+  }
+
+  // "120 short of THE AVERAGE MAN", typed out on the terminal a character
+  // at a time whenever it changes, cursor left blinking after it.
+  let nextText = null, nextTimer = 0;
+  function typeNext(text) {
+    const el = EL['adm-next'];
+    if (text === nextText) return;
+    nextText = text;
+    clearTimeout(nextTimer);
+    el.style.display = text ? '' : 'none';
+    if (!text) { el.textContent = ''; return; }
+    let n = 0;
+    const tick = () => {
+      n = Math.min(text.length, n + 2);
+      el.textContent = text.slice(0, n);
+      const cur = D.createElement('span');
+      cur.className = 'cur';
+      el.appendChild(cur);
+      if (n < text.length) nextTimer = setTimeout(tick, 45);
+    };
+    tick();
+  }
+
+  // The plate THE ADMIRED is painted on: rusting steel, scratched, riveted,
+  // shot twice, taped where it is coming apart, and the spray-painted title
+  // left to run. Repainted only when the box changes size.
+  let platePx = '';
+  function paintAdmired() {
+    const cv = EL['adm-plate'], box = EL.admired;
+    if (!cv || !box || !box.offsetWidth) return;
+    const W = box.offsetWidth, H = box.offsetHeight;
+    const title = box.querySelector('h4 span');
+    // Rects come back scaled when fitAdmired() has shrunk the box; the
+    // plate is painted in its own unscaled px.
+    const br = box.getBoundingClientRect(), sx = br.width / W || 1;
+    const t0 = title ? title.getBoundingClientRect() : null;
+    const tr = t0 && { left: (t0.left - br.left) / sx, right: (t0.right - br.left) / sx,
+                       bottom: (t0.bottom - br.top) / sx, height: t0.height / sx, width: t0.width / sx };
+    const key = W + 'x' + H + ':' + (tr ? Math.round(tr.left) + ',' + Math.round(tr.width) : '');
+    if (key === platePx) return;
+    platePx = key;
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const rnd = Grime.rng(0xAD1);
+    Grime.steel(ctx, W, H, 4242, { soot: true, rust: 0.42, dark: 0.72 });
+    Grime.scratches(ctx, W, H, rnd, Math.round(W * H / 2600));
+    if (tr && tr.width) {
+      Grime.drips(ctx, tr.left, tr.right, tr.bottom - tr.height * 0.2,
+        rnd, 11, tr.height * 1.4, 'rgba(224,124,28,0.75)');
+    }
+    Grime.hole(ctx, W * 0.87, H * 0.7, Math.max(3, W * 0.011), rnd);
+    Grime.hole(ctx, W * 0.93, H * 0.79, Math.max(2, W * 0.007), rnd);
+    const ri = Math.max(8, W * 0.022), rr = Math.max(3, W * 0.009);
+    for (const [x, y] of [[ri, ri], [W - ri, ri], [ri, H - ri], [W - ri, H - ri], [W / 2, ri], [W / 2, H - ri]]) {
+      Grime.rivet(ctx, x, y, rr, rnd, y < H / 2);
+    }
+    Grime.tape(ctx, W * 0.93, H * 0.07, W * 0.22, Math.max(12, H * 0.065), 0.62, rnd);
+    Grime.tape(ctx, W * 0.06, H * 0.93, W * 0.17, Math.max(12, H * 0.06), 0.55, rnd);
+  }
+
+  // The medal by the title: a bottle cap, the currency of better days, hung
+  // off a bent nail on a twist of wire and stamped 1ST by somebody with a
+  // hammer. CSS swings it.
+  let medalPx = 0;
+  function drawMedal() {
+    const cv = EL['adm-medal'];
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    const pw = Math.round(r.width * dpr), ph = Math.round(r.height * dpr);
+    if (!pw || !ph || pw === medalPx) return;
+    medalPx = pw;
+    cv.width = pw; cv.height = ph;
+    const ctx = cv.getContext('2d');
+    const rnd = Grime.rng(1977);
+    const cx = pw / 2, R = pw * 0.42, cy = ph - R - pw * 0.05;
+    // the wire, twisted down from the nail to a hole punched in the cap
+    ctx.strokeStyle = '#8A7A5C'; ctx.lineWidth = Math.max(1, pw * 0.035); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, pw * 0.06);
+    const top = cy - R * 0.78, steps = 6;
+    for (let i = 1; i <= steps; i++) ctx.lineTo(cx + (i % 2 ? 1 : -1) * pw * 0.05, pw * 0.06 + (top - pw * 0.06) * i / steps);
+    ctx.stroke();
+    ctx.fillStyle = '#5A4A36'; ctx.fillRect(cx - pw * 0.09, 0, pw * 0.18, pw * 0.07);   // the nail head
+    // the crimp: 21 teeth, no two pressed the same
+    ctx.beginPath();
+    for (let i = 0; i <= 42; i++) {
+      const a = i / 42 * Math.PI * 2, rr = i % 2 ? R : R * (0.85 + rnd() * 0.05);
+      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+    let g = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    g.addColorStop(0, '#E8A030'); g.addColorStop(0.55, '#8C3A12'); g.addColorStop(1, '#2E1206');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = '#0C0400'; ctx.lineWidth = Math.max(1, pw * 0.02); ctx.stroke();
+    // the face, dented
+    g = ctx.createRadialGradient(cx + R * 0.2, cy + R * 0.25, R * 0.05, cx, cy, R * 0.72);
+    g.addColorStop(0, '#6E2C0E'); g.addColorStop(1, '#B05A18');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.72, 0, Math.PI * 2); ctx.fill();
+    // rust eating in from the rim
+    for (let i = 0; i < 9; i++) {
+      const a = rnd() * Math.PI * 2, d = R * (0.45 + rnd() * 0.35);
+      ctx.fillStyle = 'rgba(60,20,6,' + (0.35 + rnd() * 0.4).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, R * (0.05 + rnd() * 0.09), 0, Math.PI * 2); ctx.fill();
+    }
+    // the stamp, hammered in crooked
+    ctx.save();
+    ctx.translate(cx, cy + R * 0.04); ctx.rotate(-0.12);
+    ctx.font = Math.round(R * 0.62) + 'px ' + STENCIL;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,214,140,0.35)'; ctx.fillText('1ST', 1, 1);
+    ctx.fillStyle = '#1E0A00'; ctx.fillText('1ST', 0, 0);
+    ctx.restore();
+    // the hole the wire goes through
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(cx, top + R * 0.05, Math.max(1, pw * 0.035), 0, Math.PI * 2); ctx.fill();
   }
 
   // ── The cast ──────────────────────────────────────────────────
@@ -2147,7 +3025,7 @@
   // out the poll interval.
   OBS.ST = ST; OBS.Roster = Roster; OBS.Director = Director; OBS.Narrator = Narrator;
   OBS.diff = diff; OBS.normalise = normalise; OBS.causeOfDeath = causeOfDeath;
-  OBS.handle = handle; OBS.Art = Art;
+  OBS.handle = handle; OBS.Art = Art; OBS.Glide = Glide;
 
   if (D.readyState === 'loading') D.addEventListener('DOMContentLoaded', boot);
   else boot();

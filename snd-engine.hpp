@@ -56,6 +56,8 @@ enum SndStoryKind : uint8_t {
   SS_CALIBRATE,     // play the measurement sequence (GET /sndtest): see sndCalBlock()
   SS_STOP,          // silence everything now: effects, speech, the sequence (the sound desk)
   SS_LIGHTS,        // a = banks: a section of tunnel lights clunking on, one bank after another
+  SS_GHOST,         // a = slot, b = which joke: a ghost has taken hold of them (ghosts.hpp)
+  SS_KICKSTART,     // a = slot: a stalled Motorbike found fuel and started (EVT_REFUEL)
   SS_COUNT
 };
 // For the sound desk (GET /sndinfo), in enum order.
@@ -63,7 +65,7 @@ static const char* const SND_STORY_NAME[] = {
   "none", "boot", "dawn", "dusk", "join", "left", "downed", "threat", "weather", "enc_start",
   "enc_win", "enc_thrown", "enc_hazard", "enc_cleared", "caravan", "quake", "fire", "flood",
   "doom_taunt", "doom_band", "score_up", "score_down", "tunnel", "regen", "thunder", "sfx",
-  "geiger", "say", "calibrate", "stop", "lights" };
+  "geiger", "say", "calibrate", "stop", "lights", "ghost", "kickstart" };
 static_assert(sizeof(SND_STORY_NAME) / sizeof(SND_STORY_NAME[0]) == SS_COUNT, "SND_STORY_NAME must match SndStoryKind");
 
 struct SndCue { uint8_t kind, a, b, c; };
@@ -137,6 +139,7 @@ static uint8_t sndNumberWords(uint16_t n, uint8_t* out) {
 static inline int8_t sndKeyShift() { return (int8_t)(((SMu.tonicPc - 2) + 18) % 12 - 6); }   // in-key effects written in D
 static void sndFx(uint8_t id, float delayMs = 0.0f) {
   if (id == SFX_GEIGER) { sndSfxGeiger(SC.rng); return; }
+  if (id == SFX_THUNDER_FAR || id == SFX_THUNDER_NEAR) { sndSfxThunder(id == SFX_THUNDER_FAR, SC.rng, delayMs); return; }
   if (id == SFX_NONE || id >= SFX_COUNT) return;
   const SfxDef& d = SFX_TABLE[id];
   sfxStart(d.s, d.n, d.inKey ? sndKeyShift() : 0, delayMs);
@@ -156,6 +159,14 @@ static bool sndCool(uint32_t* last, uint8_t kind, uint32_t ms) {
   return true;
 }
 
+// A storm walks in. Its first bolts are far off and only roll, the next few
+// boom, and from then on it is overhead: the crack. Counted in bolts, not
+// time, so a party that sat a storm out underground hears it arrive when it
+// comes up. Cleared when the weather is anything but storm.
+static constexpr uint8_t THUNDER_FAR_BOLTS = 4, THUNDER_NEAR_BOLTS = 8;
+static uint8_t  sndStormBolts = 0;
+static uint32_t sndBoltMs = 0;
+
 static void sndHandleCue(const SndCue& c) {
   SST.cues++;
   uint8_t words[8];
@@ -169,7 +180,7 @@ static void sndHandleCue(const SndCue& c) {
       if (sndMusicOn()) musDawn(SMu.w.aliveMask);
       SP.tonicHz = sndMidiHz((float)SMu.tonicBass);
       uint8_t k = 0; words[k++] = VOC_DAY; k += sndNumberWords(day, words + k);
-      sndSay(words, k, SAY_CHANT, SAYP_HIGH, 6, 130);         // after the call has rung out
+      sndSay(words, k, SAY_CHANT, SAYP_HIGH, 6, 130);         // once the dawn chord is in, before the roll call
       static const uint8_t DAWN_LINE[3] = { VOC_DAWN_GREY, VOC_DAWN_THIN, VOC_DAWN_SUN };
       sndSay1(DAWN_LINE[day % 3], SAY_NARRATOR, SAYP_NORMAL);
       break;
@@ -227,9 +238,9 @@ static void sndHandleCue(const SndCue& c) {
         sndSay(words, 2, SAY_NARRATOR, SAYP_LOW, 4);
       }
       break;
-    case SS_ENC_WIN:
-      sndFx(SFX_DARK_DEPART);
-      if (c.b) sndSay1(VOC_CORRECT, SAY_RADIO, SAYP_NORMAL);
+    case SS_ENC_WIN:   // every roll that comes off: kept rare, it was a lot
+      if (sndCool(sndLastFx, SS_ENC_WIN, 12000)) sndFx(SFX_DARK_DEPART);
+      if (c.b && sndCool(sndLastSay, SS_ENC_WIN, 30000)) sndSay1(VOC_CORRECT, SAY_RADIO, SAYP_NORMAL);
       break;
     case SS_ENC_THROWN:
       sndFx(SFX_BROKEN_TECH);
@@ -238,7 +249,7 @@ static void sndHandleCue(const SndCue& c) {
     case SS_ENC_HAZARD:  sndFx(SFX_SYSTEM_FAULT); break;
     case SS_ENC_CLEARED:
       sndFx(SFX_WEIRD_ANOMALY);
-      sndSay1(VOC_CLEARED, SAY_NARRATOR, SAYP_NORMAL);
+      if (sndCool(sndLastSay, SS_ENC_CLEARED, 30000)) sndSay1(VOC_CLEARED, SAY_NARRATOR, SAYP_NORMAL);
       break;
     case SS_CARAVAN:
       sndFx(SFX_CALLIOPE_CALL);
@@ -250,7 +261,10 @@ static void sndHandleCue(const SndCue& c) {
       sndSay1(VOC_QUAKE, SAY_NARRATOR, SAYP_NORMAL);
       break;
     case SS_FIRE:
-      if (c.b) sndFx(SFX_THUNDER);                               // a strike is always news
+      if (c.b) {                                                 // a strike is always news,
+        sndFx(SFX_THUNDER);                                      // and the storm is on top of us
+        if (sndStormBolts < THUNDER_NEAR_BOLTS) sndStormBolts = THUNDER_NEAR_BOLTS;
+      }
       else if (sndCool(sndLastFx, SS_FIRE, 4000)) sndFx(SFX_FIRE_BURST);
       if (sndCool(sndLastSay, SS_FIRE, 25000)) sndSay1(VOC_FIRE, SAY_NARRATOR, SAYP_LOW);
       break;
@@ -287,14 +301,40 @@ static void sndHandleCue(const SndCue& c) {
       sndFx(SFX_BROKEN_TECH, 420.0f * thuds + 200.0f);
       break;
     }
+    case SS_GHOST: {
+      // A ghost has taken hold of someone (ghosts.hpp): the groan, under the
+      // LCD's jump scare (FXK_GHOUL), and once it has died away the terminal
+      // makes a little joke about the new company. b picks which.
+      sndFx(SFX_GHOUL_GROAN);
+      static const uint8_t JOKE[3] = { VOC_GHOST0, VOC_GHOST1, VOC_GHOST2 };
+      words[0] = JOKE[c.b % 3];
+      sndSay(words, 1, SAY_NARRATOR, SAYP_HIGH, 9, 110);       // 2.2 s: after the gasp
+      break;
+    }
+    case SS_KICKSTART:
+      // Kicked to the clock the map plays it to (renderer.js KICK_STOMPS).
+      // Two riders fuelled by one trade are one engine's worth of noise.
+      if (sndCool(sndLastFx, SS_KICKSTART, 2500)) sndFx(SFX_KICKSTART);
+      break;
     case SS_REGEN:
       sndFx(SFX_POWER_DOWN);
       musWindDown(0.05f, 1.2f, 2.0f);
       break;
     case SS_THUNDER: {
       if (SMu.w.allUnder) break;
-      float delay = 250.0f + 1400.0f * sndRandF(SC.rng);        // the flash, then the count
-      sndFx(SFX_THUNDER, delay);
+      // Every lit tick of a bolt's flicker is a cue (ui-leds.hpp BOLT_PATTERNS:
+      // up to three in half a second; the next bolt is 1.8 s on at least).
+      // Far off, the flickers are one roll; overhead, each keeps its own crack.
+      uint32_t now = sndNowMs();
+      bool bolt = !sndBoltMs || now - sndBoltMs > 1000;
+      if (bolt) { sndBoltMs = now ? now : 1; if (sndStormBolts < 255) sndStormBolts++; }
+      if (sndStormBolts <= THUNDER_FAR_BOLTS) {
+        if (bolt) sndFx(SFX_THUNDER_FAR, 2200.0f + 1800.0f * sndRandF(SC.rng));   // the flash, then a long count
+      } else if (sndStormBolts <= THUNDER_NEAR_BOLTS) {
+        if (bolt) sndFx(SFX_THUNDER_NEAR, 1000.0f + 1000.0f * sndRandF(SC.rng));
+      } else {
+        sndFx(SFX_THUNDER, 250.0f + 1400.0f * sndRandF(SC.rng));
+      }
       break;
     }
     case SS_SFX: {
@@ -435,6 +475,7 @@ static void sndRenderBlock(int16_t* out) {
   SND_UNLOCK();
   if (nw) {
     SMu.w = w; SMu.haveWorld = true;
+    if (w.weather != 2) sndStormBolts = 0;          // the next storm starts far off
     SMu.tensionTgt = SMu.forceTension >= 0.0f ? SMu.forceTension : musTension(w);
     float lvl = w.musicLevel >= 9 ? 1.0f : w.musicLevel / 9.0f;
     SMu.level = lvl;

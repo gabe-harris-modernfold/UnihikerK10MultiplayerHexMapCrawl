@@ -173,7 +173,7 @@ class TunnelPolicy(SurvivorPolicy):
     # and one dawn puts it back under.
     #
     # Water sits one under the ordinary floor, because invSlots is the
-    # *token* cap (resetSurvivor: "2 water, 1 food ... = 6 of 8") and
+    # *token* cap (resetSurvivor: "4 water, 1 food ... = 8 of 8") and
     # collectResource() refuses every pickup once it is reached.  Food 3 plus
     # water 4 is 7 of 8 and leaves a survivor unable to pick up the piles it
     # walks over -- and of the two, water is the one the tunnels restock.

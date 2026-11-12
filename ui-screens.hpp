@@ -129,7 +129,8 @@ static void drawSceneScreen(uint8_t screen) {
 // that needs the board -- turning a log entry into the sentence the page
 // shows (names are filled in at draw time, because drainEvents() cannot take
 // G.mutex to read them when the entry is logged) and the plates' figures.
-static_assert(GLY_COUNT == SC_GLY_COUNT && GLY_FOG == SC_GLY_FOG && GLY_MEDAL == SC_GLY_MEDAL,
+static_assert(GLY_COUNT == SC_GLY_COUNT && GLY_FOG == SC_GLY_FOG && GLY_MEDAL == SC_GLY_MEDAL &&
+              GLY_GUNFIRE == SC_GLY_GUNFIRE && GLY_ROUGH_CHALK == SC_GLY_ROUGH_CHALK,
               "SC_GLY_* in ui-scenes.hpp mirrors K10Glyph");
 static_assert(TONE_OMEN == SC_TONE_OMEN && TONE_GOOD == SC_TONE_GOOD, "SC_TONE_* mirrors K10Tone");
 
@@ -352,12 +353,20 @@ static void encStatsNote(const GameEvent& ev) {
 // Filled only for the screen that needs it: the stash's item names, the
 // odds' tallies and whoever is inside, the map's terrain. Defined down here
 // because it reads EncStats (above) -- drawSceneScreen forward-declares it.
+//
+// The waste's old radar only comes up WASTE_WORKS_PCT of the times button B
+// lands on it; the rest it is broken, a new way each visit (scWasteBreak in
+// ui-scenes.hpp). Rolled in checkGestureSwitch, below.
+static const uint32_t WASTE_WORKS_PCT = 30;
+static uint32_t k10WasteFault = 0;   // 0: it came up; else the seed of how it is broken
+static uint32_t k10WasteAt    = 0;   // when it was landed on
 static void sceneScreenFill(SceneSnap& S, uint8_t screen) {
   if (screen == 3) {
     int online[MAX_PLAYERS], cnt = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) if (S.s[i].on) online[cnt++] = i;
     S.page  = cnt ? (int8_t)online[(millis() / RES_PAGE_MS) % (uint32_t)cnt] : (int8_t)-1;
     S.itemN = 0;
+    S.cols  = MAP_COLS; S.rows = MAP_ROWS;   // one lap of the map is one lap of the sky (scStars)
     if (S.page >= 0 && xSemaphoreTake(G.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
       const Player& p = G.players[S.page];
       uint8_t slots = effectiveInvSlots(p);
@@ -427,6 +436,8 @@ static void sceneScreenFill(SceneSnap& S, uint8_t screen) {
     for (int i = 0; i < hatchCount && S.hatchN < 8; i++) {
       S.hatchQ[S.hatchN] = bunkerHatches[i].sq; S.hatchR[S.hatchN] = bunkerHatches[i].sr; S.hatchN++;
     }
+    S.wasteFault = k10WasteFault;
+    S.wasteSince = k10WasteAt;
   }
 }
 
@@ -498,6 +509,10 @@ static void checkGestureSwitch() {
   bool btnB = k10.buttonB && k10.buttonB->isPressed();
   if (btnB && !k10BtnBLast) {
     k10Screen = (k10Screen % 6) + 1;
+    if (k10Screen == 5) {     // the waste: does the scope come up this time?
+      k10WasteAt    = millis();
+      k10WasteFault = (esp_random() % 100) < WASTE_WORKS_PCT ? 0 : (esp_random() | 1);
+    }
     k10ScreenXition = true;   // consumed by the display block in the .ino loop
     k10Play(MOTIF_SCREEN_CLICK);
   }

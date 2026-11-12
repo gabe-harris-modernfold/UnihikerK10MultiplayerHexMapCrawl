@@ -99,6 +99,56 @@ static void evTextTo(AsyncWebSocketClient* cl, const char* json, int len) {
 // GameLoop only, like both of them.
 static uint32_t downedSeatPending[MAX_PLAYERS] = {0};
 
+// Sleeping rough (EVT_DAWN's dawnRough): one line in the book and the cut
+// scene that laughs at it (FXK_ROUGH, ui-scenes.hpp section 12b). Once a day,
+// however many slept out -- most nights that is nearly everybody, and the
+// book is not a roll call. Up a tree in the Rust Forest it is the branch; on
+// open ground it is the vulture and the chalk outline, turn about. The cue's
+// arg carries the variant (low bits), the sleeper's archetype (<< 4) and
+// their seat (<< 8): what the LCD cannot look up for itself, and the seat for
+// the TV, whose ring names a survivor but not where they sit.
+//
+// The line goes in the book now; the cue waits ROUGH_CUE_MS. It is raised in
+// the same drain as the dawn's chapter card, and the compositor takes every
+// waiting cue at once and plays only the most urgent: side by side with DAWN
+// it would simply be dropped. Late, it finds the card already up and waits
+// its turn behind it, on the LCD and on the TV's ring alike.
+static constexpr uint32_t ROUGH_CUE_MS = 1500;
+static uint16_t s_roughDay  = 0;
+static uint8_t  s_roughTurn = 0;
+static struct { bool on; int8_t pid; uint16_t arg; uint32_t at; char line[56]; } s_roughCue = {};
+static void roughSay(int8_t pid, uint8_t where, uint16_t day) {
+  if (day == s_roughDay) return;           // one dawn split across two drains
+  s_roughDay = day;
+  const uint8_t v = (where == 2) ? 1 : ((s_roughTurn++ & 1) ? 2 : 0);
+  const char* line;
+  if (v == 0)      line = K10_SAY("slept on the bare ground. The vultures took notes.",
+                                  "spent the night in the dirt. The dirt won.",
+                                  "slept rough and woke up being measured by a vulture.");
+  else if (v == 1) line = K10_SAY("slept in a tree. Briefly.",
+                                  "tried sleeping up a tree. The tree said no.",
+                                  "slept in a tree and came down the fast way.");
+  else             line = K10_SAY("slept so rough that somebody drew the chalk outline.",
+                                  "slept out in the open and woke to their own funeral.",
+                                  "slept on the ground. The locals held a small service.");
+  static const uint8_t GLY[3] = { GLY_ROUGH, GLY_ROUGH_TREE, GLY_ROUGH_CHALK };
+  k10LogAdd(line, pid, TONE_ILL, GLY[v]);
+  // A byte read without the mutex: it is set once, when the survivor is made.
+  const uint8_t arch = G.players[pid].archetype < 6 ? G.players[pid].archetype : 0;
+  s_roughCue.on  = true;
+  s_roughCue.pid = pid;
+  s_roughCue.arg = (uint16_t)(v | (arch << 4) | ((pid & 15) << 8));
+  s_roughCue.at  = millis() + ROUGH_CUE_MS;
+  strncpy(s_roughCue.line, line, sizeof(s_roughCue.line) - 1);
+  s_roughCue.line[sizeof(s_roughCue.line) - 1] = 0;
+}
+// Every drain: the held cue, once its time has come.
+static void roughCueDue() {
+  if (!s_roughCue.on || (int32_t)(millis() - s_roughCue.at) < 0) return;
+  s_roughCue.on = false;
+  fxCue(FXK_ROUGH, s_roughCue.pid, s_roughCue.line, nullptr, s_roughCue.arg);
+}
+
 // ── Drain event queue ─────────────────────────────────────────────────────────
 static void drainEvents() {
   // Static, so a G.mutex timeout below really does fall back to the last
@@ -109,6 +159,9 @@ static void drainEvents() {
   static bool     conn[MAX_PLAYERS];
   static uint32_t wsId[MAX_PLAYERS];
   static int      visR[MAX_PLAYERS];
+  // Below ground pq/pr are the hatch and visR is the tunnel radius, so the
+  // surface events culled by sight (fire_spread, flood_washout) skip them.
+  static uint8_t  pdep[MAX_PLAYERS];
   // Condition, for the chronicle's plates: enc_res reports what a hazard cost
   // but not what it left behind, and the plate wants the figure after.
   static uint8_t  pll[MAX_PLAYERS], prad[MAX_PLAYERS];
@@ -119,6 +172,7 @@ static void drainEvents() {
       pq[i]   = G.players[i].q;
       pr[i]   = G.players[i].r;
       wsId[i] = G.players[i].wsClientId;
+      pdep[i] = G.players[i].depth;
       pll[i]  = G.players[i].ll;
       prad[i] = G.players[i].radiation;
       if (conn[i]) {
@@ -151,6 +205,11 @@ static void drainEvents() {
   // Longest payload is enc_res at ~216 chars worst case; 288 leaves headroom.
   char buf[288];
   bool saveAfterDrain = false;   // a fall left piles on the ground -- persist them
+  // Who slept rough this dawn: a reservoir of one, so whoever gets laughed at
+  // is a fair pick among them, and roughSay() hears it once the loop is done.
+  int8_t   roughWho = -1;
+  uint8_t  roughWhere = 0, roughN = 0;
+  uint16_t roughDay = 0;
   for (int i = 0; i < snapCount; i++) {
     GameEvent& ev = snapshot[i];
     int len = 0;
@@ -263,12 +322,15 @@ static void drainEvents() {
       }
 
       case EVT_REFUEL: {
-        // Everyone: each client fades a stalled bike back in for whoever it
-        // was (renderer.js); the rider also gets the log line and the AP.
+        // Everyone: each client kick-starts a stalled bike for whoever it
+        // was (renderer.js, off the tick's "uf"); the rider also gets the log
+        // line and the AP. The box plays the kicks and the engine catching --
+        // the Rust Rocket's too, which has no bike on the map but an engine.
         len = snprintf(buf, sizeof(buf),
           "{\"t\":\"ev\",\"k\":\"refuel\",\"pid\":%d,\"it\":%d,\"apd\":%d,\"ap\":%d,\"unf\":%d}",
           ev.pid, (int)ev.res, (int)ev.amt, (int)ev.moveAP, (int)ev.dawnUnfuelled);
         evTextAll(buf, len);
+        sndStory(SS_KICKSTART, ev.pid);
         break;
       }
 
@@ -288,7 +350,7 @@ static void drainEvents() {
           (int)ev.dawnWndMin, (int)ev.dawnWndMaj,
           (int)ev.dawnUnfuelled);
         evTextAll(buf, len);
-        sndDawn((uint16_t)ev.dawnDay);   // the call, the roll call, "day N" -- once a day (ui-audio.hpp)
+        sndDawn((uint16_t)ev.dawnDay);   // "day N", then the roll call -- once a day (ui-audio.hpp)
         // Chronicle — only once per day (pid==0 guards double-logging: dawn fires once per player)
         if (ev.pid == 0) {
           char lb[48];
@@ -308,6 +370,11 @@ static void drainEvents() {
                             "breathed bunker air all night and paid for it.",
                             "coughs the tunnel up and looks the worse for it."),
                     (int8_t)ev.pid, TONE_ILL, GLY_CHEM);
+        }
+        // Slept out in it, and lived (a death at dawn has the Doom's laugh).
+        if (ev.dawnRough && ev.dawnLL > 0 && ev.pid < MAX_PLAYERS && ++roughN &&
+            esp_random() % roughN == 0) {
+          roughWho = (int8_t)ev.pid; roughWhere = ev.dawnRough; roughDay = ev.dawnDay;
         }
         break;
       }
@@ -415,12 +482,26 @@ static void drainEvents() {
         bool fellWithStuff = false;
         int  fellQ = 0, fellR = 0;
         bool released = false;
+        // And a ghost rises off the body (ghosts.hpp). Only here: a seat whose
+        // release is deferred below leaves no ghost, as it leaves no line.
+        int  ghostSlot = -1;
+        bool ghostHoardDropped = false;
+        char ghostName[12] = {0};
         if (xSemaphoreTake(G.mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
           released = true;
           Player& p = G.players[ev.pid];
+          // A death the scene itself dealt was ended in encRunChoice. One
+          // still open here came from outside it (a dawn drain, an item, the
+          // ecology): close it before the seat goes, or the next survivor in
+          // this seat inherits it -- refused "in_enc" until dawn, and able to
+          // bank the dead one's haul. Not the scene's doing, so the place
+          // stays, as at dawn.
+          if (encounters[ev.pid].active) endEncounter(ev.pid, ENC_END_DOWNED, /*restorePoi=*/true);
           memcpy(downedName, p.name, sizeof(downedName));
           downedName[sizeof(downedName) - 1] = '\0';
           fellWithStuff = dropRemains(ev.pid);
+          ghostSlot = ghostRise(ev.pid, &ghostHoardDropped);
+          memcpy(ghostName, ghosts[ghostSlot].name, sizeof(ghostName));
           fellQ = p.q; fellR = p.r;
           p.connected  = false;
           p.wsClientId = 0;
@@ -435,6 +516,16 @@ static void drainEvents() {
         if (fellWithStuff) {
           broadcastGroundUpdate(fellQ, fellR, "fell", ev.pid);
           saveAfterDrain = true;   // once, after the drain loop -- SD writes are slow
+        } else if (ghostHoardDropped) {
+          broadcastGroundUpdate(-1, -1);   // the oldest ghost faded to make room, and left its hoard
+          saveAfterDrain = true;
+        }
+        if (ghostSlot >= 0) {
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"ghost\",\"w\":\"rise\",\"g\":%d,\"src\":%d,\"pid\":-1,\"q\":%d,\"r\":%d,\"name\":\"%s\"}",
+            ghostSlot, (int)ev.pid, fellQ, fellR, ghostName);
+          evTextAll(buf, len);
+          saveAfterDrain = true;
         }
         if (!downedName[0])
           snprintf(downedName, sizeof(downedName), "Walker %d", (int)ev.pid + 1);
@@ -510,7 +601,7 @@ static void drainEvents() {
                    (ev.tradeResult < 5) ? TRL[ev.tradeResult] : "?",
                    (int)ev.tradeItem, (int)ev.tradeItemQty);
         // "item"/"n" only ride along on a caravan purchase (car_buy) — a
-        // plain resource swap keeps the original three-field shape.
+        // survivor↔survivor trade keeps the original three-field shape.
         char tbuf[128]; int tlen;
         tlen = snprintf(tbuf, sizeof(tbuf),
           "{\"t\":\"ev\",\"k\":\"trd_res\","
@@ -522,19 +613,14 @@ static void drainEvents() {
         tlen += snprintf(tbuf + tlen, sizeof(tbuf) - tlen, "}");
         evTextAll(tbuf, tlen);
         // The caravan isn't a player slot (CARAVAN_PID), so bookName() would
-        // write \x01 as "Someone" — give both caravan outcomes their own
-        // phrasing instead of the survivor↔survivor lines below.
+        // write \x01 as "Someone" — a purchase (the only caravan trade) gets
+        // its own phrasing instead of the survivor↔survivor lines below.
         if (ev.tradeTo == CARAVAN_PID) {
           char kb[48];
-          if (ev.tradeItem) {
-            static const char* const BUY_V[] = { "buys", "haggles for", "bargains for" };
-            const ItemDef* bd = getItemDef(ev.tradeItem);
-            snprintf(kb, sizeof(kb), "%s %s at the caravan.",
-                     k10Pick(BUY_V, 3), bd ? bd->name : "goods");
-          } else {
-            snprintf(kb, sizeof(kb), "%s", K10_SAY("trades supplies with the caravan.",
-                                                   "does business with the caravan."));
-          }
+          static const char* const BUY_V[] = { "buys", "haggles for", "bargains for" };
+          const ItemDef* bd = getItemDef(ev.tradeItem);
+          snprintf(kb, sizeof(kb), "%s %s at the caravan.",
+                   k10Pick(BUY_V, 3), bd ? bd->name : "goods");
           k10LogAdd(kb, (int8_t)ev.pid, TONE_GOOD, GLY_CARAVAN);
           break;
         }
@@ -574,6 +660,14 @@ static void drainEvents() {
           len = snprintf(buf, sizeof(buf),
             "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"kane\":%d}",
             ev.pid, (int)ev.q, (int)ev.r, (int)ev.res);
+        else if (ev.encLab)   // 1-4: one of RUNAWAY SCIENCE's parts opened on arrival, always below (lab.hpp)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":1,\"lab\":%d}",
+            ev.pid, (int)ev.q, (int)ev.r, (int)ev.encLab);
+        else if (ev.encBonney)   // 1-2: a section of ONE-HAND BONNEY opened at her fire (bonney.hpp)
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"bonney\":%d,\"apple\":%d,\"own\":%d}",
+            ev.pid, (int)ev.q, (int)ev.r, (int)ev.encBonney, (int)ev.encBonApple, (int)ev.encBonOwn);
         else if (ev.amt)
           len = snprintf(buf, sizeof(buf),
             "{\"t\":\"ev\",\"k\":\"enc_start\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":%d,\"trap\":1}",
@@ -608,13 +702,27 @@ static void drainEvents() {
             "walks into Kane's firelight with empty hands.",
           };
           k10LogAdd(KANE_IN[(ev.res - 1) % 5], (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        } else if (ev.encLab) {
+          // A clinic building: the ward, the pantry, his table, the second table.
+          static const char* const LAB_IN[4] = {
+            "opens a bunker door on a ward that bristles.",
+            "walks the aisles of Gaunt's pantry.",
+            "stands over a man who is only a head.",
+            "lies down on the second table.",
+          };
+          k10LogAdd(LAB_IN[(ev.encLab - 1) % 4], (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
+        } else if (ev.encBonney) {
+          // Bonney's fire: the first look, and supper.
+          k10LogAdd(ev.encBonney == 1 ? "walks into a firelight that smells of hot fat. Something is turning on a spit."
+                                      : "sits down to supper at Bonney's fire. The man on the spit says hello.",
+                    (int8_t)ev.pid, TONE_OMEN, GLY_THRESHOLD);
         } else if (ev.amt) {
           // The LCD cuts to the wire parting (ui-fx.hpp section 13b); the
           // caption is this same sentence.
           const char* tl = K10_SAY("puts a foot down and hears it click.",
                                    "finds the wire the hard way.",
                                    "steps on something that was waiting.");
-          k10LogAdd(tl, (int8_t)ev.pid, TONE_ILL, GLY_CLASH);
+          k10LogAdd(tl, (int8_t)ev.pid, TONE_ILL, GLY_TRIP);
           fxCue(FXK_TRIPWIRE, (int8_t)ev.pid, tl);
         } else {
           k10LogAdd(K10_SAY("steps off the map and into the dark.",
@@ -640,7 +748,7 @@ static void drainEvents() {
           "\"dn\":%d,\"tot\":%d,\"loot\":[%d,%d,%d,%d,%d],"
           "\"it\":%d,\"iq\":%d,\"it2\":%d,\"iq2\":%d,\"penLL\":%d,\"penRad\":%d,"
           "\"penRes\":[%d,%d,%d,%d,%d],\"penWnd\":[%d,%d],"
-          "\"ends\":%d,\"as\":%d,\"rec\":%d,\"trap\":%d}",
+          "\"ends\":%d,\"as\":%d,\"rec\":%d,\"trap\":%d,\"sure\":%d}",
           ev.pid, (int)ev.encOut, (int)ev.encSkill,
           (int)ev.encDN, (int)ev.encTotal,
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
@@ -650,7 +758,7 @@ static void drainEvents() {
           ev.encPenRes[0], ev.encPenRes[1], ev.encPenRes[2], ev.encPenRes[3], ev.encPenRes[4],
           (int)ev.encPenWndMin, (int)ev.encPenWndMaj,
           (int)ev.encEnds, (int)ev.encAssist,
-          (int)ev.encRecipe, (int)ev.amt);
+          (int)ev.encRecipe, (int)ev.amt, (int)ev.encSure);
         evTextAll(buf, len);
         // Success reads through the skill that carried it.
         static const char* ENC_WON[5] = {
@@ -660,13 +768,18 @@ static void drainEvents() {
           "finds cover before it matters.",
           "takes it and keeps standing.",
         };
-        if (ev.encOut) {
+        if (ev.encOut && ev.encSure) {
+          // Paid, not rolled ("sure", encRunChoice): nothing was risked.
+          k10LogAdd("pays what was asked, and walks on lighter.", (int8_t)ev.pid, TONE_OMEN, GLY_LIGHT);
+        } else if (ev.encOut) {
           const char* wl = ENC_WON[(ev.encSkill < 5) ? ev.encSkill : 0];
           k10LogAdd(wl, (int8_t)ev.pid, TONE_GOOD, GLY_LIGHT);
-          // A win the numbers said was lost gets a panel -- the same DN bar
-          // the LONG ODDS commendation below is pressed at.
-          if (ev.encDN >= 8) fxCue(FXK_LONGODDS, (int8_t)ev.pid, wl);
-          sndStory(SS_ENC_WIN, ev.pid, ev.encDN >= 8);   // the long odds also get "that is correct"
+          // A win the numbers said was lost gets a panel. DN 10, not the
+          // commendation's 8: DN 8 is a 58% roll at skill 1, so it cut in on
+          // most deep caches and every trap past the door. DN 10 is ~28%.
+          const bool longOdds = ev.encDN >= 10;
+          if (longOdds) fxCue(FXK_LONGODDS, (int8_t)ev.pid, wl);
+          sndStory(SS_ENC_WIN, ev.pid, longOdds);   // the long odds also get "that is correct"
         } else if (ev.encEnds && ev.amt) {
           // A trap went off on them (amt = 1, traps.hpp). It never takes the
           // last point of LL, so this is always the line for someone who is
@@ -737,7 +850,7 @@ static void drainEvents() {
           ev.encLoot[0], ev.encLoot[1], ev.encLoot[2], ev.encLoot[3], ev.encLoot[4],
           (int)ev.actScoreD, (unsigned long)ev.bankedRecipes);
         evTextAll(buf, len);
-        if (ev.actScoreD >= 10 + 3) {  // full clear bonus present
+        if (ev.amt) {  // full clear bonus paid (handleMsg_enc_bank)
           char lb[48];
           snprintf(lb, sizeof(lb), "clears the place out entire. +%d.", (int)ev.actScoreD);
           k10LogAdd(lb, (int8_t)ev.pid, TONE_GOOD, GLY_HAUL);
@@ -755,7 +868,7 @@ static void drainEvents() {
           if (all > 0)
             k10LogPlate(PLATE_HAUL, "", (int8_t)ev.pid, TONE_GOOD, ev.encLoot, 5);
           char cb[48];
-          if (ev.actScoreD >= 10 + 3) {
+          if (ev.amt) {
             snprintf(cb, sizeof(cb), "cleared it, +%d", (int)ev.actScoreD);
             uint8_t pv[1] = { AWD_SWEPT };
             k10LogPlate(PLATE_AWARD, cb, (int8_t)ev.pid, TONE_GOOD, pv, 1);
@@ -906,7 +1019,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"fire_spread\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.q, (int)ev.r, (int)ev.amt);
         for (int i = 0; i < MAX_PLAYERS; i++) {
-          if (!conn[i]) continue;
+          if (!conn[i] || pdep[i]) continue;
           if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
           AsyncWebSocketClient* cl = ws.client(wsId[i]);
           if (cl) evTextTo(cl, buf, len);
@@ -928,7 +1041,7 @@ static void drainEvents() {
           "{\"t\":\"ev\",\"k\":\"flood_washout\",\"q\":%d,\"r\":%d,\"intensity\":%d}",
           (int)ev.q, (int)ev.r, (int)ev.amt);
         for (int i = 0; i < MAX_PLAYERS; i++) {
-          if (!conn[i]) continue;
+          if (!conn[i] || pdep[i]) continue;
           if (hexDistWrap(pq[i], pr[i], ev.q, ev.r) > visR[i]) continue;
           AsyncWebSocketClient* cl = ws.client(wsId[i]);
           if (cl) evTextTo(cl, buf, len);
@@ -994,6 +1107,61 @@ static void drainEvents() {
         break;
       }
 
+      case EVT_GHOST: {
+        // A ghost did something (ghosts.hpp): w = what, g = its slot, src =
+        // the seat it rose from, pid = who it rides or rode (-1 nobody), res
+        // = resource 1-5, n = tokens. No name: the client has it from world
+        // "ghosts" (the slot is already empty by the time a fade drains).
+        // Broadcast -- a haunting is everyone's business.
+        const uint8_t what = ev.actType < 6 ? ev.actType : 0;
+        const int     who  = ev.pid == GHOST_NONE ? -1 : (int)ev.pid;
+        Log.notice("EVT ghost %s g=%d src=%d pid=%d (%d,%d) res=%d n=%d",
+                   GHOST_WHAT[what], (int)ev.actOut, (int)ev.tradeTo, who, (int)ev.q, (int)ev.r,
+                   (int)ev.res, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"ghost\",\"w\":\"%s\",\"g\":%d,\"src\":%d,\"pid\":%d,\"q\":%d,\"r\":%d,\"res\":%d,\"n\":%d}",
+          GHOST_WHAT[what], (int)ev.actOut, (int)ev.tradeTo, who, (int)ev.q, (int)ev.r, (int)ev.res, (int)ev.amt);
+        evTextAll(buf, len);
+        if (what == GH_LATCH) {
+          // The haunting starts with a jump scare: its face on the LCD
+          // (FXK_GHOUL, the chronicle line as its caption), the groan, and the
+          // terminal's joke about the new company (SS_GHOST picks one of
+          // three); the lamps go cold for a moment.
+          const char* line = K10_SAY("feels a cold hand settle on their pack.",
+                                     "has a dead survivor riding on their back.");
+          k10LogAdd(line, (int8_t)ev.pid, TONE_OMEN, GLY_DEATH);
+          fxCue(FXK_GHOUL, (int8_t)ev.pid, line);
+          sndStory(SS_GHOST, ev.pid, (uint8_t)(esp_random() & 0xFF));
+          ledFlash(150, 170, 200);
+        } else if (what == GH_LETGO)
+          k10LogAdd("walks into town. The ghost stays at the gate.", (int8_t)ev.pid, TONE_GOOD, GLY_SETTLE);
+        else if (what == GH_FADE && ev.amt)
+          k10LogAdd("A ghost thins to nothing, and drops what it stole.", -1, TONE_OMEN, GLY_DEATH);
+        break;
+      }
+
+      case EVT_DSH: {
+        // The Dshingus (dshingus.hpp): w = catch / spot / clear, pid = who,
+        // src = the seat they caught it off (-1 = the band), d = days left,
+        // day = today (a spot's stamp; the clients age spots off it).
+        // Broadcast -- everybody wants to know who has it.
+        const uint8_t what = ev.actType < 3 ? ev.actType : 0;
+        const int     src  = ev.tradeTo == DSH_SRC_BAND ? -1 : (int)ev.tradeTo;
+        Log.notice("EVT dsh %s pid=%d src=%d (%d,%d) d=%d",
+                   DSH_WHAT[what], (int)ev.pid, src, (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"dsh\",\"w\":\"%s\",\"pid\":%d,\"src\":%d,\"q\":%d,\"r\":%d,\"d\":%d,\"day\":%d}",
+          DSH_WHAT[what], (int)ev.pid, src, (int)ev.q, (int)ev.r, (int)ev.amt, (int)G.dayCount);
+        evTextAll(buf, len);
+        if (what == DSH_EV_CATCH)
+          k10LogAdd(src < 0 ? K10_SAY("caught the Dshingus off the band.", "has the Dshingus now. Thanks, Ron.")
+                            : K10_SAY("caught the Dshingus off a friend.", "stood too close. Dshingus."),
+                    (int8_t)ev.pid, TONE_OMEN, GLY_WOUND);
+        else if (what == DSH_EV_CLEAR)
+          k10LogAdd("is over the Dshingus at last.", (int8_t)ev.pid, TONE_GOOD, GLY_MEDIC);
+        break;
+      }
+
       case EVT_KANE_CALL: {
         // He asks before he fires (kane.hpp). res = line index the client
         // reduces mod its own table (KANE_LINES in data/game-data.js, the
@@ -1022,11 +1190,11 @@ static void drainEvents() {
           k10LogAdd(K10_SAY("is caught in the open by Kane's gun.",
                             "didn't have an answer for Kane.",
                             "learns why the brass is everywhere."),
-                    (int8_t)ev.pid, TONE_ILL, GLY_CLASH);
-        else
+                    (int8_t)ev.pid, TONE_ILL, GLY_GUNFIRE);
+        else   // the panel reads the tone: OMEN is the miss, ILL the hit
           k10LogAdd(K10_SAY("hears Kane's rounds go past, close.",
                             "is shot at by the jeep, and missed."),
-                    (int8_t)ev.pid, TONE_OMEN, GLY_CLASH);
+                    (int8_t)ev.pid, TONE_OMEN, GLY_GUNFIRE);
         break;
       }
 
@@ -1096,6 +1264,86 @@ static void drainEvents() {
           case VAC_EV_LOST:
             k10LogAdd("The sign went out with the town.", -1, TONE_ILL, GLY_QUAKE);
             break;
+        }
+        break;
+      }
+
+      case EVT_FLARE: {
+        // A Bright Bad Idea went up (handleMsg_use_item). Every phone draws
+        // it, or the red glow it throws toward them (data/flare-field.js);
+        // dp = 1 means it burns in a hand below ground, not in the sky.
+        Log.notice("EVT flare pid=%d at (%d,%d) dp=%d", (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"flare\",\"pid\":%d,\"q\":%d,\"r\":%d,\"dp\":%d}",
+          (int)ev.pid, (int)ev.q, (int)ev.r, (int)ev.amt);
+        evTextAll(buf, len);
+        break;
+      }
+
+      case EVT_LAB: {
+        // RUNAWAY SCIENCE (lab.hpp). amt = what happened (LAB_EV_*), q/r =
+        // the room, a G.tunnel cell. The call and the taunt are Gaunt talking to one
+        // survivor -- unicast; "d" = hexes to his theatre, "has" = which
+        // parts they DO carry (1 the Needlecap, 2 the Brine Heart, 4 the
+        // Spine Wires). Everything else is the world's.
+        static const char* const LAB_WHAT[8] = { "?", "call", "needle", "jar", "wires", "graft", "lost", "taunt" };
+        const char* what = LAB_WHAT[ev.amt < 8 ? ev.amt : 0];
+        const int who = (ev.pid == 255) ? -1 : (int)ev.pid;
+        Log.notice("EVT lab %s pid=%d at=(%d,%d) res=%d", what, who, (int)ev.q, (int)ev.r, (int)ev.res);
+        if (ev.amt == LAB_EV_CALL || ev.amt == LAB_EV_TAUNT) {
+          len = snprintf(buf, sizeof(buf),
+            "{\"t\":\"ev\",\"k\":\"lab\",\"w\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"%s\":%d}",
+            what, who, (int)ev.q, (int)ev.r, ev.amt == LAB_EV_CALL ? "d" : "has", (int)ev.res);
+          if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
+          break;
+        }
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"lab\",\"w\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"part\":%d}",
+          what, who, (int)ev.q, (int)ev.r, (int)ev.res);
+        evTextAll(buf, len);
+        switch (ev.amt) {
+          case LAB_EV_NEEDLE: k10LogAdd("comes out of the ward with a fist of needles, breathing.", (int8_t)who, TONE_OMEN, GLY_HAUL); break;
+          case LAB_EV_JAR:    k10LogAdd("takes a heart off Gaunt's top shelf. It is still going.", (int8_t)who, TONE_OMEN, GLY_HAUL); break;
+          case LAB_EV_WIRES:  k10LogAdd("pulls the wires out of Gaunt's neck. He keeps talking.", (int8_t)who, TONE_OMEN, GLY_HAUL); break;
+          case LAB_EV_GRAFT:
+            k10LogAdd("gets up off the second table with two hearts. Gaunt is still.", (int8_t)who, TONE_ILL, GLY_WOUND);
+            k10Play(MOTIF_MUTANT_BREATH);   // the second heart catches
+            break;
+          case LAB_EV_LOST:
+            k10LogAdd("Somewhere in Gaunt's clinic, something has grown back.", -1, TONE_OMEN, GLY_THRESHOLD);
+            break;
+        }
+        break;
+      }
+
+      case EVT_BONNEY: {
+        // ONE-HAND BONNEY (bonney.hpp). amt = what happened (BON_EV_*), q/r =
+        // her fire, res = the item (0 = lint, or a real apple) or the call's
+        // line index. The call and the pinch are one survivor's -- unicast;
+        // the rest is the world's.
+        static const char* const BON_WHAT[8] = { "?", "call", "pinch", "caught", "supper", "rescue", "bargain", "back" };
+        const char* what = BON_WHAT[ev.amt < 8 ? ev.amt : 0];
+        const int who = (ev.pid == 255) ? -1 : (int)ev.pid;
+        Log.notice("EVT bonney %s pid=%d at=(%d,%d) res=%d", what, who, (int)ev.q, (int)ev.r, (int)ev.res);
+        len = snprintf(buf, sizeof(buf),
+          "{\"t\":\"ev\",\"k\":\"bonney\",\"w\":\"%s\",\"pid\":%d,\"q\":%d,\"r\":%d,\"%s\":%d}",
+          what, who, (int)ev.q, (int)ev.r, ev.amt == BON_EV_CALL ? "i" : "item", (int)ev.res);
+        if (ev.amt == BON_EV_CALL || ev.amt == BON_EV_PINCH) {
+          if (AsyncWebSocketClient* cl = ws.client(ev.evWsId)) evTextTo(cl, buf, len);
+        } else {
+          evTextAll(buf, len);
+        }
+        switch (ev.amt) {
+          case BON_EV_PINCH:
+            if (ev.res) k10LogAdd("shakes Bonney's one hand. Her other one goes through their pack.", (int8_t)who, TONE_ILL, GLY_TRADE);
+            break;
+          case BON_EV_CAUGHT:  k10LogAdd("catches a hand in their pack. It is not theirs.", (int8_t)who, TONE_GOOD, GLY_HAUL); break;
+          case BON_EV_RESCUE:
+            k10LogAdd("cuts a man down off Bonney's spit. He thanks them, smoking.", (int8_t)who, TONE_GOOD, GLY_HAUL);
+            k10Play(MOTIF_ROTTEN_CHORD);   // she screams
+            break;
+          case BON_EV_BARGAIN: k10LogAdd("trades a toenail for the man on the spit. Bonney eats the apple.", (int8_t)who, TONE_ILL, GLY_WOUND); break;
+          case BON_EV_BACK:    k10LogAdd("Near a town, a new fire is lit. Something is turning on it.", -1, TONE_OMEN, GLY_THRESHOLD); break;
         }
         break;
       }
@@ -1199,7 +1447,7 @@ static void drainEvents() {
 
       case EVT_DAMAGE: {
         // LL lost to a hazard with no event of its own (chem storm, fog, the
-        // Wasteland Daisy's bite).
+        // Wasteland Daisy's bite, the slime mould).
         Log.notice("EVT dmg pid=%d amt=%d cause=%s ll=%d",
                    (int)ev.pid, (int)ev.amt, dcName(ev.res), (int)ev.actNewLL);
         len = snprintf(buf, sizeof(buf),
@@ -1213,6 +1461,17 @@ static void drainEvents() {
                             "is bitten by something pale and pretty.",
                             "steps in the daisies. Teeth, in the middle."),
                     (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
+        // The slime: the first step gets a line, then only the run's later,
+        // harder bites, so wading through it does not bury the book.
+        else if (ev.res == DC_SLIME && (ev.amt == 1 || ev.amt >= 3))
+          k10LogAdd(ev.amt == 1
+                      ? K10_SAY("steps in the slime. It holds on.",
+                                "walks into the mould. It is warm.",
+                                "puts a foot in the purple. It drinks.")
+                      : K10_SAY("wades deeper. The slime takes more.",
+                                "keeps on through the mould. It eats.",
+                                "will not get out of the slime."),
+                    (int8_t)ev.pid, TONE_ILL, GLY_WOUND);
         break;
       }
 
@@ -1222,6 +1481,8 @@ static void drainEvents() {
     }
   }
   if (snapCount > 0) LOG_VERBOSE("drainEvents: dispatched=%d", snapCount);
+  if (roughWho >= 0) roughSay(roughWho, roughWhere, roughDay);
+  roughCueDue();
   // pendingCount was already reset to 0 inside the spinlock snapshot above.
   if (saveAfterDrain) requestSave();   // the Saver task writes it, outside this mutex hold
 }

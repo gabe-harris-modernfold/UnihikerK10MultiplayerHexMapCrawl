@@ -63,6 +63,8 @@ enum : uint8_t {
   SC_GLY_DEATH, SC_GLY_DOOM, SC_GLY_FIRE, SC_GLY_FLOOD, SC_GLY_QUAKE, SC_GLY_SETTLE,
   SC_GLY_RAIN, SC_GLY_STORM, SC_GLY_CHEM, SC_GLY_FOG,
   SC_GLY_RAD, SC_GLY_MEDAL,
+  SC_GLY_TRIP, SC_GLY_GUNFIRE,
+  SC_GLY_ROUGH, SC_GLY_ROUGH_TREE, SC_GLY_ROUGH_CHALK,
   SC_GLY_COUNT
 };
 enum : uint8_t { SC_TONE_PLAIN = 0, SC_TONE_GOOD, SC_TONE_ILL, SC_TONE_OMEN };
@@ -105,6 +107,8 @@ struct SceneSnap {
   uint8_t   vacStage;       // 0 lit, 1 counting, 2 saved (dark), 3 fallen (NO VACANCY)
   uint8_t   hatchN;
   int16_t   hatchQ[8], hatchR[8];
+  uint32_t  wasteFault;     // 0: the scope came up this visit; else how it is broken (scWasteBreak)
+  uint32_t  wasteSince;     // when button B landed on it
 };
 
 // ── 1. Small hands ───────────────────────────────────────────────────────────
@@ -1424,10 +1428,13 @@ static void scRoadDraw(const SceneSnap& S, uint32_t now) {
     fxF2(L1, (FX_W - fxF2Width(L1)) / 2, 190, FX_PAL[FXP_HDR]);
     scType("THE WASTELAND IS NOW", 60, 216, 1, FXP_RUST);
     scType("ACCEPTING APPLICANTS.", 57, 226, 1, FXP_RUST);
-    scType("JOIN THE HOTSPOT, THEN OPEN", 39, 250, 1, FXP_LINE);
+    // On the house network the LAN address is the one to type; the hotspot
+    // only takes the headline when there is no LAN to send anyone to.
+    const char* how = S.lanUp ? "ON THE HOUSE WI-FI, OPEN" : "JOIN THE HOTSPOT, THEN OPEN";
+    scType(how, (FX_W - scTypeW(how, 1)) / 2, 250, 1, FXP_LINE);
     // plain http:// so nobody expects a padlock
     char url[28];
-    snprintf(url, sizeof(url), "http://%s", S.ap);
+    snprintf(url, sizeof(url), "http://%s", S.lanUp ? S.lan : S.ap);
     fxF2(url, (FX_W - fxF2Width(url)) / 2, 262, FX_PAL[FXP_CRIT]);
     scType("PLAIN HTTP - NOT HTTPS", 54, 282, 1, FXP_RUST);
   } else {
@@ -1979,6 +1986,7 @@ struct ScStage {
   uint8_t  tone, rim;
   uint32_t seed, now;
   bool     live, night;
+  uint32_t t0;          // when the live one landed: a picture that tells a story starts it here
 };
 static void scClipRect(int x0, int y0, int x1, int y1) {
   for (int x = 0; x < FX_W; x++) {
@@ -2065,12 +2073,1740 @@ static void scHeap(float cx, float by, float w, float h, uint32_t seed, uint8_t 
   }
 }
 
+// A lump of concrete turned `a`: six corners knocked about, lit along the
+// edge toward the light, and a stub of rebar out of the big ones.
+static void scLump(float x, float y, float a, float s, uint32_t seed, uint8_t rimLv) {
+  FxRng R; R.s = seed;
+  float px[6], py[6], qx[6], qy[6];
+  const float ca = cosf(a), sa = sinf(a);
+  for (int i = 0; i < 6; i++) {
+    float b = i * (FX_TAU / 6) + R.sgn() * 0.3f, rr = s * (0.7f + 0.4f * R.u());
+    float lu = cosf(b) * rr * 1.3f, lv = sinf(b) * rr;
+    px[i] = x + lu * ca - lv * sa; py[i] = y + lu * sa + lv * ca;
+    qx[i] = px[i] - 0.8f; qy[i] = py[i] - 1.0f;
+  }
+  fxPoly(qx, qy, 6, FX_PAL[rimLv]);
+  fxPoly(px, py, 6, FX_PAL[FXP_INK]);
+  if (s > 3.0f)
+    fxStroke(x + cosf(a - 2.2f) * s * 0.6f, y + sinf(a - 2.2f) * s * 0.6f,
+             x + cosf(a - 2.2f) * s * 1.9f, y + sinf(a - 2.2f) * s * 1.9f, 1.0f, 0.8f, FX_PAL[FXP_RUST]);
+}
+
+// The page takes a knock when the live panel's picture lands one -- the first
+// time through only, or a picture that loops would rattle the screen forever.
+// `lt` is ms since the panel landed.
+static uint32_t scJoltMark = 0;
+static void scJolt(const ScStage& P, uint32_t lt, uint32_t at, float amt) {
+  if (!P.live || lt < at || lt > at + 500 || scJoltMark == P.t0 + at + 1) return;
+  scJoltMark = P.t0 + at + 1;
+  fxImpact(amt);
+}
+
+// ── Manga marks ──
+// What a body is feeling, said the way a manga page says it: focus lines,
+// speed lines, the startle, the sweat drop, gloom hung over a head, a sparkle
+// on a find, stars round a knocked head, an afterimage, the impact frame. All
+// in the house ink and amber, sized off k so a mark reads the same in either
+// size of panel.
+
+// Roughly where a figure's head is (scFigureDraw's skeleton, solved per pose).
+static void scHeadAt(const ScFig& F, float* x, float* y) {
+  float u = 0.85f, v = 24.6f;
+  switch (F.pose) {
+    case SCP_WALK:   u = 1.9f;   v = 24.8f; break;
+    case SCP_CROUCH: u = 7.1f;   v = 15.9f; break;
+    case SCP_SIT:    u = 2.2f;   v = 14.1f; break;
+    case SCP_SLUMP:  u = 3.2f;   v = 23.4f; break;
+    case SCP_LIE:    u = -11.6f; v = 3.2f;  break;
+  }
+  *x = F.x + F.dir * u * F.k; *y = F.foot - v * F.k;
+}
+// Put a figure's near hand at (x, y) on the screen.
+static inline void scHandTo(ScFig& F, float x, float y) {
+  F.handU = (x - F.x) / (F.dir * F.k);
+  F.handV = fmaxf(0.05f, (F.foot - y) / F.k);
+}
+// Focus lines on a panel: fxFocusLines' hashed wedges, cut to the panel's
+// reach and re-dealt at the cel rate, in to a ragged clear zone round (x, y).
+static void scFocus(const ScStage& P, float x, float y, float r, uint8_t col, float wMax, int n = 28) {
+  const uint32_t boil = P.live ? P.now / 90 : 0;
+  const float far = (float)(P.x1 - P.x0) * 1.2f;
+  for (int i = 0; i < n; i++) {
+    uint32_t h = fxHash2((uint32_t)i, P.seed + 71), hb = fxHash2((uint32_t)i, (P.seed + 71) ^ boil);
+    if (fxU(h ^ 0x5bd1e995U) < 0.2f) continue;
+    float a = ((float)i + fxS(hb) * 0.45f) * FX_TAU / (float)n, ca = cosf(a), sa = sinf(a);
+    float r0 = r * (0.8f + 0.5f * fxU(fxHash(h + 1)) + 0.12f * fxS(hb >> 3));
+    float w = 0.6f + wMax * fxU(fxHash(h + 2)) * fxU(fxHash(h + 3));
+    fxTri(x + ca * r0, y + sa * r0 * 0.85f, x + ca * far - sa * w, y + sa * far + ca * w,
+          x + ca * far + sa * w, y + sa * far - ca * w, FX_PAL[col]);
+  }
+}
+// Speed lines trailing whatever is going along (dx, dy) at (x, y): tapered
+// streaks, staggered, crawling at the cel rate.
+static void scSpeed(const ScStage& P, float x, float y, float dx, float dy, float len, float spread, int n, uint8_t col) {
+  const float d = fmaxf(0.001f, sqrtf(dx * dx + dy * dy)), ux = dx / d, uy = dy / d, nx = -uy, ny = ux;
+  const uint32_t boil = P.live ? P.now / 70 : 0;
+  for (int i = 0; i < n; i++) {
+    uint32_t h = fxHash2((uint32_t)i, P.seed + 73), hb = fxHash2((uint32_t)i, boil + 5);
+    float off = fxS(h) * spread, back = (0.1f + 0.5f * fxU(hb)) * len, l = len * (0.4f + 0.6f * fxU(h >> 8));
+    float x0 = x - ux * back + nx * off, y0 = y - uy * back + ny * off;
+    fxStroke(x0, y0, x0 - ux * l, y0 - uy * l, 0.5f + P.k * (0.4f + 0.6f * fxU(h >> 16)), 0.3f, FX_PAL[col]);
+  }
+}
+// A five-point star.
+static void scStar(float x, float y, float r, uint16_t col) {
+  for (int i = 0; i < 5; i++) {
+    float a = -1.5708f + i * (FX_TAU / 5);
+    for (int sd = -1; sd <= 1; sd += 2)
+      fxTri(x, y, x + cosf(a + sd * 0.63f) * r * 0.42f, y + sinf(a + sd * 0.63f) * r * 0.42f,
+            x + cosf(a) * r, y + sinf(a) * r, col);
+  }
+}
+// The startle: a "!" by the head, popped in big and settling, and shock
+// ticks off the crown. `age` ms since it went up.
+static void scStartle(float hx, float hy, float k, uint32_t age) {
+  const float s = k * (age < 140 ? 1.4f : 1.0f), x = hx + 6 * k, y = hy - 7 * k;
+  fxStroke(x, y - 7 * s, x, y - 2.6f * s, 2.6f * s, 1.4f * s, FX_PAL[FXP_INK]);
+  fxDisc(x, y, 1.4f * s, FX_PAL[FXP_INK]);
+  fxStroke(x, y - 7 * s, x, y - 2.6f * s, 1.6f * s, 0.8f * s, FX_PAL[FXP_GLOW]);
+  fxDisc(x, y, 0.85f * s, FX_PAL[FXP_GLOW]);
+  for (int i = 0; i < 3; i++) {
+    float a = -2.7f + i * 0.5f, r0 = 4.6f * k, r1 = (age < 140 ? 8.5f : 7.0f) * k;
+    fxStroke(hx + cosf(a) * r0, hy + sinf(a) * r0, hx + cosf(a) * r1, hy + sinf(a) * r1, 1.1f * k, 0.4f, FX_PAL[FXP_GLOW]);
+  }
+}
+// The sweat drop: a bead with a point, sliding down beside a head.
+static void scSweat(float hx, float hy, float k, uint32_t age, float side) {
+  const float x = hx + side * 3.6f * k, y = hy - 2.5f * k + fminf(age * 0.004f, 3.0f) * k;
+  fxDisc(x, y, 1.5f * k, FX_PAL[FXP_INK]);
+  fxTri(x - 1.35f * k, y - 0.5f * k, x + 1.35f * k, y - 0.5f * k, x + side * 0.3f * k, y - 3.8f * k, FX_PAL[FXP_INK]);
+  fxDisc(x, y, 0.95f * k, FX_PAL[FXP_GLOW]);
+  fxTri(x - 0.8f * k, y - 0.4f * k, x + 0.8f * k, y - 0.4f * k, x + side * 0.25f * k, y - 2.9f * k, FX_PAL[FXP_GLOW]);
+  scPx((int)(x - 0.4f * k), (int)(y - 0.3f * k), FX_PAL[FXP_WHITE]);
+}
+// Gloom: wavering vertical lines let down over a head that has just been
+// let down itself. Ink with a rust edge, so they read over any sky.
+static void scGloom(float hx, float hy, float k, uint32_t age, uint32_t now) {
+  const float grow = fxClampF(age / 500.0f, 0.0f, 1.0f);
+  for (int i = 0; i < 7; i++) {
+    uint32_t h = fxHash2((uint32_t)i, 0x6100u);
+    float x = hx + (i - 3) * 1.8f * k, top = hy - 15 * k, len = (7 + 8 * fxU(h)) * k * grow;
+    for (int y = (int)top; y < (int)(top + len); y++) {
+      int lx = (int)(x + sinf(y * 0.45f + now * 0.005f + i * 1.3f) * 0.6f);
+      scPx(lx + 1, y, FX_PAL[FXP_RUST]);
+      scPx(lx, y, FX_PAL[FXP_INK]);
+    }
+  }
+}
+// A sparkle that twinkles: fxSparkle's crossed diamonds, breathing.
+static void scKira(float x, float y, float r, uint32_t now, uint32_t ph) {
+  fxSparkle(x, y, r * (0.5f + 0.5f * sinf(now * 0.011f + ph * 1.9f)));
+}
+// Stars going round a knocked head.
+static void scDizzy(float hx, float hy, float k, uint32_t now) {
+  for (int i = 0; i < 3; i++) {
+    float a = now * 0.008f + i * (FX_TAU / 3), s = sinf(a);
+    scStar(hx + cosf(a) * 6.5f * k, hy - 5 * k + s * 1.8f * k, (s > 0 ? 2.2f : 1.5f) * k, FX_PAL[s > 0 ? FXP_GLOW : FXP_HDR]);
+  }
+}
+// An afterimage, where a fast figure just was: its silhouette, flat, in `col`.
+static void scGhost(ScFig F, float dx, float dy, uint8_t col) {
+  F.x += dx; F.foot += dy; F.rim = col; F.lx = F.ly = 0;
+  scFigureDraw(F, 0);
+}
+// An impact frame: the panel blown out flat for a beat, ink focus lines
+// driving in at what was hit. Drawn before the figures, which stay ink.
+static void scImpactFrame(const ScStage& P, float x, float y) {
+  for (int yy = P.y0; yy < P.y1; yy++) scTone(yy, P.x0, P.x1, 13.5f);
+  scFocus(P, x, y, 11 * P.k, FXP_INK, 2.6f * P.k, 36);
+}
+// A plus, rising off whoever was just patched up.
+static void scPlus(float x, float y, float k) {
+  fxRect((int)(x - 2.2f * k), (int)(y - 0.9f * k), (int)(x + 2.2f * k) + 1, (int)(y + 0.9f * k) + 1, FX_PAL[FXP_INK]);
+  fxRect((int)(x - 0.9f * k), (int)(y - 2.2f * k), (int)(x + 0.9f * k) + 1, (int)(y + 2.2f * k) + 1, FX_PAL[FXP_INK]);
+  fxRect((int)(x - 1.6f * k), (int)(y - 0.4f * k), (int)(x + 1.6f * k) + 1, (int)(y + 0.4f * k) + 1, FX_PAL[FXP_GLOW]);
+  fxRect((int)(x - 0.4f * k), (int)(y - 1.6f * k), (int)(x + 0.4f * k) + 1, (int)(y + 1.6f * k) + 1, FX_PAL[FXP_GLOW]);
+}
+
 // The Creeping Doom, placed: `s` 0-1 is how much of it there is.
 static void scDoomAt(float cx, float base, float s, uint8_t aware, uint32_t now);
 
+// The panels that tell a story, each its own function: inlined into one
+// scPanelArt() they made a function the Xtensa GCC cannot allocate (an ICE
+// in postreload), so they stay out of line.
+#if defined(_MSC_VER)
+#define SC_NOINLINE __declspec(noinline)
+#else
+#define SC_NOINLINE __attribute__((noinline))
+#endif
+
+static SC_NOINLINE void scArtClash(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, W = (float)(P.x1 - P.x0), k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // The place itself, hurting them. Indoors, under a slab with a hole
+    // punched in it and a shaft of daylight standing in the dust: in they
+    // come out of the dark doorway, stop in the light, look up -- and a
+    // lump of the ceiling picks its moment. WHAM. Down on a knee, an arm
+    // over the head, the bits still coming down; then up, and on, out past
+    // the pillar. And the room waits for the next one.
+    const uint32_t CYC = 4800, LOOK = 1100, CRACK = 1250, DROP = 1500, HIT = 1800, RISE = 3000, GONE = 4500;
+    const uint32_t lt = t - P.t0, u = P.live ? lt % CYC : HIT + 90;
+    const float hx = cx + 4 * k, slab = G - 50 * k, fx = hx - 1.5f * k;   // the hole, the slab's underside, where they stop
+    const float lx0 = hx - 3.5f * k, ly0 = slab + 1.2f * k, lyH = G - 32 * k;   // the lump: where it hangs, where it lands
+    // the room: dark, the shaft standing in it, a pool where the light lands
+    for (int y = (int)T; y < (int)G; y++) scTone(y, (int)L, (int)R, 1.1f + 0.6f * (y - T) / (G - T));
+    for (int y = (int)slab; y < (int)G; y++) {
+      float v = (y - slab) / (G - slab);
+      scTone(y, (int)(hx - 6 * k - 3 * k * v), (int)(hx + 5 * k + 8 * k * v), 5.7f - 1.5f * v);
+    }
+    for (int y = (int)G; y < P.y1; y++) {
+      float v = (y - G) / fmaxf(1.0f, P.y1 - G);
+      float hw = 12 * k * sqrtf(fmaxf(0.0f, 1.0f - v * v * 0.85f));
+      scTone(y, (int)L, (int)R, 2.4f - v);
+      scTone(y, (int)(hx + 2 * k - hw), (int)(hx + 2 * k + hw), 4.8f - 1.8f * v);
+    }
+    fxRect((int)(L + 3 * k), (int)(G - 31 * k), (int)(L + 13 * k), (int)G, FX_PAL[FXP_INK]);   // the way in
+    fxLine((int)(L + 13 * k), (int)(G - 31 * k), (int)(L + 13 * k), (int)G - 1, FX_PAL[FXP_TRACK]);
+    fxLine((int)(L + 3 * k), (int)(G - 31 * k), (int)(L + 13 * k), (int)(G - 31 * k), FX_PAL[FXP_TRACK]);
+    scHeap(hx + 1 * k, G, 24 * k, 4 * k, P.seed, FXP_RUST);   // what came down before
+    for (int i = 0; i < 9; i++) {                          // the dust, standing in the light
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 3);
+      float v = fmodf(fxU(h) + (P.live ? t * 0.00011f : 0.3f) * (0.6f + 0.6f * fxU(h >> 4)), 1.0f);
+      float y = slab + v * (G - slab), x = hx - 5 * k + fxU(h >> 8) * (10 + 7 * v) * k + sinf(v * 9 + i) * k;
+      scPx((int)x, (int)y, FX_PAL[(h & 3) ? FXP_RUST : FXP_HDR]);
+    }
+    // the slab overhead, the hole through it, the sky through that
+    fxRect((int)L, (int)T, (int)R, (int)slab, FX_PAL[FXP_INK]);
+    for (int y = (int)T; y < (int)slab; y++) {
+      float v = (y - T) / fmaxf(1.0f, slab - T), hw = (4.2f + 1.8f * v + 1.4f * fxNoise1(y * 0.3f, P.seed)) * k;
+      scTone(y, (int)(hx - hw), (int)(hx + hw * 0.9f), 10.6f - 2.5f * v);
+      scPx((int)(hx - hw) - 1, y, FX_PAL[FXP_HOT]);
+    }
+    fxLine((int)L, (int)slab, (int)(hx - 6 * k), (int)slab, FX_PAL[FXP_DIM]);   // its edge, what light gets to it
+    fxLine((int)(hx + 5 * k), (int)slab, (int)R, (int)slab, FX_PAL[FXP_DIM]);
+    for (int i = 0; i < 10; i++) {                         // its broken underside
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 9);
+      float x = L + (i + fxU(h)) * W / 10;
+      if (fabsf(x - hx) < 7 * k) continue;
+      fxTri(x - 3 * k, slab - 1, x + 3 * k, slab - 1, x + fxS(h >> 4) * 2 * k, slab + (1 + 2.5f * fxU(h >> 8)) * k, FX_PAL[FXP_INK]);
+    }
+    fxStroke(hx + 4.5f * k, slab - 3 * k, hx + 1.5f * k, slab + 2 * k, 0.9f * k, 0.7f * k, FX_PAL[FXP_RUST]);   // rebar, hung in the hole
+    fxStroke(hx - 5.5f * k, slab - 5 * k, hx - 3 * k, slab - 2 * k, 0.9f * k, 0.7f * k, FX_PAL[FXP_RUST]);
+    // the lump: hanging off the lip, grit first, a crack; then down
+    if (u < DROP || u >= GONE) {
+      scLump(lx0, ly0, 0.2f, 3.6f * k, P.seed + 17, FXP_RUST);
+      if (u >= CRACK && u < DROP && ((u / 140) & 1) == 0)
+        fxLine((int)(lx0 - 4 * k), (int)(slab + 0.5f * k), (int)(lx0 + 4 * k), (int)(slab - 0.5f * k), FX_PAL[FXP_HOT]);
+      if (u >= LOOK - 400 && u < DROP)
+        for (int i = 0; i < 3; i++) {
+          float v = fmodf((u - (LOOK - 400)) * 0.0021f + i / 3.0f, 1.0f);
+          scPx((int)(lx0 + (i - 1) * 1.5f * k), (int)(ly0 + 3 * k + v * (G - ly0 - 3 * k)), FX_PAL[FXP_HDR]);
+        }
+    } else if (u < HIT) {
+      float e = (u - DROP) / (float)(HIT - DROP), y = fxLerp(ly0, lyH, e * e), x = fxLerp(lx0, fx + 0.5f * k, e);
+      for (int i = -1; i <= 1; i++)                        // how fast
+        fxLine((int)(x + i * 2.2f * k), (int)(y - 5 * k), (int)(x + i * 2.2f * k), (int)(y - (5 + 12 * e) * k), FX_PAL[FXP_LINE]);
+      scLump(x, y, 0.2f + 1.4f * e, 3.6f * k, P.seed + 17, FXP_RUST);
+    }
+    if (P.live && u >= HIT && u < HIT + 150) scImpactFrame(P, fx + 0.5f * k, lyH);   // the blow, as a cel
+    // them
+    if (u < GONE) {
+      ScFig F = { fx, G, 1, arch, SCP_STAND, seat, 0, FXP_HDR, 0.25f, -0.97f, k };   // lit from overhead
+      if (u < LOOK) { F.x = fxLerp(L + 9 * k, fx, u / (float)LOOK); F.pose = SCP_WALK; F.ph = u * 0.016f; }
+      else if (u < HIT) F.look = 0.75f * fxClampF((u - LOOK) / 210.0f, 0, 1);
+      else if (u < RISE) { F.pose = SCP_CROUCH; F.handU = 7.2f; F.handV = 19.8f; }   // an arm over the head
+      else { F.pose = SCP_WALK; F.x = fxLerp(fx, R + 7 * k, (u - RISE) / (float)(GONE - RISE)); F.ph = (u - RISE) * 0.015f; }
+      if (fabsf(F.x - hx) > 11 * k) F.rim = FXP_RUST;      // out of the shaft, only the edge of it
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      if (u >= HIT + 350 && u < RISE) {                    // and stars going round
+        float qx, qy;
+        scHeadAt(F, &qx, &qy);
+        scDizzy(qx, qy, k, P.live ? t : 500);
+      }
+    }
+    // the bits, and the dust off them
+    if (u >= HIT && u < GONE) {
+      const float dt = (float)(u - HIT), gk = 0.00042f * k, ix = fx + 0.5f * k;
+      for (int i = 0; i < 4; i++) {
+        uint32_t h = fxHash2((uint32_t)i, P.seed + 21);
+        float vx = ((i & 1) ? 1.0f : -1.0f) * (0.01f + 0.028f * fxU(h)) * k, vy = -(0.008f + 0.03f * fxU(h >> 8)) * k;
+        float s = (1.3f + 0.9f * fxU(h >> 16)) * k, fl = G - s * 0.6f;
+        float tl = (-vy + sqrtf(vy * vy + 2 * gk * (fl - lyH))) / gk, tt = fminf(dt, tl);
+        scLump(ix + vx * tt, lyH + vy * tt + 0.5f * gk * tt * tt, i * 1.3f + tt * 0.011f, s, h, FXP_RUST);
+      }
+      if (dt < 260)                                        // the blow itself
+        for (int i = 0; i < 8; i++) {
+          float a = i * (FX_TAU / 8) + 0.3f, r0 = (4 + dt * 0.02f) * k, r1 = r0 + 4 * k * (1 - dt / 260);
+          fxLine((int)(ix + cosf(a) * r0), (int)(lyH + sinf(a) * r0), (int)(ix + cosf(a) * r1), (int)(lyH + sinf(a) * r1), FX_PAL[FXP_WHITE]);
+        }
+      fxDustDraw(ix, lyH, dt, 13 * k, P.seed + 5, 900.0f);
+      fxDustDraw(hx, G - 1, dt - 380, 18 * k, P.seed + 6, 1100.0f);
+    }
+    fxRect((int)(R - 12 * k), (int)T, (int)(R - 5 * k), P.y1, FX_PAL[FXP_INK]);   // a pillar to go out past
+    fxLine((int)(R - 12 * k), (int)slab, (int)(R - 12 * k), (int)G + 2, FX_PAL[FXP_TRACK]);
+    if (u >= HIT && u < HIT + 1000) scBang("WHAM!", cx + 30 * k, T + (G - T) * 0.4f, 10 * k, P.seed, P.k > 1.3f ? 2 : 1);
+    scJolt(P, lt, HIT, 0.22f);
+}
+
+static SC_NOINLINE void scArtTrip(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // A tripwire, told small (ui-fx.hpp 13b is the close-up, and plays over
+    // this as it lands, so this one has no knock of its own). A wire across
+    // the path at the ankle; over the path, out on a gallows arm, a deadfall
+    // -- a log, planks, a drum, lashed and hung. The boot finds the wire,
+    // the pegs lean in, it parts -- SNAP -- they go over forward and it all
+    // comes down where they were. A look back at it, up, gone; and the wire
+    // is strung again for whoever is next.
+    const uint32_t CYC = 5600, TOUCH = 1150, SNAP = 1450, DROP = 1500, KNEE = 1720, LAND = 1820,
+                   BACK = 2500, RISE = 3300, GONE = 4700;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : SNAP + 170;
+    const bool armed = u < SNAP || u >= GONE;
+    const float wx = cx - 6 * k, wy = G - 3 * k, wa = wx - 6 * k, wb = wx + 6 * k;   // the wire, and its pegs
+    const float gx = cx - 30 * k, armY = G - 54 * k, hx = cx - 4 * k;   // the gallows, and the drop under its arm
+    const float xt = wx - 4.2f * k, xk = cx + 10 * k;      // where the shin meets the wire; where they land
+    const float push = u < TOUCH || u >= GONE ? 0.0f : fxCubicOut(fxClampF((u - TOUCH) / (float)(SNAP - TOUCH), 0, 1));
+    const float tipX = xt + (5 + 1.6f * push) * k, tipY = wy - 0.9f * push * k;
+    if (P.live && u >= TOUCH + 80 && u < SNAP) scFocus(P, tipX, tipY, 9 * k, FXP_INK, 1.6f * k);   // the strain, as a page holds it
+    // the gallows: a post, an arm out over the path, a brace
+    fxStroke(gx, G + 1, gx, armY - 2 * k, 2.6f * k, 2.1f * k, FX_PAL[FXP_INK]);
+    fxStroke(gx - 1 * k, armY, hx + 5 * k, armY + 0.6f * k, 2.1f * k, 1.6f * k, FX_PAL[FXP_INK]);
+    fxStroke(gx, armY + 11 * k, gx + 9 * k, armY + 0.5f * k, 1.3f * k, 1.1f * k, FX_PAL[FXP_INK]);
+    fxLine((int)(gx - 1.4f * k), (int)G, (int)(gx - 1.4f * k), (int)(armY - 1 * k), FX_PAL[P.rim]);
+    fxLine((int)(gx - 1 * k), (int)(armY - 1.1f * k), (int)(hx + 5 * k), (int)(armY - 0.5f * k), FX_PAL[P.rim]);
+    if (armed) {                                           // the line from the wire, up the post, out to the knot
+      fxLine((int)wa, (int)wy, (int)(gx + 1.6f * k), (int)G - 1, FX_PAL[FXP_LINE]);
+      fxLine((int)(gx + 1.6f * k), (int)G - 1, (int)(gx + 1.6f * k), (int)(armY + 1.4f * k), FX_PAL[FXP_LINE]);
+      fxLine((int)(gx + 1.6f * k), (int)(armY + 1.4f * k), (int)hx, (int)(armY + 1.4f * k), FX_PAL[FXP_LINE]);
+    }
+    // the deadfall: hung, falling, or down and gone to pieces
+    const float hang = armY + 16 * k;                      // its foot, while it hangs: over the Mule's pack
+    if (!armed && u >= DROP) {                             // the cut end of its rope, swinging
+      float a = (float)(u - DROP), sw = sinf(a * 0.011f) * 0.6f * expf(-a * 0.0011f);
+      fxStroke(hx, armY + 1 * k, hx + sinf(sw) * 5 * k, armY + (1 + cosf(sw) * 5) * k, 0.9f * k, 0.7f * k, FX_PAL[FXP_INK]);
+    } else {
+      fxStroke(hx, armY + 1 * k, hx, hang - 12 * k, 0.9f * k, 0.9f * k, FX_PAL[FXP_INK]);
+    }
+    if (!armed && u >= LAND) {
+      fxStroke(hx - 10 * k, G - 1.7f * k, hx + 8 * k, G - 1.6f * k, 3.4f * k, 3.2f * k, FX_PAL[FXP_INK]);   // the log
+      fxLine((int)(hx - 10 * k), (int)(G - 3.4f * k), (int)(hx + 8 * k), (int)(G - 3.3f * k), FX_PAL[P.rim]);
+      fxDisc(hx + 8 * k, G - 1.7f * k, 1.6f * k, FX_PAL[FXP_BRICK]);
+      fxStroke(hx - 3 * k, G - 1, hx + 2 * k, G - 12 * k, 1.5f * k, 1.4f * k, FX_PAL[FXP_INK]);   // a plank, stood up in the dirt
+      fxLine((int)(hx - 3.8f * k), (int)G - 2, (int)(hx + 1.2f * k), (int)(G - 12 * k), FX_PAL[P.rim]);
+      fxStroke(hx - 12 * k, G - 4 * k, hx + 3 * k, G - 2.6f * k, 1.5f * k, 1.4f * k, FX_PAL[FXP_INK]);
+      fxRect((int)(hx - 18 * k), (int)(G - 6 * k), (int)(hx - 10 * k), (int)G, FX_PAL[FXP_INK]);   // the drum, rolled off
+      fxLine((int)(hx - 18 * k), (int)(G - 6 * k), (int)(hx - 10 * k), (int)(G - 6 * k), FX_PAL[P.rim]);
+      fxLine((int)(hx - 15 * k), (int)(G - 6 * k), (int)(hx - 15 * k), (int)G - 1, FX_PAL[FXP_RUST]);
+    } else {
+      float b = hang;
+      if (!armed && u >= DROP) {
+        float e = (u - DROP) / (float)(LAND - DROP);
+        b = hang + (G - hang) * e * e;
+        for (int i = -1; i <= 1; i++)                      // how fast
+          fxLine((int)(hx + i * 5 * k), (int)(b - 14 * k), (int)(hx + i * 5 * k), (int)(b - (14 + 14 * e) * k), FX_PAL[FXP_LINE]);
+      }
+      fxRect((int)(hx - 3 * k), (int)(b - 13 * k), (int)(hx + 3 * k), (int)(b - 6 * k), FX_PAL[FXP_INK]);   // a drum
+      fxLine((int)(hx - 3 * k), (int)(b - 13 * k), (int)(hx + 3 * k), (int)(b - 13 * k), FX_PAL[P.rim]);
+      fxLine((int)(hx - 3 * k), (int)(b - 10 * k), (int)(hx + 3 * k), (int)(b - 10 * k), FX_PAL[FXP_RUST]);
+      fxStroke(hx - 8 * k, b - 9 * k, hx + 7 * k, b - 6 * k, 1.5f * k, 1.5f * k, FX_PAL[FXP_INK]);       // planks
+      fxStroke(hx - 7 * k, b - 4.5f * k, hx + 8 * k, b - 10.5f * k, 1.5f * k, 1.5f * k, FX_PAL[FXP_INK]);
+      fxStroke(hx - 9 * k, b - 2.6f * k, hx + 9 * k, b - 3.2f * k, 3.4f * k, 3.2f * k, FX_PAL[FXP_INK]); // the log
+      fxLine((int)(hx - 9 * k), (int)(b - 4.3f * k), (int)(hx + 9 * k), (int)(b - 4.9f * k), FX_PAL[P.rim]);
+      fxDisc(hx + 9 * k, b - 3.2f * k, 1.6f * k, FX_PAL[FXP_BRICK]);
+      fxLine((int)(hx - 4 * k), (int)(b - 13 * k), (int)(hx - 4 * k), (int)(b - 1 * k), FX_PAL[FXP_RUST]);   // the lashing
+      fxLine((int)(hx + 5 * k), (int)(b - 12 * k), (int)(hx + 5 * k), (int)(b - 1 * k), FX_PAL[FXP_RUST]);
+    }
+    for (int s = 0; s < 2; s++) {                          // the pegs, leaning in as it takes the strain
+      float x = s ? wb : wa, lean = (s ? -0.8f : 0.8f) * push * k;
+      fxStroke(x, G + 1, x + lean, wy - 1.2f * k, 1.3f * k, 1.0f * k, FX_PAL[FXP_INK]);
+      scPx((int)(x + lean), (int)(wy - 1.2f * k), FX_PAL[FXP_GLOW]);
+    }
+    // them
+    if (u < GONE) {
+      ScFig F = { xt, G, 1, arch, SCP_WALK, seat, 1.5708f, P.rim, -0.7f, -0.7f, k };
+      if (u < TOUCH) { F.x = fxLerp(L + 6 * k, xt, u / (float)TOUCH); F.ph = 1.5708f - (TOUCH - u) * 0.016f; }
+      else if (u < SNAP) F.x = xt + 1.6f * k * push;     // stopped mid-stride, leaning into it
+      else if (u < KNEE) { F.pose = SCP_SLUMP; F.x = fxLerp(xt + 1.6f * k, xk - 2 * k, (u - SNAP) / (float)(KNEE - SNAP)); }
+      else if (u < RISE) {
+        F.pose = SCP_CROUCH; F.x = xk;
+        if (u >= BACK) { F.dir = -1; F.lx = 0.7f; }        // and a look back at it
+      } else { F.x = fxLerp(xk, R + 8 * k, (u - RISE) / (float)(GONE - RISE)); F.ph = (u - RISE) * 0.016f; }
+      if (u >= SNAP && u < KNEE) scGhost(F, -3 * k, 0, FXP_DIM);   // going over, fast
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      if (u >= SNAP && u < SNAP + 600) {
+        float qx, qy;
+        scHeadAt(F, &qx, &qy);
+        scStartle(qx, qy, k, u - SNAP);
+      }
+    }
+    // the wire, over the shin: taut and glinting, bowed, or parted
+    if (u < TOUCH || u >= GONE) {
+      fxLine((int)wa, (int)wy, (int)wb, (int)wy, FX_PAL[FXP_GLOW]);
+      float g = fmodf((P.live ? t : 0) * 0.0007f, 1.6f);
+      if (g < 1) fxLine((int)fxLerp(wa, wb, g), (int)wy, (int)fxLerp(wa, wb, g) + 1, (int)wy, FX_PAL[FXP_WHITE]);
+    } else if (u < SNAP) {
+      fxLine((int)wa, (int)wy, (int)tipX, (int)tipY, FX_PAL[FXP_WHITE]);
+      fxLine((int)tipX, (int)tipY, (int)wb, (int)wy, FX_PAL[FXP_WHITE]);
+      for (int i = 0; i < 4; i++) {                        // the strain, jumping
+        uint32_t h = fxHash2((uint32_t)i, u / 70);
+        float a = FX_TAU * fxU(h), r0 = (1.5f + fxU(h >> 8)) * k;
+        fxLine((int)(tipX + cosf(a) * r0), (int)(tipY + sinf(a) * r0), (int)(tipX + cosf(a) * (r0 + 2 * k)), (int)(tipY + sinf(a) * (r0 + 2 * k)), FX_PAL[FXP_WHITE]);
+      }
+    } else {
+      float a = (float)(u - SNAP), w = expf(-a / 160.0f);
+      for (int s = 0; s < 2; s++) {                        // the halves whip back, ring, and hang
+        float p0 = s ? wb : wa, d = s ? -1.0f : 1.0f;
+        float len = (2.0f + 4.0f * w * fabsf(cosf(a * 0.035f))) * k;
+        float ex = p0 + d * len, ey = wy + (1 - w) * 2.2f * k;
+        float mx = (p0 + ex) * 0.5f, my = (wy + ey) * 0.5f + sinf(a * 0.05f + s) * w * 1.5f * k;
+        fxLine((int)p0, (int)wy, (int)mx, (int)my, FX_PAL[FXP_GLOW]);
+        fxLine((int)mx, (int)my, (int)ex, (int)ey, FX_PAL[FXP_GLOW]);
+      }
+      if (a < 200) {                                       // where it went
+        for (int i = 0; i < 7; i++) {
+          float an = i * (FX_TAU / 7) + 0.4f, r0 = (1.5f + a * 0.02f) * k, r1 = r0 + 3.5f * k * (1 - a / 200);
+          fxLine((int)(tipX + cosf(an) * r0), (int)(tipY + sinf(an) * r0), (int)(tipX + cosf(an) * r1), (int)(tipY + sinf(an) * r1), FX_PAL[FXP_WHITE]);
+        }
+        fxDisc(tipX, tipY, 1.4f * k * (1 - a / 200), FX_PAL[FXP_WHITE]);
+      }
+    }
+    if (!armed && u >= LAND) fxDustDraw(hx, G - 1, (float)(u - LAND), 17 * k, P.seed + 3, 1000.0f);
+    if (!armed && u < SNAP + 1100) scBang("SNAP!", cx + 32 * k, T + (G - T) * 0.42f, 9 * k, P.seed, P.k > 1.3f ? 2 : 1);
+}
+
+static SC_NOINLINE void scArtGunfire(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // Machine Gun Kane (docs/machine-gun-kane.md): the old M151 idling, the
+    // gun bolted to its windshield frame and a cable run from its trigger to
+    // the wheel, and him at the wheel, grinning. A burst walks its spurts up
+    // the dirt to them, and the brass goes up off the gun in a fountain --
+    // which is why it is everywhere. A hit (an ILL line) knocks them to a
+    // knee, and they get up again; a miss (OMEN) is at night, in his lights,
+    // with them already down and the rest of the burst going over.
+    const bool hit = P.tone != SC_TONE_OMEN;
+    const uint32_t CYC = 4400, SHOT0 = 300, GAP = 100, FLY = 170, HITN = 6, SHOTS = hit ? 10 : 13;
+    const uint32_t HIT = SHOT0 + HITN * GAP + FLY, KNEE = HIT + 380, RISE = 3500, SHOT1 = SHOT0 + SHOTS * GAP;
+    const uint32_t lt = t - P.t0, u = P.live ? lt % CYC : (hit ? HIT + 70 : SHOT0 + 9 * GAP + 60);
+    const bool firing = u >= SHOT0 && u < SHOT1;
+    const float jx = cx + 30 * k, figX = cx - 28 * k;
+    const float bY = G - (firing ? fxU(fxHash2(u / 50, P.seed)) * 0.6f * k : (float)((u / 120) & 1) * 0.3f * k);   // the tub, shaking
+    const float mx = jx - 18.8f * k, my = bY - 22 * k;     // the muzzle
+    const float hlx = jx - 15.8f * k, hly = bY - 8.5f * k; // a headlight
+    if (hit && P.live && u >= HIT && u < HIT + 150) scImpactFrame(P, figX + 1.5f * k, G - 18 * k);   // the one that finds them
+    for (int i = 0; i < 14; i++) {                         // the brass, everywhere
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 31);
+      int x = (int)(cx - 14 * k + fxU(h) * (R - cx + 12 * k)), y = (int)(G + fxU(h >> 8) * 2.5f * k);
+      bool glint = P.live && fxHash2((uint32_t)i, t / 380) % 7 == 0;
+      scPx(x, y, FX_PAL[glint ? FXP_WHITE : FXP_HDR]);
+      if (k > 1.3f) scPx(x + 1, y, FX_PAL[FXP_RUST]);
+    }
+    for (int i = 0; i < 3; i++) {                          // the exhaust
+      float p = fmodf((P.live ? t * 0.0011f : 0.4f) + i / 3.0f, 1.0f);
+      fxDisc(jx + (16 + p * 9) * k, bY - (4 + p * 6) * k, (1 + p * 2.4f) * k, FX_PAL[p < 0.5f ? FXP_LINE : FXP_DIM]);
+    }
+    if (P.night)                                           // his lights, down the road at them
+      for (int y = (int)(hly - (hlx - L) * 0.12f); y < P.y1; y++) {
+        float dy = y - hly, xr = hlx - fabsf(dy) / (dy < 0 ? 0.12f : 0.22f);
+        for (int x = (int)L; x < (int)xr; x++)
+          if (scDot(x, y, 0.12f + 0.4f * (x - L) / fmaxf(1.0f, hlx - L))) scPx(x, y, FX_PAL[FXP_EMBER]);
+      }
+    // the jeep: the spare, the tub and the hood, the wheels
+    fxDisc(jx + 15.2f * k, bY - 8.6f * k, 3.4f * k, FX_PAL[FXP_INK]);
+    float qx[5] = { jx - 16 * k, jx - 15.6f * k, jx - 4 * k, jx + 15 * k, jx + 15 * k };
+    float qy[5] = { bY - 4.6f * k, bY - 10 * k, bY - 12.6f * k, bY - 12.6f * k, bY - 4.6f * k };
+    fxPoly(qx, qy, 5, FX_PAL[FXP_INK]);
+    fxLine((int)(jx - 15.6f * k), (int)(bY - 10.6f * k), (int)(jx - 4 * k), (int)(bY - 13.2f * k), FX_PAL[P.rim]);
+    fxLine((int)(jx - 4 * k), (int)(bY - 13.2f * k), (int)(jx + 15 * k), (int)(bY - 13.2f * k), FX_PAL[P.rim]);
+    fxLine((int)(jx - 16.4f * k), (int)(bY - 10 * k), (int)(jx - 16.4f * k), (int)(bY - 5 * k), FX_PAL[P.rim]);
+    if (k > 1.3f) {                                        // the white star, mostly gone
+      const float sx = jx - 9 * k, sy = bY - 8 * k;
+      for (int i = 0; i < 5; i++) {
+        float a = -1.5708f + i * (FX_TAU / 5);
+        for (int sd = -1; sd <= 1; sd += 2)
+          fxTri(sx, sy, sx + cosf(a + sd * 0.63f) * 1.0f * k, sy + sinf(a + sd * 0.63f) * 1.0f * k,
+                sx + cosf(a) * 2.6f * k, sy + sinf(a) * 2.6f * k, FX_PAL[FXP_DIM]);
+      }
+    }
+    for (int s = 0; s < 2; s++) {
+      float wx2 = jx + (s ? 9 : -10) * k;
+      fxDisc(wx2, G - 4.3f * k, 4.4f * k, FX_PAL[FXP_INK]);
+      fxDisc(wx2, G - 4.3f * k, 1.5f * k, FX_PAL[FXP_LINE]);
+      fxDisc(wx2, G - 4.3f * k, 0.6f * k, FX_PAL[FXP_INK]);
+      for (int i = 0; i < 5; i++) {                        // the tread, catching the light
+        float a = 3.6f + i * 0.25f;
+        scPx((int)(wx2 + cosf(a) * 4.6f * k), (int)(G - 4.3f * k + sinf(a) * 4.6f * k), FX_PAL[P.rim]);
+      }
+    }
+    fxDisc(hlx, hly, 1.1f * k, FX_PAL[P.night ? FXP_WHITE : FXP_GLOW]);
+    // the windshield frame, the gun bolted to it, the cable to the wheel
+    fxStroke(jx - 3.6f * k, bY - 12.6f * k, jx - 4.6f * k, bY - 20.6f * k, 1.1f * k, 1.0f * k, FX_PAL[FXP_INK]);
+    fxLine((int)(jx - 2.8f * k), (int)(bY - 13.4f * k), (int)(jx - 3.6f * k), (int)(bY - 19.8f * k), FX_PAL[FXP_LINE]);
+    fxRect((int)(jx - 7.4f * k), (int)(bY - 23.2f * k), (int)(jx - 1.6f * k), (int)(bY - 20.6f * k), FX_PAL[FXP_INK]);
+    fxStroke(jx - 7 * k, bY - 22 * k, mx + 0.6f * k, my, 1.1f * k, 0.9f * k, FX_PAL[FXP_INK]);
+    fxRect((int)mx, (int)(my - 0.8f * k), (int)(mx + 1.4f * k), (int)(my + 0.8f * k), FX_PAL[FXP_INK]);
+    fxLine((int)(jx - 7.4f * k), (int)(bY - 23.6f * k), (int)(jx - 1.6f * k), (int)(bY - 23.6f * k), FX_PAL[P.rim]);
+    fxLine((int)mx, (int)(my - 0.9f * k), (int)(jx - 7.4f * k), (int)(bY - 22.9f * k), FX_PAL[P.rim]);
+    fxRect((int)(jx - 5.4f * k), (int)(bY - 20.6f * k), (int)(jx - 2.6f * k), (int)(bY - 18.4f * k), FX_PAL[FXP_INK]);   // the ammo can
+    fxLine((int)(jx - 2 * k), (int)(bY - 20.6f * k), (int)(jx - 1.2f * k), (int)(bY - 15.6f * k), FX_PAL[FXP_RUST]);
+    // and him: a field cap, both hands on the wheel, and the grin that no longer closes
+    fxStroke(jx + 2.6f * k, bY - 12.6f * k, jx + 1.8f * k, bY - 19.6f * k, 4.2f * k, 3.6f * k, FX_PAL[FXP_INK]);
+    fxDisc(jx + 1.0f * k - 0.7f, bY - 22.6f * k - 0.7f, 2.4f * k + 0.8f, FX_PAL[P.rim]);
+    fxDisc(jx + 1.0f * k, bY - 22.6f * k, 2.4f * k, FX_PAL[FXP_INK]);
+    fxRect((int)(jx - 0.6f * k), (int)(bY - 26 * k), (int)(jx + 3 * k), (int)(bY - 23.8f * k), FX_PAL[FXP_INK]);
+    fxStroke(jx + 0.2f * k, bY - 24 * k, jx - 2.6f * k, bY - 23.4f * k, 0.8f * k, 0.6f * k, FX_PAL[FXP_INK]);
+    fxStroke(jx + 1.4f * k, bY - 18.6f * k, jx - 1.4f * k, bY - 15.4f * k, 1.5f * k, 1.2f * k, FX_PAL[FXP_INK]);
+    fxStroke(jx - 2.8f * k, bY - 17.6f * k, jx - 0.2f * k, bY - 13.8f * k, 0.8f * k, 0.8f * k, FX_PAL[FXP_INK]);
+    scPx((int)(jx - 0.4f * k), (int)(bY - 23.1f * k), FX_PAL[FXP_CRIT]);
+    fxLine((int)(jx - 1.1f * k), (int)(bY - 21.5f * k), (int)(jx + 0.5f * k), (int)(bY - 21.2f * k), FX_PAL[FXP_WHITE]);
+    // them
+    {
+      ScFig F = { figX, G, 1, arch, SCP_STAND, seat, 0, P.rim, -0.7f, -0.7f, k };
+      if (!hit) {                                          // down already, in his lights
+        F.pose = SCP_CROUCH; F.x = figX + 2 * k; F.handU = 7.2f; F.handV = 19.8f;
+        F.rim = FXP_HDR; F.lx = 0.92f; F.ly = -0.4f;
+      } else if (u >= HIT && u < KNEE) {
+        F.pose = SCP_SLUMP; F.x = figX - 1.6f * k * fxCubicOut((u - HIT) / (float)(KNEE - HIT));
+      } else if (u >= KNEE && u < RISE) {
+        F.pose = SCP_CROUCH; F.x = figX - 1.6f * k;
+      } else if (u >= RISE) {                              // up, and squared up to it again
+        F.pose = u < RISE + 260 ? SCP_SLUMP : SCP_STAND;
+        F.x = figX - 1.6f * k * (1 - fxClampF((u - RISE) / 700.0f, 0, 1));
+      }
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      float qx, qy;
+      scHeadAt(F, &qx, &qy);
+      const uint32_t OVER = SHOT0 + 6 * GAP + 100;         // the first round over their head
+      if (!hit && u >= OVER && u < OVER + 600) scStartle(qx, qy, k, u - OVER);
+      if (!hit && u >= OVER) scSweat(qx, qy, k, u - OVER, -1);
+      if (hit && u >= RISE + 260) scSweat(qx, qy, k, u - RISE - 260, -1);
+    }
+    // the burst: where each round goes, its tracer, and the dirt it throws up
+    for (uint32_t i = 0; i < SHOTS; i++) {
+      const uint32_t f = SHOT0 + i * GAP;
+      if (u < f) break;
+      const uint32_t h = fxHash2(i, P.seed + 13);
+      float tx, ty = G + 1;
+      bool ground = true;
+      if (hit && i == HITN)     { tx = figX + 1.5f * k; ty = G - 18 * k; ground = false; }   // the one that finds them
+      else if (hit && i > HITN) tx = figX + (6 + 3.0f * (i - HITN)) * k + fxS(h) * k;      // then the dirt in front of them
+      else if (!hit && i >= 6)  { tx = L - 8 * k; ty = G - (22 + 5 * fxU(h)) * k; ground = false; }   // over, close
+      else tx = fxLerp(cx + 8 * k, figX + (hit ? 7 : 13) * k, i / (hit ? (float)HITN : 5.0f)) + fxS(h) * 1.5f * k;
+      const float age = (float)(u - f);
+      if (age < FLY) {
+        float q = age / FLY, x = fxLerp(mx, tx, q), y = fxLerp(my, ty, q);
+        float dx = mx - tx, dy = my - ty, d = fmaxf(1.0f, sqrtf(dx * dx + dy * dy)), tl = fminf(13 * k, d * q);
+        fxStroke(x + dx / d * tl, y + dy / d * tl, x, y, 0.5f, 0.6f + 0.7f * k, FX_PAL[FXP_HOT]);
+        fxLine((int)(x + dx / d * tl * 0.4f), (int)(y + dy / d * tl * 0.4f), (int)x, (int)y, FX_PAL[FXP_WHITE]);
+      } else if (ground && age < FLY + 340) {
+        const float a2 = (age - FLY) / 340.0f, e = fxCubicOut(a2);
+        for (int j = 0; j < 4; j++) {
+          const uint32_t hj = fxHash2((uint32_t)j, h);
+          const float an = -1.5708f + (j - 1.5f) * 0.42f + fxS(hj) * 0.15f, ln = (3.5f + 7 * fxU(hj >> 8)) * k * e;
+          fxStroke(tx + cosf(an) * ln * 0.35f, G + sinf(an) * ln * 0.35f, tx + cosf(an) * ln, G + sinf(an) * ln + a2 * a2 * 6 * k,
+                   0.5f + 1.4f * k * (1 - a2), 0.5f, FX_PAL[(j & 1) ? FXP_LINE : FXP_TRACK]);
+        }
+        if (a2 < 0.55f) fxBlob(tx, G - 1.6f * k * e, 1, 0, (1.8f + 3.4f * e) * k, (1.1f + 1.8f * e) * k, h, FX_PAL[FXP_DIM]);
+      }
+    }
+    if (hit && u >= HIT && u < HIT + 460) {                // where it found them
+      const float a = (float)(u - HIT), bx = figX + 1.5f * k, by = G - 18 * k;
+      if (a < 120)
+        for (int i = 0; i < 6; i++) {
+          float an = i * (FX_TAU / 6) + 0.5f;
+          fxLine((int)(bx + cosf(an) * 1.5f * k), (int)(by + sinf(an) * 1.5f * k), (int)(bx + cosf(an) * 4.5f * k), (int)(by + sinf(an) * 4.5f * k), FX_PAL[FXP_WHITE]);
+        }
+      for (int i = 0; i < 6; i++) {
+        uint32_t h = fxHash2((uint32_t)i, P.seed + 41);
+        float vx = -(0.012f + 0.03f * fxU(h)) * k, vy = (fxS(h >> 8) * 0.02f - 0.008f) * k;
+        fxDisc(bx + vx * a, fminf(G - 0.5f, by + vy * a + 0.00025f * k * a * a), (0.5f + 0.35f * fxU(h >> 16)) * k, FX_PAL[FXP_BLOOD]);
+      }
+    }
+    if (hit && u >= KNEE && u < RISE)                      // and it runs
+      for (int i = 0; i < 2; i++) {
+        float ph2 = fmodf((u - KNEE) * 0.0011f + i * 0.5f, 1.0f);
+        fxDisc(figX + 1.4f * k + i * 2, G - 9 * k + ph2 * 9 * k, 1.2f, FX_PAL[FXP_BLOOD]);
+      }
+    if (firing && (!P.live || fxHash2(u / 70, P.seed) % 5 != 0)) {   // the flash, most frames of the burst
+      for (int i = 0; i < 5; i++) {
+        const float a = 3.14159f + (i - 2) * 0.5f + fxS(fxHash2((uint32_t)i, u / 70)) * 0.12f, r = (i == 2 ? 7.0f : 3.8f) * k;
+        fxTri(mx, my - 0.9f * k, mx, my + 0.9f * k, mx + cosf(a) * r, my + sinf(a) * r, FX_PAL[FXP_GLOW]);
+      }
+      fxDisc(mx - 0.6f * k, my, 1.7f * k, FX_PAL[FXP_WHITE]);
+    }
+    if (u >= SHOT0 && u < SHOT1 + 300)                           // and the brass going up off it
+      for (int i = 0; i < 5; i++) {
+        float p = fmodf((u - SHOT0) * 0.0032f + i / 5.0f, 1.0f);
+        const float x0 = jx - 2.4f * k, y0 = bY - 22 * k;
+        const float x = x0 + p * 11 * k, y = y0 - 32 * k * p * (1 - p) + (G - y0) * p * p;
+        scPx((int)x, (int)y, FX_PAL[FXP_HDR]);
+        scPx((int)x + ((int)(p * 9) & 1), (int)y - 1, FX_PAL[FXP_GLOW]);
+      }
+    if (u >= SHOT0 && u < SHOT1 + 250)
+      scBang("BRRRAT", jx - 2 * k, T + (G - T) * (P.k > 1.3f ? 0.33f : 0.26f), 9 * k, P.seed, P.k > 1.3f ? 2 : 1);   // over the gun
+    scJolt(P, lt, hit ? HIT : SHOT0, 0.18f);
+}
+
+static SC_NOINLINE void scArtForage(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, W = (float)(P.x1 - P.x0), k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // Foraging dead ground: down on a knee, digging, the dirt going back over
+    // the shoulder. A good line (GOOD) pulls up a root worth having -- SHLUK,
+    // the startle -- and holds it up to the light with the page closing in
+    // on it, sparkling. A bad one (ILL) turns a stone over on nothing: the
+    // dots, the sweat drop, the gloom, a tumbleweed going by, and the belly
+    // having its say.
+    const bool ok = P.tone != SC_TONE_ILL;
+    const uint32_t CYC = 5200, DUG = 1700, HELD = DUG + 300, SHOW = HELD + 1400, FLIPPED = DUG + 400;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : (ok ? HELD + 400 : FLIPPED + 1100);
+    const float fx = cx - 10 * k, dx0 = fx + 10.4f * k;    // where they kneel; where they dig
+    const float sway = P.live ? sinf(t * 0.004f) : 0.3f;
+    for (int i = 0; i < 6; i++) {                          // the scrub, what there is of it
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 2);
+      float x = L + 6 * k + fxU(h) * (W - 12 * k), hh = (3 + 4 * fxU(h >> 8)) * k;
+      if (fabsf(x - dx0) < 7 * k) continue;
+      for (int j = -1; j <= 1; j++)
+        fxLine((int)x, (int)G, (int)(x + j * 1.5f * k + sway * k), (int)(G - hh * (j ? 0.7f : 1.0f)), FX_PAL[FXP_INK]);
+    }
+    const float hole = fminf(1.0f, u / (float)DUG);
+    fxBlob(dx0, G + 0.5f, 1, 0, (1.5f + 3 * hole) * k, (0.6f + 0.8f * hole) * k, P.seed, FX_PAL[FXP_INK]);
+    if (u < DUG)                                           // the dirt, going back over the shoulder
+      for (int i = 0; i < 3; i++) {
+        float p = fmodf(u / 330.0f + i / 3.0f, 1.0f);
+        float x = dx0 - p * (15 + 5 * i) * k, y = G - 2 - sinf(p * 3.14159f) * (8 + 3 * i) * k;
+        fxDisc(x, y, (0.9f + 0.4f * i) * k, FX_PAL[FXP_INK]);
+        scPx((int)(x - 0.5f * k), (int)(y - 0.6f * k), FX_PAL[FXP_RUST]);
+      }
+    ScFig F = { fx, G, 1, arch, SCP_CROUCH, seat, 0, P.rim, -0.7f, -0.7f, k };
+    if (u < DUG) {                                         // dig, dig
+      float pump = fabsf(sinf(u * 0.0095f));
+      F.handU = 10.4f - 1.2f * pump; F.handV = 1.4f + 4.4f * pump;
+    }
+    float hx, hy;
+    if (ok) {
+      const float rx = fx + 3 * k + 8.5f * k, ry = G - 24 * k;   // held up, out in front of the face
+      if (u >= DUG && u < HELD) {
+        float e = fxCubicOut((u - DUG) / (float)(HELD - DUG));
+        F.handU = 10.4f - 3.4f * e; F.handV = 1.4f + 17 * e;
+      } else if (u >= HELD && u < SHOW) {
+        F.pose = SCP_STAND; F.x = fx + 3 * k; F.handU = 8.5f; F.handV = 24.0f; F.look = 0.25f;
+        scFocus(P, rx, ry + 4 * k, 12 * k, FXP_INK, 2.2f * k);   // and the page closes in on it
+      } else if (u >= SHOW) {
+        F.pose = SCP_STAND; F.x = fx + 3 * k; F.handU = 8.0f; F.handV = 17.0f; F.look = -0.25f;
+      }
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      scHeadAt(F, &hx, &hy);
+      if (u >= DUG) {                                      // the root, hung from the hand
+        const float x = scHandX, y = scHandY;
+        for (int j = -1; j <= 1; j++)                      // its greens
+          fxStroke(x, y, x + j * 2.6f * k, y - (3.5f + (j == 0 ? 2 : 0)) * k, 1.1f * k, 0.4f * k, FX_PAL[FXP_INK]);
+        fxBlob(x - 0.8f, y + 4.2f * k - 1.0f, 0.2f, 0.98f, 4.2f * k, 2.5f * k, P.seed + 9, FX_PAL[P.rim]);
+        fxBlob(x, y + 4.2f * k, 0.2f, 0.98f, 4.0f * k, 2.3f * k, P.seed + 9, FX_PAL[FXP_INK]);
+        scPx((int)(x - 1 * k), (int)(y + 2.6f * k), FX_PAL[FXP_HDR]);
+        for (int j = 0; j < 3; j++)                        // and its roots
+          fxLine((int)(x + (j - 1) * 0.8f * k), (int)(y + 7.8f * k), (int)(x + (j - 1) * 1.8f * k), (int)(y + (10 + j) * k), FX_PAL[FXP_INK]);
+        if (u < HELD + 500)                                // still shedding its dirt
+          for (int j = 0; j < 3; j++) {
+            float p = fmodf((u - DUG) * 0.003f + j / 3.0f, 1.0f);
+            scPx((int)(x - 2 * k + j * k), (int)(y + 6 * k + p * (G - y - 6 * k)), FX_PAL[FXP_INK]);
+          }
+        if (u < HELD) scSpeed(P, x, y + 5 * k, 0, -1, 10 * k, 2.5f * k, 5, FXP_LINE);
+        else
+          for (int j = 0; j < 3; j++) scKira(x + (j - 1) * 6 * k, y + (j == 1 ? -4.0f : 3.0f) * k, 4.2f * k, P.live ? t : 300, j);
+      }
+      if (u >= DUG && u < DUG + 600) scStartle(hx, hy, k, u - DUG);
+      if (u >= DUG && u < DUG + 800) scBang("SHLUK!", cx + 30 * k, T + (G - T) * 0.38f, 9 * k, P.seed, P.k > 1.3f ? 2 : 1);
+    } else {
+      // the stone: turned over in the hand, then left lying
+      float sx = dx0 + 1 * k, sy = G - 1.2f * k, sa = 0;
+      if (u >= DUG) {
+        float e = fminf(1.0f, (u - DUG) / (float)(FLIPPED - DUG));
+        sx = fxLerp(dx0 + 1 * k, dx0 + 5 * k, e); sy = G - 1.2f * k - sinf(e * 3.14159f) * 5 * k; sa = e * 3.14159f;
+        if (u < FLIPPED) scHandTo(F, sx - 1.5f * k, sy - 1 * k);
+        fxBlob(dx0 + 1 * k, G, 1, 0, 2.6f * k, 0.8f * k, P.seed + 4, FX_PAL[FXP_SOOT]);   // where it lay: nothing
+        if (u >= FLIPPED && u < FLIPPED + 1100)            // nothing but a beetle, leaving
+          scPx((int)(dx0 + 1 * k + (u - FLIPPED) * 0.012f * k), (int)G, FX_PAL[FXP_HDR]);
+      }
+      fxBlob(sx - 0.7f, sy - 0.6f * k - 0.9f, cosf(sa), sinf(sa), 3.0f * k, 1.9f * k, P.seed + 6, FX_PAL[P.rim]);
+      fxBlob(sx, sy - 0.6f * k, cosf(sa), sinf(sa), 2.9f * k, 1.8f * k, P.seed + 6, FX_PAL[FXP_INK]);
+      if (u >= FLIPPED + 1200) F.look = -0.85f;            // and the head goes down
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      scHeadAt(F, &hx, &hy);
+      if (u >= FLIPPED + 200 && u < FLIPPED + 1500)
+        scBalloon("...", (int)(hx + 12 * k), (int)(hy - 5 * k), (int)(hx + 4 * k), (int)(hy - 2 * k));   // off to the side, clear of the gloom
+      if (u >= FLIPPED + 500) scSweat(hx, hy, k, u - FLIPPED - 500, -1);
+      if (u >= FLIPPED + 1200) scGloom(hx, hy, k, u - FLIPPED - 1200, t);
+      if (u >= FLIPPED + 900 && u < FLIPPED + 2900) {      // and the wind brings a tumbleweed by
+        float e = (u - FLIPPED - 900) / 2000.0f, x = fxLerp(R + 6 * k, L - 8 * k, e), r = 3.4f * k;
+        float y = G - r - fabsf(sinf(e * 14)) * 4 * k, a = -e * 30;
+        for (int j = 0; j < 9; j++) {
+          float a0 = a + j * 0.7f, a1 = a0 + 2.1f;
+          fxLine((int)(x + cosf(a0) * r), (int)(y + sinf(a0) * r), (int)(x + cosf(a1) * r * 0.8f), (int)(y + sinf(a1) * r * 0.8f), FX_PAL[FXP_INK]);
+        }
+        scSpeed(P, x + r, y, -1, 0, 6 * k, r * 0.8f, 3, FXP_LINE);
+      }
+      if (u >= FLIPPED + 2000 && u < FLIPPED + 3000) {     // the belly has its say
+        int jx = P.live ? (int)(fxS(fxHash(t / 70)) * 1.5f) : 0;
+        scType("GRMBL", (int)(fx + 11 * k) + jx, (int)(G - 14 * k), 1, FXP_GLOW);
+      }
+    }
+}
+
+static SC_NOINLINE void scArtWater(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float T = (float)P.y0, G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // At a hand pump, working the handle, the pail under the spout. A good
+    // line (GOOD) has it cough and then come -- GUSH -- into the pail till
+    // it brims, a shine on it and a wipe of the brow. A bad one (ILL) coughs
+    // dust -- pff -- and one drop, plip, into the empty pail; then the
+    // handle worked harder and harder for nothing, the dots, the gloom.
+    const bool ok = P.tone != SC_TONE_ILL;
+    const uint32_t CYC = 5200, COME = 1500, FULL = COME + 1800, PLIP = 1900, FRANTIC = 2300, QUIT = 3000;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : (ok ? COME + 900 : QUIT + 200);
+    const float px = cx + 10 * k, pvx = px - 2.2f * k, pvy = G - 21 * k;   // the pump; its handle's pivot
+    const float sx = px + 7.5f * k, sy = G - 12 * k;       // the spout's mouth; the pail stands under it
+    const float fx = cx - 12 * k;                          // where they stand to work it
+    // the handle: steady strokes, then (a bad line) frantic ones, then let go
+    float sw;
+    if (ok)               sw = u < FULL ? sinf(u * (FX_TAU / 520.0f)) : 0.9f;
+    else if (u < FRANTIC) sw = sinf(u * (FX_TAU / 520.0f));
+    else if (u < QUIT)    sw = sinf(u * (FX_TAU / 260.0f));
+    else                  sw = 0.9f + 0.1f * expf(-(float)(u - QUIT) * 0.004f) * sinf((u - QUIT) * 0.03f);   // let go, it rocks and settles
+    const float la = 0.38f * sw, gx = pvx - cosf(la) * 13 * k, gy = pvy + sinf(la) * 13 * k;   // the grip
+    const float lvl = ok ? fxClampF((u - COME) / (float)(FULL - COME), 0.0f, 1.0f) : 0.0f;
+    // the pump: a pad, the barrel and its cap, the spout
+    fxRect((int)(px - 5 * k), (int)(G - 1.5f * k), (int)(px + 5 * k), (int)G + 1, FX_PAL[FXP_INK]);
+    fxRect((int)(px - 2 * k), (int)(G - 20 * k), (int)(px + 2 * k), (int)(G - 1.5f * k), FX_PAL[FXP_INK]);
+    fxRect((int)(px - 2.7f * k), (int)(G - 21.6f * k), (int)(px + 2.7f * k), (int)(G - 19.6f * k), FX_PAL[FXP_INK]);
+    fxStroke(px + 1.5f * k, G - 15 * k, px + 7 * k, G - 14 * k, 1.8f * k, 1.4f * k, FX_PAL[FXP_INK]);
+    fxStroke(px + 7 * k, G - 14 * k, sx, sy, 1.4f * k, 1.3f * k, FX_PAL[FXP_INK]);
+    fxLine((int)(px - 2.6f * k), (int)(G - 19.6f * k), (int)(px - 2.6f * k), (int)(G - 2 * k), FX_PAL[P.rim]);
+    fxLine((int)(px - 2.7f * k), (int)(G - 22.2f * k), (int)(px + 2.7f * k), (int)(G - 22.2f * k), FX_PAL[P.rim]);
+    fxLine((int)(px + 1.5f * k), (int)(G - 15.9f * k), (int)(px + 7 * k), (int)(G - 14.9f * k), FX_PAL[P.rim]);
+    // the pail, and what is in it
+    {
+      const float bx = sx, by = G - 2.5f * k;
+      float qx[4] = { bx - 3 * k, bx + 3 * k, bx + 2.3f * k, bx - 2.3f * k }, qy[4] = { by - 2.5f * k, by - 2.5f * k, by + 2.5f * k, by + 2.5f * k };
+      fxPoly(qx, qy, 4, FX_PAL[FXP_INK]);
+      fxLine((int)(bx - 3 * k), (int)(by - 2.6f * k), (int)(bx + 3 * k), (int)(by - 2.6f * k), FX_PAL[P.rim]);
+      fxLine((int)(bx - 2.7f * k), (int)(by + 0.3f * k), (int)(bx + 2.7f * k), (int)(by + 0.3f * k), FX_PAL[FXP_RUST]);
+      fxLine((int)(bx - 3 * k), (int)(by - 2.5f * k), (int)bx, (int)(by - 5.5f * k), FX_PAL[FXP_INK]);   // its bail
+      fxLine((int)(bx + 3 * k), (int)(by - 2.5f * k), (int)bx, (int)(by - 5.5f * k), FX_PAL[FXP_INK]);
+      if (lvl > 0) {                                       // the water, coming up it
+        float yl = by + 2.2f * k - lvl * 4.6f * k, hw = fxLerp(2.0f, 2.8f, lvl) * k;
+        fxLine((int)(bx - hw), (int)yl, (int)(bx + hw), (int)yl, FX_PAL[FXP_GLOW]);
+        scPx((int)(bx - hw * 0.4f), (int)yl, FX_PAL[FXP_WHITE]);
+        if (lvl >= 1.0f) fxLine((int)(bx - hw), (int)yl - 1, (int)(bx + hw), (int)yl - 1, FX_PAL[FXP_HDR]);
+      }
+    }
+    // the handle, over its pivot
+    fxStroke(gx, gy, pvx + cosf(la) * 2.6f * k, pvy - sinf(la) * 2.6f * k, 1.2f * k, 1.0f * k, FX_PAL[FXP_INK]);
+    fxDisc(pvx, pvy, 0.9f * k, FX_PAL[FXP_INK]);
+    scPx((int)pvx, (int)pvy, FX_PAL[FXP_LINE]);
+    // them
+    ScFig F = { fx, G, 1, arch, SCP_STAND, seat, 0, P.rim, -0.7f, -0.7f, k };
+    const bool working = ok ? u < FULL : u < QUIT;
+    if (working) scHandTo(F, gx + 0.5f * k, gy);
+    if (!ok && u >= QUIT + 600) { F.pose = SCP_SLUMP; F.look = -0.85f; }
+    float hx, hy;
+    scHeadAt(F, &hx, &hy);
+    if (ok && u >= FULL + 200 && u < FULL + 1100) scHandTo(F, hx + 1.5f * k, hy - 0.4f * k);   // the brow
+    for (int p = 0; p < 3; p++) scFigure(F, p);
+    if (working && sw < -0.8f) scType("kii", (int)(pvx - 3 * k), (int)(pvy - 9 * k), 1, FXP_HDR);    // it squeals at the top
+    if (ok) {
+      if (u >= COME - 350 && u < COME) fxDustDraw(sx, sy, (float)(u - COME + 350), 3 * k, P.seed + 7, 350.0f);   // a cough first
+      if (u >= COME && u < FULL + 250) {                   // then it comes
+        const float yl = G - 0.3f * k - lvl * 4.6f * k, wob = P.live ? sinf(t * 0.03f) * 0.5f * k : 0;
+        fxStroke(sx, sy, sx + wob, yl, 2.2f * k, 1.4f * k, FX_PAL[FXP_GLOW]);
+        fxLine((int)sx, (int)sy, (int)(sx + wob), (int)yl, FX_PAL[FXP_WHITE]);
+        for (int i = 0; i < 4; i++) {                      // splashing out of the pail
+          float p = fmodf((P.live ? t : 0) * 0.005f + i / 4.0f, 1.0f), d = (i & 1) ? 1.0f : -1.0f;
+          fxDisc(sx + d * (1 + 3 * p) * k, yl - sinf(p * 3.14159f) * 3.5f * k, 0.6f * k, FX_PAL[FXP_WHITE]);
+        }
+        scSpeed(P, sx, sy + 4 * k, 0, 1, 5 * k, 1.5f * k, 3, FXP_WHITE);
+      }
+      if (u >= COME && u < COME + 800) scBang("GUSH!", cx + 32 * k, T + (G - T) * 0.36f, 9 * k, P.seed, P.k > 1.3f ? 2 : 1);
+      if (u >= FULL - 300)
+        for (int j = 0; j < 2; j++) scKira(sx + (j ? 3.5f : -3.0f) * k, G - (7 + 3 * j) * k, 3.4f * k, P.live ? t : 300, j);
+      if (u >= FULL + 200 && u < FULL + 1100) {            // phew
+        float p = (u - FULL - 200) / 900.0f;
+        fxDisc(hx - 3 * k - p * 5 * k, hy - 2 * k - sinf(p * 3.14159f) * 4 * k + p * 4 * k, 0.8f * k, FX_PAL[FXP_GLOW]);
+      }
+    } else {
+      if (u >= COME && u < COME + 700) {                   // it coughs dust
+        fxDustDraw(sx, sy, (float)(u - COME), 6 * k, P.seed + 7, 700.0f);
+        scType("pff", (int)(sx + 3 * k), (int)(sy - 8 * k), 1, FXP_GLOW);
+      }
+      if (u >= PLIP - 200 && u < PLIP + 200) {             // and one drop
+        float e = fmaxf(0.0f, (u - PLIP + 200) / 400.0f - 0.3f) / 0.7f;
+        fxDisc(sx, fxLerp(sy + 0.8f * k, G - 0.6f * k, e * e), 0.7f * k, FX_PAL[FXP_GLOW]);
+      }
+      if (u >= PLIP + 200 && u < PLIP + 900) scType("plip", (int)(sx + 4 * k), (int)(G - 9 * k), 1, FXP_GLOW);
+      if (u >= FRANTIC && u < QUIT) {                      // harder, harder
+        for (int i = 0; i < 3; i++) {
+          uint32_t h = fxHash2((uint32_t)i, u / 80);
+          float a = FX_TAU * fxU(h);
+          fxLine((int)(gx + cosf(a) * 2.5f * k), (int)(gy + sinf(a) * 2.5f * k), (int)(gx + cosf(a) * 4.5f * k), (int)(gy + sinf(a) * 4.5f * k), FX_PAL[FXP_WHITE]);
+        }
+        scSweat(hx, hy, k, u - FRANTIC, -1);
+      }
+      if (u >= QUIT && u < QUIT + 1300)
+        scBalloon("...", (int)(hx + 12 * k), (int)(hy - 5 * k), (int)(hx + 4 * k), (int)(hy - 2 * k));   // off to the side, clear of the gloom
+      if (u >= QUIT + 600) scGloom(hx, hy, k, u - QUIT - 600, t);
+    }
+}
+
+static SC_NOINLINE void scArtMedic(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // Patching up: the roll going round and round, the white closing over
+    // the red. A good line (GOOD) ties it off with a shine and a plus going
+    // up, and a wipe of the brow; a bad one (ILL) runs out of roll -- the
+    // core goes bouncing off -- and the red comes back through, hands
+    // pressing, sweat flying, the gloom. On someone else (who2) the patient
+    // lies there beside them; on themselves, they sit and do their own leg.
+    const bool ok = P.tone != SC_TONE_ILL, self = seat2 == 255;
+    const uint32_t CYC = 5000, WRAPPED = 2000, TIED = WRAPPED + 300;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : (ok ? TIED + 300 : WRAPPED + 800);
+    const float mx = self ? cx - 8 * k : cx - 10 * k;      // the one doing it
+    float wx, wy, ddx, ddy;                                // the wound, and which way the limb runs through it
+    if (self) { wx = mx + 7 * k; wy = G - 3.9f * k; ddx = 0.548f; ddy = 0.837f; }
+    else      { wx = mx + 6 * k; wy = G - 3 * k;    ddx = 1.0f;   ddy = 0.0f;   }
+    const float nx = -ddy, ny = ddx;                       // across it
+    float bx = cx - 26 * k;                                // the kit, lid up
+    fxRect((int)bx - 1, (int)(G - 7 * k) - 1, (int)(bx + 9 * k) + 1, (int)G + 1, FX_PAL[FXP_INK]);
+    fxRect((int)bx, (int)(G - 7 * k), (int)(bx + 9 * k), (int)G, FX_PAL[FXP_GLOW]);
+    int kmx = (int)(bx + 4.5f * k), kmy = (int)(G - 3.5f * k);
+    fxRect(kmx - 1, kmy - 3, kmx + 1, kmy + 3, FX_PAL[FXP_BLOOD]);
+    fxRect(kmx - 3, kmy - 1, kmx + 3, kmy + 1, FX_PAL[FXP_BLOOD]);
+    if (!self) {
+      ScFig D = { mx + 10 * k, G, -1, arch2, SCP_LIE, seat2, 0, P.rim, 0.7f, -0.7f, k };
+      for (int p = 0; p < 3; p++) scFigure(D, p);
+    }
+    ScFig F = { mx, G, 1, arch, self ? SCP_SIT : SCP_CROUCH, seat, 0, P.rim, -0.7f, -0.7f, k };
+    const float th = fminf((float)u, (float)WRAPPED) * 0.013f;   // the roll, going round
+    float rx = wx + nx * cosf(th) * 2.4f * k + ddx * sinf(th) * 0.6f * k, ry = wy + ny * cosf(th) * 2.4f * k + ddy * sinf(th) * 0.6f * k;
+    if (u < WRAPPED) scHandTo(F, rx, ry);
+    else if (ok && u < TIED) { float e = (u - WRAPPED) / 300.0f; scHandTo(F, wx + nx * 3.2f * k * sinf(e * 3.14159f), wy + ny * 3.2f * k * sinf(e * 3.14159f)); }
+    else if (!ok && u < WRAPPED + 1600) {                  // pressing on it, hard and fast
+      float pr = P.live ? fabsf(sinf(u * 0.017f)) : 0.5f;
+      scHandTo(F, wx + nx * (0.6f + pr) * k, wy + ny * (0.6f + pr) * k);
+    }
+    float hx, hy;
+    scHeadAt(F, &hx, &hy);
+    if (ok && u >= TIED + 600 && u < TIED + 1500) scHandTo(F, hx + 1.5f * k, hy - 0.5f * k);   // the brow
+    if (!ok && u >= WRAPPED + 1600) F.look = -0.85f;
+    for (int p = 0; p < 3; p++) scFigure(F, p);
+    // the wound, and the white going over it, band by band
+    const int bands = (int)fminf(6.0f, u / 300.0f);
+    fxDisc(wx, wy, 1.4f * k, FX_PAL[FXP_BLOOD]);
+    for (int i = 0; i < bands; i++) {
+      float ox = wx + ddx * (i - 2.5f) * 0.75f * k, oy = wy + ddy * (i - 2.5f) * 0.75f * k;
+      fxStroke(ox - nx * 1.5f * k, oy - ny * 1.5f * k, ox + nx * 1.5f * k, oy + ny * 1.5f * k, 1.1f * k, 1.1f * k, FX_PAL[FXP_WHITE]);
+      if (!ok && u >= WRAPPED + 300 && i < (int)((u - WRAPPED - 300) / 160))   // and the red back through it
+        fxDisc(ox + nx * 0.3f * k, oy + ny * 0.3f * k, 0.7f * k, FX_PAL[FXP_BLOOD]);
+    }
+    if (u < WRAPPED) {                                     // the roll, and its tail to the wrap
+      fxLine((int)rx, (int)ry, (int)(wx + ddx * (bands - 2.5f) * 0.75f * k), (int)(wy + ddy * (bands - 2.5f) * 0.75f * k), FX_PAL[FXP_WHITE]);
+      fxDisc(rx, ry, 1.4f * k, FX_PAL[FXP_INK]);
+      fxDisc(rx, ry, 1.0f * k, FX_PAL[sinf(th) > 0 ? FXP_WHITE : FXP_LINE]);
+    }
+    if (ok) {
+      if (u >= WRAPPED) {
+        fxDisc(wx + ddx * 3 * k, wy + ddy * 3 * k - 0.6f * k, 0.7f * k, FX_PAL[FXP_WHITE]);   // the knot
+        fxLine((int)(wx + ddx * 3 * k), (int)(wy + ddy * 3 * k), (int)(wx + ddx * 4.4f * k + nx * k), (int)(wy + ddy * 4.4f * k + ny * k), FX_PAL[FXP_WHITE]);
+      }
+      if (u >= WRAPPED + 100 && u < TIED + 1200) scKira(wx + nx * 2 * k, wy + ny * 2 * k - 2 * k, 3.6f * k, P.live ? t : 300, 1);
+      if (u >= TIED)                                       // and a plus going up off them
+        for (int i = 0; i < 2; i++) {
+          float a = (float)(u - TIED) - i * 450.0f;
+          if (a < 0 || a > 1400) continue;
+          float ox = self ? hx - 5 * k : mx + 15 * k, oy = self ? hy - 4 * k : G - 8 * k;
+          fxStip = (uint8_t)fxClampF((a - 900) / 500.0f * 255, 0, 255);
+          scPlus(ox + i * 5 * k + sinf(a * 0.006f) * k, oy - a * 0.012f * k, k * 1.6f);
+          fxStip = 0;
+        }
+      if (u >= TIED + 600 && u < TIED + 1500) {            // phew
+        float p = (u - TIED - 600) / 900.0f;
+        fxDisc(hx - 3 * k - p * 5 * k, hy - 2 * k - sinf(p * 3.14159f) * 4 * k + p * 4 * k, 0.8f * k, FX_PAL[FXP_GLOW]);
+      }
+    } else {
+      if (u >= WRAPPED && u < WRAPPED + 1100) {            // the roll's run out: its core, off and away
+        float a = (float)(u - WRAPPED), x = wx + 3 * k + a * 0.02f * k, y = G - 1.2f * k - fabsf(sinf(a * 0.012f)) * 3 * k * (1 - a / 1100);
+        fxDisc(x, y, 1.2f * k, FX_PAL[FXP_INK]);
+        fxDisc(x, y, 0.7f * k, FX_PAL[FXP_LINE]);
+      }
+      if (u >= WRAPPED && u < WRAPPED + 600) scStartle(hx, hy, k, u - WRAPPED);
+      if (u >= WRAPPED + 300 && u < WRAPPED + 1600) {
+        for (int i = 0; i < 3; i++) {                      // the hands going, going
+          uint32_t h = fxHash2((uint32_t)i, u / 90);
+          float a = FX_TAU * fxU(h);
+          fxLine((int)(scHandX + cosf(a) * 2.2f * k), (int)(scHandY + sinf(a) * 2.2f * k), (int)(scHandX + cosf(a) * 4 * k), (int)(scHandY + sinf(a) * 4 * k), FX_PAL[FXP_WHITE]);
+        }
+        for (int s = -1; s <= 1; s += 2) {                 // the sweat, flying off
+          float p = fmodf((u - WRAPPED) * 0.0025f + (s > 0 ? 0.5f : 0), 1.0f);
+          scSweat(hx + s * p * 5 * k, hy - 3 * k - sinf(p * 3.14159f) * 4 * k + p * 5 * k, k * 0.8f, 0, (float)s);
+        }
+      }
+      if (u >= WRAPPED + 400)                              // and it drips
+        for (int i = 0; i < 2; i++) {
+          float p = fmodf((u - WRAPPED) * 0.0012f + i * 0.5f, 1.0f);
+          fxDisc(wx + i * k, wy + 1.4f * k + p * (G - wy), 0.6f * k, FX_PAL[FXP_BLOOD]);
+        }
+      if (u >= WRAPPED + 1600) scGloom(hx, hy, k, u - WRAPPED - 1600, t);
+    }
+}
+
+static SC_NOINLINE void scArtSalvage(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // Into the wreck: a car on its roof in a heap of everything else. Down
+    // in it to the elbows, a cloud of dust and the junk going back over the
+    // shoulder -- a tyre, a can, a boot, a hubcap, a spring, a pipe. A good
+    // line (GOOD) comes up with a cache -- the startle, held up with the page
+    // closing in, then the lid up and the light coming out of it. A bad one
+    // (ILL) comes up with one bolt, cuts a hand on it -- OW -- and throws it
+    // after the rest, and hangs its head.
+    const bool ok = P.tone != SC_TONE_ILL;
+    const uint32_t CYC = 5400, PULL = 1900, OPEN = PULL + 1600;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : (ok ? PULL + 500 : PULL + 600);
+    const float hx0 = cx + 12 * k, dx0 = hx0 - 14 * k, fx = dx0 - 8 * k;   // the heap; where they dig; where they kneel
+    // the car, on its roof, and the heap it is in
+    {
+      float qx[4] = { hx0 - 4 * k, hx0 + 22 * k, hx0 + 22.5f * k, hx0 - 4 * k };
+      float qy[4] = { G - 14 * k, G - 16 * k, G - 10 * k, G - 8.5f * k };
+      fxPoly(qx, qy, 4, FX_PAL[FXP_INK]);
+      fxLine((int)(hx0 - 4 * k), (int)(G - 14.6f * k), (int)(hx0 + 22 * k), (int)(G - 16.6f * k), FX_PAL[P.rim]);
+      for (int s = 0; s < 2; s++) {                         // wheels to the sky
+        float wx2 = hx0 + (s ? 17 : 1) * k, wy2 = G - (s ? 17.6f : 16.2f) * k;
+        float spin = P.live ? t * 0.002f : 0;
+        fxDisc(wx2, wy2, 3 * k, FX_PAL[FXP_INK]);
+        fxDisc(wx2, wy2, 1.1f * k, FX_PAL[FXP_LINE]);
+        scPx((int)(wx2 + cosf(spin + s) * 2.2f * k), (int)(wy2 + sinf(spin + s) * 2.2f * k), FX_PAL[P.rim]);
+      }
+      scHeap(hx0, G, 46 * k, 13 * k, P.seed, P.rim);
+      fxStroke(hx0 + 6 * k, G - 10 * k, hx0 + 9 * k, G - 18 * k, 1.0f * k, 0.8f * k, FX_PAL[FXP_INK]);   // rebar
+    }
+    // the junk, going back over the shoulder, and where it lands
+    auto junk = [&](int kind, float x, float y, float a) {
+      const float ca = cosf(a), sa = sinf(a);
+      switch (kind % 6) {
+        case 0: fxDisc(x, y, 2.4f * k, FX_PAL[FXP_INK]); fxDisc(x, y, 1.0f * k, FX_PAL[FXP_LINE]); break;   // a tyre
+        case 1: fxStroke(x - ca * 1.7f * k, y - sa * 1.7f * k, x + ca * 1.7f * k, y + sa * 1.7f * k, 2.4f * k, 2.4f * k, FX_PAL[FXP_INK]);
+                scPx((int)x, (int)y, FX_PAL[FXP_RUST]); break;                                                  // a can
+        case 2: fxStroke(x, y, x - sa * 3 * k, y + ca * 3 * k, 1.4f * k, 1.4f * k, FX_PAL[FXP_INK]);              // a boot
+                fxStroke(x - sa * 3 * k, y + ca * 3 * k, x - sa * 3 * k + ca * 2.4f * k, y + ca * 3 * k + sa * 2.4f * k, 1.5f * k, 1.2f * k, FX_PAL[FXP_INK]); break;
+        case 3: fxBlob(x, y, ca, sa, 2.3f * k, 0.9f * k, 5, FX_PAL[FXP_HDR]); scPx((int)x, (int)y, FX_PAL[FXP_WHITE]); break;   // a hubcap
+        case 4: for (int i = 0; i < 4; i++) {                                                                  // a spring
+                  // +k, -k, +k...: the sign from integer bits, because a select between two float
+                  // constants here gave the Xtensa GCC an internal compiler error (postreload)
+                  const float z = (float)(((i & 1) << 1) - 1) * k;
+                  fxLine((int)(x + ca * (i - 2) * k - sa * z), (int)(y + sa * (i - 2) * k + ca * z),
+                         (int)(x + ca * (i - 1) * k + sa * z), (int)(y + sa * (i - 1) * k - ca * z), FX_PAL[FXP_LINE]);
+                }
+                break;
+        default: fxStroke(x - ca * 2.6f * k, y - sa * 2.6f * k, x + ca * 2.6f * k, y + sa * 2.6f * k, 1.0f * k, 1.0f * k, FX_PAL[FXP_INK]); break;   // a pipe
+      }
+    };
+    for (int i = 0; i < 6; i++) {
+      const uint32_t f = 150 + i * 290;
+      if (u < f) break;
+      const float a = (float)(u - f), e = fminf(1.0f, a / 440.0f);
+      const float lx = fx - (6 + 3.5f * i) * k, ly = G - 1.2f * k;
+      junk(i, fxLerp(dx0, lx, e), fxLerp(G - 7 * k, ly, e) - sinf(e * 3.14159f) * 20 * k, e < 1 ? a * 0.02f : 1.3f * i);
+    }
+    // them
+    ScFig F = { fx, G, 1, arch, SCP_CROUCH, seat, 0, P.rim, -0.7f, -0.7f, k };
+    if (u < PULL) { float pump = fabsf(sinf(u * 0.011f)); scHandTo(F, dx0 - 2 * k + pump * 2 * k, G - 4.5f * k + pump * 1.5f * k); }
+    float hx, hy;
+    if (ok) {
+      const float cxh = fx + 2 * k + (arch == 3 ? 5.2f : 2.9f) * k, cyh = G - 29.6f * k;   // held up: REACH's near hand
+      if (u >= PULL && u < OPEN) {
+        F.pose = SCP_REACH; F.x = fx + 2 * k;
+        if (u >= PULL + 150) scFocus(P, cxh, cyh + 1 * k, 13 * k, FXP_INK, 1.8f * k);
+      } else if (u >= OPEN) { F.pose = SCP_STAND; F.x = fx + 2 * k; F.handU = 6.0f; F.handV = 14.0f; F.look = -0.3f; }
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      scHeadAt(F, &hx, &hy);
+      if (u >= PULL) {                                     // the cache: an ammo can, held up
+        const float x = scHandX, y = scHandY - (u < OPEN ? 1.5f * k : 0);
+        fxRect((int)(x - 3.4f * k), (int)(y - 2.4f * k), (int)(x + 3.4f * k), (int)(y + 2.4f * k), FX_PAL[FXP_INK]);
+        fxLine((int)(x - 3.4f * k), (int)(y - 2.6f * k), (int)(x + 3.4f * k), (int)(y - 2.6f * k), FX_PAL[P.rim]);
+        fxLine((int)(x - 1.2f * k), (int)(y - 3.4f * k), (int)(x + 1.2f * k), (int)(y - 3.4f * k), FX_PAL[FXP_INK]);   // its handle
+        fxLine((int)(x - 2.4f * k), (int)y, (int)(x + 2.4f * k), (int)y, FX_PAL[FXP_HDR]);   // its stencil, what's left
+        if (u < OPEN)
+          for (int j = 0; j < 3; j++) scKira(x + (j - 1) * 6 * k, y - (j == 1 ? 6.0f : 2.0f) * k, 3.4f * k, P.live ? t : 300, j);
+        else {                                             // the lid up, and the light coming out of it
+          fxStroke(x - 3.4f * k, y - 2.6f * k, x - 4.4f * k, y - 8 * k, 0.9f * k, 0.9f * k, FX_PAL[FXP_INK]);
+          for (int j = 0; j < 5; j++) {
+            float fl = P.live ? 0.8f + 0.2f * sinf(t * 0.02f + j) : 1.0f, a = -1.5708f + (j - 2) * 0.3f;
+            fxTri(x - 2.6f * k + j * 1.3f * k, y - 2.6f * k, x - 2.6f * k + j * 1.3f * k + 0.6f * k, y - 2.6f * k,
+                  x + cosf(a) * 13 * k * fl, y - 2.6f * k + sinf(a) * 13 * k * fl, FX_PAL[(j & 1) ? FXP_HDR : FXP_GLOW]);
+          }
+          for (int j = 0; j < 3; j++) {
+            float p = fmodf((P.live ? t : 0) * 0.0008f + j / 3.0f, 1.0f);
+            scKira(x + (j - 1) * 4 * k, y - 4 * k - p * 12 * k, 2.4f * k * (1 - p), P.live ? t : 300, j);
+          }
+        }
+      }
+      if (u >= PULL && u < PULL + 600) scStartle(hx, hy, k, u - PULL);
+    } else {
+      const uint32_t OW = PULL + 400, TOSS = PULL + 1000;
+      if (u >= PULL) {
+        F.pose = u >= TOSS + 300 ? SCP_SLUMP : SCP_STAND; F.x = fx + 2 * k;
+        float hx2, hy2;
+        scHeadAt(F, &hx2, &hy2);
+        float jit = (u >= OW && u < OW + 500 && P.live) ? fxS(fxHash(u / 60)) * 1.2f * k : 0;
+        if (u < TOSS) scHandTo(F, hx2 + 5 * k + jit, hy2 + 1.5f * k);
+        else if (u < TOSS + 300) { float e = (u - TOSS) / 300.0f; scHandTo(F, hx2 + (5 - 9 * e) * k, hy2 - 3 * k * sinf(e * 3.14159f)); }
+        else { F.handU = 4.0f; F.handV = 12.5f; }
+      }
+      if (u >= TOSS + 300) F.look = -0.85f;
+      for (int p = 0; p < 3; p++) scFigure(F, p);
+      scHeadAt(F, &hx, &hy);
+      if (u >= PULL && u < TOSS) {                         // one bolt
+        fxRect((int)(scHandX - 0.5f * k), (int)(scHandY - 2.4f * k), (int)(scHandX + 0.5f * k) + 1, (int)scHandY, FX_PAL[FXP_LINE]);
+        fxRect((int)(scHandX - 1.1f * k), (int)(scHandY - 2.8f * k), (int)(scHandX + 1.1f * k) + 1, (int)(scHandY - 2.0f * k), FX_PAL[FXP_LINE]);
+        if (u < PULL + 300) scKira(scHandX + 2 * k, scHandY - 4 * k, 2.6f * k, P.live ? t : 300, 0);
+      }
+      if (u >= TOSS && u < TOSS + 700) {                   // and after the rest of it
+        float e = (u - TOSS) / 700.0f;
+        float x = fxLerp(scHandX, fx - 14 * k, e), y = fxLerp(scHandY, G - 1, e) - sinf(e * 3.14159f) * 10 * k;
+        fxRect((int)(x - 0.5f * k), (int)(y - 1.2f * k), (int)(x + 0.5f * k) + 1, (int)(y + 1.2f * k), FX_PAL[FXP_LINE]);
+      }
+      if (u >= OW && u < OW + 600) {                       // OW
+        for (int i = 0; i < 3; i++) {
+          float a = -2.4f + i * 0.8f;
+          fxLine((int)(scHandX + cosf(a) * 2.5f * k), (int)(scHandY + sinf(a) * 2.5f * k), (int)(scHandX + cosf(a) * 5 * k), (int)(scHandY + sinf(a) * 5 * k), FX_PAL[FXP_WHITE]);
+        }
+        scBang("OW!", scHandX + 12 * k, scHandY - 6 * k, 7 * k, P.seed, P.k > 1.3f ? 2 : 1);
+      }
+      if (u >= OW)                                         // and the hand drips
+        for (int i = 0; i < 2; i++) {
+          float p = fmodf((u - OW) * 0.0014f + i * 0.5f, 1.0f);
+          fxDisc(scHandX, scHandY + 1 * k + p * (G - scHandY - 1 * k), 0.55f * k, FX_PAL[FXP_BLOOD]);
+        }
+      if (u >= OW + 300) scSweat(hx, hy, k, u - OW - 300, -1);
+      if (u >= TOSS + 300) scGloom(hx, hy, k, u - TOSS - 300, t);
+    }
+    if (u < PULL) {                                        // the dig cloud, over the arms, boiling: a manga fight cloud, inked
+      for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < 6; i++) {
+          uint32_t h = fxHash2((uint32_t)i, P.live ? u / 100 : 3);
+          float g = pass ? 0.0f : 0.9f * k;
+          fxBlob(dx0 + 1 * k + fxS(h) * 5 * k, G - 6 * k + fxS(h >> 8) * 3 * k, 1, 0, (3.2f + 2.4f * fxU(h >> 16)) * k + g,
+                 (2.6f + 1.6f * fxU(h >> 4)) * k + g, h, FX_PAL[pass ? ((i & 1) ? FXP_HDR : FXP_GLOW) : FXP_INK]);
+        }
+      for (int i = 0; i < 4; i++) {                        // and what flies out of it
+        uint32_t h = fxHash2((uint32_t)i, P.live ? u / 100 + 7 : 5);
+        float an = FX_TAU * fxU(h >> 12);
+        fxStroke(dx0 + cosf(an) * 6 * k, G - 5 * k + sinf(an) * 4.5f * k, dx0 + cosf(an) * 9 * k, G - 5 * k + sinf(an) * 7 * k, 1.0f * k, 0.3f, FX_PAL[FXP_INK]);
+      }
+    }
+}
+
+static SC_NOINLINE void scArtShelter(const ScStage& P, uint8_t arch, uint8_t arch2, uint8_t seat, uint8_t seat2) {
+  const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, W = (float)(P.x1 - P.x0), k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+    // A lean-to, put up against the wind -- and the wind is in every frame
+    // of it. Driving the short pole, then the sheet carried over from the
+    // tall one and pulled down tight: FWAP. A good line (GOOD) goes under it
+    // and sits, a fire going, the wind going over the top and none of it
+    // getting in. A bad one (ILL) has the gust take it -- WHOOSH -- the
+    // sheet gone up and away over the page, the tall pole down after it,
+    // and them reaching for it, and then just standing there.
+    const bool ok = P.tone != SC_TONE_ILL;
+    const uint32_t CYC = 5400, DRIVEN = 1300, TAUT = 1900, UNDER = TAUT + 800;
+    const uint32_t u = P.live ? (t - P.t0) % CYC : (ok ? UNDER + 500 : TAUT + 400);
+    const float ax = cx - 4 * k, bx = cx + 24 * k, aTop = G - 26 * k, bTop = G - 12 * k;   // the poles
+    const bool gone = !ok && u >= TAUT;
+    const float tt = P.live ? (float)t : 1500.0f;
+    // the pole that goes over, and where the sheet is
+    float aAng = 0;
+    if (gone && u >= TAUT + 200) aAng = -1.35f * fxCubicIn(fminf(1.0f, (u - TAUT - 200) / 350.0f));
+    const float aTx = ax + sinf(aAng) * 26 * k, aTy = G - cosf(aAng) * 26 * k;
+    auto inShelter = [&](float x, float y) {
+      if (gone || u < TAUT || x < ax || x > bx) return false;
+      return y > fxLerp(aTop, bTop, (x - ax) / (bx - ax));
+    };
+    // the wind, in every frame: streaks and grit going left, none of it under the sheet
+    for (int i = 0; i < 14; i++) {
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 61);
+      float span = W + 40 * k, x = R + 20 * k - fmodf(fxU(h) * span + tt * (0.12f + 0.08f * fxU(h >> 4)) * k, span);
+      float y = T + (0.3f + 0.68f * fxU(h >> 8)) * (G - T), len = (6 + 10 * fxU(h >> 12)) * k;
+      if (inShelter(x, y) || inShelter(x + len, y)) continue;
+      fxStroke(x, y, x + len, y, 0.4f + 0.4f * k, 0.3f, FX_PAL[ok ? ((h & 3) ? FXP_SOOT : FXP_DIM) : ((h & 3) ? FXP_HDR : FXP_RUST)]);
+    }
+    for (int i = 0; i < 10; i++) {
+      uint32_t h = fxHash2((uint32_t)i, P.seed + 63);
+      float span = W + 20 * k, x = R + 10 * k - fmodf(fxU(h) * span + tt * 0.3f * k, span), y = G - (0.5f + 3 * fxU(h >> 8)) * k;
+      if (!inShelter(x, y)) scPx((int)x, (int)y, FX_PAL[ok ? FXP_INK : FXP_HDR]);
+    }
+    if (gone && u < TAUT + 700) scSpeed(P, cx - 8 * k, G - 20 * k, -1, 0, 30 * k, 18 * k, 16, FXP_WHITE);   // the gust
+    // the poles
+    fxStroke(ax, G, aTx, aTy, 1.8f * k, 1.6f * k, FX_PAL[FXP_INK]);
+    fxStroke(bx, G, bx, bTop, 1.8f * k, 1.6f * k, FX_PAL[FXP_INK]);
+    fxLine((int)(ax - 1 * k), (int)G, (int)(aTx - 1 * k), (int)aTy, FX_PAL[P.rim]);
+    if (gone && u >= TAUT + 550) fxDustDraw(aTx, G - 1, (float)(u - TAUT - 550), 9 * k, P.seed + 5, 700.0f);
+    // the sheet: bunched at the foot of the tall pole, carried, tight, or flying
+    float sway = (fxNoise1(tt * 0.004f, 6) - 0.5f) * 3 * k;
+    float fx2 = bx, fy2 = bTop;                            // its free end
+    if (u < DRIVEN) {
+      fxBlob(ax + 3 * k, G - 1.5f * k, 1, 0, 4 * k, 1.8f * k, P.seed + 3, FX_PAL[FXP_INK]);
+      fxLine((int)(ax), (int)(G - 3.2f * k), (int)(ax + 6 * k), (int)(G - 2.8f * k), FX_PAL[P.rim]);
+    } else if (!gone) {
+      if (u < TAUT) { float e = (u - DRIVEN) / (float)(TAUT - DRIVEN); fx2 = fxLerp(ax + 4 * k, bx + 2 * k, e); fy2 = G - 20 * k + (bTop - G + 20 * k) * e; sway *= 2.5f; }
+      else sway *= (u < TAUT + 200) ? 0.3f : 0.4f;
+      float mxs = (ax + fx2) * 0.5f, mys = (aTop + fy2) * 0.5f + 1.5f * k + sway;
+      float qx[4] = { ax - 4 * k, mxs, mxs, ax - 4 * k }, qy[4] = { aTop - 1 * k, mys - 1.2f * k, mys + 1.2f * k, aTop + 2 * k };
+      fxPoly(qx, qy, 4, FX_PAL[FXP_INK]);
+      float rx2[4] = { mxs, fx2 + 3 * k, fx2 + 3 * k, mxs }, ry2[4] = { mys - 1.2f * k, fy2 - 0.4f * k, fy2 + 1.6f * k, mys + 1.2f * k };
+      fxPoly(rx2, ry2, 4, FX_PAL[FXP_INK]);
+      fxLine((int)(ax - 4 * k), (int)(aTop - 1.6f * k), (int)mxs, (int)(mys - 1.8f * k), FX_PAL[P.rim]);
+      fxLine((int)mxs, (int)(mys - 1.8f * k), (int)(fx2 + 3 * k), (int)(fy2 - 1.0f * k), FX_PAL[P.rim]);
+      if (ok && u >= TAUT)                                 // the wind, going over the top of it
+        for (int i = 0; i < 3; i++) {
+          float p = fmodf(tt * 0.0016f + i / 3.0f, 1.0f), x = fxLerp(bx + 8 * k, ax - 6 * k, p), y = fxLerp(bTop - 2 * k, aTop - 3 * k, p) - (i - 1) * 2 * k;
+          fxStroke(x, y, x + 7 * k, y + 7 * k * (bTop - aTop) / (bx - ax), 0.9f * k, 0.3f, FX_PAL[FXP_LINE]);
+        }
+    } else if (u < TAUT + 1100) {                          // gone, tumbling up and away over the page
+      float e = (u - TAUT) / 1100.0f, s = 1 - 0.7f * e, a = e * 7.0f;
+      float x = fxLerp(cx + 10 * k, L - 6 * k, e), y = fxLerp(G - 20 * k, T + 6 * k, fxCubicOut(e));
+      float qx[4], qy[4];
+      for (int i = 0; i < 4; i++) {
+        float ca2 = cosf(a + i * 1.5708f), sa2 = sinf(a + i * 1.5708f) * 0.45f;
+        qx[i] = x + ca2 * 12 * k * s; qy[i] = y + sa2 * 12 * k * s;
+      }
+      scSpeed(P, x + 8 * k * s, y, -1, -0.4f, 14 * k, 5 * k * s, 6, FXP_LINE);
+      fxPoly(qx, qy, 4, FX_PAL[FXP_INK]);
+      fxLine((int)qx[0], (int)qy[0], (int)qx[1], (int)qy[1], FX_PAL[P.rim]);
+    } else {                                               // a speck, still going
+      float e = fminf(1.0f, (u - TAUT - 1100) / 2400.0f), x = L + (5 + 4 * e) * k, y = T + (5 - 2 * e) * k + sinf(tt * 0.01f) * k;
+      fxLine((int)(x - 1.5f * k), (int)(y - 0.5f * k), (int)(x + 1.5f * k), (int)(y + 0.5f * k), FX_PAL[FXP_INK]);
+    }
+    // the fire they get, under it
+    if (ok && u >= UNDER) scFire(cx + 2 * k, G - 1, P.live ? t : 1500, k * 0.45f);
+    // them
+    ScFig F = { bx - 7.5f * k, G, 1, arch, SCP_STAND, seat, 0, P.rim, -0.7f, -0.7f, k };
+    float hx, hy;
+    if (u < DRIVEN) {                                      // driving the short pole
+      float p = (u % 420) / 420.0f, raise = p < 0.75f ? fxSmooth(p / 0.75f) : 1 - fxCubicIn((p - 0.75f) / 0.25f);
+      scHandTo(F, fxLerp(bx - 1.5f * k, F.x + 2.5f * k, raise), fxLerp(bTop - 1.5f * k, G - 26 * k, raise));
+    } else if (u < TAUT) {                                 // carrying the sheet over
+      F.pose = SCP_WALK; F.x = fxLerp(ax + 2 * k, bx + 2 * k, (u - DRIVEN) / (float)(TAUT - DRIVEN)); F.ph = u * 0.016f;
+      scHandTo(F, fx2 + 1 * k, fy2 + 0.5f * k);
+    } else if (ok) {
+      if (u < TAUT + 400) { F.x = bx + 3 * k; F.dir = -1; F.lx = 0.7f; scHandTo(F, bx + 0.5f * k, bTop); }
+      else if (u < UNDER) { F.pose = SCP_WALK; F.dir = -1; F.lx = 0.7f; F.x = fxLerp(bx + 3 * k, cx + 12 * k, (u - TAUT - 400) / 400.0f); F.ph = u * 0.016f; }
+      else { F.pose = SCP_SIT; F.dir = -1; F.lx = -0.95f; F.ly = -0.3f; F.x = cx + 12 * k; F.rim = FXP_FLAME; }   // by the fire, lit by it
+    } else {
+      F.x = bx + 3 * k; F.dir = -1; F.lx = 0.7f;
+      if (u < TAUT + 1000) F.pose = SCP_REACH;            // after it
+      else if (u >= TAUT + 1400) F.look = -0.8f;
+    }
+    if (u >= DRIVEN && u < TAUT) scGhost(F, -2.5f * k, 0, FXP_DIM);
+    for (int p = 0; p < 3; p++) scFigure(F, p);
+    scHeadAt(F, &hx, &hy);
+    if (u < DRIVEN) {                                      // the hammer, and what it says
+      float p = (u % 420) / 420.0f, ex = scHandX + 2.5f * k, ey = scHandY - 1.5f * k;
+      fxStroke(scHandX, scHandY, ex, ey, 0.9f * k, 0.8f * k, FX_PAL[FXP_INK]);
+      fxRect((int)(ex - 1.5f * k), (int)(ey - 1.2f * k), (int)(ex + 1.5f * k), (int)(ey + 1.2f * k), FX_PAL[FXP_INK]);
+      if (p < 0.2f) scType("TOK", (int)(bx + 3 * k), (int)(bTop - 6 * k), 1, FXP_GLOW);
+    }
+    if (u >= TAUT && u < TAUT + 700) {
+      if (ok) scBang("FWAP!", cx - 22 * k, T + (G - T) * 0.32f, 9 * k, P.seed, P.k > 1.3f ? 2 : 1);   // clear of them
+      else    scBang("WHOOSH", cx - 24 * k, T + (G - T) * 0.55f, 9 * k, P.seed, P.k > 1.3f ? 2 : 1);
+    }
+    if (ok && u >= TAUT && u < TAUT + 800) scKira((ax + bx) * 0.5f, (aTop + bTop) * 0.5f - 2 * k, 3.6f * k, P.live ? t : 300, 0);
+    if (ok && u >= UNDER + 400) {                          // ahh
+      float p = fmodf((u - UNDER - 400) * 0.0006f, 1.0f);
+      fxStip = (uint8_t)(p * 230);
+      fxDisc(hx - (3 + p * 4) * k, hy - (1 + p * 6) * k, (0.8f + p * 2) * k, FX_PAL[FXP_LINE]);
+      fxStip = 0;
+    }
+    if (gone && u < TAUT + 600) scStartle(hx, hy, k, u - TAUT);
+    if (gone && u >= TAUT + 1000) scSweat(hx, hy, k, u - TAUT - 1000, 1);
+    if (gone && u >= TAUT + 1400) scGloom(hx, hy, k, u - TAUT - 1400, t);
+}
+
+// ── Sleeping rough ──
+// Three nights with no roof, each told from lights-out to the morning after,
+// and then laughed at. They are drawn on a stage like every panel here, so
+// the book's picture (SC_GLY_ROUGH*) and the cut scene cued with it (section
+// 12b, FXK_ROUGH) are one drawing at two sizes. `u` is ms into the story; the
+// last frame holds once it is told. `cut` says the cut scene is doing the
+// laughing, bigger, so the panel's own HA's stay out of its way.
+//
+//   THE GROUND  flat in the dirt with a rock for a pillow, shivering, while
+//               two vultures circle. At first light one comes down to see,
+//               and pecks a boot. The boot sits up. The bird can wait.
+//   THE TREE    along a branch too thin for it, in the Rust Forest. A crow
+//               lands on the end. The branch has views on that, and a moment
+//               later so does the rest of the tree.
+//   THE CHALK   out on the open ground, so still all night that by morning
+//               somebody has drawn round them, tagged a toe, left a flower
+//               and put up a cross. Then the body sits up and reads the tag.
+enum : uint32_t { SCR_DAWN = 1800, SCR_LIGHT = 2500, SCR_MOCK = 4000, SCR_CYC = 5900 };
+static const uint32_t SCR_STILL[3] = { 4200, 3900, 3800 };   // the beat a still panel keeps
+static void scMoon(float cx, float cy, float r, float ph, float low, uint32_t now);   // section 9
+
+// The set: the night going over to a hard morning, `dawn` 0-1. The broken
+// moon goes down the left, the sun comes up the right, and the stars go out
+// one at a time.
+static void scRoughSet(const ScStage& P, float dawn) {
+  const float W = (float)(P.x1 - P.x0), k = P.k, sky = P.gy - P.y0;
+  const float top = fxLerp(0.5f, 2.8f, dawn), hor = fxLerp(3.6f, 12.0f, dawn);
+  for (int y = P.y0; y < (int)P.gy; y++) {
+    const float v = (float)(y - P.y0) / fmaxf(1.0f, sky);
+    scTone(y, P.x0, P.x1, fxLerp(top, hor, v * v * 0.8f + v * 0.2f));
+  }
+  const int nStars = (P.x1 - P.x0) / 4;
+  for (int i = 0; i < nStars; i++) {
+    const uint32_t h = fxHash2((uint32_t)i, P.seed + 17);
+    if (fxU(fxHash(h)) < dawn * 1.5f) continue;
+    if (P.live && (fxHash2((uint32_t)i, P.now / 450) & 7) == 0) continue;
+    const int x = P.x0 + (int)(h % (uint32_t)(P.x1 - P.x0));
+    const int y = P.y0 + 2 + (int)((h >> 9) % (uint32_t)fxMaxI(1, (int)(sky * 0.6f)));
+    scPx(x, y, FX_PAL[(h >> 20) % 5 == 0 ? FXP_GLOW : FXP_LINE]);
+  }
+  if (dawn < 0.75f) scMoon(P.x0 + W * 0.3f, P.y0 + sky * (0.34f + 0.3f * dawn), 6.0f * k, 0.42f, dawn, P.now);
+  if (dawn > 0.05f) {
+    const float r = 11.0f * k, sx = P.x0 + W * 0.82f, sy = P.gy + r * 0.7f - (dawn - 0.05f) * r * 1.4f;
+    const float hr = r * 2.4f;                               // its glow on the sky, in dots, coming up with it
+    for (int y = (int)(sy - hr); y < (int)fminf(P.gy, sy + hr); y++)
+      for (int x = (int)(sx - hr); x < (int)(sx + hr); x++) {
+        const float ddx = x + 0.5f - sx, ddy = y + 0.5f - sy, d2 = (ddx * ddx + ddy * ddy) / (r * r);
+        if (d2 <= 1.0f || d2 >= 5.76f) continue;
+        if (scDot(x, y, (2.4f - sqrtf(d2)) * 0.43f * dawn)) scPx(x, y, FX_PAL[FXP_HOT]);
+      }
+    fxDisc(sx, sy, r, FX_PAL[FXP_GLOW]);
+    fxDisc(sx - 1, sy - 1, r * 0.65f, FX_PAL[FXP_WHITE]);
+  }
+  scRuins((float)(P.seed % 3000), (int)P.gy, fxClampF(hor - 3.0f, 0.8f, 8.0f), dawn < 0.5f, P.now, P.seed,
+          fxMaxI(12, (int)(16 * k)), (int)(4 * k), (int)fminf(sky * 0.3f, 14.0f * k));
+  for (int y = (int)P.gy; y < P.y1; y++) {
+    const float v = (float)(y - (int)P.gy) / fmaxf(1.0f, (float)(P.y1 - (int)P.gy));
+    scTone(y, P.x0, P.x1, fxLerp(fxLerp(1.6f, 4.5f, dawn), 0.6f, v));
+  }
+}
+
+// Lettering with an ink shadow under it, so it reads on any sky.
+static void scSay(const char* s, float x, float y, int sc, uint8_t col) {
+  scType(s, (int)x + 1, (int)y + 1, sc, FXP_INK);
+  scType(s, (int)x, (int)y, sc, col);
+}
+// The z's going up off somebody asleep.
+static void scZzz(float x, float y, float k, uint32_t now) {
+  const int big = k > 2.5f ? 3 : (k > 1.6f ? 2 : 1);
+  for (int i = 0; i < 3; i++) {
+    const float ph = fmodf(now * 0.0005f + i / 3.0f, 1.0f);
+    const char z[2] = { ph > 0.55f ? 'Z' : 'z', 0 };
+    scSay(z, x + ph * 8 * k + sinf(ph * 9.0f + i) * 1.4f * k, y - ph * 14 * k, ph > 0.5f ? big : fxMaxI(1, big - 1),
+          ph > 0.8f ? FXP_LINE : FXP_GLOW);
+  }
+}
+// The nose bubble, the way a manga page says fast asleep: it swells on the
+// breath in and goes down on the breath out. `pop` is ms since it burst
+// (negative: it has not).
+static void scNoseBubble(float x, float y, float k, uint32_t now, int32_t pop) {
+  if (pop >= 0) {
+    if (pop > 260) return;
+    const float p = pop / 260.0f;
+    for (int i = 0; i < 7; i++) {
+      const float a = i * (FX_TAU / 7) + 0.4f, r = (1.5f + 5.0f * fxCubicOut(p)) * k;
+      fxDisc(x + cosf(a) * r, y - 2.5f * k + sinf(a) * r, (1.0f - p) * 0.8f * k, FX_PAL[FXP_GLOW]);
+    }
+    if (pop < 170) scSay("POP", x + 3 * k, y - 9 * k, k > 2.5f ? 2 : 1, FXP_WHITE);
+    return;
+  }
+  const float br = 0.5f + 0.5f * sinf(now * 0.0042f);
+  const float r = (0.7f + 2.4f * br) * k, bx = x + r * 0.5f, by = y - r * 0.9f;   // off the nose, up and forward
+  fxDisc(bx, by, r + fmaxf(0.8f, 0.35f * k), FX_PAL[FXP_INK]);
+  fxDisc(bx, by, r, FX_PAL[FXP_LINE]);
+  fxDisc(bx + r * 0.15f, by + r * 0.15f, r * 0.72f, FX_PAL[FXP_DIM]);
+  fxDisc(bx - r * 0.38f, by - r * 0.38f, fmaxf(0.6f, r * 0.2f), FX_PAL[FXP_WHITE]);
+}
+// Cold: jagged shiver ticks either side of a body, flipping every few frames.
+static void scShiver(float xl, float xr, float y, float k, uint32_t now) {
+  const int jit = (int)((now / 90) & 1);
+  for (int s = 0; s < 2; s++) {
+    const float x = s ? xr : xl, dir = (float)(s * 2 - 1);
+    for (int j = 0; j < 2; j++) {
+      const float bx = x + dir * (1.5f + j * 1.8f) * k, by = y - (2.0f + j * 1.6f) * k;
+      const float o = (float)(((jit ^ j) << 1) - 1) * 0.7f * k;
+      fxStroke(bx, by - 2.0f * k, bx + o, by - 1.0f * k, 0.5f * k, 0.4f * k, FX_PAL[FXP_GLOW]);
+      fxStroke(bx + o, by - 1.0f * k, bx - o, by, 0.5f * k, 0.4f * k, FX_PAL[FXP_GLOW]);
+      fxStroke(bx - o, by, bx, by + 1.0f * k, 0.5f * k, 0.3f * k, FX_PAL[FXP_GLOW]);
+    }
+  }
+}
+// The anger mark on a temple: four arcs back to back, throbbing.
+static void scVein(float x, float y, float k, uint32_t now) {
+  const float s = k * (1.0f + 0.18f * sinf(now * 0.02f));
+  for (int pass = 0; pass < 2; pass++) {
+    const uint16_t c = FX_PAL[pass ? FXP_CRIT : FXP_INK];
+    const float w = pass ? 0.6f * s : 1.3f * s;
+    for (int q = 0; q < 4; q++) {
+      const float qa = q * 1.5708f + 0.785f, ax = x + cosf(qa) * 2.3f * s, ay = y + sinf(qa) * 2.3f * s;
+      float px = 0, py = 0;
+      for (int i = 0; i <= 4; i++) {                         // each arc bows in toward the middle
+        const float a = qa + 3.14159f + (i - 2) * 0.42f, ex = ax + cosf(a) * 1.9f * s, ey = ay + sinf(a) * 1.9f * s;
+        if (i) fxStroke(px, py, ex, ey, w, w, c);
+        px = ex; py = ey;
+      }
+    }
+  }
+}
+// The panel's own laugh track, once the story is told: HA's popping up round
+// whoever it was about. The cut scene laughs bigger (section 12b).
+static void scHaHa(const ScStage& P, uint32_t u) {
+  if (u < SCR_MOCK) return;
+  const int sc = P.k > 1.6f ? 2 : 1;
+  const float top = P.y0 + (P.gy - P.y0) * 0.38f, span = (P.gy - top) - 10.0f * sc;
+  for (int i = 0; i < 3; i++) {
+    if (u < SCR_MOCK + (uint32_t)i * 170) continue;
+    const uint32_t h = fxHash2((uint32_t)i + 3u * ((u - SCR_MOCK) / 600u), P.seed + 29);
+    const float x = P.x0 + 4 + ((float)i + 0.1f + 0.5f * fxU(h)) * (float)(P.x1 - P.x0 - 8 - 18 * sc) / 3.0f;   // a third each
+    const float y = top + fxU(h >> 8) * span - (float)(((u + i * 97) / 90) & 1) * sc;   // shaking with it
+    scSay((h >> 16) & 1 ? "HA!" : "HA", x, y, sc, (h >> 17) & 1 ? FXP_GLOW : FXP_HOT);
+  }
+}
+
+// A vulture side on, feet at (x, y), facing `dir`, `k` px to the unit: a
+// hunched body, the pale ruff that says what it is from across a room, a
+// bald head on a long neck. `wing` 0 folded .. 1 spread, beating with `beat`
+// (radians); `peck` 0-1 takes the head down to the dirt ahead of it.
+static void scVulture(float x, float y, float dir, float k, float wing, float beat, float peck, uint8_t rim) {
+  const float d = dir;
+  auto X = [&](float u) { return x + d * u * k; };
+  auto Y = [&](float v) { return y - v * k; };
+  const float hu = fxLerp(4.4f, 8.2f, peck), hv = fxLerp(14.0f, 2.4f, peck);   // the head
+  const float lift = fxLerp(-0.35f, 1.25f, 0.5f + 0.5f * sinf(beat));          // the wings, up from flat
+  const float ba = -0.45f * d;                                                  // hunched into it
+  auto wingAt = [&](float su, float sv, float ang, float span, float o, float g, uint16_t c) {
+    const float wu = -cosf(ang), wv = sinf(ang), pu = -sinf(ang), pv = -cosf(ang);   // out along it; back across it
+    const float tu = su + wu * span, tv = sv + wv * span;
+    float qx[4] = { X(su), X(tu), X(tu + pu * 2.6f), X(su + pu * 4.6f) };
+    float qy[4] = { Y(sv), Y(tv), Y(tv + pv * 2.6f), Y(sv + pv * 4.6f) };
+    for (int i = 0; i < 4; i++) { qx[i] += o; qy[i] += o; }
+    fxPoly(qx, qy, 4, c);
+    for (int f = 0; f < 4; f++) {                            // the primaries, spread like fingers
+      const float fu = tu + pu * (0.3f + f * 0.72f), fv = tv + pv * (0.3f + f * 0.72f);
+      fxStroke(X(fu) + o, Y(fv) + o, X(fu + wu * 2.6f - pu * 0.35f * f) + o, Y(fv + wv * 2.6f - pv * 0.35f * f) + o,
+               0.9f * k + g, 0.4f * k + g, c);
+    }
+  };
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.8f, g = pass ? 0.0f : 1.1f;   // the rim: fat, up toward the light
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    if (wing > 0.02f) wingAt(1.4f, 11.2f, lift + 0.2f, 11.0f * wing, o, g, c);   // the far one
+    for (int s = 0; s < 2; s++) {                            // legs, and the toes splayed in the dirt
+      const float lu = s ? 1.1f : -0.9f;
+      fxStroke(X(lu * 0.7f) + o, Y(6.0f) + o, X(lu), Y(0.3f), 1.2f * k + g, 0.7f * k + g, c);
+      fxStroke(X(lu) - d * 1.3f * k, Y(0.2f), X(lu) + d * 1.9f * k, Y(0.2f), 0.7f * k + g, 0.5f * k + g, c);
+    }
+    fxBlob(X(-0.6f) + o, Y(8.4f) + o, cosf(ba), sinf(ba), 5.6f * k + g, 3.9f * k + g, 7, c);
+    fxTri(X(-5.2f) + o, Y(7.6f) + o, X(-9.6f) + o, Y(3.6f) + o, X(-5.6f) + o, Y(5.0f) + o, c);   // the tail
+    fxStroke(X(2.0f) + o, Y(11.2f) + o, X(hu) + o, Y(hv) + o, 1.4f * k + g, 1.0f * k + g, c);  // the neck
+    fxDisc(X(hu) + o, Y(hv) + o, 1.55f * k + g, c);
+    const float pa = -peck * 1.1f, bu = cosf(pa), bv = sinf(pa);                                // the beak, hooked
+    fxTri(X(hu + 0.5f) + o, Y(hv + 0.8f) + o, X(hu + 0.5f) + o, Y(hv - 0.8f) + o,
+          X(hu + bu * 3.6f) + o, Y(hv + bv * 3.6f - 0.3f) + o, c);
+    if (wing > 0.02f) wingAt(0.4f, 10.6f, lift, 11.0f * wing, o, g, c);                       // the near one
+  }
+  // the ruff, pale, and the bald head coming up out of it
+  for (int i = 0; i < 10; i++) {
+    const float a = i * (FX_TAU / 10) + 0.3f, ca = cosf(a), sa = sinf(a);
+    fxTri(X(2.0f + ca * 1.0f), Y(11.0f + sa * 1.0f), X(2.0f + ca * 1.0f - sa * 0.9f), Y(11.0f + sa * 1.0f + ca * 0.9f),
+          X(2.0f + ca * 2.7f), Y(11.0f + sa * 2.7f), FX_PAL[FXP_LINE]);
+  }
+  fxStroke(X(2.6f), Y(11.6f), X(hu), Y(hv), 1.0f * k, 0.8f * k, FX_PAL[FXP_INK]);
+  fxDisc(X(hu), Y(hv), 1.1f * k, FX_PAL[FXP_DIM]);
+  scPx((int)X(hu + 0.5f), (int)Y(hv + 0.4f), FX_PAL[FXP_HOT]);                                 // an eye on you
+  if (wing > 0.02f) {                                                                           // the near wing's edge lit
+    const float ang = lift, tu = 0.4f - cosf(ang) * 11.0f * wing, tv = 10.6f + sinf(ang) * 11.0f * wing;
+    fxLine((int)X(0.4f), (int)Y(10.6f) - 1, (int)X(tu), (int)Y(tv) - 1, FX_PAL[rim]);
+  }
+}
+// One of them aloft, small against the sky: long fingered wings, banking.
+static void scVultureSoar(float x, float y, float k, float tilt, uint8_t rim) {
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.6f, g = pass ? 0.0f : 0.8f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    for (int s = 0; s < 2; s++) {
+      const float sd = (float)(s * 2 - 1), tx = x + sd * 10.0f * k, ty = y - 1.4f * k - sd * tilt * k;
+      fxStroke(x + o, y + o, tx + o, ty + o, 3.0f * k + g, 1.8f * k + g, c);
+      for (int f = 0; f < 3; f++)                            // the fingers at the tips
+        fxStroke(tx + o, ty + o, tx + sd * 2.4f * k + o, ty + (f - 1) * 0.9f * k + o, 0.6f * k + g, 0.4f * k + g, c);
+    }
+    fxBlob(x + o, y + o, 1, 0, 2.2f * k + g, 1.2f * k + g, 3, c);
+    fxTri(x - 0.9f * k + o, y + 0.6f * k + o, x + 0.9f * k + o, y + 0.6f * k + o, x + o, y + 3.2f * k + o, c);   // the tail
+  }
+}
+// A crow on the wing, at any size (scCrowFly is one far off).
+static void scCrowFlap(float x, float y, float k, uint32_t now, float dir) {
+  const float up = sinf(now * 0.03f) * 3.5f * k;
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.7f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : FXP_RUST];
+    fxBlob(x + o, y + o, 1, 0, 3.0f * k, 1.6f * k, 5, c);
+    fxStroke(x - 0.8f * k + o, y + o, x - 8.0f * k + o, y - up + o, 2.2f * k, 0.6f * k, c);
+    fxStroke(x + 0.8f * k + o, y + o, x + 8.0f * k + o, y - up + o, 2.2f * k, 0.6f * k, c);
+    fxDisc(x + dir * 3.2f * k + o, y - 0.9f * k + o, 1.4f * k, c);
+    fxTri(x + dir * 4.2f * k + o, y - 1.4f * k + o, x + dir * 4.2f * k + o, y - 0.4f * k + o, x + dir * 6.4f * k + o, y - 0.9f * k + o, c);
+  }
+}
+// A crow sat on something at (x, y), facing `dir`. Laughing (`caw`), it
+// throws its head back and opens its beak wide on every caw.
+static void scCrowCaw(float x, float y, float dir, float k, uint32_t now, bool caw) {
+  const int open = caw ? (int)((now / 130) & 1) : 0;
+  const float back = 0.7f * open, bob = (float)open * 0.6f * k;
+  const float hx = x + dir * (3.4f - back) * k, hy = y - (7.6f + back) * k - bob;
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.8f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : FXP_BRICK];
+    fxLine((int)(x - k), (int)(y - 2 * k), (int)(x - k), (int)y, c);
+    fxLine((int)(x + k), (int)(y - 2 * k), (int)(x + k), (int)y, c);
+    fxBlob(x + o, y - 4.2f * k - bob + o, 1, 0, 4.2f * k, 2.8f * k, 11, c);
+    fxTri(x - dir * 3 * k + o, y - 5 * k - bob + o, x - dir * 9 * k + o, y - 2.4f * k + o, x - dir * 3 * k + o, y - 2.2f * k - bob + o, c);
+    fxDisc(hx + o, hy + o, 2.2f * k, c);
+    const float bx = hx + dir * 1.6f * k, lift = 1.1f * k * open;                 // the beak: two halves, apart
+    fxTri(bx + o, hy - 0.8f * k + o, bx + o, hy + 0.2f * k + o, bx + dir * 3.4f * k + o, hy - 0.4f * k - lift + o, c);
+    fxTri(bx + o, hy + 0.2f * k + o, bx + o, hy + 0.9f * k + o, bx + dir * 3.0f * k + o, hy + 0.5f * k + lift + o, c);
+  }
+  scPx((int)(hx + dir * 0.6f * k), (int)(hy - 0.6f * k), FX_PAL[FXP_HOT]);
+}
+
+// THE GROUND.
+static SC_NOINLINE void scRoughGround(const ScStage& P, uint8_t arch, uint8_t seat, uint32_t u, bool cut,
+                                      float* hx, float* hy) {
+  const float G = P.gy, k = P.k, cx = P.cx, T = (float)P.y0;
+  const uint32_t t = P.now;
+  const uint32_t LAND = SCR_LIGHT, HOP = LAND + 200, LOOK = LAND + 550, PECK = LAND + 650, POP = LAND + 800;
+  const uint32_t UP = LAND + 900, SHOO = LAND + 950, WAIT = LAND + 1300;
+  const float dawn = fxClampF(((float)u - SCR_DAWN) / (float)(SCR_LIGHT - SCR_DAWN), 0.0f, 1.0f);
+  scRoughSet(P, dawn);
+  const uint8_t rim = (uint8_t)(FXP_BRICK + (int)(dawn * 2.0f));  // moonlight, then the morning
+  ScFig F = { cx - 2 * k, G + 1 * k, 1, arch, SCP_LIE, seat, 0, rim, fxLerp(-0.7f, 0.7f, dawn), -0.7f, k };
+  float px, py;                                              // where the head lay all night
+  scHeadAt(F, &px, &py);
+  scLump(px - 0.4f * k, G + 0.8f * k, 0.25f, 2.5f * k, P.seed + 3, rim);   // the pillow
+  // The two that circled all night. At first light one of them comes down.
+  const float ccx = cx + 4 * k, ccy = T + (G - T) * 0.3f, ct = (float)(P.live ? t : 2000u);
+  for (int i = 0; i < 2; i++) {
+    if (i == 0 && u >= SCR_DAWN) continue;
+    const float a = ct * 0.0011f + i * 3.14159f;
+    scVultureSoar(ccx + cosf(a) * 17 * k, ccy + sinf(a) * 4 * k, 0.42f * k, cosf(a) * 0.8f, rim);
+  }
+  const float kv = 0.74f * k, vy0 = G + 1.5f * k;
+  float vx = cx + 24 * k, vy = vy0, vk = kv, wing = 0, beat = 0, peck = 0;
+  if (u >= SCR_DAWN && u < LAND) {                           // gliding down to it, wings out
+    const float p = (float)(u - SCR_DAWN) / (float)(LAND - SCR_DAWN), a0 = (ct - (float)(u - SCR_DAWN)) * 0.0011f;
+    vx = fxLerp(ccx + cosf(a0) * 17 * k, cx + 24 * k, fxSmooth(p));
+    vy = fxLerp(ccy + sinf(a0) * 4 * k, vy0, p * p);
+    vk = fxLerp(0.38f * k, kv, p);
+    wing = 1; beat = u * 0.018f;
+  } else if (u >= LAND && u < HOP) {                         // down, and folding up
+    wing = 1.0f - (float)(u - LAND) / (float)(HOP - LAND); beat = 1.2f;
+  } else if (u >= HOP && u < LOOK) {                         // two hops in, for a closer look
+    const float p = (float)(u - HOP) / (float)(LOOK - HOP), q = fmodf(p * 2.0f, 1.0f);
+    vx = fxLerp(cx + 24 * k, cx + 17.5f * k, (floorf(p * 2.0f) + fxSmooth(q)) * 0.5f);
+    vy -= sinf(q * 3.14159f) * 2.4f * k;
+  } else if (u >= LOOK && u < SHOO) {
+    vx = cx + 17.5f * k;
+    if (u < PECK) peck = 0.25f;
+    else if (u < PECK + 120) peck = 1.0f;
+    else peck = fmaxf(0.0f, 1.0f - (float)(u - PECK - 120) / 150.0f);
+  } else if (u >= SHOO) {                                    // and back off, as if that were the plan
+    const float p = fminf(1.0f, (float)(u - SHOO) / 220.0f);
+    vx = fxLerp(cx + 17.5f * k, cx + 25 * k, fxCubicOut(p));
+    vy -= sinf(p * 3.14159f) * 3.0f * k;
+    if (u < WAIT) { wing = 0.75f * (1.0f - fxClampF((float)(u - SHOO - 150) / (float)(WAIT - SHOO - 150), 0.0f, 1.0f)); beat = 0.9f; }
+  }
+  if (u >= LAND && u < LAND + 700) fxDustDraw(cx + 24 * k, vy0, (float)(u - LAND), 8 * k, P.seed + 7, 700.0f);
+  if (u >= SCR_DAWN) scVulture(vx, vy, -1, vk, wing, beat, peck, rim);
+  // Them.
+  if (u >= UP) F.pose = SCP_SIT;
+  else if (u < SCR_LIGHT) F.x += (float)((int)((t / 70) & 1) * 2 - 1) * 0.3f * k;   // shivering
+  for (int p = 0; p < 3; p++) scFigure(F, p);
+  scHeadAt(F, hx, hy);
+  if (u < SCR_LIGHT) scShiver(F.x - 15 * k, F.x + 14 * k, F.foot, k, t);
+  scNoseBubble(px + 0.6f * k, py - 2.4f * k, k, t, u < POP ? -1 : (int32_t)(u - POP));
+  if (u < POP) scZzz(px + 3 * k, py - 6 * k, k, t);
+  if (u >= PECK && u < PECK + 250)                           // up over the bird, clear of the boot
+    scBang("PECK!", vx + 2 * k, vy - 30 * vk, 6 * k, P.seed + 1, k > 1.3f ? 2 : 1);
+  scJolt(P, u, PECK, 0.15f);
+  if (u >= POP + 50 && u < UP + 500) scStartle(*hx, *hy, k, u - POP - 50);
+  if (u >= UP + 100) scSweat(*hx, *hy, k, u - UP - 100, -1);
+  if (u >= WAIT + 100) scGloom(*hx, *hy, k, u - WAIT - 100, t);
+  if (u >= SHOO - 30 && u < SHOO + 450) scStartle(vx - 4.4f * vk, vy - 14 * vk, vk * 1.3f, u - SHOO + 30);
+  if (u >= WAIT + 150 && k > 1.5f)
+    scBalloon("I'LL WAIT.", (int)(vx + 2 * k), (int)(vy - 19 * vk), (int)(vx - 3 * vk), (int)(vy - 16 * vk));
+  if (!cut) scHaHa(P, u);
+}
+
+// THE TREE.
+static SC_NOINLINE void scRoughTree(const ScStage& P, uint8_t arch, uint8_t seat, uint32_t u, bool cut,
+                                    float* hx, float* hy) {
+  const float G = P.gy, k = P.k, cx = P.cx, T = (float)P.y0, R = (float)P.x1;
+  const uint32_t t = P.now;
+  const uint32_t INCOMING = SCR_DAWN + 150, PERCH = SCR_LIGHT - 200, CREAK = SCR_LIGHT - 50, SNAP = SCR_LIGHT + 200;
+  const uint32_t WHAM = SNAP + 240, BONK = WHAM + 280, STUB = SNAP + 800;
+  const float kc = 0.8f * k;                                 // the crow
+  const float dawn = fxClampF(((float)u - SCR_DAWN) / (float)(SCR_LIGHT - SCR_DAWN), 0.0f, 1.0f);
+  scRoughSet(P, dawn);
+  const uint8_t rim = (uint8_t)(FXP_BRICK + (int)(dawn * 2.0f));
+  const int sc = k > 1.3f ? 2 : 1;
+  if ((u >= SNAP && u < SNAP + 70) || (u >= WHAM && u < WHAM + 70)) scImpactFrame(P, cx, G - 12 * k);
+  const float tx = cx - 15 * k;                              // the trunk
+  const float bx0 = tx + 1.4f * k, by0 = G - 24 * k;         // where the branch leaves it
+  float sag = (1.4f + 0.7f * sinf(t * 0.0042f)) * k;         // it breathes with them
+  if (u >= PERCH) sag += 2.6f * k * fxCubicOut(fminf(1.0f, (float)(u - PERCH) / 200.0f));   // and then the crow
+  if (u >= CREAK && u < SNAP) sag += (float)((u / 60) & 1) * 0.7f * k;                        // giving, in jerks
+  const float bx1 = cx + 22 * k, by1 = G - 22 * k + sag;
+  // The trunk, its roots, what is left of the crown, and the bit of it that
+  // is about to join them.
+  const float twx = tx + 1.9f * k, twy = G - 31.5f * k;
+  const bool twigOn = u < WHAM + 80;
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.9f, g = pass ? 0.0f : 1.2f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    fxStroke(tx + o, G + o, tx + 1.4f * k + o, G - 31 * k + o, 4.8f * k + g, 2.6f * k + g, c);
+    fxStroke(tx + o, G - 1 * k + o, tx - 5 * k + o, G + 0.6f * k + o, 2.0f * k + g, 0.8f * k + g, c);
+    fxStroke(tx + o, G - 1 * k + o, tx + 4.5f * k + o, G + 0.8f * k + o, 1.8f * k + g, 0.7f * k + g, c);
+    if (twigOn) fxStroke(twx + o, twy + o, twx + 5 * k + o, twy - 4 * k + o, 1.3f * k + g, 0.6f * k + g, c);
+  }
+  scTree(tx + 1.4f * k, G - 30 * k, P.seed + 9, 8.5f * k, 2.4f * k, 3, FX_PAL[rim]);
+  fxDisc(tx + 0.4f * k, G - 13 * k, 1.1f * k, FX_PAL[FXP_SOOT]);   // a knot-hole
+  // The branch: on the tree until it isn't, then down with them.
+  const float ff = u < SNAP ? 0.0f : fminf(1.0f, (float)(u - SNAP) / (float)(WHAM - SNAP)), fall = ff * ff;
+  float ax = bx0, ay = by0, ex = bx1, ey = by1;
+  if (u >= SNAP) {
+    ax = fxLerp(bx0 + 2.5f * k, bx0 + 4 * k, fall); ay = fxLerp(by0, G - 0.6f * k, fall);
+    ex = fxLerp(bx1, bx1 + 2 * k, fall);             ey = fxLerp(by1 + 2 * k, G + 0.6f * k, fall);
+  }
+  const float mx = (ax + ex) * 0.5f, my = (ay + ey) * 0.5f + (u < SNAP ? sag * 0.5f : 0.0f);
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.8f, g = pass ? 0.0f : 1.1f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    fxStroke(ax + o, ay + o, mx + o, my + o, 3.0f * k + g, 2.2f * k + g, c);
+    fxStroke(mx + o, my + o, ex + o, ey + o, 2.2f * k + g, 1.0f * k + g, c);
+    fxStroke(mx + 3 * k + o, my - 0.3f * k + o, mx + 6 * k + o, my - 4 * k + o, 0.9f * k + g, 0.5f * k + g, c);
+    if (u >= SNAP) fxStroke(bx0 + o, by0 + o, bx0 + 2.4f * k + o, by0 + 0.3f * k + o, 3.0f * k + g, 2.6f * k + g, c);   // the stub
+  }
+  if (u >= SNAP)                                             // splintered pale where it went
+    for (int i = 0; i < 3; i++)
+      fxLine((int)(bx0 + 2.4f * k), (int)(by0 - 1.0f * k + i * k), (int)(bx0 + 3.6f * k), (int)(by0 - 1.4f * k + i * 1.4f * k), FX_PAL[FXP_GLOW]);
+  // Them, along it, an arm hanging down; then not along it.
+  const float fx0 = cx + 4 * k, lieY = my - 1.2f * k;
+  ScFig F = { fx0, lieY, 1, arch, SCP_LIE, seat, 0, rim, fxLerp(-0.7f, 0.7f, dawn), -0.7f, k };
+  if (u < SNAP)       { F.handU = -3.0f; F.handV = -5.0f; F.x += (float)((int)((t / 70) & 1) * 2 - 1) * 0.25f * k * (u < SCR_LIGHT); }
+  else if (u < WHAM)  { F.foot = fxLerp((by0 + by1 + sag) * 0.5f - 1.2f * k, G + 1 * k, fall); F.handU = -4.0f; F.handV = 9.0f; }   // arms up, going down
+  else                F.foot = G + 1 * k;
+  float px, py;
+  scHeadAt(F, &px, &py);
+  if (u >= SNAP && u < WHAM) {
+    scGhost(F, 0, -9 * k * ff, FXP_DIM);
+    scGhost(F, 0, -4.5f * k * ff, FXP_LINE);
+    scSpeed(P, F.x - 2 * k, F.foot - 3 * k, 0, 1, 22 * k, 14 * k, 12, FXP_WHITE);
+  }
+  for (int p = 0; p < 3; p++) scFigure(F, p);
+  scHeadAt(F, hx, hy);
+  // The crow: in off the right, onto the end of the branch -- the last straw
+  // -- up when it goes, round, and onto the stub to have a good laugh.
+  if (u >= INCOMING && u < PERCH) {
+    const float p = (float)(u - INCOMING) / (float)(PERCH - INCOMING);
+    scCrowFlap(fxLerp(R + 6 * k, ex - 2 * k, fxSmooth(p)), fxLerp(T + (G - T) * 0.25f, ey - 4 * k, p), kc, t, -1);
+  } else if (u >= PERCH && u < SNAP) {
+    scCrowCaw(ex - 2.5f * k, ey - 0.9f * k, -1, kc, t, false);
+  } else if (u >= SNAP && u < STUB) {
+    const float p = (float)(u - SNAP) / (float)(STUB - SNAP);
+    scCrowFlap(fxLerp(bx1 - 2 * k, bx0 + 2.4f * k, fxSmooth(p)), fxLerp(by1 - 3 * k, by0 - 1.5f * k, p) - sinf(p * 3.14159f) * 10 * k,
+               kc, t, -1);
+  } else if (u >= STUB) {
+    const bool caw = u >= STUB + 150;
+    scCrowCaw(bx0 + 2.2f * k, by0 - 1.4f * k, 1, kc, t, caw);
+    if (caw && ((t / 260) & 1)) scSay("KAW", bx0 + (4 + ((t / 520) & 1) * 3) * k, by0 - 12 * k, sc, FXP_GLOW);
+  }
+  // The bit of the crown, following them down onto the head, and off it.
+  if (!twigOn) {
+    float qx, qy, a;
+    const float hgx = px, hgy = G + 1 * k - 3.2f * k;        // the head, on the ground
+    if (u < BONK) {
+      const float p = (float)(u - WHAM - 80) / (float)(BONK - WHAM - 80);
+      qx = fxLerp(twx + 2.5f * k, hgx, p); qy = fxLerp(twy - 2 * k, hgy - 2.5f * k, p * p); a = -0.7f + p * 5.0f;
+    } else {
+      const float p = fminf(1.0f, (float)(u - BONK) / 260.0f);
+      qx = fxLerp(hgx, hgx - 7 * k, p); qy = fxLerp(hgy - 2.5f * k, G + 0.4f * k, p) - sinf(p * 3.14159f) * 5 * k; a = 4.3f + p * 1.9f;
+    }
+    const float ca = cosf(a) * 3 * k, sa = sinf(a) * 3 * k;
+    fxStroke(qx - ca - 0.8f, qy - sa - 0.8f, qx + ca - 0.8f, qy + sa - 0.8f, 1.3f * k + 1.1f, 0.6f * k + 1.1f, FX_PAL[rim]);
+    fxStroke(qx - ca, qy - sa, qx + ca, qy + sa, 1.3f * k, 0.6f * k, FX_PAL[FXP_INK]);
+  }
+  // What it all sounds like.
+  if (u < CREAK) {
+    scNoseBubble(px + 0.6f * k, py - 2.4f * k, k, t, -1);
+    scZzz(px + 3 * k, py - 6 * k, k, t);
+    if ((u >= 600 && u < 1000) || (u >= 1250 && u < 1650)) scSay("creak", bx0 + 2 * k, by0 - 7 * k, 1, FXP_LINE);
+  } else if (u < SNAP) {
+    scNoseBubble(px + 0.6f * k, py - 2.4f * k, k, t, (int32_t)(u - CREAK));
+    for (int i = 0; i < 3; i++)                              // the crack, running
+      fxLine((int)(bx0 + 1 * k), (int)(by0 - 0.5f * k + i * 0.6f * k), (int)(bx0 + (2.2f + i * 0.5f) * k), (int)(by0 - (1.6f - i * 1.2f) * k), FX_PAL[FXP_WHITE]);
+    scSay("crk", bx0 + 3 * k, by0 - 8 * k, sc, FXP_GLOW);
+    if (u >= CREAK + 60) scStartle(*hx, *hy, k, u - CREAK - 60);
+    if (u >= CREAK + 120) scSweat(*hx, *hy, k, u - CREAK - 120, 1);
+  }
+  if (u >= SNAP && u < SNAP + 240) scBang("SNAP!", bx0 + 15 * k, by0 - 23 * k, 8 * k, P.seed, sc);   // all clear of the fall
+  if (u >= WHAM && u < WHAM + 300) scBang("WHAM!", F.x + 15 * k, G - 9 * k, 8 * k, P.seed + 2, sc);
+  if (u >= WHAM) fxDustDraw(F.x, G + 1 * k, (float)(u - WHAM), 14 * k, P.seed + 4, 700.0f);
+  if (u >= BONK && u < BONK + 300) scBang("BONK", *hx - 5 * k, *hy - 23 * k, 6 * k, P.seed + 3, sc);
+  if (u >= BONK) scDizzy(*hx, *hy, k, t);
+  scJolt(P, u, SNAP, 0.25f);
+  scJolt(P, u, WHAM, 0.5f);
+  scJolt(P, u, BONK, 0.2f);
+  if (!cut) scHaHa(P, u);
+}
+
+// The chalk outline, round somebody lying with their hip at x on the ground
+// line g, seen low across the dirt so its plan is squashed: a head, arms
+// flung out, legs apart, the way the police drew them. Chalk goes on dry.
+static void scChalk(float x, float g, float k, uint32_t seed) {
+  static const float CU[22] = { -9.0f, -6.5f, -5.0f, -3.0f, -3.6f, 2.0f, 13.8f, 15.6f, 5.0f, 15.6f, 14.0f,
+                                2.0f, -3.6f, -2.6f, -4.6f, -6.5f, -9.0f, -11.0f, -14.8f, -16.2f, -14.8f, -11.0f };
+  static const float CW[22] = { 1.9f, 3.0f, 8.4f, 8.0f, 2.8f, 3.0f, 6.0f, 4.4f, 0.4f, -3.8f, -5.6f,
+                                -3.0f, -2.8f, -8.2f, -8.8f, -3.0f, -1.9f, -3.6f, -3.0f, 0.0f, 3.0f, 3.6f };
+  float ou[96], ov[96];
+  const int m = fxCurve(CU, CW, 22, 4, ou, ov, 96);
+  const uint8_t stip0 = fxStip;
+  const uint32_t seed0 = fxStipSeed;
+  for (int pass = 0; pass < 2; pass++) {
+    fxStip = (uint8_t)(pass ? 150 : 40);
+    fxStipSeed = seed + pass * 7;
+    const float dx = pass * 0.35f * k, dy = pass * 0.25f * k, w = fmaxf(1.2f, 0.65f * k);
+    for (int i = 0; i < m; i++) {
+      const int j = (i + 1) % m;
+      fxStroke(x + ou[i] * k + dx, g + ov[i] * 0.55f * k + dy, x + ou[j] * k + dx, g + ov[j] * 0.55f * k + dy, w, w, FX_PAL[FXP_WHITE]);
+    }
+  }
+  fxStip = stip0;
+  fxStipSeed = seed0;
+}
+// The cross at the head of it, on its mound: RIP across the bar where the
+// glass is big enough to letter it.
+static void scGraveCross(float x, float g, float k, uint8_t rim) {
+  const bool rip = k > 2.4f;
+  const float th = rip ? 10.0f : 2.4f * k;
+  fxBlob(x, g + 0.2f * k, 1, 0, 4.4f * k, 1.4f * k, 19, FX_PAL[FXP_TRACK]);
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -0.9f, gr = pass ? 0.0f : 1.2f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    fxStroke(x + o, g + o, x + 0.3f * k + o, g - 13 * k + o, 1.6f * k + gr, 1.3f * k + gr, c);
+    fxStroke(x - 4.2f * k + o, g - 9.7f * k + o, x + 4.4f * k + o, g - 9.3f * k + o, th + gr, th + gr, c);
+  }
+  if (rip) fxGlcd("RIP", (int)(x - 8), (int)(g - 9.5f * k - 3), 1, FX_PAL[FXP_GLOW]);
+}
+// A toe tag, on a string from the big toe at (x, y).
+static void scToeTag(float x, float y, float k, uint32_t now) {
+  const float tx = x + 1.6f * k + sinf(now * 0.003f) * 0.5f * k, ty = y + 2.2f * k;
+  fxLine((int)x, (int)y, (int)tx, (int)ty, FX_PAL[FXP_GLOW]);
+  const int x0 = (int)tx, y0 = (int)ty, x1 = (int)(tx + 2.8f * k) + 1, y1 = (int)(ty + 1.7f * k) + 1;
+  fxRect(x0 - 1, y0 - 1, x1 + 1, y1 + 1, FX_PAL[FXP_INK]);
+  fxRect(x0, y0, x1, y1, FX_PAL[FXP_GLOW]);
+  if (k > 1.6f) fxLine(x0 + 2, (y0 + y1) / 2, x1 - 2, (y0 + y1) / 2 - 1, FX_PAL[FXP_INK]);   // a name, scrawled
+}
+// A flower somebody left, already wilting: standing at (x, y), or laid flat.
+static void scWiltFlower(float x, float y, float k, bool flat) {
+  const float hx = flat ? x + 5 * k : x + 2.2f * k, hy = flat ? y - 0.5f * k : y - 3.4f * k;
+  if (flat) fxStroke(x, y, hx, hy, 0.7f * k, 0.5f * k, FX_PAL[FXP_RUST]);
+  else {
+    fxStroke(x, y, x + 0.5f * k, y - 4.2f * k, 0.7f * k, 0.5f * k, FX_PAL[FXP_RUST]);
+    fxStroke(x + 0.5f * k, y - 4.2f * k, hx, hy, 0.5f * k, 0.4f * k, FX_PAL[FXP_RUST]);   // gone over at the neck
+  }
+  for (int i = 0; i < 4; i++) {
+    const float a = i * 1.5708f + 0.4f;
+    fxDisc(hx + cosf(a) * 0.9f * k, hy + sinf(a) * 0.9f * k, 0.75f * k, FX_PAL[FXP_HOT]);
+  }
+  fxDisc(hx, hy, 0.5f * k, FX_PAL[FXP_INK]);
+}
+// The tape across the front of it all: DO NOT CROSS, sagging.
+static void scTape(const ScStage& P, float y, float k, uint32_t now) {
+  const bool words = k > 2.4f;
+  const float th = words ? 10.0f : 2.2f * k, half = (P.x1 - P.x0) * 0.5f, mid = P.x0 + half;
+  auto at = [&](float x) {
+    const float q = (x - mid) / half;
+    return y + 2.2f * k * (1.0f - q * q) + sinf(now * 0.004f + x * 0.05f) * 0.4f * k;
+  };
+  for (int x = P.x0; x < P.x1; x += 2) {
+    const float yc = at(x + 1.0f);
+    fxRect(x, (int)(yc - th * 0.5f) - 1, x + 2, (int)(yc + th * 0.5f) + 1, FX_PAL[FXP_INK]);
+    fxRect(x, (int)(yc - th * 0.5f), x + 2, (int)(yc + th * 0.5f), FX_PAL[FXP_HOT]);
+  }
+  static const char TXT[] = "DO NOT CROSS  ";
+  for (int x = P.x0 + 2, i = 0; x < P.x1 - 4; x += words ? 6 : (int)(4 * k), i++) {
+    const float yc = at(x + 2.5f);
+    if (words) {
+      const char ch[2] = { TXT[i % 14], 0 };
+      fxGlcd(ch, x, (int)(yc - 3.5f), 1, FX_PAL[FXP_INK]);
+    } else if (i & 1) {
+      fxRect(x, (int)(yc - th * 0.5f), x + (int)(1.6f * k), (int)(yc + th * 0.5f), FX_PAL[FXP_INK]);
+    }
+  }
+}
+
+// THE CHALK.
+static SC_NOINLINE void scRoughChalk(const ScStage& P, uint8_t arch, uint8_t seat, uint32_t u, bool cut,
+                                     float* hx, float* hy) {
+  const float G = P.gy, k = P.k, cx = P.cx;
+  const uint32_t t = P.now;
+  const uint32_t BLINK = SCR_LIGHT + 300, JOLT = BLINK + 150, SIT = BLINK + 260, READ = BLINK + 500, CHEAP = BLINK + 950;
+  const bool morning = u >= SCR_DAWN;                        // no dawn here: a cut to the morning after
+  scRoughSet(P, morning ? 1.0f : 0.0f);
+  if (morning && u < SCR_DAWN + 70) scImpactFrame(P, cx, G - 8 * k);
+  const uint8_t rim = morning ? FXP_HDR : FXP_BRICK;
+  ScFig F = { cx + 3 * k, G + 2 * k, 1, arch, SCP_LIE, seat, 0, rim, morning ? 0.7f : -0.7f, -0.7f, k };
+  float px, py;
+  scHeadAt(F, &px, &py);
+  if (morning) {
+    scChalk(F.x, F.foot, k, P.seed);
+    scGraveCross(F.x - 21 * k, G, k, rim);
+  }
+  if (u >= SIT) F.pose = SCP_SIT;
+  else if (!morning) F.x += (float)((int)((t / 70) & 1) * 2 - 1) * 0.3f * k;   // shivering
+  if (u >= READ) F.look = -0.6f;                             // down at the tag on their toe
+  for (int p = 0; p < 3; p++) scFigure(F, p);
+  scHeadAt(F, hx, hy);
+  if (morning) {
+    const bool sat = u >= SIT;
+    scToeTag(F.x + (sat ? 11.3f : 12.4f) * k, F.foot - (sat ? 1.6f : 4.4f) * k, k, t);
+    if (sat) scWiltFlower(F.x - 6 * k, G + 2.4f * k, k, true);   // off the chest when they came up
+    else     scWiltFlower(F.x - 5 * k, F.foot - 5.2f * k, k, false);
+  }
+  if (!morning) {
+    scShiver(F.x - 15 * k, F.x + 14 * k, F.foot, k, t);
+    scZzz(px + 3 * k, py - 6 * k, k, t);
+    for (int i = 0; i < 4; i++) scKira(F.x + (-10 + i * 7) * k, F.foot - (3 + (i & 1) * 2) * k, 1.6f * k, t, i);   // frost on them
+  }
+  scNoseBubble(px + 0.6f * k, py - 2.4f * k, k, t, u < BLINK ? -1 : (int32_t)(u - BLINK));
+  if (u >= BLINK && u < SIT) fxDisc(px + 0.7f * k, py - 1.4f * k, fmaxf(0.8f, 0.6f * k), FX_PAL[FXP_WHITE]);   // an eye, open
+  if (u >= JOLT && u < JOLT + 600) scStartle(*hx, *hy, k, u - JOLT);
+  scJolt(P, u, JOLT, 0.15f);
+  if (u >= READ + 150) scSweat(*hx, *hy, k, u - READ - 150, -1);
+  if (u >= CHEAP && k > 1.5f) scBalloon("NOT DEAD. JUST CHEAP.", (int)(*hx - 10 * k), (int)(*hy - 8 * k), (int)(*hx - 1 * k), (int)(*hy - 4 * k));
+  if (morning) scTape(P, G + 5.5f * k, k, t);
+  if (!cut) scHaHa(P, u);
+}
+
+// One of the three, by number: 0 the ground, 1 the tree, 2 the chalk. Puts
+// where the sleeper's head is now in (hx, hy), for whatever is laughing.
+static void scArtRough(const ScStage& P, uint8_t v, uint8_t arch, uint8_t seat, uint32_t u, bool cut,
+                       float* hx, float* hy) {
+  if (v == 1)      scRoughTree(P, arch, seat, u, cut, hx, hy);
+  else if (v == 2) scRoughChalk(P, arch, seat, u, cut, hx, hy);
+  else             scRoughGround(P, arch, seat, u, cut, hx, hy);
+}
+
 // One panel's picture. Everything is placed off the stage, so the same event
 // reads at either size.
-static void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t arch2, int8_t who, int8_t who2) {
+static SC_NOINLINE void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t arch2, int8_t who, int8_t who2) {
   const float L = (float)P.x0, R = (float)P.x1, T = (float)P.y0, G = P.gy, W = R - L, k = P.k, cx = P.cx;
   const uint32_t t = P.now;
   const uint8_t seat = (uint8_t)(who >= 0 && who < SC_SEATS ? who : 255);
@@ -2089,64 +3825,11 @@ static void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t ar
       fig(cx - W * 0.2f, arch, SCP_REACH, 1, 0, seat, k);    // a stretch. or a surrender.
       break;
     }
-    case SC_GLY_FORAGE: {
-      fig(cx - 6 * k, arch, SCP_CROUCH, 1, 0, seat, k);
-      float px = cx + 12 * k;
-      float sway = P.live ? (fxNoise1(t * 0.002f, 4) - 0.5f) * 2 : 0;
-      fxStroke(px, G, px + sway, G - 12 * k, 1.6f, 1.0f, FX_PAL[FXP_INK]);
-      fxBlob(px + sway - 3 * k, G - 9 * k, 0.8f, -0.6f, 3.4f * k, 1.6f * k, 3, FX_PAL[FXP_HDR]);
-      fxBlob(px + sway + 3 * k, G - 12 * k, 0.8f, 0.6f, 3.4f * k, 1.6f * k, 4, FX_PAL[FXP_CRIT]);
-      scSparkleSmall(px + 9 * k, G - 17 * k, P.live ? t : 0);
-      break;
-    }
-    case SC_GLY_WATER: {
-      float px = cx + 8 * k;
-      fxBlob(px, G + 1, 1, 0, 16 * k, 2.6f * k, 9, FX_PAL[FXP_GLOW]);                  // the seep
-      fxLine((int)(px - 10 * k), (int)G + 1, (int)(px + 7 * k), (int)G + 1, FX_PAL[FXP_WHITE]);
-      fxStroke(px + 10 * k, G - 2, px + 10 * k, G - 16 * k, 3.4f, 3.0f, FX_PAL[FXP_INK]);   // a pipe out of nowhere
-      fxStroke(px + 10 * k, G - 16 * k, px + 4 * k, G - 16 * k, 3.4f, 3.0f, FX_PAL[FXP_INK]);
-      for (int i = 0; i < 3; i++) {
-        float ph2 = fmodf((P.live ? t * 0.0016f : 0.2f) + i / 3.0f, 1.0f);
-        fxDisc(px + 4 * k, G - 14 * k + ph2 * 13 * k, 1.3f, FX_PAL[FXP_GLOW]);
-      }
-      fig(cx - 14 * k, arch, SCP_CROUCH, 1, 0, seat, k);
-      break;
-    }
-    case SC_GLY_MEDIC: {
-      ScFig D = { cx + 10 * k, G, -1, arch2, SCP_LIE, seat2, 0, P.rim, 0.7f, -0.7f, k };
-      for (int p = 0; p < 3; p++) scFigure(D, p);
-      fig(cx - 14 * k, arch, SCP_CROUCH, 1, 0, seat, k);
-      float bx = cx - 26 * k;                                // the kit, lid up
-      fxRect((int)bx - 1, (int)(G - 7 * k) - 1, (int)(bx + 9 * k) + 1, (int)G + 1, FX_PAL[FXP_INK]);
-      fxRect((int)bx, (int)(G - 7 * k), (int)(bx + 9 * k), (int)G, FX_PAL[FXP_GLOW]);
-      int mx = (int)(bx + 4.5f * k), my = (int)(G - 3.5f * k);
-      fxRect(mx - 1, my - 3, mx + 1, my + 3, FX_PAL[FXP_BLOOD]);
-      fxRect(mx - 3, my - 1, mx + 3, my + 1, FX_PAL[FXP_BLOOD]);
-      break;
-    }
-    case SC_GLY_SALVAGE: {
-      scHeap(cx + 10 * k, G, 46 * k, 16 * k, P.seed, P.rim);
-      fxStroke(cx + 2 * k, G - 11 * k, cx + 14 * k, G - 19 * k, 1.8f, 1.4f, FX_PAL[FXP_INK]);   // rebar
-      float pop = P.live ? fabsf(sinf(t * 0.004f)) * 5 * k : 3 * k;
-      float bx = cx + 12 * k, by = G - 16 * k - pop;          // something comes up out of it
-      fxRect((int)(bx - 5 * k), (int)(by - 6 * k), (int)(bx + 5 * k), (int)by, FX_PAL[FXP_INK]);
-      fxRect((int)(bx - 4 * k), (int)(by - 5 * k), (int)(bx + 4 * k), (int)by - 1, FX_PAL[FXP_HDR]);
-      fxLine((int)(bx - 4 * k), (int)(by - 3 * k), (int)(bx + 4 * k), (int)(by - 3 * k), FX_PAL[FXP_RUST]);
-      scSparkleSmall(bx + 8 * k, by - 7 * k, P.live ? t : 0);
-      fig(cx - 18 * k, arch, SCP_CROUCH, 1, 0, seat, k);
-      break;
-    }
-    case SC_GLY_SHELTER: {
-      float a = cx - 2 * k, b = cx + 30 * k;                  // a lean-to: two poles, a sheet
-      fxStroke(a, G, a, G - 26 * k, 1.8f, 1.6f, FX_PAL[FXP_INK]);
-      fxStroke(b, G, b, G - 12 * k, 1.8f, 1.6f, FX_PAL[FXP_INK]);
-      float sag = P.live ? (fxNoise1(t * 0.003f, 6) - 0.5f) * 2.5f : 0;
-      float qx[4] = { a - 4 * k, b + 5 * k, b + 5 * k, a - 4 * k }, qy[4] = { G - 27 * k, G - 11 * k + sag, G - 9 * k + sag, G - 24 * k };
-      fxPoly(qx, qy, 4, FX_PAL[FXP_INK]);
-      fxLine((int)(a - 4 * k), (int)(G - 28 * k), (int)(b + 5 * k), (int)(G - 12 * k + sag), FX_PAL[P.rim]);
-      fig(cx - 20 * k, arch, SCP_STAND, 1, 0, seat, k);
-      break;
-    }
+    case SC_GLY_FORAGE: scArtForage(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_WATER: scArtWater(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_MEDIC: scArtMedic(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_SALVAGE: scArtSalvage(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_SHELTER: scArtShelter(P, arch, arch2, seat, seat2); break;
     case SC_GLY_CRAFT: {
       float bx = cx + 6 * k;                                 // the bench
       fxRect((int)(bx - 14 * k), (int)(G - 11 * k), (int)(bx + 16 * k), (int)(G - 8 * k), FX_PAL[FXP_INK]);
@@ -2252,22 +3935,7 @@ static void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t ar
       scBang("CREAK", cx - 26 * k, T + (G - T) * 0.35f, 8 * k, P.seed, 1);
       break;
     }
-    case SC_GLY_CLASH: {
-      fig(cx - 16 * k, arch, SCP_REACH, 1, 0, seat, k);
-      float lunge = P.live ? fabsf(sinf(t * 0.006f)) * 4 * k : 2 * k;
-      float mx = cx + 18 * k - lunge, my = G - 12 * k;       // it: all mouth
-      fxBlob(mx, my, 1, 0, 13 * k, 11 * k, 55, FX_PAL[FXP_INK]);
-      fxBlob(mx - 1, my - 1, 1, 0, 12 * k, 10 * k, 55, FX_PAL[FXP_SOOT]);
-      for (int i = 0; i < 5; i++) {
-        float tx = mx - 10 * k + i * 3.2f * k;
-        fxTri(tx, my - 2, tx + 1.6f * k, my - 2, tx + 0.8f * k, my + 3 * k, FX_PAL[FXP_GLOW]);
-      }
-      scPx((int)(mx - 4 * k), (int)(my - 6 * k), FX_PAL[FXP_CRIT]);
-      scPx((int)(mx + 3 * k), (int)(my - 6 * k), FX_PAL[FXP_CRIT]);
-      fxStroke(cx - 12 * k, G - 31 * k, cx + 2 * k, G - 22 * k, 2.0f, 1.8f, FX_PAL[FXP_INK]);   // the pipe
-      scBang("WHAM!", cx + 2 * k, T + (G - T) * 0.32f, 10 * k, P.seed, P.k > 1.3f ? 2 : 1);
-      break;
-    }
+    case SC_GLY_CLASH: scArtClash(P, arch, arch2, seat, seat2); break;
     case SC_GLY_LIGHT: {
       fxRect((int)L, (int)T, (int)R, (int)G, FX_PAL[FXP_INK]);
       float dx = cx + 14 * k;                                // a panel, open, and the light behind it
@@ -2437,6 +4105,14 @@ static void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t ar
       scBang("TA-DA", cx + 26 * k, T + (G - T) * 0.3f, 8 * k, P.seed, 1);
       break;
     }
+    case SC_GLY_TRIP: scArtTrip(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_GUNFIRE: scArtGunfire(P, arch, arch2, seat, seat2); break;
+    case SC_GLY_ROUGH: case SC_GLY_ROUGH_TREE: case SC_GLY_ROUGH_CHALK: {
+      const uint8_t v = (uint8_t)(glyph - SC_GLY_ROUGH);
+      float hx, hy;
+      scArtRough(P, v, arch, seat, P.live ? (t - P.t0) % SCR_CYC : SCR_STILL[v], false, &hx, &hy);
+      break;
+    }
     default: {                                               // on the road, as ever
       fig(cx, arch, SCP_WALK, 1, ph, seat, k);
       break;
@@ -2444,8 +4120,169 @@ static void scPanelArt(const ScStage& P, uint8_t glyph, uint8_t arch, uint8_t ar
   }
 }
 
-// The sky a panel is set under: its tone decides the hour, its weather the rest.
-static void scPanelSet(ScStage& P, uint8_t glyph) {
+// The chart overhead: the waste's own zodiac, twelve signs strung on a belt
+// round the sky, on a chart that wraps the way the map does -- the map is a
+// torus, so is the sky over it. Once round the map east-west is once round
+// the belt, so which signs are overhead says how far east you stand: walk
+// east and the next one climbs in from the right. North-south tilts the belt
+// higher or lower and slides the field stars behind it. A neighbour a hex
+// away sees nearly the same sky; somebody across the map sees other signs.
+// No names, no numbers -- the clusters, the faintest join inside each, and a
+// scatter of field stars. For whoever learns to steer by them: the can, the
+// jackal, the wheel, the crow, the skull, the bottle, the key, the scorpion,
+// the lantern, the snake, the crown, the twins.
+struct ScSky {
+  float x, y;                                    // the chart point at the panel's top-left
+  bool  moon;                                    // the broken moon is up (scMoon), at mx,my
+  float mx, my, phase, low;                      // phase 0 new .. 0.5 full; low 1 on the horizon
+};
+static const int SC_CHART_W = 960, SC_CHART_H = 340;
+struct ScAster { uint8_t n; int8_t x[7], y[7]; uint8_t mag[7]; const char* path; };   // path: star digits, ' ' lifts the pen
+static const ScAster SC_ASTER[12] = {
+  { 5, {  -9,   7,  10,  -8,  -3 },           {  -7,  -9,   8,  10, -15 },           { 1, 2, 1, 1, 0 },       "401230" },
+  { 7, { -16, -11,  -8,   6,  14,  -6,   8 }, {  -6,  -9,  -3,  -2,  -8,   8,   9 }, { 2, 1, 0, 1, 0, 0, 0 }, "01234 25 36" },
+  { 7, {  11,   5,  -6, -10,  -5,   6,   0 }, {   1,  -9,  -8,   0,   9,   9,   0 }, { 1, 0, 1, 0, 1, 0, 2 }, "0123450" },
+  { 6, { -18,  -9,   0,   9,  17,   0 },      {  -6,   0,   4,  -1,  -8,  11 },      { 0, 1, 2, 1, 0, 1 },    "01234 25" },
+  { 6, {  -7,   7, -10,  -4,   4,  10 },      {  -4,  -4,   6,  11,  11,   6 },      { 2, 2, 0, 1, 1, 0 },    "2345" },
+  { 6, {   0,   1,  -6,  -6,   6,   6 },      { -15,  -8,  -2,  12,  12,  -2 },      { 0, 1, 1, 0, 1, 2 },    "0154321" },
+  { 7, { -16, -12,  -6,   5,  14,  14,   9 }, {  -3,   3,   0,   0,   1,   7,   6 }, { 1, 0, 2, 0, 1, 0, 0 }, "0120 234 45 36" },
+  { 7, { -16, -12,  -6,   1,   8,  13,  11 }, {  -6,  -1,   2,   4,   2,  -3,  -9 }, { 1, 0, 1, 2, 0, 1, 1 }, "0123456" },
+  { 6, {   0,  -6,   6,  -7,   7,   0 },      { -14,  -6,  -6,   8,   8,   1 },      { 0, 1, 1, 0, 0, 2 },    "013420 12" },
+  { 7, { -18, -11,  -4,   3,  10,  16,  20 }, {   4,  -3,   3,  -4,   2,  -5,  -2 }, { 1, 0, 1, 0, 1, 2, 0 }, "0123456" },
+  { 7, { -12, -10,  -5,   0,   5,  10,  12 }, {   6,  -6,   1,  -9,   1,  -6,   6 }, { 0, 1, 0, 2, 0, 1, 0 }, "0123456" },
+  { 6, {  -3,   3,  -5,   5,  -7,   7 },      { -10, -10,   0,   0,  10,  10 },      { 2, 2, 1, 1, 0, 0 },    "024 135 23" },
+};
+static inline float scWrapF(float v, float m) { v = fmodf(v, m); return v < 0 ? v + m : v; }
+// Where sign i sits on the belt (x on the chart) and how far off its line
+// (y, px): evenly round, each nudged so the spacing never looks ruled.
+static void scAsterAt(int i, float* x, float* y) {
+  uint32_t h = fxHash2((uint32_t)i, 0x57A2u);
+  *x = i * (SC_CHART_W / 12.0f) + SC_CHART_W / 24.0f + fxS(h) * 10.0f;
+  *y = fxS(fxHash(h)) * 5.0f;
+}
+// The broken moon: a bite out of its crown where something hit it, the
+// rubble from it still drifting off the break, a crack run back across the
+// face. Lit for its phase the northern way -- waxing on the right, waning on
+// the left -- with the dark of it a shade above the sky, so the broken shape
+// reads even as a sliver; a halo as full as it is; ruddy when it is low.
+static void scMoon(float cx, float cy, float r, float ph, float low, uint32_t now) {
+  const float th = ph * FX_TAU, lx = sinf(th), lz = -cosf(th);     // where the sun is, seen from it
+  const float full = (1.0f - cosf(th)) * 0.5f;                      // how much of it is lit
+  const float BX = 0.48f, BY = -0.82f, BITE_R = 0.4f;                   // the bite out of its crown, in radii (BR, CR: board macros)
+  const uint8_t LIT = low > 0.55f ? FXP_FLAME : FXP_GLOW, HI = low > 0.55f ? FXP_HOT : FXP_WHITE;
+  const int x0 = (int)floorf(cx - r * 2), x1 = (int)ceilf(cx + r * 2), y0 = (int)floorf(cy - r * 2), y1 = (int)ceilf(cy + r * 2);
+  for (int y = y0; y <= y1; y++)                                    // the halo, thrown on the sky round it
+    for (int x = x0; x <= x1; x++) {
+      float d = sqrtf((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy)) / r;
+      if (d > 1.05f && d < 1.7f && scDot(x, y, (1.7f - d) * 0.2f * full)) scPx(x, y, FX_PAL[FXP_EMBER]);
+    }
+  static const float CRATER[3][3] = { { -0.32f, 0.18f, 0.24f }, { 0.12f, 0.48f, 0.16f }, { -0.52f, -0.28f, 0.13f } };   // craters
+  for (int y = (int)floorf(cy - r - 1); y <= (int)ceilf(cy + r + 1); y++)
+    for (int x = (int)floorf(cx - r - 1); x <= (int)ceilf(cx + r + 1); x++) {
+      float u = (x + 0.5f - cx) / r, v = (y + 0.5f - cy) / r, d2 = u * u + v * v;
+      if (d2 > 1.0f) continue;
+      float bu = u - BX, bv = v - BY, bd = sqrtf(bu * bu + bv * bv);
+      float jag = BITE_R * (0.8f + 0.4f * fxNoise1(atan2f(bv, bu) * 2.4f + 3.0f, 77));
+      if (bd < jag) continue;                                       // gone: the sky through it
+      float z = sqrtf(1.0f - d2), lit = u * lx + z * lz;
+      uint8_t c;
+      if (bd < jag + 0.17f) c = lit > 0 ? FXP_EMBER : FXP_RUST;     // the broken edge, its insides showing
+      else if (lit > 0.06f) {
+        c = lit > 0.42f && d2 < 0.72f ? HI : LIT;
+        for (int k = 0; k < 3; k++) {
+          float cu = u - CRATER[k][0], cv = v - CRATER[k][1];
+          if (cu * cu + cv * cv < CRATER[k][2] * CRATER[k][2]) c = c == HI ? LIT : FXP_HDR;
+        }
+      } else if (lit > -0.05f) c = scDot(x, y, 0.5f) ? FXP_HDR : FXP_DIM;   // the terminator, soft
+      else c = FXP_DIM;                                              // the dark of it
+      // the crack: from the break back down across the face
+      float pu = u - (BX - 0.1f), pv = v - (BY + 0.4f);
+      float t1 = fxClampF((pu * -0.4f + pv * 0.82f) / (0.16f + 0.6724f), 0.0f, 1.0f);
+      float ex = pu + 0.4f * t1, ey = pv - 0.82f * t1;
+      if (ex * ex + ey * ey < 0.0085f && lit > -0.05f) c = FXP_BRICK;
+      scPx(x, y, FX_PAL[c]);
+    }
+  const float dx = 0.505f, dy = -0.863f;                            // the rubble, drifting off the break
+  for (int k = 0; k < 5; k++) {
+    uint32_t h = fxHash2((uint32_t)k, 0xB0C3u);
+    float dist = 1.08f + k * 0.36f + 0.1f * sinf(now * 0.0007f + k * 1.7f), side = fxS(h) * 0.4f;
+    int fx = (int)lroundf(cx + r * (dx * dist - dy * side)), fy = (int)lroundf(cy + r * (dy * dist + dx * side));
+    uint16_t c = FX_PAL[full > 0.2f ? (k & 1 ? LIT : FXP_HDR) : FXP_LINE];
+    scPx(fx, fy, c);
+    if (k < 2) { scPx(fx + 1, fy, c); scPx(fx, fy + 1, FX_PAL[FXP_DIM]); scPx(fx + 1, fy + 1, FX_PAL[FXP_DIM]); }
+  }
+}
+
+// The chart laid over the sky scPanelSet has just graded (top..hor), before
+// the ruins go up in front of it. Stars wash out as the sky brightens toward
+// the horizon, the way they do.
+static void scStars(const ScStage& P, const ScSky& sky, float top, float hor) {
+  const int w = P.x1 - P.x0, h = (int)P.gy - P.y0;
+  auto skyLv = [&](int y) -> float {
+    float u = (float)(y - P.y0) / fmaxf(1.0f, P.gy - P.y0);
+    return fxLerp(top, hor, u * u * 0.8f + u * 0.2f);
+  };
+  auto star = [&](int x, int y, float lv, bool rel) {         // rel: lv is above the sky, not a rung
+    if (x < P.x0 || x >= P.x1 || y <= P.y0 || y >= (int)P.gy - 2) return;
+    float s = skyLv(y), vis = fxClampF((7.0f - s) / 4.5f, 0.0f, 1.0f);
+    if (vis > 0) scDither(x, y, rel ? s + lv * vis : fxLerp(s, lv, vis));
+  };
+  const int CELL = 10, NC = SC_CHART_W / CELL, NR = SC_CHART_H / CELL;
+  const int c0 = (int)floorf(sky.x / CELL), r0 = (int)floorf(sky.y / CELL);
+  const float belt = h * 0.42f + h * 0.1f * sinf(sky.y * (FX_TAU / SC_CHART_H));   // how high it rides, by how far north
+  for (int cr = r0; cr <= r0 + h / CELL + 1; cr++)            // the field: one cell in five holds a star, dim
+    for (int cc = c0; cc <= c0 + w / CELL + 1; cc++) {
+      uint32_t hh = fxHash2((uint32_t)(((cc % NC) + NC) % NC), (uint32_t)(((cr % NR) + NR) % NR) * 977u + 0x5EEDu);
+      if (hh % 5) continue;
+      if (P.live && (fxHash2(hh, P.now / 450) & 15) == 0) continue;
+      int x = P.x0 + (int)floorf(cc * CELL + (float)((hh >> 8) % CELL) - sky.x);
+      int y = P.y0 + (int)floorf(cr * CELL + (float)((hh >> 16) % CELL) - sky.y);
+      star(x, y, (hh >> 24) % 8 == 0 ? 8.6f : 4.6f + ((hh >> 27) & 3) * 0.7f, false);
+    }
+  // a star of the chart: the brighter, the bigger -- a cross of glow round the leads
+  auto lamp = [&](int x, int y, uint8_t mag, bool tw) {
+    float c = mag == 2 ? 15.0f : mag == 1 ? 13.4f : 11.8f;
+    if (tw) c -= 2.4f;
+    star(x, y, c, false);
+    if (mag == 0 || (mag == 1 && tw)) return;
+    float a = mag == 2 ? c - 3.6f : c - 5.6f;
+    star(x - 1, y, a, false); star(x + 1, y, a, false); star(x, y - 1, a, false); star(x, y + 1, a, false);
+  };
+  for (int i = 0; i < 12; i++) {
+    const ScAster& A = SC_ASTER[i];
+    float ax, ay;
+    scAsterAt(i, &ax, &ay);
+    float dx = scWrapF(ax - sky.x + 40.0f, (float)SC_CHART_W) - 40.0f;   // the nearest lap of it
+    if (dx > w + 40) continue;
+    float dy = belt + h * 0.08f * sinf(ax * (2.0f * FX_TAU / SC_CHART_W)) + ay;   // the belt winds twice round
+    int sx[7], sy[7];
+    for (int k = 0; k < A.n; k++) {                           // drawn a quarter over the table's size
+      sx[k] = P.x0 + (int)floorf(dx + A.x[k] * 1.25f);
+      sy[k] = P.y0 + (int)floorf(dy + A.y[k] * 1.25f);
+    }
+    int from = -1;
+    for (const char* p = A.path;; p++) {                      // the joins, dotted, kept clear of the stars
+      if (*p >= '0' && *p <= '9') {
+        int to = *p - '0';
+        if (from >= 0) {
+          int n = fxMaxI(abs(sx[to] - sx[from]), abs(sy[to] - sy[from]));
+          for (int s = 3; s <= n - 3; s += 2)
+            star(sx[from] + (sx[to] - sx[from]) * s / n, sy[from] + (sy[to] - sy[from]) * s / n, 3.6f, true);
+        }
+        from = to;
+      } else from = -1;
+      if (!*p) break;
+    }
+    for (int k = 0; k < A.n; k++)
+      lamp(sx[k], sy[k], A.mag[k], P.live && fxHash2((uint32_t)(i * 8 + k), P.now / 380) % 11 == 0);
+  }
+  if (sky.moon) scMoon(sky.mx, sky.my, 7.5f, sky.phase, sky.low, P.now);
+}
+
+// The sky a panel is set under: its tone decides the hour, its weather the
+// rest -- and, handed the chart point somebody stands under, its stars are
+// that place's (scStars) instead of a scatter.
+static void scPanelSet(ScStage& P, uint8_t glyph, const ScSky* sky = nullptr) {
   float top = 3.4f, hor = 8.6f;
   switch (P.tone) {
     case SC_TONE_GOOD: top = 4.4f; hor = 11.0f; break;
@@ -2459,18 +4296,21 @@ static void scPanelSet(ScStage& P, uint8_t glyph) {
   if (glyph == SC_GLY_FOG)                             { top = 5.0f; hor = 6.4f; }
   P.night = top < 1.0f;
   P.rim = (uint8_t)fxClampF(hor - 1.0f, 7.0f, 11.0f);
+  if (sky) top = fminf(top, 0.4f);                           // a sky with a chart in it goes dark enough to read
   for (int y = P.y0; y < (int)P.gy; y++) {
     float u = (float)(y - P.y0) / fmaxf(1.0f, P.gy - P.y0);
     scTone(y, P.x0, P.x1, fxLerp(top, hor, u * u * 0.8f + u * 0.2f));
   }
-  if (P.night)
+  if (sky)
+    scStars(P, *sky, top, hor);
+  else if (P.night)
     for (int i = 0; i < (P.x1 - P.x0) / 5; i++) {
       uint32_t h = fxHash2((uint32_t)i, P.seed);
       int x = P.x0 + (int)(h % (uint32_t)(P.x1 - P.x0)), y = P.y0 + 2 + (int)((h >> 9) % (uint32_t)fxMaxI(1, (int)(P.gy - P.y0) / 2));
       if (P.live && (fxHash2((uint32_t)i, P.now / 450) & 7) == 0) continue;
       scPx(x, y, FX_PAL[(h >> 20) % 5 == 0 ? FXP_GLOW : FXP_LINE]);
     }
-  if (glyph != SC_GLY_LIGHT)
+  if (glyph != SC_GLY_LIGHT && glyph != SC_GLY_CLASH)       // both of those are indoors
     scRuins((float)(P.seed % 3000), (int)P.gy, fxClampF(hor - 3.0f, 0.8f, 8.0f), P.night, P.now, P.seed,
             fxMaxI(12, (int)(16 * P.k)), (int)(5 * P.k), (int)((P.gy - P.y0) * 0.42f));
   for (int y = (int)P.gy; y < P.y1; y++) {
@@ -2511,6 +4351,7 @@ static void scPanel(const SceneSnap& S, const SceneLog* e, int x0, int y0, int x
   P.seed = e ? fxHash(e->serial * 2654435761u + 7) : 99;
   P.live = big;
   P.now  = big ? now : 3000 + (P.seed % 4000);
+  P.t0   = big ? scChronSt.t0 : 0;
   uint8_t glyph = e ? e->glyph : SC_GLY_NONE;
   int cx1 = x1;
   if (wipe < 1.0f) cx1 = x0 + (int)((x1 - x0) * wipe);      // the new panel prints in from the left
@@ -2652,8 +4493,162 @@ static void scKit(float x, float y) {
   fxRect((int)x - 1, (int)y - 6, (int)x + 1, (int)y - 1, FX_PAL[FXP_BLOOD]);
   fxRect((int)x - 3, (int)y - 4, (int)x + 3, (int)y - 3, FX_PAL[FXP_BLOOD]);
 }
+// The scrap pile's pieces, centred where they sit: lit from up and left,
+// bright enough to read on the tarp the way the bottles and kits do.
+static void scCog(float x, float y, float r, float turn) {    // a gear: teeth, a hub, the hole through it
+  const int T = r > 4.0f ? 8 : 6;
+  for (int pass = 0; pass < 2; pass++) {                      // inked a pixel wider first
+    const uint16_t c = FX_PAL[pass ? FXP_BRICK : FXP_INK];
+    const float g = pass ? 0.0f : 1.0f;
+    fxDisc(x, y, r - 1.0f + g, c);
+    for (int i = 0; i < T; i++) {
+      float a = turn + i * (FX_TAU / T);
+      fxDisc(x + cosf(a) * (r - 0.4f), y + sinf(a) * (r - 0.4f), 1.05f + g * 0.75f, c);
+    }
+  }
+  fxDisc(x - 0.6f, y - 0.6f, r * 0.62f, FX_PAL[FXP_HDR]);     // the face
+  fxDisc(x - 1.2f, y - 1.2f, r * 0.3f, FX_PAL[FXP_GLOW]);
+  fxDisc(x, y, fmaxf(0.75f, r * 0.24f), FX_PAL[FXP_INK]);     // the hole
+}
+static void scTyre(float x, float y, float r) {               // a bald one stood on end, the rim still in it
+  fxDisc(x, y, r + 1.0f, FX_PAL[FXP_INK]);
+  fxDisc(x, y, r, FX_PAL[FXP_DIM]);
+  for (int i = 0; i < 14; i++) {                              // what is left of the tread
+    float a = i * (FX_TAU / 14);
+    if (i & 1) scPx((int)lroundf(x + cosf(a) * (r - 0.4f)), (int)lroundf(y + sinf(a) * (r - 0.4f)), FX_PAL[FXP_SOOT]);
+  }
+  for (int i = 0; i < 5; i++) {                               // the light along its shoulder
+    float a = 3.4f + i * 0.28f;
+    scPx((int)lroundf(x + cosf(a) * (r - 1.2f)), (int)lroundf(y + sinf(a) * (r - 1.2f)), FX_PAL[FXP_EMBER]);
+  }
+  fxDisc(x, y, r * 0.5f + 0.9f, FX_PAL[FXP_INK]);
+  fxDisc(x, y, r * 0.5f, FX_PAL[FXP_OK]);                     // the rim
+  fxDisc(x - 0.7f, y - 0.7f, r * 0.22f, FX_PAL[FXP_GLOW]);
+  fxDisc(x, y, 0.9f, FX_PAL[FXP_INK]);
+}
+static void scSheet(int x0, int y0, int x1, int y1, int w) {   // corrugated iron leant up, bottom (x0,y0) top (x1,y1)
+  float ox[4] = { x0 - 1.0f, x0 + w + 1.0f, x1 + w + 1.0f, x1 - 1.0f }, oy[4] = { y0 + 0.5f, y0 + 0.5f, y1 - 1.5f, y1 - 1.5f };
+  fxPoly(ox, oy, 4, FX_PAL[FXP_INK]);
+  for (int i = 0; i < w; i++)                                 // the ridges, one lit in three
+    fxLine(x0 + i, y0 - 1, x1 + i, y1, FX_PAL[i % 3 == 0 ? FXP_GLOW : i % 3 == 1 ? FXP_HDR : FXP_RUST]);
+  fxLine(x1, y1 - 1, x1 + w - 1, y1 - 1, FX_PAL[FXP_WHITE]);
+  fxRect((x0 + x1) / 2 + w / 2 - 1, (y0 + y1) / 2, (x0 + x1) / 2 + w / 2 + 1, (y0 + y1) / 2 + 2, FX_PAL[FXP_INK]);   // rusted through
+}
+static void scPipe(float ax, float ay, float bx, float by, float cx, float cy) {   // a pipe with one bend in it
+  fxStroke(ax, ay, bx, by, 4.4f, 4.4f, FX_PAL[FXP_INK]);
+  fxStroke(bx, by, cx, cy, 4.4f, 4.4f, FX_PAL[FXP_INK]);
+  fxDisc(bx, by, 2.2f, FX_PAL[FXP_INK]);
+  fxStroke(ax, ay, bx, by, 2.4f, 2.4f, FX_PAL[FXP_OK]);
+  fxStroke(bx, by, cx, cy, 2.4f, 2.4f, FX_PAL[FXP_OK]);
+  fxDisc(bx, by, 1.2f, FX_PAL[FXP_OK]);
+  fxLine((int)ax, (int)ay - 1, (int)bx - 1, (int)by - 1, FX_PAL[FXP_GLOW]);
+  fxLine((int)cx - 1, (int)cy + 1, (int)bx - 1, (int)by - 2, FX_PAL[FXP_GLOW]);
+  fxRect((int)cx - 1, (int)cy - 1, (int)cx + 2, (int)cy + 1, FX_PAL[FXP_INK]);   // the open end
+}
 
-static struct { int8_t page; uint32_t t0; } scStashSt = { -1, 0 };
+static struct { int8_t page; uint32_t t0; float skyX, skyY; uint32_t skyT; bool skyHave; } scStashSt = { -1, 0, 0, 0, 0, false };
+
+// A name cut to `room` characters the way a clerk would: in capitals, and if
+// it does not fit, stopped short with a full stop rather than lopped mid-word.
+static void scAbbrev(char* out, size_t cap, const char* s, int room) {
+  int n = (int)strlen(s);
+  room = fxMaxI(2, fxMinI(room, (int)cap - 1));
+  if (n <= room) {
+    memcpy(out, s, n); out[n] = 0;
+  } else {
+    int k = room - 1;
+    while (k > 1 && s[k - 1] == ' ') k--;
+    memcpy(out, s, k); out[k++] = '.'; out[k] = 0;
+  }
+  for (char* p = out; *p; p++) *p = (char)toupper((unsigned char)*p);
+}
+
+// The others, steered by: every survivor has a sign of their own -- a tight
+// knot of bright stars with no lines in it that never twinkles, which is how
+// it differs from the zodiac -- hung in the sky over wherever they stand, and
+// your own sits at the zenith. East is right and north is up, at the chart's
+// own scale (a hex east is SC_CHART_W/cols px, a row north SC_CHART_H/rows; a
+// step along q is half a row south as well, as on the map). Anyone past the
+// rim of what you can see hangs low on the rim along the line to them, dimmer,
+// the way a far sign sits on the horizon. Nothing says whose sign is whose:
+// you are always the one overhead on your own page, and the rest is for
+// whoever is paying attention. Placed from the gliding sky, so they slide
+// with the stars when the page turns.
+struct ScSeatSign { uint8_t n; int8_t x[5], y[5]; };
+static const ScSeatSign SC_SEAT_SIGN[SC_SEATS] = {
+  { 3, {  0, -5,  5 },         { -5,  4,  4 } },             // the tripod
+  { 3, { -6,  0,  6 },         {  4,  0, -4 } },             // the belt
+  { 4, {  0, -5,  0,  5 },     { -6,  0,  6,  0 } },         // the diamond
+  { 4, { -5, -5,  0,  6 },     { -5,  1,  5,  4 } },         // the hook
+  { 5, {  0,  0,  0, -6,  6 }, { -6,  0,  6,  0,  0 } },     // the cross
+  { 3, { -3,  3,  0 },         { -2, -2,  5 } },             // the pair and its drop
+};
+static const float SC_ZENITH_X = 120, SC_ZENITH_Y = 68;   // clear of the caption above and the moon's arc below
+// boxR/boxB: the narration box's far corner -- a sign that would hide under
+// it is hung just below it instead.
+static void scStashWanderers(const SceneSnap& S, int pid, const ScSky& sky, int cols, int rows, int boxR, int boxB) {
+  const float sq = (float)SC_CHART_W / cols, sr = (float)SC_CHART_H / rows;
+  const float L = 10, R = 229, T = 28, B = 108;              // the rim, a sign's width in
+  struct Mark { float px, py; uint8_t seat; bool off, below, side; };   // side: pinned to the left or right rim
+  Mark m[SC_SEATS];
+  int n = 0;
+  for (int i = 0; i < SC_SEATS; i++) {
+    if (!S.s[i].on) continue;
+    const SceneSurv& o = S.s[i];
+    Mark& k = m[n++];
+    k.seat = (uint8_t)i; k.below = o.depth > 0; k.off = false; k.side = false;
+    if (i == pid) { k.px = SC_ZENITH_X; k.py = SC_ZENITH_Y; continue; }
+    float X = scWrapF(o.q * sq - sky.x - SC_ZENITH_X + SC_CHART_W * 0.5f, (float)SC_CHART_W) - SC_CHART_W * 0.5f;
+    float Y = scWrapF(o.r * sr - sky.y - (SC_ZENITH_Y - 20) + SC_CHART_H * 0.5f, (float)SC_CHART_H) - SC_CHART_H * 0.5f
+              + X / sq * 0.5f * sr;
+    k.px = SC_ZENITH_X + X; k.py = SC_ZENITH_Y + Y;
+    k.off = !(k.px >= L && k.px <= R && k.py >= T && k.py <= B);
+    if (k.off) {                                             // pulled in to the rim along the line to them
+      float t = 1.0f, tx = 1.0f;
+      if (k.px < L) tx = fminf(tx, (L - SC_ZENITH_X) / X);
+      if (k.px > R) tx = fminf(tx, (R - SC_ZENITH_X) / X);
+      if (k.py < T) t = fminf(t, (T - SC_ZENITH_Y) / Y);
+      if (k.py > B) t = fminf(t, (B - SC_ZENITH_Y) / Y);
+      k.side = tx < t;
+      t = fminf(t, tx);
+      k.px = SC_ZENITH_X + X * t; k.py = SC_ZENITH_Y + Y * t;
+    }
+  }
+  // Signs that would land on one another -- a party on one hex, or two off the
+  // same way past the rim -- are hung side by side instead, along the rim for
+  // the far ones.
+  bool used[SC_SEATS] = {};
+  for (int a = 0; a < n; a++) {
+    if (used[a]) continue;
+    int g[SC_SEATS], gn = 0;
+    for (int b = a; b < n; b++)
+      if (!used[b] && m[b].off == m[a].off && fabsf(m[b].px - m[a].px) < 17 && fabsf(m[b].py - m[a].py) < 17) { used[b] = true; g[gn++] = b; }
+    if (gn < 2) continue;
+    const bool vert = m[a].off && m[a].side;
+    const float cx = m[a].px, cy = m[a].py;
+    for (int j = 0; j < gn; j++) {
+      float o = (j - (gn - 1) * 0.5f) * 18.0f;
+      m[g[j]].px = vert ? cx : fxClampF(cx + o, L, R);
+      m[g[j]].py = vert ? fxClampF(cy + o, T, B) : cy;
+    }
+  }
+  for (int a = 0; a < n; a++) {
+    Mark& k = m[a];
+    if (k.px < boxR + 7 && k.py < boxB + 7) k.py = fminf(B, (float)boxB + 7);   // out from under the caption
+    const ScSeatSign& G = SC_SEAT_SIGN[k.seat];
+    const uint8_t lv = (uint8_t)(k.off + k.below);           // 0 overhead, 1 far or below, 2 both
+    const uint16_t c = FX_PAL[lv == 0 ? FXP_WHITE : lv == 1 ? FXP_CRIT : FXP_HDR];
+    const uint16_t arm = FX_PAL[lv == 0 ? FXP_GLOW : lv == 1 ? FXP_FLAME : FXP_RUST];
+    for (int pass = 0; pass < 2; pass++)                     // inked round first, so a sign cuts through the zodiac behind it
+      for (int s = 0; s < G.n; s++) {
+        int x = (int)lroundf(k.px) + G.x[s], y = (int)lroundf(k.py) + G.y[s];
+        if (x < 1 || x > FX_W - 2 || y < 23 || y > 114) continue;
+        if (!pass) { fxDisc((float)x, (float)y, 2.7f, FX_PAL[FXP_INK]); continue; }
+        scPx(x - 1, y, arm); scPx(x + 1, y, arm); scPx(x, y - 1, arm); scPx(x, y + 1, arm);
+        scPx(x, y, c);
+      }
+  }
+}
 
 static void scStashDraw(const SceneSnap& S, uint32_t now) {
   int seated[SC_SEATS], nOn = 0;
@@ -2662,9 +4657,43 @@ static void scStashDraw(const SceneSnap& S, uint32_t now) {
   if (pid != scStashSt.page) { scStashSt.page = (int8_t)pid; scStashSt.t0 = now; }
   const uint32_t since = now - scStashSt.t0;
 
+  // -- the stars over wherever they stand (scStars), their zenith at
+  //    SC_ZENITH_X/Y. When the page turns the chart slides across to the next
+  //    survivor's sky, the short way round --
+  const int cols = S.cols > 0 ? S.cols : 75, rows = S.rows > 0 ? S.rows : 57;
+  if (pid >= 0) {
+    const float tx = scWrapF(S.s[pid].q * (float)SC_CHART_W / cols - SC_ZENITH_X, (float)SC_CHART_W);
+    const float ty = scWrapF(S.s[pid].r * (float)SC_CHART_H / rows - (SC_ZENITH_Y - 20), (float)SC_CHART_H);
+    if (!scStashSt.skyHave) { scStashSt.skyX = tx; scStashSt.skyY = ty; scStashSt.skyHave = true; }
+    const float k  = 1.0f - expf(-(float)(now - scStashSt.skyT) / 260.0f);
+    const float dx = scWrapF(tx - scStashSt.skyX + SC_CHART_W * 0.5f, (float)SC_CHART_W) - SC_CHART_W * 0.5f;
+    const float dy = scWrapF(ty - scStashSt.skyY + SC_CHART_H * 0.5f, (float)SC_CHART_H) - SC_CHART_H * 0.5f;
+    scStashSt.skyX = scWrapF(scStashSt.skyX + dx * k, (float)SC_CHART_W);
+    scStashSt.skyY = scWrapF(scStashSt.skyY + dy * k, (float)SC_CHART_H);
+  }
+  scStashSt.skyT = now;
+  ScSky sky = { scStashSt.skyX, scStashSt.skyY };
+  // -- the broken moon (scMoon). Thirteen of its months to the year, so the
+  //    year's wrap is seamless; up for one night's length, later each night
+  //    the way ours is: full rises at nightfall and sets at dawn, the first
+  //    quarter is high at nightfall and gone by midnight, the last quarter
+  //    rises at midnight, a crescent only shows near dusk or dawn. It goes
+  //    the northern way, facing south: up out of the left behind the ruins,
+  //    low across, down on the right --
+  {
+    const float t = S.dayMil / 1000.0f, NIGHTFALL = 0.745f;          // where the road's sun goes down
+    const float ph = scWrapF(((S.day ? S.day - 1 : 0) + t) / (365.0f / 13.0f) + 0.15f, 1.0f);
+    const float u = (t - NIGHTFALL) / (1.0f - NIGHTFALL) + 1.0f - 2.0f * ph;   // 0 rising .. 1 setting
+    if (t >= NIGHTFALL && u >= 0.0f && u <= 1.0f) {
+      const float arc = sinf(u * 3.14159265f);
+      sky.moon = true; sky.phase = ph; sky.low = 1.0f - arc;
+      sky.mx = -10.0f + u * 260.0f; sky.my = 122.0f - 34.0f * arc;
+    }
+  }
+
   // -- the set: dusk over the ruins, the tarp in the dirt --
   ScStage P = { 0, 20, FX_W, 162, 150, 120, 1.35f, SC_TONE_ILL, 9, 0x57A5u + (uint32_t)(pid + 1) * 977u, now, true, false };
-  scPanelSet(P, SC_GLY_NONE);
+  scPanelSet(P, SC_GLY_NONE, scStashSt.skyHave ? &sky : nullptr);
   for (int y = 118; y < 162; y++) {
     float u = (y - 118) / 44.0f, xl = 64 - u * 20, xr = 236 + u * 8;
     for (int x = (int)xl; x < (int)xr && x < FX_W; x++) {
@@ -2721,13 +4750,34 @@ static void scStashDraw(const SceneSnap& S, uint32_t now) {
         }
         case 2: for (int i = 0; i < fxMinI(c, 3); i++) scJerry(x - 8 + i * 8, y - (i & 1) * 2); break;
         case 3: for (int i = 0; i < fxMinI(c, 4); i++) scKit(x + (i & 1) * 3 - 1, y - i * 7); break;
-        case 4: if (c > 0) {
-          float w = 14 + fxMinI(c, 12) * 1.6f, h = 4 + fxMinI(c, 12) * 1.1f;
-          scHeap(x, y, w, h, 0x5C4Au + (uint32_t)c, FXP_HDR);
-          for (int i = 0; i < fxMinI(c, 8); i++) {           // a bolt, a spring, a something
-            uint32_t hh = fxHash(i * 7 + 3);
-            float bx = x + fxS(hh) * w * 0.3f, by = y - 2 - fxU(hh >> 8) * h * 0.7f;
-            scPx((int)bx, (int)by, FX_PAL[(hh >> 20) & 1 ? FXP_GLOW : FXP_OK]);
+        case 4: if (c > 0) {                                 // the junk itself, a piece more for each one held
+          const int n = fxMinI(c, 12);
+          const float ox = n == 1 ? -7.0f : 0.0f;            // one cog alone sits in the middle
+          const int sw = 8 + fxMinI(n, 6) * 2;
+          for (int k = 0; k < 2; k++) fxSpan((int)y - k, (int)x - sw + k * 3, (int)x + sw - k * 3, FX_PAL[FXP_TRACK]);   // its shadow
+          if (n >= 3) scSheet((int)x - 19, (int)y - 1, (int)x - 13, (int)y - 23, 7);
+          if (n >= 4) scPipe(x + 2, y - 4, x + 13, y - 4, x + 14, y - 19);
+          if (n >= 2) scTyre(x - 7, y - 8, 6.5f);
+          scCog(x + 6 + ox, y - 7, 5.6f, 0.2f);
+          if (n >= 5) scCog(x - 1, y - 17, 3.6f, 0.5f);
+          if (n >= 6)                                        // a spring, sprung
+            for (int i = 0; i < 4; i++) {
+              int sx = (int)x + 4 + i * 2, sy = (int)y - 15;
+              fxLine(sx + 1, sy + 1, sx + 2, sy - 4, FX_PAL[FXP_INK]);
+              fxLine(sx, sy, sx + 1, sy - 5, FX_PAL[FXP_GLOW]);
+            }
+          static const int8_t NUT[6][2] = { { -13, -1 }, { 12, -1 }, { -1, -1 }, { 17, -1 }, { -18, -1 }, { 7, -14 } };
+          for (int i = 0; i < n - 6; i++) {                  // and the nuts and bolts that came with it all
+            int bx = (int)x + NUT[i][0], by = (int)y + NUT[i][1];
+            fxRect(bx - 2, by - 3, bx + 2, by + 1, FX_PAL[FXP_INK]);
+            fxRect(bx - 1, by - 2, bx + 1, by, FX_PAL[i & 1 ? FXP_HDR : FXP_OK]);
+            scPx(bx - 1, by - 2, FX_PAL[FXP_GLOW]);
+          }
+          if ((now / 110) % 41 == 0) {                       // something in it catches the light
+            int gx = (int)(x + 6 + ox - 2.5f), gy = (int)(y - 9.5f);
+            scPx(gx, gy, FX_PAL[FXP_WHITE]);
+            scPx(gx - 1, gy, FX_PAL[FXP_GLOW]); scPx(gx + 1, gy, FX_PAL[FXP_GLOW]);
+            scPx(gx, gy - 1, FX_PAL[FXP_GLOW]); scPx(gx, gy + 1, FX_PAL[FXP_GLOW]);
           }
         } break;
       }
@@ -2754,6 +4804,11 @@ static void scStashDraw(const SceneSnap& S, uint32_t now) {
         v.packUsed == 0 ? "TRAVELLING LIGHT.|TOO LIGHT." :
                            "EVERYTHING THEY OWN,|LAID OUT TO JUDGE.";
     scNarration(nar, 5, 25, since);
+    {
+      int nl = 1, ll = 0, lm = 0;                              // where scNarration put its box
+      for (const char* c = nar; *c; c++) { if (*c == '|') { nl++; ll = 0; } else lm = fxMaxI(lm, ++ll); }
+      scStashWanderers(S, pid, sky, cols, rows, 5 + lm * 6 + 12, 25 + nl * 10 + 8);
+    }
   }
 
   // -- the masthead, with a dot per survivor --
@@ -2792,34 +4847,83 @@ static void scStashDraw(const SceneSnap& S, uint32_t now) {
   int nw = fxF2Width(nm);
   if (18 + nw + 6 + scTypeW(an, 1) < sx - 4) fxGlcd(an, 18 + nw + 6, 170, 1, FX_PAL[FXP_BRICK]);
 
-  // -- the manifest: a clipboard of what is in the pack --
-  for (int y = 186; y < 297; y++)
-    for (int x = 6; x < 234; x++)
-      scDither(x, y, 7.4f + 0.7f * (fxNoise2(x * 0.07f, y * 0.07f, 29) - 0.5f) + ((y - 200) % 10 == 9 && y > 200 ? -1.6f : 0));
-  fxRect(6, 186, 234, 187, FX_PAL[FXP_GLOW]);
-  fxRect(96, 182, 144, 192, FX_PAL[FXP_INK]);                 // the clip
-  fxRect(98, 183, 142, 185, FX_PAL[FXP_HDR]);
-  fxGlcd("MANIFEST", 12, 191, 1, FX_PAL[FXP_INK]);
+  // -- the manifest: a tractor-feed printout clipped to a board. Bars of two
+  //    shades so the eye can follow a row across, holes down both edges, and
+  //    a count only where there is more than one of a thing --
+  const int PX0 = 7, PY0 = 189, PX1 = 233, PY1 = 297, ROW0 = 205;
+  fxRect(2, 183, 238, 300, FX_PAL[FXP_INK]);                  // the board, the grain running down it
+  for (int y = 184; y < 299; y++)
+    for (int x = 3; x < 237; x++) scDither(x, y, 2.7f + 1.2f * (fxNoise2(x * 0.45f, y * 0.035f, 41) - 0.5f));
+  fxLine(3, 184, 236, 184, FX_PAL[FXP_LINE]);
+  fxRect(PX0 + 2, PY0 + 2, PX1 + 2, PY1 + 1, FX_PAL[FXP_INK]);  // the sheet's shadow
+  for (int y = PY0; y < PY1; y++) {
+    bool bar = y >= ROW0 && ((y - ROW0) / 10) & 1;
+    fxSpan(y, PX0, PX1, FX_PAL[FXP_HDR]);
+    if (bar) fxSpan(y, PX0 + 7, PX1 - 7, FX_PAL[FXP_OK]);
+  }
+  for (int x = PX0; x < PX1; x += 4) fxRect(x + 2, PY1 - 1, x + 4, PY1, FX_PAL[FXP_INK]);   // torn off at the fold
+  for (int y = PY0 + 4; y + 3 < PY1; y += 10)                 // the sprocket holes, and the perforations
+    for (int s = 0; s < 2; s++) {
+      int hx = s ? PX1 - 5 : PX0 + 2;
+      fxRect(hx, y, hx + 3, y + 3, FX_PAL[FXP_TRACK]);
+      fxLine(hx, y, hx + 2, y, FX_PAL[FXP_SOOT]);
+    }
+  for (int y = PY0 + 1; y < PY1 - 1; y += 2) { scPx(PX0 + 6, y, FX_PAL[FXP_BRICK]); scPx(PX1 - 7, y, FX_PAL[FXP_BRICK]); }
+  for (int dy = -5; dy <= 5; dy++)                             // somebody's thumb, where you hold it
+    for (int dx = -5; dx <= 5; dx++) {
+      float d = sqrtf(dx * dx * 1.3f + dy * dy * 0.8f);
+      if (d > 5.6f || fabsf(d * 0.62f - roundf(d * 0.62f)) > 0.2f || fxHash2((uint32_t)(dx * 31 + dy), 0x7Bu) % 5 == 0) continue;
+      scPx(81 + dx, 195 + dy, FX_PAL[FXP_OK]);
+    }
+  // the clip: a pressed-brass clamp, the hanging slot in its crown
+  {
+    const float ox[6] = { 93, 147, 147, 137, 103, 93 }, oy[6] = { 200, 200, 192, 181, 181, 192 };
+    const float ix[6] = { 94, 146, 146, 136, 104, 94 }, iy[6] = { 199, 199, 192, 182, 182, 192 };
+    fxPoly(ox, oy, 6, FX_PAL[FXP_INK]);
+    fxPoly(ix, iy, 6, FX_PAL[FXP_FLAME]);
+    fxLine(105, 182, 135, 182, FX_PAL[FXP_GLOW]);
+    fxLine(95, 192, 103, 183, FX_PAL[FXP_HOT]);
+    fxLine(137, 183, 145, 191, FX_PAL[FXP_BRICK]);
+    fxLine(95, 193, 145, 193, FX_PAL[FXP_HOT]);              // the fold where it bites the paper
+    fxLine(95, 198, 145, 198, FX_PAL[FXP_BRICK]);
+    fxRect(112, 185, 128, 189, FX_PAL[FXP_INK]);
+    fxLine(113, 189, 127, 189, FX_PAL[FXP_RUST]);
+    for (int s = 0; s < 2; s++) {
+      int rx = s ? 140 : 100;
+      fxDisc((float)rx, 196, 1.5f, FX_PAL[FXP_INK]);
+      scPx(rx - 1, 195, FX_PAL[FXP_GLOW]);
+    }
+  }
+  // the head of the form
+  fxGlcd("MANIFEST", 15, 192, 1, FX_PAL[FXP_INK]);
+  fxGlcd("MANIFEST", 16, 192, 1, FX_PAL[FXP_INK]);              // struck twice, the way a heading was
   snprintf(nm, sizeof(nm), "%u/%u", (unsigned)v.packUsed, (unsigned)v.packCap);
-  fxGlcd(nm, 228 - scTypeW(nm, 1), 191, 1, FX_PAL[FXP_INK]);
-  int shown = (int)(since / 70);                               // written up a line at a time when the page turns
+  const int cw = scTypeW(nm, 1);
+  fxGlcd(nm, 226 - cw, 192, 1, FX_PAL[v.packUsed >= v.packCap ? FXP_BLOOD : FXP_INK]);
+  fxGlcd("PACK", 226 - cw - 30, 192, 1, FX_PAL[FXP_RUST]);
+  fxLine(15, 201, 225, 201, FX_PAL[FXP_INK]);
+  for (int x = 15; x <= 225; x += 2) scPx(x, 203, FX_PAL[FXP_BRICK]);
+  int shown = (int)(since / 70);                               // printed up a line at a time when the page turns
   if (S.itemN == 0) {
-    fxGlcd("NOTHING. CONTENTS MAY", 12, 214, 1, FX_PAL[FXP_INK]);
-    fxGlcd("HAVE SETTLED ELSEWHERE.", 12, 224, 1, FX_PAL[FXP_INK]);
+    static const char E1[] = "NOTHING. CONTENTS MAY", E2[] = "HAVE SETTLED ELSEWHERE.";
+    fxGlcd(E1, 120 - scTypeW(E1, 1) / 2, 226, 1, FX_PAL[FXP_INK]);
+    fxGlcd(E2, 120 - scTypeW(E2, 1) / 2, 236, 1, FX_PAL[FXP_INK]);
+  } else {
+    for (int y = ROW0; y < ROW0 + 90; y += 2) scPx(120, y, FX_PAL[FXP_BRICK]);
   }
   for (int i = 0; i < S.itemN && i < 18 && i < shown; i++) {
-    int col = i / 9, row = i % 9;
-    int x = 12 + col * 112, y = 202 + row * 10;
-    char q[6];
-    snprintf(q, sizeof(q), "x%u", (unsigned)S.itemQty[i]);
-    char it[20];
-    int room = (104 - scTypeW(q, 1) - 4) / 6;
-    snprintf(it, sizeof(it), "%.*s", fxMaxI(1, fxMinI(19, room)), S.item[i]);
-    for (char* p = it; *p; p++) *p = (char)toupper((unsigned char)*p);
-    fxGlcd(it, x, y, 1, FX_PAL[FXP_INK]);
-    fxGlcd(q, x + 104 - scTypeW(q, 1), y, 1, FX_PAL[FXP_BLOOD]);
+    const int x0 = i < 9 ? 15 : 124, x1 = i < 9 ? 116 : 225, y = ROW0 + 1 + (i % 9) * 10;
+    char q[6] = "";
+    if (S.itemQty[i] > 1) snprintf(q, sizeof(q), "x%u", (unsigned)S.itemQty[i]);
+    const int qw = q[0] ? scTypeW(q, 1) : 0;
+    char it[22];
+    scAbbrev(it, sizeof(it), S.item[i], (x1 - x0 + 1 - (qw ? qw + 4 : 0)) / 6);
+    const int tw = fxGlcd(it, x0, y, 1, FX_PAL[FXP_INK]);
+    if (qw) {
+      for (int x = x0 + tw + 1; x < x1 - qw - 2; x += 3) scPx(x, y + 6, FX_PAL[FXP_RUST]);   // the leader
+      fxGlcd(q, x1 - qw + 1, y, 1, FX_PAL[FXP_BLOOD]);
+    }
   }
-  fxDisc(226, 290, 4, FX_PAL[FXP_EMBER]);                      // somebody's thumbprint
   // -- the remark --
   static const char* const REM[] = {
     "CHECKED TWICE. STILL NOT ENOUGH.", "EVERY ITEM HAS A STORY. MOSTLY SAD.",
@@ -3288,6 +5392,392 @@ static void scWasteDraw(const SceneSnap& S, uint32_t now) {
   fxGlcd(rem, 3, 304, 1, FX_PAL[FXP_LINE]);
 }
 
+// ── 11b. THE WASTE, broken ───────────────────────────────────────────────────
+// The old radar only comes up about a third of the times button B lands on
+// it. The rest, the board hands in a seed (S.wasteFault, rolled once a visit
+// in ui-screens.hpp) and the scope is broken its own way for that whole
+// visit: one big fault -- the picture rolls, collapses to a line, shears off
+// its sync, fills with junk out of bad video RAM, loses half the tube, or
+// gives up and dumps its memory -- with a few small ones on top: the sweep
+// stuck and twitching, a field of lines dropped, the phosphor smearing,
+// columns stuck, the lettering rotting, snow. The masthead and the key mostly
+// keep working; it is the scope that has gone. The remark line owns up.
+//
+// All of it is done to the finished frame, so scWasteDraw never knows; the
+// stuck sweep is only scWasteDraw handed a clock that has stopped.
+enum : uint8_t { SCW_ROLL = 0, SCW_COLLAPSE, SCW_SHEAR, SCW_VRAM, SCW_HALF, SCW_DUMP, SCW_MAJOR_N };
+enum : uint8_t { SCW_STALL = 1, SCW_SCAN = 2, SCW_SMEAR = 4, SCW_COLS = 8, SCW_TYPE = 16, SCW_SNOW = 32 };
+static const int SCW_Y0 = 20, SCW_Y1 = 255;     // the scope's rows, bezel and all
+static const int SCW_H  = SCW_Y1 - SCW_Y0;
+
+static inline uint8_t scWasteMajor(uint32_t f) { return (uint8_t)(fxHash2(f, 101) % SCW_MAJOR_N); }
+static uint8_t scWasteMinor(uint32_t f) {
+  const uint32_t h = fxHash2(f, 202), g = fxHash(h);
+  uint8_t m = 0;
+  if ((h & 255) < 100)        m |= SCW_STALL;
+  if (((h >> 8) & 255) < 70)  m |= SCW_SCAN;
+  if (((h >> 16) & 255) < 80) m |= SCW_SMEAR;
+  if (((h >> 24) & 255) < 80) m |= SCW_COLS;
+  if ((g & 255) < 150)        m |= SCW_TYPE;
+  if (((g >> 8) & 255) < 120) m |= SCW_SNOW;
+  return m;
+}
+// The clock scWasteDraw is handed: the real one, or -- the sweep stuck -- the
+// moment it broke, twitching between three nearly-the-same frames.
+static inline uint32_t scWasteClock(const SceneSnap& S, uint32_t now) {
+  if (!S.wasteFault || !(scWasteMinor(S.wasteFault) & SCW_STALL)) return now;
+  return S.wasteSince + (fxHash2(now / 280, S.wasteFault) % 3) * 110;
+}
+
+// Junk out of bad character RAM: the glcd hand's own pictographs, its shades
+// and box pieces, some punctuation -- what a terminal shows when its memory
+// lies to it.
+static const uint8_t SCW_JUNK[] = {
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0B, 0x0E, 0x0F, 0x10, 0x11, 0x13, 0x18, 0x19, 0x1E, 0x1F,
+  '#', '%', '&', '@', '$', '*', '?', '<', '>', '/',
+  0xB0, 0xB1, 0xB2, 0xBA, 0xBB, 0xBC, 0xC4, 0xC5, 0xCD, 0xCE, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xFE,
+};
+// One 6 x 8 cell of it, inked over whatever was there; now and then in
+// inverse video.
+static void scwJunk(int x, int y, uint32_t h) {
+  static const uint8_t COL[4] = { FXP_LINE, FXP_HDR, FXP_CRIT, FXP_DIM };
+  const char g[2] = { (char)SCW_JUNK[(h >> 4) % sizeof(SCW_JUNK)], 0 };
+  const bool inv = (h & 7) == 0;
+  fxRect(x, y, x + 6, y + 8, FX_PAL[inv ? FXP_HDR : FXP_INK]);
+  fxGlcd(g, x, y, 1, FX_PAL[inv ? FXP_INK : COL[(h >> 12) & 3]]);
+}
+static inline uint16_t* scwRow(int y) { return fxDst + y * FX_W; }
+static void scwSwapRows(int a, int b) {
+  uint16_t tmp[FX_W];
+  memcpy(tmp, scwRow(a), sizeof(tmp));
+  memcpy(scwRow(a), scwRow(b), sizeof(tmp));
+  memcpy(scwRow(b), tmp, sizeof(tmp));
+}
+static void scwReverseRows(int y0, int y1) { for (y1--; y0 < y1; y0++, y1--) scwSwapRows(y0, y1); }
+// Turn the rows [y0, y1) over by k, wrapping: what was at y0 lands at y0 + k.
+static void scwRollRows(int y0, int y1, int k) {
+  const int n = y1 - y0;
+  k %= n;
+  if (k < 0) k += n;
+  if (!k) return;
+  scwReverseRows(y0, y1); scwReverseRows(y0, y0 + k); scwReverseRows(y0 + k, y1);
+}
+// And a row along by k, wrapping: what was at x = 0 lands at x = k.
+static void scwShiftRow(uint16_t* row, int k) {
+  k %= FX_W;
+  if (k < 0) k += FX_W;
+  if (!k) return;
+  uint16_t tmp[FX_W];
+  memcpy(tmp, row + FX_W - k, (size_t)k * 2);
+  memmove(row + k, row, (size_t)(FX_W - k) * 2);
+  memcpy(row, tmp, (size_t)k * 2);
+}
+static void scwDimRow(int y, uint32_t k) {
+  uint16_t* row = scwRow(y);
+  for (int x = 0; x < FX_W; x++) row[x] = fxDim(row[x], k);
+}
+
+// Vertical hold gone: the picture rolls, catches for a beat, slips again,
+// and the blanking between one frame and the next goes by as a black bar.
+// A soft hum bar drifts up through it the other way.
+static SC_NOINLINE void scwRoll(uint32_t t, uint32_t f) {
+  const uint32_t cyc = 2600 + (f >> 20) % 1400, slip = cyc * 3 / 4, n = t / cyc, u = t % cyc;
+  const float v = 0.05f + 0.05f * fxU(fxHash2(f, 7));            // px a ms while it slips
+  int k = (int)((float)(n * slip + (u < slip ? u : slip)) * v);
+  if (u >= slip) k += (int)(fxHash2(t / 140, f) % 3) - 1;        // caught, but not firmly
+  k %= SCW_H;
+  scwRollRows(SCW_Y0, SCW_Y1, k);
+  for (int i = 1; i <= 9; i++) {                                   // the blanking, over the seam
+    int y = SCW_Y0 + k - i;
+    if (y < SCW_Y0) y += SCW_H;
+    uint16_t* row = scwRow(y);
+    const uint16_t c = i == 4 ? FX_PAL[FXP_SOOT] : FX_PAL[FXP_INK];
+    for (int x = 0; x < FX_W; x++) row[x] = c;
+  }
+  const int hy = SCW_Y1 - 1 - (int)((t / 46) % SCW_H);            // the hum bar, going up
+  for (int i = 0; i < 44; i++) {
+    int y = hy + i;
+    if (y >= SCW_Y1) y -= SCW_H;
+    scwDimRow(y, 256 - (uint32_t)(120.0f * sinf(i * (3.14159265f / 44))));
+  }
+}
+
+// The vertical deflection gone: the whole picture squeezed into a few lines
+// of raster, white-hot because all of the beam is there, breathing with the
+// supply and now and then heaving open as if it might come back. The rest of
+// the scope is the picture burnt into the glass, barely.
+static SC_NOINLINE void scwCollapse(uint32_t t, uint32_t f) {
+  float h = 4.0f + 9.0f * fxNoise1(t * 0.0016f, f);
+  const uint32_t b = t / 900, u = t % 900;
+  if (fxHash2(b, f + 3) % 4 == 0 && u < 220) h += 70.0f * (1.0f - u / 220.0f);
+  const int hh = fxMaxI(1, fxMinI(SCW_H / 2, (int)h));
+  const int c = (SCW_Y0 + SCW_Y1) / 2 + (int)(fxS(fxHash2(f, 9)) * 40.0f);
+  const int top = fxMaxI(SCW_Y0, c - hh / 2), bot = fxMinI(SCW_Y1, top + hh);
+  const float k = (float)SCW_H / (float)(bot - top);
+  // Squeezed in place, outward from the row that stays put, so nothing is
+  // read after it has been written over.
+  auto src = [&](int y) { return fxMinI(SCW_Y1 - 1, SCW_Y0 + (int)((y - top) * k)); };
+  const int ys = fxMaxI(top, fxMinI(bot - 1, (int)((top * k - SCW_Y0) / (k - 1.0f))));
+  for (int y = ys; y >= top; y--) { int s = src(y); if (s != y) memcpy(scwRow(y), scwRow(s), FX_W * 2); }
+  for (int y = ys + 1; y < bot; y++) { int s = src(y); if (s != y) memcpy(scwRow(y), scwRow(s), FX_W * 2); }
+  const int core = (top + bot) / 2;
+  for (int y = SCW_Y0; y < SCW_Y1; y++) {
+    uint16_t* row = scwRow(y);
+    if (y < top || y >= bot) { for (int x = 0; x < FX_W; x++) row[x] = fxDim(row[x], 30); continue; }
+    for (int x = 0; x < FX_W; x++) row[x] = row[x] ? fxBoost(row[x], 380) : FX_PAL[FXP_EMBER];
+  }
+  // The beam itself, white-hot down the middle, and its bloom on the glass
+  // either side -- uneven along its length, the way a tired tube burns.
+  static const uint8_t GLOW[6] = { FXP_WHITE, FXP_GLOW, FXP_HOT, FXP_FLAME, FXP_RUST, FXP_TRACK };
+  for (int x = 0; x < FX_W; x++) {
+    const int reach = (int)(fxNoise1(x * 0.07f + t * 0.004f, f + 21) * 5.0f) + 2;
+    for (int d = -reach; d <= reach; d++) {
+      const int y = core + d, r = fxMinI(5, d < 0 ? -d : d) + (reach < 4 ? 1 : 0);
+      if (y < SCW_Y0 || y >= SCW_Y1) continue;
+      uint16_t& p = fxDst[y * FX_W + x];
+      const uint16_t c = FX_PAL[GLOW[fxMinI(5, r)]];
+      if (fxLum(p) < fxLum(c)) p = c;
+    }
+  }
+}
+
+// Horizontal sync gone: every line starts a little late, so the picture
+// leans over into diagonal bands with the blanking showing black between
+// them. Now and then it nearly catches and only stands crooked, sliding.
+static SC_NOINLINE void scwShear(uint32_t t, uint32_t f) {
+  const float dir   = (float)((int)((f >> 1) & 2) - 1);
+  const float slope = fmaxf(0.0f, fxNoise1(t * 0.0006f, f + 5) - 0.22f) * 3.4f * dir;
+  const float drift = t * 0.05f;
+  for (int y = SCW_Y0; y < SCW_Y1; y++) {
+    const int k = (int)(drift + (y - SCW_Y0) * slope);
+    uint16_t* row = scwRow(y);
+    scwShiftRow(row, k);
+    int bx = k % FX_W;
+    if (bx < 0) bx += FX_W;
+    for (int i = 1; i <= 26; i++) row[(bx - i + FX_W) % FX_W] = FX_PAL[FXP_INK];   // where the line should have started
+    row[(bx - 27 + FX_W) % FX_W] = FX_PAL[FXP_DIM];
+  }
+}
+
+// The scope's character RAM gone bad: an address line stuck, so whole strips
+// of the picture turn up twice; a page stuck on one glyph, or on nothing;
+// runs of junk across the rows, a third of them churning while you watch.
+static SC_NOINLINE void scwVram(uint32_t t, uint32_t f) {
+  const int GY = SCW_Y0 + 2, NC = FX_W / 6, NR = (SCW_Y1 - GY) / 8;
+  FxRng R; R.s = f ^ 0x0BADC0DEu;
+  for (int i = R.range(1, 3); i > 0; i--) {                       // strips doubled
+    const int a = R.range(0, NR - 2), b = R.range(0, NR - 2), n = R.range(1, 2);
+    if (a != b)
+      for (int y = 0; y < n * 8; y++) memcpy(scwRow(GY + b * 8 + y), scwRow(GY + a * 8 + y), FX_W * 2);
+  }
+  for (int p = R.range(1, 2); p > 0; p--) {                       // a page stuck
+    const int cw = R.range(4, 14), ch = R.range(2, 7), cx = R.range(0, NC - cw), ry = R.range(0, NR - ch);
+    const uint32_t h = R.next() | 1;
+    const bool dead = (h & 6) == 0;
+    for (int r = 0; r < ch; r++)
+      for (int c = 0; c < cw; c++) {
+        const int x = (cx + c) * 6, y = GY + (ry + r) * 8;
+        if (dead) fxRect(x, y, x + 6, y + 8, FX_PAL[FXP_INK]);
+        else scwJunk(x, y, h);                                     // the same cell, over and over
+      }
+  }
+  for (int i = R.range(10, 22); i > 0; i--) {                     // runs of junk
+    const int ry = R.range(0, NR - 1), cx = R.range(0, NC - 2), len = R.range(2, 18);
+    const uint32_t rs = R.next(), tick = rs % 3 == 0 ? t / 140 : 0;
+    for (int j = 0; j < len && cx + j < NC; j++) {
+      const uint32_t h = fxHash2(rs + (uint32_t)j, tick);
+      if (h % 5 == 0) continue;                                    // the picture, through a gap
+      scwJunk((cx + j) * 6, GY + ry * 8, h);
+    }
+  }
+}
+
+// Half the tube dark: a dead sector with a fizzing edge and the odd spark
+// across it, and the half still going a little weak and unsteady.
+static SC_NOINLINE void scwHalf(uint32_t t, uint32_t f) {
+  FxRng R; R.s = f ^ 0x5EC7u;
+  const int side = R.range(0, 3);                                 // dead: 0 left 1 right 2 top 3 bottom
+  const int pct = R.range(35, 60), lead = (side & 1) ? 100 - pct : pct;
+  const bool vert = side < 2;
+  const int base = vert ? FX_W * lead / 100 : SCW_Y0 + SCW_H * lead / 100;
+  const int len = vert ? SCW_H : FX_W;
+  const uint32_t fr = t / 140, weak = 170 + fxHash2(fr, f) % 70;
+  int16_t ex[FX_W];                                               // the edge, along it
+  for (int i = 0; i < len; i++)
+    ex[i] = (int16_t)(base + (int)(fxNoise1(i * 0.12f, f) * 10.0f) - 5 + (int)(fxHash2((uint32_t)i, fr ^ f) % 3) - 1);
+  for (int y = SCW_Y0; y < SCW_Y1; y++) {
+    uint16_t* row = scwRow(y);
+    for (int x = 0; x < FX_W; x++) {
+      const int e = vert ? ex[y - SCW_Y0] : ex[x], p = vert ? x : y;
+      if ((side & 1) ? p >= e : p < e) row[x] = FX_PAL[FXP_INK];
+      else row[x] = fxDim(row[x], weak);
+    }
+  }
+  for (int i = 0; i < len; i += 2) {                              // the edge fizzing
+    const uint32_t h = fxHash2((uint32_t)i * 31u, fr + f);
+    if (h % 3) continue;
+    const int e = ex[i] + (int)((h >> 8) % 7) - 3;
+    const uint16_t c = FX_PAL[(h >> 16) & 1 ? FXP_HDR : FXP_LINE];
+    if (vert) scPx(e, SCW_Y0 + i, c); else scPx(i, e, c);
+  }
+  if (fxHash2(fr, f + 1) % 3) return;
+  FxRng K; K.s = fxHash2(fr, f + 2);                              // a spark across the dark
+  for (int n = K.range(1, 3); n > 0; n--) {
+    const int L = K.range(6, 50);
+    if (vert) {
+      const int y = K.range(SCW_Y0, SCW_Y1 - 1), e = ex[y - SCW_Y0];
+      const int x0 = side == 0 ? K.range(0, fxMaxI(0, e - 12)) : K.range(fxMinI(FX_W - 1, e + 6), FX_W - 1);
+      const int x1 = side == 0 ? fxMinI(x0 + L, e - 4) : fxMinI(x0 + L, FX_W);
+      for (int x = x0; x < x1; x++) scPx(x, y, FX_PAL[x == x0 ? FXP_WHITE : FXP_HDR]);
+    } else {
+      const int x0 = K.range(0, FX_W - 8);
+      const int y = side == 2 ? K.range(SCW_Y0, fxMaxI(SCW_Y0, base - 10)) : K.range(fxMinI(SCW_Y1 - 1, base + 10), SCW_Y1 - 1);
+      for (int x = x0; x < x0 + L && x < FX_W; x++) scPx(x, y, FX_PAL[x == x0 ? FXP_WHITE : FXP_HDR]);
+    }
+  }
+}
+
+// The scope gave up partway down and is dumping its memory instead: the map's
+// own bytes, eight to a line, scrolling up under a fault header, the terrain
+// codes showing as whatever glyphs they happen to be.
+static SC_NOINLINE void scwDump(const SceneSnap& S, uint32_t t, uint32_t f) {
+  const int y0 = 112 + (int)(fxHash2(f, 11) % 80);
+  for (int x = 0; x < FX_W; x++) {                                // a torn edge
+    const int e = y0 - (int)(fxNoise1(x * 0.09f, f + 13) * 9.0f);
+    for (int y = e; y < y0 + 10; y++) fxDst[y * FX_W + x] = FX_PAL[FXP_INK];
+  }
+  for (int y = y0 + 10; y < SCW_Y1; y++) fxRect(0, y, FX_W, y + 1, FX_PAL[FXP_INK]);
+  char b[40];
+  snprintf(b, sizeof(b), "?SCOPE FAULT %02X  CORE DUMP", (unsigned)(fxHash2(f, 12) & 0x3F));
+  fxGlcd(b, 3, y0 + 2, 1, FX_PAL[FXP_CRIT]);
+  const int n = S.terr ? S.cols * S.rows : 0;
+  const uint32_t first = t / 220;
+  for (int i = 0, y = y0 + 14; y + 8 <= SCW_Y1 - 2; i++, y += 9) {
+    const uint32_t ln = first + (uint32_t)i, at = (ln * 8u) % (uint32_t)(n > 0 ? n : 4096);
+    snprintf(b, sizeof(b), "%04X", (unsigned)((0x3F00u + at) & 0xFFFFu));
+    int x = 3 + fxGlcd(b, 3, y, 1, FX_PAL[FXP_EMBER]);
+    uint8_t v[8];
+    for (int k = 0; k < 8; k++) {
+      const uint32_t h = fxHash2(ln * 8u + (uint32_t)k, f);
+      v[k] = n > 0 ? S.terr[(at + (uint32_t)k) % (uint32_t)n] : (uint8_t)h;
+      if (h % 11 == 0) v[k] ^= (uint8_t)(h >> 8);                 // and some of it is wrong
+      snprintf(b, sizeof(b), " %02X", (unsigned)v[k]);
+      x += fxGlcd(b, x, y, 1, FX_PAL[FXP_OK]);
+    }
+    x += 6;
+    for (int k = 0; k < 8; k++) {
+      const char g[2] = { (char)(v[k] ? v[k] : '.'), 0 };
+      x += fxGlcd(g, x, y, 1, FX_PAL[FXP_HDR]);
+    }
+  }
+}
+
+// -- the small faults, on top --
+static void scwScan(uint32_t f) {                    // a field dropped: every other line faint
+  for (int y = SCW_Y0 + (int)((f >> 9) & 1); y < SCW_Y1; y += 2) scwDimRow(y, 70);
+}
+static void scwSmear() {                             // the phosphor hanging on, smeared rightward
+  for (int y = SCW_Y0; y < SCW_Y1; y++) {
+    uint16_t* row = scwRow(y);
+    uint16_t trail = 0;
+    uint32_t tl = 0;
+    for (int x = 0; x < FX_W; x++) {
+      const uint32_t l = fxLum(row[x]);
+      if (l + 8 < tl) row[x] = trail;
+      else { trail = row[x]; tl = l; }
+      trail = fxDim(trail, 212);
+      tl = (tl * 212u) >> 8;
+    }
+  }
+}
+static void scwCols(uint32_t t, uint32_t f) {        // a column or two stuck dead, or stuck on
+  FxRng R; R.s = f ^ 0xC011u;
+  for (int i = R.range(1, 3); i > 0; i--) {
+    const int x0 = R.range(6, FX_W - 8), w = R.range(1, 2), kind = R.range(0, 2);
+    for (int y = SCW_Y0; y < SCW_Y1; y++) {
+      uint16_t c = FX_PAL[FXP_INK];
+      if (kind) c = FX_PAL[(fxHash2((uint32_t)(y / 3), (kind == 2 ? t / 140 : 0) + f) & 7) == 0 ? FXP_HDR : FXP_DIM];
+      for (int x = x0; x < x0 + w; x++) fxDst[y * FX_W + x] = c;
+    }
+  }
+}
+static void scwSnow(uint32_t t, uint32_t f) {        // snow, and a streak or two
+  FxRng R; R.s = fxHash2(t / 70, f);
+  for (int n = 140 + R.range(0, 240); n > 0; n--) {
+    const int x = R.range(0, FX_W - 1), y = R.range(SCW_Y0, SCW_Y1 - 1);
+    fxDst[y * FX_W + x] = FX_PAL[R.range(0, 5) == 0 ? FXP_WHITE : FXP_LINE];
+  }
+  for (int n = R.range(0, 2); n > 0; n--) {
+    const int y = R.range(SCW_Y0, SCW_Y1 - 1), x0 = R.range(0, FX_W - 12), len = R.range(10, 90);
+    const uint16_t c = FX_PAL[R.range(0, 1) ? FXP_HDR : FXP_INK];
+    for (int x = x0; x < x0 + len && x < FX_W; x++) fxDst[y * FX_W + x] = c;
+  }
+}
+static void scwType(uint32_t t, uint32_t f) {        // the lettering round the scope, rotting
+  FxRng R; R.s = f ^ 0x7E77u;
+  for (int i = R.range(3, 8); i > 0; i--) {
+    const int x = R.range(0, FX_W / 6 - 1) * 6;
+    const int y = R.range(0, 2) == 0 ? 2 + R.range(0, 1) * 8 : 257 + R.range(0, 4) * 8;
+    const uint32_t s = R.next(), h = fxHash2(s, (s & 1) ? t / 280 : 0);
+    if ((s & 1) && h % 4 == 0) continue;               // the right letter, for a moment
+    scwJunk(x, y, h);
+  }
+}
+
+// What the terminal says about it, typed out on the remark line, the cursor
+// waiting after it.
+static const char* const SCW_SAYS[SCW_MAJOR_N][2] = {
+  { "VERTICAL HOLD: GONE. LIKE EVERYONE.",  "V-HOLD LOST. THE MAP IS IN THERE." },
+  { "YOKE FAULT. THE WORLD IS FLAT NOW.",   "DEFLECTION OUT. ONE LINE LEFT." },
+  { "NO H-SYNC. EVERYTHING LEANS.",         "SYNC LOST. TRY SQUINTING." },
+  { "PARITY ERROR AT C3F0. AND C3F1. AND",  "VIDEO RAM: MOSTLY OPINIONS NOW." },
+  { "SECTOR 7 NOT RESPONDING. NOR IS 8.",   "HALF A MAP. THE WORSE HALF." },
+  { "?SCOPE FAULT -- DUMPING CORE",         "CORE DUMPED. IT WAS ALL WE HAD." },
+};
+static const char* const SCW_ANY[] = {
+  "HAVE YOU TRIED HITTING IT?", "WARRANTY VOID SINCE THE BOMBS.", "SIGNAL LOST. SO ARE YOU.",
+  "?REDO FROM START", "THE MAP IS FINE. THE SCREEN IS NOT.", "NO CARRIER", "PRESS B. COME BACK. PRAY.",
+};
+static void scwOwnUp(uint32_t t, uint32_t now, uint32_t f, uint8_t big) {
+  const uint32_t h = fxHash2(f, 303);
+  const char* s = (h & 1) ? SCW_SAYS[big][(h >> 1) & 1] : SCW_ANY[(h >> 2) % SC_NN(SCW_ANY)];
+  const int len = (int)strlen(s), n = fxMinI(len, (int)(t / 45));
+  char b[48];
+  snprintf(b, sizeof(b), "%.*s", n, s);
+  fxRect(0, 299, FX_W, FX_H, FX_PAL[FXP_INK]);
+  const int w = fxGlcd(b, 3, 304, 1, FX_PAL[FXP_CRIT]);
+  if (n < len || ((now / 380) & 1)) fxRect(3 + w, 304, 3 + w + 5, 311, FX_PAL[FXP_CRIT]);   // the cursor
+}
+// Now and then the whole glass takes a knock with it (the compositor's tear).
+static void scwKick(uint32_t t, uint32_t now, uint32_t f) {
+  static uint32_t last = 0;
+  const uint32_t b = t / 1300, key = b ^ f;
+  if (key == last) return;
+  last = key;
+  const uint32_t h = fxHash2(b, f + 17);
+  if (h % 3 == 0) fxTearBurst(now, (uint8_t)(1 + (h >> 8) % 2), 8 + (int)((h >> 12) % 14), 180);
+}
+
+static void scWasteBreak(const SceneSnap& S, uint32_t now) {
+  const uint32_t f = S.wasteFault, t = now - S.wasteSince;
+  const uint8_t big = scWasteMajor(f), small = scWasteMinor(f);
+  if (small & SCW_SMEAR) scwSmear();               // in the phosphor, so under whatever the timing does
+  switch (big) {
+    case SCW_ROLL:     scwRoll(t, f); break;
+    case SCW_COLLAPSE: scwCollapse(t, f); break;
+    case SCW_SHEAR:    scwShear(t, f); break;
+    case SCW_VRAM:     scwVram(t, f); break;
+    case SCW_HALF:     scwHalf(t, f); break;
+    default:           scwDump(S, t, f); break;
+  }
+  if (small & SCW_SCAN) scwScan(f);
+  if (small & SCW_COLS) scwCols(t, f);
+  if (small & SCW_SNOW) scwSnow(t, f);
+  if (small & SCW_TYPE) scwType(t, f);
+  scwOwnUp(t, now, f, big);
+  scwKick(t, now, f);
+}
+
 // ── 12. Takeover: THE LAUGH ──────────────────────────────────────────────────
 // When someone goes down the LCD stops being a screen for six seconds and is
 // the Creeping Doom, laughing at it. The gas pulls itself into the skull while
@@ -3498,6 +5988,167 @@ static void scDeathDraw(const SceneDeath& D, uint32_t now, uint32_t since, uint1
   scReset(buf);
 }
 
+// ── 12b. Cut scene: SLEEPING ROUGH ───────────────────────────────────────────
+// Somebody slept with no roof over them (network-events.hpp picks one a
+// dawn), and the waste would like a word. One of the three stories in
+// section 8 plays at the size of the glass, inside a cartoon's frame: it
+// irises in on the sleeper, and once the story has landed the world points
+// and laughs -- hands in off every edge of the glass, the laugh slammed
+// across the top, a vein going on the victim's temple. The review is
+// stamped on it, the chronicle's line comes up underneath, and the iris
+// closes on their face. That's all, folks. FX_STYLE's holdMs is 6800.
+enum : uint16_t { FXR_IN = 380, FXR_STAMP = SCR_MOCK + 450, FXR_CAP = SCR_MOCK + 700, FXR_OUT = 6200, FXR_HOLD = 6600,
+                  FXR_SHUT = 6720 };
+struct FxRough { uint8_t v, arch, seat, stamped; uint32_t seed; };
+static FxRough fxRough;
+static const char* const FXR_OPEN[3] = {
+  "NIGHT. NO ROOF.|THE GROUND IT IS, THEN.",
+  "NIGHT. NO ROOF.|UP A TREE. WHAT COULD|POSSIBLY GO WRONG.",
+  "NIGHT. NO ROOF.|FLAT OUT IN THE OPEN.|NOT A MUSCLE MOVES.",
+};
+static const char* const FXR_REVIEW[3][2] = {
+  { "DIRT MOTEL", "ZERO STARS" }, { "BRANCH OFFICE", "CLOSED" }, { "FUNERAL", "POSTPONED" },
+};
+
+static void fxRoughBegin(FxCut& C, const FxCueReq& q) {
+  fxRough.v       = (uint8_t)((q.arg & 15) % 3);
+  fxRough.arch    = (uint8_t)(((q.arg >> 4) & 15) % 6);
+  fxRough.seat    = (uint8_t)(q.who >= 0 && q.who < SC_SEATS ? q.who : 255);
+  fxRough.seed    = fxHash(C.seed ^ 0x5EE9u);
+  fxRough.stamped = 0;
+}
+
+// A hand in off the edge of the glass from (ox, oy), pointing at (tx, ty): a
+// sleeve, its cuff, a fist, the finger. The crowd a page has no room for,
+// drawn the way manga draws it -- just the arms.
+static void scPointer(float ox, float oy, float tx, float ty, float k, uint8_t rim) {
+  const float dx = tx - ox, dy = ty - oy, L = fmaxf(1.0f, sqrtf(dx * dx + dy * dy));
+  const float ux = dx / L, uy = dy / L;
+  const float up = (float)((ux >= 0) * 2 - 1);               // the thumb's side: whichever way is up
+  const float nx = uy * up, ny = -ux * up;
+  const float fist = 3.2f * k, fing = 6.5f * k;
+  const float fx = tx - ux * (fing + fist * 0.6f), fy = ty - uy * (fing + fist * 0.6f);
+  const float wx = fx - ux * fist * 1.3f, wy = fy - uy * fist * 1.3f;   // the wrist
+  for (int pass = 0; pass < 2; pass++) {
+    const float o = pass ? 0.0f : -1.0f, g = pass ? 0.0f : 1.4f;
+    const uint16_t c = FX_PAL[pass ? FXP_INK : rim];
+    fxStroke(ox + o, oy + o, wx + o, wy + o, 6.4f * k + g, 5.2f * k + g, c);
+    fxStroke(wx - ux * 1.6f * k + o, wy - uy * 1.6f * k + o, wx + o, wy + o, 6.8f * k + g, 6.8f * k + g, c);
+    fxBlob(fx + o, fy + o, ux, uy, fist + g, fist * 0.82f + g, 41, c);
+    for (int i = 0; i < 3; i++)                              // the fingers curled under
+      fxDisc(fx + ux * (i - 0.6f) * 1.2f * k - nx * fist * 0.75f + o, fy + uy * (i - 0.6f) * 1.2f * k - ny * fist * 0.75f + o,
+             1.15f * k + g * 0.6f, c);
+    fxStroke(fx + ux * fist * 0.5f + o, fy + uy * fist * 0.5f + o, tx + o, ty + o, 1.9f * k + g, 1.5f * k + g, c);
+    fxDisc(tx + o, ty + o, 0.75f * k + g * 0.5f, c);
+    fxStroke(fx + nx * fist * 0.6f + o, fy + ny * fist * 0.6f + o, fx + ux * 2.0f * k + nx * fist * 1.05f + o,
+             fy + uy * 2.0f * k + ny * fist * 1.05f + o, 1.6f * k + g, 1.2f * k + g, c);   // the thumb, cocked
+  }
+  const float cx0 = wx - ux * 0.8f * k, cy0 = wy - uy * 0.8f * k;   // the cuff's seam, and a nail catching the light
+  fxLine((int)(cx0 + nx * 3.2f * k), (int)(cy0 + ny * 3.2f * k), (int)(cx0 - nx * 3.2f * k), (int)(cy0 - ny * 3.2f * k), FX_PAL[rim]);
+  scPx((int)(tx + nx * 0.4f * k), (int)(ty + ny * 0.4f * k), FX_PAL[FXP_GLOW]);
+}
+
+// The cartoon's iris: everything outside a circle round (cx, cy) gone to ink.
+static void scIris(float cx, float cy, float r) {
+  const uint16_t ink = FX_PAL[FXP_INK];
+  for (int y = 0; y < FX_H; y++) {
+    const float dy = y + 0.5f - cy, h = r * r - dy * dy;
+    if (h <= 0) { fxSpan(y, 0, FX_W, ink); continue; }
+    const float w = sqrtf(h);
+    fxSpan(y, 0, (int)ceilf(cx - w - 0.5f), ink);
+    fxSpan(y, (int)ceilf(cx + w - 0.5f), FX_W, ink);
+  }
+  if (r > 3.0f && r < 400.0f) {                              // its edge catches a little light
+    const int n = fxMinI(900, (int)(r * 3.0f));
+    for (int i = 0; i < n; i++) {
+      const float a = i * FX_TAU / n;
+      fxPut((int)(cx + cosf(a) * (r - 0.5f)), (int)(cy + sinf(a) * (r - 0.5f)), FX_PAL[FXP_RUST]);
+    }
+  }
+}
+
+// The review: a card, turned `rot` and struck at `scl`, with the stamp on
+// it (fxStampDraw) and five stars underneath, none of them filled in.
+static void scReview(const char* l1, const char* l2, float cx, float cy, float rot, float scl, uint32_t seed) {
+  const int n = fxMaxI((int)strlen(l1), (int)strlen(l2));
+  const float W = n * 11 + 30.0f, H = 84.0f, c = cosf(rot), s = sinf(rot);
+  auto at = [&](float u, float v, float* x, float* y) { *x = cx + (u * c - v * s) * scl; *y = cy + (u * s + v * c) * scl; };
+  static const float CU[4] = { -1, 1, 1, -1 }, CV[4] = { -1, -1, 1, 1 };
+  float qx[4], qy[4];
+  for (int pass = 0; pass < 3; pass++) {                     // its shadow, its edge, the card
+    const float m = pass == 2 ? 0.0f : 3.0f, off = pass == 0 ? 5.0f : 0.0f;
+    for (int i = 0; i < 4; i++) { at(CU[i] * (W * 0.5f + m), CV[i] * (H * 0.5f + m), &qx[i], &qy[i]); qx[i] += off; qy[i] += off; }
+    fxPoly(qx, qy, 4, FX_PAL[pass == 2 ? FXP_GLOW : FXP_INK]);
+  }
+  float sx, sy;
+  at(0, -12, &sx, &sy);
+  fxStampDraw(l1, l2, sx, sy, rot, scl, seed, true);
+  for (int i = 0; i < 5; i++) {
+    at((i - 2) * 16.0f, 27.0f, &sx, &sy);
+    scStar(sx, sy, 6.5f * scl, FX_PAL[FXP_INK]);
+    scStar(sx, sy, 3.6f * scl, FX_PAL[FXP_GLOW]);
+  }
+}
+
+static void fxRoughFrame(FxCut& C, uint32_t t, uint32_t now, float shx, float shy) {
+  FxRough& Rg = fxRough;
+  const uint8_t v = Rg.v;
+  if (t >= FXR_SHUT) { fxRect(0, 0, FX_W, FX_H, FX_PAL[FXP_INK]); return; }   // the iris is shut
+  ScStage P;
+  P.x0 = 0; P.y0 = 0; P.x1 = FX_W; P.y1 = FX_H;
+  P.k = 2.9f; P.gy = 226.0f + shy; P.cx = 120.0f + shx;
+  P.tone = SC_TONE_ILL; P.rim = FXP_HDR; P.seed = Rg.seed; P.now = now; P.live = true; P.night = false;
+  P.t0 = C.t0;
+  scFigT = now;
+  float hx, hy;
+  scArtRough(P, v, Rg.arch, Rg.seat, t < SCR_CYC ? t : SCR_CYC - 1, true, &hx, &hy);
+  // What the narrator makes of it; for the chalk, the cut to the morning.
+  if (t >= 150 && t < SCR_DAWN + (v == 2 ? 0 : 500)) scNarration(FXR_OPEN[v], 8, 8, (t - 150) * 2);   // typed at a clip
+  if (v == 2 && t >= SCR_DAWN + 60 && t < SCR_DAWN + 1500) scNarration("THE NEXT MORNING...", 8, 8, (t - SCR_DAWN - 60) * 2);
+  // And then everybody else's: three hands in off the edges, one after
+  // another, jabbing; a HA off each; the laugh across the top.
+  if (t >= SCR_MOCK) {
+    const float m = (float)(t - SCR_MOCK);
+    const float ORG[3][2] = { { -40.0f, hy + 6.0f }, { 280.0f, hy - 70.0f }, { hx + 40.0f, (float)FX_H + 30.0f } };
+    for (int i = 0; i < 3; i++) {
+      const float a = fxClampF((m - i * 110.0f) / 220.0f, 0.0f, 1.0f);
+      if (a <= 0) continue;
+      const float ox = ORG[i][0], oy = ORG[i][1], ddx = hx - ox, ddy = hy - oy;
+      const float L = sqrtf(ddx * ddx + ddy * ddy), ux = ddx / L, uy = ddy / L;
+      const float jab = 5.0f * fmaxf(0.0f, sinf(m * 0.028f + i * 2.1f));
+      const float reach = (L - 26.0f - 6.0f * i) * fxBackOut(a) + jab;
+      const float tx = ox + ux * reach, ty = oy + uy * reach;
+      scPointer(ox - ux * 60.0f, oy - uy * 60.0f, tx, ty, 3.0f, FXP_HDR);
+      if (a >= 1.0f)
+        scSay(i == 1 ? "HA!" : "HA", tx - ux * 44.0f - 10.0f, ty - uy * 44.0f - 26.0f - (float)(((t / 110 + i) & 1) * 2), 2, FXP_GLOW);
+    }
+    if (t >= SCR_MOCK + 300) scVein(hx + 4.5f * P.k, hy - 4.2f * P.k, P.k * 0.9f, now);
+    if (C.hasWord) fxWordSlam(C.word, (int32_t)(t - SCR_MOCK - 80), 120.0f + shx, 34.0f + shy + sinf(m * 0.025f) * 3.0f,
+                              -0.07f, 55, t / 80);
+  }
+  // The review, stamped on it.
+  if (t >= FXR_STAMP) {
+    const float p = fxClampF((float)(t - FXR_STAMP) / 110.0f, 0.0f, 1.0f);
+    if (p >= 1.0f && !Rg.stamped) { Rg.stamped = 1; fxImpact(0.35f); }
+    scReview(FXR_REVIEW[v][0], FXR_REVIEW[v][1], 120.0f + shx, 98.0f + shy, -0.12f, fxLerp(2.4f, 1.0f, fxCubicIn(p)), Rg.seed);
+  }
+  // The chronicle's line, in a box at the foot of the glass.
+  if (C.capN && t >= FXR_CAP) {
+    const float p = fxClampF((float)(t - FXR_CAP) / 150.0f, 0.0f, 1.0f);
+    const int bw = C.capW + 14, bh = C.capN * 16 + 8;
+    const int x = (int)(8 + shx), y = (int)(FX_H - 10 - bh + shy + (1.0f - fxBackOut(p)) * 24.0f);
+    fxRect(x + 3, y + 3, x + bw + 3, y + bh + 3, FX_PAL[FXP_INK]);
+    fxRect(x, y, x + bw, y + bh, FX_PAL[FXP_INK]);
+    fxRect(x + 1, y + 1, x + bw - 1, y + 2, FX_PAL[FXP_EMBER]);
+    fxRect(x + 1, y + bh - 2, x + bw - 1, y + bh - 1, FX_PAL[FXP_EMBER]);
+    for (int i = 0; i < C.capN; i++) fxF2(C.cap[i], x + 7, y + 4 + i * 16, FX_PAL[FXP_OK]);
+  }
+  // The iris: open on the sleeper, and at the end shut on them.
+  if (t < FXR_IN) scIris(hx, hy, 2.0f + 420.0f * fxCubicOut((float)t / FXR_IN));
+  else if (t >= FXR_OUT && t < FXR_HOLD) scIris(hx, hy, fxLerp(420.0f, 30.0f, fxSmooth((float)(t - FXR_OUT) / (float)(FXR_HOLD - FXR_OUT))));
+  else if (t >= FXR_HOLD) scIris(hx, hy, t < FXR_HOLD + 120 ? 30.0f : fxLerp(30.0f, 0.0f, (float)(t - FXR_HOLD - 120) / (float)(FXR_SHUT - FXR_HOLD - 120)));
+}
+
 // ── 13. Dispatch ──────────────────────────────────────────────────────────────
 // Which screens are scenes (the rest still draw through ui-screens.hpp), and
 // how often each wants a new frame.
@@ -3510,7 +6161,10 @@ static void sceneDraw(uint8_t screen, const SceneSnap& S, uint32_t now, uint16_t
     case 2:  scChronicleDraw(S, now); break;
     case 3:  scStashDraw(S, now); break;
     case 4:  scOddsDraw(S, now); break;
-    case 5:  scWasteDraw(S, now); break;
+    case 5:
+      scWasteDraw(S, scWasteClock(S, now));
+      if (S.wasteFault) scWasteBreak(S, now);
+      break;
     case 6:  scAdmiredDraw(S, now); break;
     default: scRoadDraw(S, now); break;
   }

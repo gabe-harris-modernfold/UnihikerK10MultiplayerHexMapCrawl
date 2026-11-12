@@ -12,7 +12,7 @@ This is how the hex terrain tiles are being redrawn:
 - **Open Scrub:** 10 of its 43 tiles ship, one per variant slot, as cells 0–9
   of the Open Scrub sheet. The other 33 are waiting for alternates support;
   see [Integration](#integration).
-- **Marsh:** 6 tiles ship as cells 0–5 of the Marsh sheet. These are whole
+- **Marsh:** 5 tiles ship as cells 0–4 of the Marsh sheet. These are whole
   painted hexes, reshaped and regraded; see [Marsh](#marsh).
 - **Broken Urban (2026-09-28):** all 24 buildings of gi23, one per hex on
   Open Scrub ground, as 10 slots + 3 downtown pins with alternates; see
@@ -331,12 +331,16 @@ standarize the palette and get them shaped properly".
 
 | Slot | Share | Source | What it shows |
 |---|---|---|---|
-| 0 | 39.6% | gi7 | braided blue-grey pools, cattails, cracked mud |
-| 1 | 27.5% | old `hexMarsh0` | grey-green channel |
-| 2 | 17.6% | gi14 | flat-top diorama: open water, reeds, shopping cart |
-| 3 | 9.9% | gi8 (= gi15 = gi16, the same file) | dark pond, algae, planks; the "MARSH" label is painted out |
-| 4 | 4.4% | old `hexMarsh1` | reedy green bog |
-| 5 | 1.1% | gi13 | pointy-top diorama: pools, reeds, cart |
+| 0 | 45.5% | gi7 | braided blue-grey pools, cattails, cracked mud |
+| 1 | 29.1% | gi14 | flat-top diorama: open water, reeds, shopping cart |
+| 2 | 16.4% | gi8 (= gi15 = gi16, the same file) | dark pond, algae, planks; the "MARSH" label is painted out |
+| 3 | 7.3% | old `hexMarsh1` | reedy green bog |
+| 4 | 1.8% | gi13 | pointy-top diorama: pools, reeds, cart |
+
+**2026-11-06:** old `hexMarsh0` (the grey-green channel, then slot 1 at
+27.5%) was dropped — the user called it out as a blurred water tile. The
+later cells moved up one and the pool went 6 → 5. Rebuilt with
+`build --no-grade` so no other page picked up the Amber Dusk grade.
 
 - **Slot order:** the calm tiles are frequent. The two cart tiles are split
   between a common slot and the rarest one, so carts don't repeat.
@@ -778,6 +782,43 @@ magenta with every edge drawn and no outline stroke.
   pre-hills master, page and tiles.json in `bak/` and the 12-tile ones in
   `bak2/`.
 
+## Rust Forest (2026-11-04)
+
+The user generated six sheets (`hexforrest1..6.png`, OneDrive Desktop) from
+the prompts given in chat: two of the common look, one of encounter
+landmarks, three of filler. Each holds six flat-top hexes, on magenta (1, 2),
+flat grey (3) or white (4-6). Sheets 1-2 have a ~3 px black stroke, 3-6 a
+thin dark one. The old green pixel-art forest is retired; git HEAD keeps it.
+
+- **Cut:** background = median of the sheet border, matte = everything within
+  28 RGB of it connected to the border (`cut.py`). All 36 went to
+  `art/hex-sheets/forest-candidates/` with a numbered `contact.png`; the user
+  picked 30.
+- **Fit (`fit.py`):** top/bottom rows wider than 40% of the hex, left/right
+  from the median extremes of the middle rows, top/bottom vertex x from those
+  rows' extents. Inset 4.5 px (sheets 1-2) or 3 px, background-tinted pixels
+  Telea-inpainted, then the centre-fan affine onto R = 128*1.035 at 3x and
+  INTER_AREA down. Sheet 4 is squashed (about 1.23:1) with treetops poking
+  above the top edge; the overhang is clipped.
+- **Grade (`grade.py`):** picks sat at L* 24-37. Each tile's mean goes to
+  L* 33 + 0.4*(own - set mean), a*/b* 0.6 of the way to the set mean (2.4,
+  12.4), ink (L* < 12, ramped to 22) untouched. The old forest was L* 34.
+- **Slots:** pool 3, `LANDMARKS[2] = 6`, alternates in `hexRustForest.json`
+  (its `cells` lists each cell's pick id). Slot 0 filler 64.3% (10 tiles),
+  slot 1 filler 28.6% (6), slot 2 features 7.1% (4: fallen trunks, light
+  shaft, canopy tunnel). Pinned: 2_6 hut (forest/2) and 2_7 Evacuation Special
+  (forest/4) via `LANDMARK_PINS`; 2_8-2_12 the forest oasis group (hollow,
+  den, three overhead canopies; `docs/forest-oasis.md`); 2_13-2_15 stump light
+  shaft, lookout tower, mushroom ring, unassigned.
+- **Stale worlds:** a world made while counts[2] was 10 holds forest variants
+  0-9, and 6-9 now draw pinned art on random hexes. Regenerate it. The mock's
+  `variantFor()` deals Rust Forest from the pool, since its raw `baseIdx & 15`
+  hit the pinned cells.
+- The page is q95, 793 KB, the largest on the card.
+- Scripts: `art/hex-sheets/forest-candidates/scripts/` (`cut.py`, `fit.py`,
+  `grade.py`, `sheet.py`, `preview.py`, `master.py`), run from a folder that
+  holds `fit/` and `graded/`.
+
 ## Quest landmarks (2026-10-14)
 
 One-of-a-kind tiles for the big quests' sites, from two image-gen sheets the
@@ -844,6 +885,48 @@ is the "Pinned art" table in that file.
   `master.py` are in scratchpad
   `2c560805-e860-4936-a649-8e9366560872\scratchpad\quest`. `master.py`
   rebuilds the five masters from its `bak/` copies.
+
+## Palette (2026-11-05)
+
+The map is colour-graded at build time ("Amber Dusk"). The grade is
+`scripts/palette_grade.py`: `hex_sheets.py build` applies it to every terrain
+and tunnel page as it encodes, and `--no-grade` skips it. The master sheets
+are never changed. Sprites (shelters, forage, caravan, bike, Kane) are not
+graded.
+
+**Why:** the user's verdict on the old tiles was "a gray muddy land mass".
+Measured in CIELAB, every terrain sat at one yellow-olive hue with
+chroma ≤ 22 and median L* 49–69. Ash Dunes, Glass Fields and Nuke Crater were
+the same grey, Ridge looked like Open Scrub, Rust Forest was a hole at L* 23,
+and the tunnels were the same khaki-grey as the surface.
+
+| Rule from the user | How the grade does it |
+|---|---|
+| Warm surface, cool underground | Surface: umber shadows, amber highlights. Tunnels: blue-violet shadows, white point 16 lower |
+| Ash Dunes and Nuke Crater stay dead grey | They move in lightness only (dunes lightest, crater mid) |
+| "Rust" Forest is only a name | Olive-umber, lifted from L* 23 to ~31 |
+| Keep the style, unify the contrast | Every sheet's 2nd/98th L* percentile goes to 7/86 |
+
+- **Lanes:** `LANES` gives each terrain a median L*, hue and chroma, so
+  terrains separate by value first (the map still reads in greyscale) and
+  hue second.
+- **Shared ground:** Broken Urban, Settlement, Bunker Entrance and Vent Shaft
+  are painted on scrub ground, so they take Open Scrub's transform. The seam
+  with a plain scrub hex doesn't show.
+- **What survives the grade:** ink (the darkest lines) keeps its colour, and
+  accents far from a sheet's ground colour (crater glow, rust, signage) keep
+  their full chroma.
+- **Anchors** are each sheet's own L* percentiles and median a*b*, frozen in
+  `art/hex-sheets/palette-anchors.json` so that adding a tile doesn't regrade
+  its neighbours. Re-run `python scripts/palette_grade.py measure` only when a
+  sheet is repainted wholesale.
+- **Encode:** graded pages score higher visible RMSE at every WebP rung,
+  because their contrast is wider. A graded sheet that misses the 3.5 bar
+  falls back to q90, not q95. Zoomed 3×, q90 looks the same as q95 on the
+  worst cells, and q95 would cost ~1 MB of the PSRAM image cache. Graded
+  total 5272 KB; ungraded is 5396 KB.
+- **New terrain:** add a lane (or put it in `ON_SCRUB`), run `measure`, and
+  check the build in greyscale next to its neighbours.
 
 ## Integration
 

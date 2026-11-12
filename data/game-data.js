@@ -122,6 +122,65 @@ const KANE_CAMP_LINES = [
 ];
 function kaneRoadLine(idx) { const n = KANE_LINES.length; return KANE_LINES[((idx | 0) % n + n) % n]; }
 function kaneCampLine(idx) { const n = KANE_CAMP_LINES.length; return KANE_CAMP_LINES[((idx | 0) % n + n) % n]; }
+
+// ── The Cursed Note (RUNAWAY SCIENCE, docs/runaway-science.md) ─────────────
+// Item 76: Doctor Gaunt, folded, riding in your pack. Looking at it (opening
+// it in the pack, or Read -- narrative effect 13) puts up one of these, never
+// the same one twice running. {name} is the reader's name, {pts} their
+// points. Client-only: the firmware never sees the text, so the lines can
+// change without a reflash.
+const LAB_ITEM_NOTE = 76;
+
+// ONE-HAND BONNEY's calls (bonney.js, ev bonney "call"): the first time each
+// day you come within three hexes of her fire. The firmware sends a random
+// byte; it is reduced mod this list, so lines can be added without a reflash.
+const BONNEY_LINES = [
+  'Psst. Sweetmeat. Over here. Bonney’s got something to show you.',
+  'Bonney can smell you from here. You smell like pockets.',
+  'Come and see the jars. Nobody ever wants to see the jars.',
+  'Skinny thing. Come closer. Bonney won’t bite. Pinch might.',
+  'You’ve got lovely teeth. Has anyone told you? Bonney’s telling you.',
+  'Supper’s on. There’s always room for one more. On the plate or at it.',
+  'What’s in the pack, dumpling? Something heavy? Something cursed? Ohh, say cursed.',
+  'Don’t run. Running makes you stringy.',
+  'Bonney came down in the bright, you know. Or was born in a tent. One of those.',
+  'Come here and guess which hand.',
+  'Bonney collects things. Bonney could collect you.',
+  'Mind the ash. Things live in it. One of them’s mine.',
+];
+const LAB_CURSES = [
+  'Still walking? How quaint. I had a body like yours once. I had it pickled.',
+  'You call that a pulse? I have seen livelier jars.',
+  '{name}. Even your name sounds like something I would take out and label.',
+  'May your water taste of pennies and your pennies taste of water.',
+  'Every hex you walk, I walked first. In my head. Faster.',
+  'Your heart beats a half-step behind mine. It always will. Keep up.',
+  'Remember the best thing you ever did? No? Good. I have it.',
+  'May every jar you open be the one with the eyes in it.',
+  'You have {pts} points. I have had more than that out of a single tooth.',
+  "Die, if you like. I will be in the next one's pocket.",
+  'May your boots fill with sand and your sand fill with boots.',
+  'I did not run away. Science does not run. It walks, in you, and you carry it.',
+  'May you itch where the needles went in. Forever. Just there.',
+  'Somewhere a jar has your name on it. The date is blank. For now.',
+  'May your fire go out the moment you get warm, and your shelter leak exactly onto your face.',
+  'Do not fold me. I hate being folded. I will remember it, and I remember everything.',
+  'The heart in your chest has opinions about your choices. They are all low.',
+  'Sixty years on a table, and I still got further than you.',
+  'Throw me away. Go on. I will be in your other pocket.',
+  'May you live forever. I mean it. I know exactly how that feels.',
+];
+let _labCurseLast = -1;
+// A fresh curse for whoever is reading, never the one they just had.
+function labCurse(reader) {
+  const n = LAB_CURSES.length;
+  let i = Math.floor(Math.random() * n);
+  if (i === _labCurseLast) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
+  _labCurseLast = i;
+  return LAB_CURSES[i]
+    .replace('{name}', (reader?.nm || 'You').toUpperCase())
+    .replace('{pts}', String(reader?.sc | 0));
+}
 // ── The board of the admired ──────────────────────────────────────
 // The ladder a survivor is actually climbing. ADMIRED_WIN (10000) is the way
 // out; nothing in the game grants it in one piece, it is a few thousand
@@ -255,7 +314,7 @@ const TERRAIN = [
   { name:'Ridge',           mc:2,   sv:1, vis: 2, icon:'⛰',
     fill:'#1E1A12', stroke:'#3C3424',   /* warm slag-stone */
     tags:['Vantage','Open Horizon'],
-    desc:'Elevated ridgelines of compressed slag-stone. A superior vantage point — the surrounding terrain is visible in detail. Exposed to wind, lightning, and distant sight lines.' },
+    desc:'Elevated ridgelines of compressed slag-stone. A superior vantage point — the surrounding terrain is visible in detail. Exposed to wind and distant sight lines — and in a storm you are the tallest thing for miles: lightning finds you up here far more often.' },
   { name:'Mountain',        mc:4,   sv:2, vis: 2, icon:'🗻',
     fill:'#14141C', stroke:'#28283A',   /* cold dark mineral */
     tags:['Vantage','Waypoint'],
@@ -366,9 +425,12 @@ const ACT_NAMES = ['FORAGE','COLLECT WATER','TREAT WOUND','SCAVENGE',
 // Mirrors data/recipes.cfg / RecipeDef in Esp32HexMapCrawl.ino byte-for-byte:
 // matItem/matQty are up to 3 material ItemDef ids + counts, resCost is
 // water/food/fuel/med/scrap tokens consumed (same order as RES_SHORT).
+// outputRes (recipes.cfg `output_res`): the recipe makes outputQty resource
+// TOKENS of that index + 1 (4 = medicine) instead of an item -- outputItem 0.
+// knownBy (recipes.cfg `known_by`): archetype indexes that spawn knowing it.
 const RECIPES = [
   { id: 1,  name: 'Field Trauma Patch', outputItem: 1,  outputQty: 1,
-    matItem: [24, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 0, 1, 0] },
+    matItem: [24, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 0, 1, 0], knownBy: [2] },
   { id: 2,  name: 'Sock Puppet Bandage', outputItem: 53, outputQty: 1,
     matItem: [36, 24, 0], matQty: [1, 1, 0], resCost: [0, 0, 0, 0, 0] },
   { id: 3,  name: 'Squelch Bandage', outputItem: 57, outputQty: 1,
@@ -410,8 +472,22 @@ const RECIPES = [
   // 8 tokens: all a bare 8-slot pack holds, with no room for food or water.
   { id: 20, name: 'Motorbike', outputItem: 26, outputQty: 1,
     matItem: [22, 0, 0], matQty: [1, 0, 0], resCost: [0, 0, 1, 0, 7], starter: true },
+  // The Medic's trade (known_by = Medic): Expired Meds into medicine tokens,
+  // and Super Juice (item 80): a second day's AP for 1 LL.
+  { id: 21, name: 'Medicine', outputItem: 0, outputRes: 4, outputQty: 2,
+    matItem: [24, 0, 0], matQty: [1, 0, 0], resCost: [1, 0, 0, 0, 0], knownBy: [2] },
+  { id: 22, name: 'Super Juice', outputItem: 80, outputQty: 1,
+    matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [0, 0, 1, 2, 0], knownBy: [2] },
+  { id: 23, name: 'Liquid Bread', outputItem: 81, outputQty: 1,
+    matItem: [0, 0, 0], matQty: [0, 0, 0], resCost: [1, 1, 0, 0, 0], knownBy: [2] },
 ];
 function getRecipeById(id) { return RECIPES.find(r => r.id === id) ?? null; }
+// What a recipe makes, as words: "2 Medicine" for a token recipe, else the item's name.
+function recipeOutputName(r) {
+  if (!r) return 'something';
+  if (r.outputRes) return `${r.outputQty} ${RES_NAMES[r.outputRes] ?? '?'}`;
+  return getItemById(r.outputItem)?.name ?? r.name ?? 'something';
+}
 function knowsRecipe(kr, id) { return ((kr ?? 0) >>> (id - 1)) & 1; }
 // AP costs live on the action cards in ui-panels.js (shelter and water are dynamic).
 // Which terrain indices allow each action (matches server terrain arrays)
@@ -436,6 +512,23 @@ const TERRAIN_HAS_WATER  = [0,0,0,1,0,1,0,0,0,0,0, 1, 0,0,1,0];
 // of a hatch is terrain 12/13 on the tunnel board too -- so "underground" is the
 // board being shown (myDepth), with the terrain test kept as a backstop. On the
 // surface a hatch behaves like any other surface hex.
+// Forest oasis (docs/forest-oasis.md): a Rust Forest hex pinned to variant
+// 8..12 (root hollow / den in the middle, canopy round it) is one of the five
+// safe groves a map. Mirrors oasisCell() in hex-map.hpp -- the variant is the
+// whole flag, there is nothing else on the wire. Tunnel cells are never
+// terrain 2, so the board does not matter.
+const OASIS_NAME = 'Forest Oasis';
+const OASIS_HINT = 'Safe rest spot: no weather, fire or creature can reach you here, and resting heals without food or water.';
+function isOasisCell(cell) {
+  return !!cell && cell.terrain === 2 && cell.variant >= 8 && cell.variant <= 12;
+}
+// The name of the hex under a cell: "Forest Oasis" on a grove, else the terrain's.
+function cellTerrainName(cell) {
+  if (isOasisCell(cell)) return OASIS_NAME;
+  const t = cell?.terrain;
+  return (t != null && t < TERRAIN.length) ? (TERRAIN[t]?.name ?? 'Unknown') : 'Unknown';
+}
+
 function actAvailable(actId, terrainIdx) {
   if (terrainIdx == null || terrainIdx >= NUM_TERRAIN) return false;
   const underground = terrainIdx >= 14 || (typeof myDepth !== 'undefined' && !!myDepth);
@@ -458,12 +551,23 @@ function actAvailable(actId, terrainIdx) {
 
 // Starting resource tokens, inv[] order (water, food, fuel, med, scrap).
 // Mirrors resetSurvivor() in inventory_items.hpp: everyone walks out with
-// SURVIVOR_KIT plus their archetype's kitBonus. Display only (the lobby's pack
-// preview) -- the server hands out the real kit.
+// SURVIVOR_KIT plus their archetype's kitBonus, topped up with water to a full
+// pack. Display only (the lobby's pack preview) -- the server hands out the
+// real kit.
 const SURVIVOR_KIT = [2, 1, 1, 1, 1];
 function archKit(arch) {
   const b = arch?.kitBonus ?? [];
-  return SURVIVOR_KIT.map((n, i) => n + (b[i] || 0));
+  const kit = SURVIVOR_KIT.map((n, i) => n + (b[i] || 0));
+  kit[0] += Math.max(0, (arch?.invSlots ?? 8) - kit.reduce((a, n) => a + n, 0));
+  return kit;
+}
+// Starting gear on top of the tokens, mirroring handleMsg_pick in
+// network-msg-player.hpp: START_PATCHES Trauma Patches, then random tradeable
+// items -- two, three for the Quartermaster, five for the Mule.
+const START_PATCH_ITEM = 1;
+const START_PATCHES    = 2;
+function archRandomItems(archIdx) {
+  return archIdx === 3 ? 5 : archIdx === 1 ? 3 : 2;
 }
 
 // ── Survivor archetypes (§9.4 Synergy Roles) ─────────────────────
@@ -669,7 +773,7 @@ const ITEMS = [
   { id:25, name:'Doomed Diary',     category:3, slot:0, usable:true,
     img:'img/items/item_25.png', icon:'img/items/icon_25.png',
     preUse:  null, postUse: null,
-    story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too. Reading it maps the three hexes around you.' },
+    story:   'A worn journal, pages stained with ash. Someone survived long enough to write this. Their luck ran out. Yours might too. Reading it maps three hexes past what you can see. Only above ground.' },
   { id:26, name:'Motorbike',        category:1, slot:5,
     img:'img/items/item_26.png', icon:'img/items/icon_26.png',
     preUse: null, postUse: null,
@@ -721,7 +825,7 @@ const ITEMS = [
   { id:38, name:'Pre-War Net Map',  category:3, slot:0, usable:true,
     img:'img/items/item_38.png', icon:'img/items/icon_38.png',
     preUse:  null, postUse: null,
-    story:   'A recovered network node uplink. Pulls every active signal on the grid. Reading it surveys the entire map; it can be read again any time.' },
+    story:   'A recovered network node uplink, the old grid survey still cached in it. Reading it lays out the ground of the entire map — the land, not who is on it. It can be read again any time, above ground.' },
   { id:39, name:'Irradiated Fur',   category:2, slot:0,
     img:'img/items/item_39.png', icon:'img/items/icon_39.png',
     preUse: null, postUse: null, story: null },
@@ -816,7 +920,7 @@ const ITEMS = [
   { id:60, name:'Static Chew',        category:0, slot:0,
     img:'img/items/item_60.png', icon:'img/items/icon_60.png',
     preUse:  'A live wire, chewed like gum. This was, at some point, someone\'s idea.',
-    postUse: 'Your teeth go numb and the wasteland snaps into focus for a moment. Reveals the terrain nearby.',
+    postUse: 'Your teeth go numb and the wasteland snaps into focus for a moment. You see two hexes further than you could.',
     story:   null },
   { id:61, name:'Blister Balm',       category:0, slot:0,
     img:'img/items/item_61.png', icon:'img/items/icon_61.png',
@@ -836,8 +940,8 @@ const ITEMS = [
   { id:67, name:'Upside Pendulum',    category:3, slot:0, usable:true,
     img:'img/items/item_67.png', icon:'img/items/icon_67.png',
     preUse:  'A bob on a rigid rod, rising from your palm instead of hanging from it.',
-    postUse: 'It swings toward whatever does not belong. The ground for four hexes around you comes into focus. If it circles your own feet, do not ask.',
-    story:   'A bob on a rigid rod that stands up from the floor and swings toward whatever does not belong. Reveals the land within 4 hexes each time you read it. It is never used up.' },
+    postUse: 'It swings toward whatever does not belong. The ground four hexes past your sight comes into focus. If it circles your own feet, do not ask.',
+    story:   'A bob on a rigid rod that stands up from the floor and swings toward whatever does not belong. Reveals the land four hexes past your sight each time you read it, above ground. It is never used up.' },
   { id:68, name:'Inward Scope',       category:3, slot:0, usable:true,
     img:'img/items/item_68.png', icon:'img/items/icon_68.png',
     preUse:  'The eyepiece faces inward. You have to hold it backwards to look.',
@@ -847,6 +951,55 @@ const ITEMS = [
     img:'img/items/item_69.png', icon:'img/items/icon_69.png',
     preUse:  null, postUse: null,
     story:   'A left-hand surgical glove, never sterile. Worn, it lets you palpate a survivor, a corpse, a Bloom or an echo (it has a pulse, slower than yours). +1 Rad every dawn while worn. The more it is used, the worse it chooses.' },
+  // ── RUNAWAY SCIENCE — Doctor Gaunt's clinic (docs/runaway-science.md) ──
+  { id:72, name:'Needlecap',          category:3, slot:0,
+    img:'img/items/item_72.png', icon:'img/items/icon_72.png',
+    preUse:  null, postUse: null,
+    story:   'A fist-sized pincushion of hypodermic needles with a crown of bruise-purple caps growing out of it, wet and very slowly breathing. It has matched its pulse to yours. It bites when it is cold. Gaunt wants it for the Graft.' },
+  { id:73, name:'Brine Heart',        category:3, slot:0,
+    img:'img/items/item_73.png', icon:'img/items/icon_73.png',
+    preUse:  null, postUse: null,
+    story:   'A human heart in a waxed jar of pink brine, labelled G. - SPARE - 1966 in a neat, upright hand. It beats once to every four of yours. It is not yours. Gaunt wants it back, in you.' },
+  { id:74, name:'Spine Wires',        category:3, slot:0,
+    img:'img/items/item_74.png', icon:'img/items/icon_74.png',
+    preUse:  null, postUse: null,
+    story:   "A yard of braided copper loom in rotten cloth, with a wet grey bulb at the end where it was in Doctor Gaunt's neck. Hold it and your fingers twitch in a pattern that is not yours." },
+  { id:75, name:'Runaway Heart',      category:1, slot:2,
+    img:'img/items/item_75.png', icon:'img/items/icon_75.png',
+    preUse:  null, postUse: null,
+    story:   'Two hearts, one of them his, sewn in under your ribs, with a Needlecap to make the bed and a loom of wires in your spine to keep the time. +2 LL ceiling while it beats. +3 AP a day once it has eaten (1 food). +1 Rad every dawn: the fungus glows.' },
+  { id:76, name:'Cursed Note',        category:3, slot:0, usable:true,
+    img:'img/items/item_76.png', icon:'img/items/icon_76.png',
+    preUse:  'Folded twice. Neat, upright handwriting. It is warm.',
+    postUse: null,
+    story:   'Doctor Gaunt, folded. It will not be dropped, and it will not stay behind when you fall. Every time you look at it, it has something new to say.' },
+  // ── JACK'S FRIEND CHICKEN — Jack the Romper's stand (settlement/24.json) ──
+  { id:77, name:'Fried Chicken',      category:0, slot:0,
+    img:'img/items/item_77.png', icon:'img/items/icon_77.png',
+    preUse:  'The lid says FRIEND CHICKEN in red crayon, with a small heart. The box is still warm. It should not still be warm.',
+    postUse: 'Crisp, hot, and better than anything has been in years. You do not ask which one it was. LL fully restored. +1 Food.',
+    story:   null },
+  { id:78, name:'Hot Sauce',          category:0, slot:0,
+    img:'img/items/item_78.png', icon:'img/items/icon_78.png',
+    preUse:  'Romper Red. One drop a dose. Not two. The label is a skull, and under it a smaller skull.',
+    postUse: 'One drop. Your eyes water, your ears ring, and your legs decide to be somewhere else. +1 AP.',
+    story:   null },
+  // ── DSHINGUEST RON — the touring band's gig (settlement/25.json) ──
+  { id:79, name:'Bender Strat',       category:1, slot:3,
+    img:'img/items/item_79.png', icon:'img/items/icon_79.png',
+    preUse:  null, postUse: null,
+    story:   'The Bender Stratocaster: a pre-war electric with the F on the headstock filed into a B, so long ago nobody remembers who. Ron of Dshinguest Ron traded it for one clean pair. It has been places, and most of those places were the front row. Wipe it before you play it. +1 LL ceiling and +1 AP a day while it is slung on.' },
+  // ── THE MEDIC'S TRADE — crafted only (recipes.cfg 22, known_by = Medic) ──
+  { id:80, name:'Super Juice',        category:0, slot:0,
+    img:'img/items/item_80.png', icon:'img/items/icon_80.png',
+    preUse:  'It fizzes on its own. Costs 1 LL; doubles your AP today.',
+    postUse: 'Your heart kicks like a starter motor. Your legs have a second day in them. AP doubled. -1 LL.',
+    story:   null },
+  { id:81, name:'Liquid Bread',       category:0, slot:0,
+    img:'img/items/item_81.png', icon:'img/items/icon_81.png',
+    preUse:  'Cloudy, warm, and brewed in something that used to hold antifreeze.',
+    postUse: 'It takes the edge off, and then it takes your feet. +1 LL, +1 Water. Your next steps will wander.',
+    story:   null },
 ];
 
 // Placeholder image paths — shown when item_<id>.png / icon_<id>.png doesn't exist.
@@ -901,6 +1054,7 @@ const ITEM_MODS = {
   64: { slots: +4 },                                               // Backpack
   65: { waterCap: +3 },                                            // Canteen
   69: { rad: +1, note: 'Opens palpate choices while worn' },       // Dirty Glove
+  75: { ll: +2, ap: +3, rad: +1, foodCost: 1 },                    // Runaway Heart
 };
 
 // ── Equipment terrain perks (mirrors items.cfg "terrain" / TERR_PASS_* ) ─────
@@ -917,6 +1071,9 @@ const INV_SLOTS_MAX = 18;
 // pack and tokens -- lasts before the dawn sweep reclaims it. Mirrors
 // GROUND_AGE_DAYS in the .ino (groundAgeOut() in inventory_items.hpp).
 const GROUND_AGE_DAYS = 30;
+// The day counter (gameState.dc) runs 1..365, then day 1 again. Mirrors
+// DAYS_PER_YEAR in the .ino; day differences are taken mod it.
+const DAYS_PER_YEAR = 365;
 const TERR_PASS_RIVER = 1, TERR_PASS_CLIFF = 2, TERR_PASS_RAD = 4, TERR_PASS_WATER = 8;
 const RIVER_MC = 2, CLIFF_MC = 2, RAFT_MC = 1;
 // item id -> terrain bitmask. Keep in step with items.cfg's "terrain" key.

@@ -18,7 +18,7 @@ Event kinds (ev.k):
 import time
 from dataclasses import dataclass, field
 from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
-                    TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain,
+                    TUN_ROWS, TUNNEL_VIS_BASE, is_hatch_terrain, unwrap_day,
                     KANE_DRIVE, KANE_GONE, KANE_RANGE, MAP_COLS,
                     MAP_ROWS, TICK_MS, WORLD_TICK_INTERVAL, kane_open_ground,
                     VAC_FALLEN_TERRAIN, VAC_GOT_KEY, VAC_GOT_REGISTER,
@@ -27,7 +27,30 @@ from config import (EQUIP_SLOTS, INV_SLOTS_MAX, MAX_PLAYERS, TUN_COLS,
 from mapdec import WorldMap
 from navigate import (DAISY_BLOOM_COST, DAISY_BUD_COST, DOOM_DANGER_AWARENESS,
                       DOOM_DANGER_COST, DOOM_DANGER_RADIUS, KANE_CALLED_COST,
-                      KANE_DANGER_COST, hex_dist_wrap)
+                      KANE_DANGER_COST, SLIME_COST, hex_dist_wrap)
+
+
+def decode_slime(v: str, bodies) -> set[tuple[int, int]]:
+    """Every hex the eco message draws mould on: `v` is two chars per hex,
+    row-major, density 0-15 as a hex digit then the edge mask; `f` lists the
+    fruiting bodies as [q, r, stage, seed] and a mature one (stage 2) counts
+    whatever the density says.  ecoSlimeAt's own test."""
+    out = set()
+    for hi in range(min(len(v) // 2, MAP_COLS * MAP_ROWS)):
+        if v[2 * hi] != "0":
+            out.add((hi % MAP_COLS, hi // MAP_COLS))
+    for b in bodies:
+        if len(b) >= 3 and b[2] == 2:
+            out.add((b[0], b[1]))
+    return out
+
+
+def _surface_piles(gi) -> list:
+    """The "gi" piles on the surface board.  A tunnel pile ("dp": 1, from a
+    drop or a bank overflow below) has tunnel-board q/r, and every policy
+    that walks to a pile reads q/r as a surface hex -- left in, it would send
+    a bot to an empty hex with the same numbers, forever."""
+    return [g for g in gi if not g.get("dp")]
 
 # Machine Gun Kane asks, and the burst comes one world tick later
 # (WORLD_TICK_INTERVAL game ticks). His question stays "open" for that long
@@ -260,7 +283,10 @@ class Observation:
     def __init__(self):
         self.pid = -1
         self.tick = 0
+        # Days elapsed, NOT the board's day: that goes 365 -> 1, and every
+        # per-day rate in metrics.py divides by this.  See _see_day().
         self.day = 0
+        self._day_seen = False
         self.threat = 0
         self.weather = 0
         self.vision_r = 0
@@ -301,14 +327,17 @@ class Observation:
         # firmware and the mock). 2+ answers every request that carries a
         # "rid" with ack/nack, stamps ev with "sq" and sends "rt" per tick.
         self.proto = 1
-        # The Understory (docs/ecology-spec.md, protocol 3).  Cosmetic except
-        # for the Wasteland Daisy, so the ~9 KB vein grid is dropped on the
-        # floor here and only the daisy patches are kept: (q, r) -> (stage,
-        # count).  Stage 3 bites for 1 LL on entry; stage 2 blooms at the
-        # next dawn.  Both are priced into map.extra_cost for the pathfinder.
+        # The Understory (docs/ecology-spec.md, protocol 3).  Two things in it
+        # hurt.  The daisy patches: (q, r) -> (stage, count); stage 3 bites
+        # for 1 LL on entry, stage 2 blooms at the next dawn.  And the slime
+        # mould itself (protocol 11): every hex the ~9 KB vein grid `v` draws
+        # mould on (density 1+) or a mature body stands on, 1 LL for the first
+        # step onto it and 1 more each step after.  All of it is priced into
+        # map.extra_cost for the pathfinder (_price_understory).
         self.eco_tick = 0
         self.eco_name = ""
         self.daisies: dict[tuple[int, int], tuple[int, int]] = {}
+        self.slime: set[tuple[int, int]] = set()
         # Machine Gun Kane has asked US (a road `kane_call`, unicast): {t, q, r}
         # with t on time.monotonic(), or None.  The burst follows one world
         # tick later if we are still in the open -- see kane_call_pending.
@@ -513,7 +542,7 @@ class Observation:
                 self.world.update(msg["world"])
             self._surface_rev += 1
             self._refresh_kane_danger()
-            self.ground_items = list(msg.get("gi", []))
+            self.ground_items = _surface_piles(msg.get("gi", []))
             self.remains = list(msg.get("rm", []))
             self._prune_graves()
             self.synced = True
@@ -603,11 +632,12 @@ class Observation:
             if t == "item_result":
                 self.last_item_result = msg
         elif t == "trade_fail":
-            # car_buy / car_trade / trade_offer refused (why: 1 no caravan,
+            # car_buy / trade_offer refused (why: 1 no caravan,
             # 2 cannot pay, 3 no room, 4 offered water). Protocol 2 also nacks.
             self.last_trade_fail = msg.get("why", 0)
         elif t == "ground_update":
-            self.ground_items = list(msg.get("gi", self.ground_items))
+            if "gi" in msg:
+                self.ground_items = _surface_piles(msg["gi"])
             self.remains = list(msg.get("rm", self.remains))
             # "fell" is sent while our pid still names the seat that fell --
             # downed, left and this all go out in one drainEvents() pass,
@@ -626,14 +656,23 @@ class Observation:
             self.eco_tick = msg.get("tk", self.eco_tick)
             if "n" in msg:
                 self.eco_name = msg["n"]
+            if "v" in msg:
+                self.slime = decode_slime(msg["v"], msg.get("f") or [])
             if "dz" in msg:
                 self.daisies = {(d[0], d[1]): (d[2], d[3])
                                 for d in msg["dz"] if len(d) >= 4}
-                self.map.extra_cost = {
-                    qr: (DAISY_BLOOM_COST if stage >= 3 else DAISY_BUD_COST)
-                    for qr, (stage, _count) in self.daisies.items()
-                    if stage >= 2}
+            if "v" in msg or "dz" in msg:
+                self._price_understory()
         return t
+
+    def _price_understory(self):
+        """map.extra_cost from the slime and the daisies.  A hex can be both,
+        and then both bite, so the prices add."""
+        cost = {qr: SLIME_COST for qr in self.slime}
+        for qr, (stage, _count) in self.daisies.items():
+            if stage >= 2:
+                cost[qr] = cost.get(qr, 0) + (DAISY_BLOOM_COST if stage >= 3 else DAISY_BUD_COST)
+        self.map.extra_cost = cost
 
     def _prune_graves(self):
         """A grave of ours only means anything while its record is there.
@@ -667,8 +706,15 @@ class Observation:
         if not gs:
             return
         self.threat  = gs.get("tc", self.threat)
-        self.day     = gs.get("dc", self.day)
+        self._see_day(gs.get("dc"))
         self.weather = gs.get("wp", self.weather)
+
+    def _see_day(self, wire):
+        """Fold the board's 1..365 day into the running self.day."""
+        if wire is None:
+            return
+        self.day = unwrap_day(self.day if self._day_seen else None, wire)
+        self._day_seen = True
 
     def _surface_cell(self, d):
         """The surface cell a {q, r} dict names, or None if it names none --
@@ -689,6 +735,16 @@ class Observation:
             # dict here made every policy see an unidentifiable encounter and
             # immediately bank out of it.
             pass
+        elif k == "surv" and mine:
+            # SURVEY's ring past sight, or a reveal item's band (unicast):
+            # the same 10-char cells a vis carries, for the surface board.
+            if "cells" in ev:
+                self.map.apply_vis(ev["cells"])
+                self._surface_rev += 1
+        elif k == "rvl" and mine:
+            # The Pre-War Net Map: every fogged surface cell's terrain.
+            if self.map.fill_terrain(ev.get("map")):
+                self._surface_rev += 1
         elif k in ("enc_end", "enc_bank") and mine:
             self.encounter = None
             # A banked scene's recipes are the only knowledge grant in the
@@ -808,6 +864,7 @@ class Observation:
             # The species died with its world (ecoRequestRegen); the new
             # map above already has an empty extra_cost.
             self.daisies = {}
+            self.slime = set()
             # A fresh jeep and an unread arc come with the sync that follows.
             self.world.kane_seen = False
             self.kane_call = None
@@ -815,8 +872,10 @@ class Observation:
             # ...and a fresh sign over a new town (vacInit).
             self.world.vac_seen = False
             self.vac_hum = None
+            # handleMsg_regen() restarts the day at 1: not time passing.
+            self._day_seen = False
         elif k == "dawn":
-            self.day = ev.get("day", self.day)
+            self._see_day(ev.get("day"))
             if mine:
                 # dawnUpkeep() clears p.resting. Protocol 2+ also carries
                 # `rt` in every tick, but older firmware sent it only in

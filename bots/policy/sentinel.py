@@ -52,7 +52,7 @@ from config import (ACT_FORAGE, ACT_SCAV, ACT_SHELTER, ACT_WATER,
                     DAY_TICKS, IMPASSABLE, NUM_TERRAIN, RES_FOOD, RES_SCRAP,
                     RES_WATER, TERR_RIVER, TERR_SETTLEMENT, TERRAIN_IS_RAD,
                     TERRAIN_MC, TERRAIN_SV, can_forage, can_salvage, has_water,
-                    is_exposed, is_hatch_terrain, is_tunnel_terrain)
+                    is_exposed, is_hatch_terrain, is_oasis, is_tunnel_terrain)
 from navigate import best_target, dijkstra
 from .base import Action
 from .scoremax import ScoreMaxPolicy
@@ -169,7 +169,7 @@ class SentinelPolicy(ScoreMaxPolicy):
         here = obs.here()
         at_camp = self.camp is not None and (me.q, me.r) == self.camp
         if (here is not None and here.shelter == 0
-                and here.terrain != TERR_SETTLEMENT
+                and here.terrain != TERR_SETTLEMENT and not is_oasis(here)
                 and (at_camp or (is_exposed(here.terrain) and me.archetype != 5))
                 and me.inv[RES_SCRAP] >= 1 and me.ap >= 1):
             act = self._shelter(obs, "bedtime: " + ("finishing camp" if at_camp
@@ -228,8 +228,10 @@ class SentinelPolicy(ScoreMaxPolicy):
 
     @staticmethod
     def _needs_cover(cell) -> bool:
-        """A Settlement is cover already; anywhere else wants a shelter."""
-        return cell is None or (cell.terrain != TERR_SETTLEMENT and cell.shelter == 0)
+        """A Settlement or a forest oasis is cover already; anywhere else
+        wants a shelter."""
+        return cell is None or (cell.terrain != TERR_SETTLEMENT and cell.shelter == 0
+                                and not is_oasis(cell))
 
     def _keep_camp(self, obs, here) -> Action | None:
         me = obs.me

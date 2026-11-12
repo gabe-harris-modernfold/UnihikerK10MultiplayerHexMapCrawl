@@ -20,7 +20,8 @@ pushes them to the board. They are lossless RGBA; edit those:
     tunCorridor.png, tunRoom.png, tunFixture.png
                           the bunker tunnel board (see TUNNEL_SHEETS below),
                           with tunCorridor.json / tunFixture.json sidecars
-`build` encodes each one as a lossy WebP page (same name, .webp) in data/img/
+`build` colour-grades each terrain and tunnel sheet (scripts/palette_grade.py;
+--no-grade skips it) and encodes each one as a lossy WebP page (same name, .webp) in data/img/
 and writes data/img/tiles.json, the manifest engine.js, observer.js, the mock
 and the firmware (setupVariantCounts: "counts", "shelterCounts", "forageCounts")
 read.
@@ -70,6 +71,7 @@ from PIL import Image, PngImagePlugin
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from png_quant import visible_rmse  # noqa: E402  (the repo's art quality metric)
+import palette_grade  # noqa: E402  (the map's colour grade, applied per page)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHEETS = os.path.join(ROOT, 'art', 'hex-sheets')
@@ -162,6 +164,8 @@ LANDMARKS = {
     0: 10,   # 10 Jack's Chopper, 11 Perambulator scrub/21 (both Phase 5.5);
              # 12 VACANCY front desk (client); 13 Null Camp (not placed yet)
     1: 15,   # 15 VACANCY front desk on Ash Dunes (client)
+    2: 6,    # 6 forester's hut forest/2, 7 Evacuation Special forest/4 (Phase 5.5);
+             # 8-12 the forest oasis group (docs/forest-oasis.md); 13-15 unassigned
     4: 10,   # downtown core, variants 10-12 (Phase 4 city-core pin), gi23 art 2026-09-28;
              # 13 VACANCY corridor, 14 the fallen VACANCY town (client)
     5: 15,   # 15 VACANCY corridor in a flooded ruin (client)
@@ -318,11 +322,25 @@ class Pages:
 
     def add(self, stem, cells, cols, g, note):
         src = clean_alpha(Image.open(os.path.join(self.args.sheets, f'{stem}.png')))
+        graded = None if self.args.no_grade else palette_grade.grade(stem, np.asarray(src))
+        if graded is not None:
+            # score the encode against the graded cells, not the master's
+            src = Image.fromarray(graded, 'RGBA')
+            cells = [None if c is None else graded[y:y + g.cell, x:x + g.cell]
+                     for c, (x, y) in zip(cells, (cell_xy(i, cols, g) for i in range(len(cells))))]
+            note += ', graded'
         ladder = [None] if g.lossless else [self.args.quality] if self.args.quality else QUALITY_LADDER
         for q in ladder:
             raw, worst = encode_page(src, cells, cols, g, q)
             if worst <= MAX_RMSE:
                 break
+        else:
+            if graded is not None and len(ladder) > 1:
+                # The grade's wider contrast scores worse at every rung, yet the
+                # bottom rung looks the same as the top one zoomed 3x (2026-11-05);
+                # the top rung would cost ~1 MB of the PSRAM image cache.
+                q = ladder[0]
+                raw, worst = encode_page(src, cells, cols, g, q)
         out = f'{stem}.webp'
         self.digest.update(raw)
         self.total += len(raw)
@@ -516,6 +534,7 @@ def main():
     b.add_argument('--out', default=IMG)
     b.add_argument('--quality', type=int, help='one WebP quality for every sheet (default: the ladder)')
     b.add_argument('--check', action='store_true', help='validate and report, write nothing')
+    b.add_argument('--no-grade', action='store_true', help='skip the colour grade (scripts/palette_grade.py)')
     s = sub.add_parser('split', help='one sheet -> a PNG per cell')
     s.add_argument('name', help='a terrain (OpenScrub) or a sprite sheet (shelterBasic, forrageAnimal)')
     s.add_argument('--dir', default=os.path.join(tempfile.gettempdir(), 'hex-cells'))

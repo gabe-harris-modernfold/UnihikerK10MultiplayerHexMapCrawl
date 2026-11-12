@@ -192,6 +192,7 @@ static constexpr uint8_t  VENT_ASCEND_AP = 2;   // climbing out of a Vent Shaft 
 static constexpr int      TUNNEL_VIS_BASE  = 1;
 static constexpr int      TUNNEL_VIS_SCOUT = 1;
 static constexpr uint8_t  ITEM_BILE_FLARE  = 54;  // data/items.cfg — the tunnel light source
+static constexpr uint8_t  ITEM_BRIGHT_BAD_IDEA = 10;  // the road flare: EVT_FLARE when it goes up
 
 // One surface hatch and the shaft cell beneath it.  sq/sr index G.map,
 // tq/tr index G.tunnel.  Persisted in SaveHeader, so keep it packed.
@@ -216,6 +217,17 @@ static constexpr int      MAX_PLAYERS   = 6;   // seats: one per archetype (NUM_
 // sizes every per-seat table, the save and the wire. This is the cap.
 static constexpr int      MAX_SEATED    = 5;
 static constexpr int      VISION_R      = 3;
+// Ceiling on the surface sight radius once every bonus is in (terrain, Scout,
+// gear, allies on the hex). A disk of radius 9 is 271 cells, ~2.7 KB of the
+// 3200-byte vis buffers handleMsg_move() and pushVisDisk() build into; at 10
+// the last rows no longer fit and buildVisDisk() drops them without a word --
+// the client then draws its old copy of those hexes as if they were in sight.
+// A Scout on a Mountain with three allies on the hex is 10 without any gear.
+static constexpr int      VIS_R_MAX     = 9;
+// How far out a one-shot reveal_fog item can reach (sight + param, capped).
+// The band goes out as an ev surv in handleMsg_use_item's 8.8 KB buffer: a
+// whole disk of 13 is 547 cells, 5.5 KB, which leaves its trail records room.
+static constexpr int      REVEAL_R_MAX  = 13;
 static constexpr int      NUM_TERRAIN   = 16;
 static constexpr uint32_t TICK_MS       = 100;
 static constexpr uint8_t  RESPAWN_TICKS = 200;
@@ -237,6 +249,10 @@ static constexpr int      INV_SLOTS_MULE  = 12;
 // inventory_items.hpp emits the JSON arrays -- so this is a single knob.
 static constexpr int      INV_SLOTS_MAX   = 18;
 static constexpr uint32_t DAY_TICKS       = 3000;
+// G.dayCount runs 1..DAYS_PER_YEAR and the dawn after the last day is day 1
+// again (tickGame()).  Anything that measures time in days does it with
+// groundAge()'s modular difference, never by subtracting raw days.
+static constexpr uint16_t DAYS_PER_YEAR   = 365;
 static constexpr uint8_t  TC_THRESHOLD_A  = 5;
 static constexpr uint8_t  TC_THRESHOLD_B  = 9;
 static constexpr uint8_t  TC_THRESHOLD_C  = 13;
@@ -416,6 +432,7 @@ static constexpr uint8_t NAR_LL_CAP_DOWN    = 29;  // permanently lowers the LL 
 static constexpr uint8_t NAR_SCAV_DOUBLE    = 30;  // doubles scrap from SCAVENGE
 static constexpr uint8_t NAR_RIVER_FORAGE   = 31;  // doubles FORAGE yield on River Channel
 static constexpr uint8_t NAR_LAND_FORAGE    = 32;  // doubles FORAGE yield on land hexes
+static constexpr uint8_t NAR_DOUBLE_AP      = 33;  // Super Juice: today's AP budget again, on use (useItem)
 
 enum StatIdx : uint8_t {
   STAT_LL      = 0,
@@ -447,7 +464,7 @@ static constexpr uint8_t EQUIP_SLOTS = 5;
 
 enum EffectId : uint8_t {
   EFX_NONE          = 0,
-  EFX_REVEAL_FOG    = 1,   // param 1 = +1 passive vision while equipped; >=2 = one-shot reveal radius; 99 = whole map
+  EFX_REVEAL_FOG    = 1,   // param 1 = +1 passive vision while equipped (surface); 2..98 = one-shot reveal of that many rings PAST current sight; 99 = whole map's terrain (handleMsg_use_item sends both)
   EFX_NARRATIVE     = 2,   // param = NAR_* (server) or client-only id
   EFX_THREAT_MOD    = 3,   // param = signed delta to the Threat Clock (per use, or per dawn while equipped)
   EFX_CURE_STATUS   = 4,   // param = number of wounds healed (minor first, then major)
@@ -470,15 +487,17 @@ struct ItemDef {
   uint8_t      value;      // items.cfg "value": caravan asking price, in resource tokens of any mix
   uint8_t      tradeable;  // items.cfg "trade": 1 = the caravan may put this on its shelf (consumables only today)
   uint8_t      leavesTracks;  // items.cfg "tracks": 1 = moving with this equipped marks HexCell.tireTrack (the Motorbike today)
+  uint8_t      cursed;        // items.cfg "cursed": 1 = never dropped, kept through a fall into the seat's next survivor (the Cursed Note)
 };
 
 struct GroundItem {
-  int16_t  q, r;
+  int16_t  q, r;      // on the board `depth` names: G.map, or G.tunnel's tq/tr
   uint8_t  itemType;
   uint8_t  qty;
   uint16_t day;       // G.dayCount when last added to -- drives GROUND_AGE_DAYS.
                       // Not in SaveGroundItem (that record is fixed at 6 bytes);
                       // it rides /save/ground.bin instead.
+  uint8_t  depth;     // 0 = surface, 1 = bunker tunnels. Also in ground.bin (v2).
 };
 
 // Where a survivor went down, and the resource tokens they were carrying.
@@ -510,19 +529,21 @@ static constexpr uint8_t TERRAIN_SETTLEMENT = 9;
 struct RecipeDef {
   uint8_t id;
   char    name[24];                  // display name, max 23 chars (see data/recipes.cfg header)
-  uint8_t outputItem;
+  uint8_t outputItem;                // ItemDef id made, or 0 when the recipe makes tokens (outputRes)
   uint8_t outputQty;
+  uint8_t outputRes;                 // 0 = none, else resource token index + 1 (4 = medicine)
   uint8_t matItem[RECIPE_MAX_MATS];  // material ItemDef ids required (0 = unused slot)
   uint8_t matQty[RECIPE_MAX_MATS];
   uint8_t resCost[5];                // water/food/fuel/med/scrap tokens consumed
   uint8_t starter;                   // 1 = known from spawn, no encounter needed
+  uint8_t archMask;                  // bit per archetype that knows it from spawn (`known_by`)
 };
 
 // 12-15 are the bunker tunnel system (tunnels.hpp).  12/13 sit on BOTH boards:
 // the surface hatch, and the shaft cell directly beneath it on the tunnel
 // board.  14/15 are tunnel-board only.  TERRAIN_VIS is unused underground --
-// playerVisParams() takes a separate branch at depth 1 (base radius 1, +1 per
-// Bile Flare carried, +1 Scout).
+// playerVisParams() takes a separate branch at depth 1 (base radius 1, +1 for
+// carrying any Bile Flare, +1 Scout).
 static const uint8_t TERRAIN_MC[NUM_TERRAIN]  = { 1, 2, 2, 3, 2, 3, 3, 2, 4, 1, 255, 255, 1, 1, 2, 255 };
 static const int8_t  TERRAIN_VIS[NUM_TERRAIN] = { 0, 0, -3, 0, -2, 0, 1, 2, 2, -1, 0, -3, 0, 0, 0, 0 };
 static const uint8_t TERRAIN_SV[NUM_TERRAIN]  = { 0, 0,  1, 0,  1,  2, 0, 1, 2, 3, 0, 0, 2, 0, 1, 0 };
@@ -734,7 +755,35 @@ enum EvtType : uint8_t {
   // The settlement mini-quest moved: amt = what (VAC_EV_*), res = rooms left
   // (VAC_EV_HUM: which half the survivor carries), q/r = the town, pid = who
   // (255 = a dawn's doing). Broadcast, except the hum, which is unicast.
-  EVT_VAC           = 39
+  EVT_VAC           = 39,
+  // ── Wasteland ghosts (ghosts.hpp) ──
+  // A ghost did something: actType = what (GH_*), actOut = its slot, tradeTo
+  // = the seat it rose from, pid = who it rides or rode (255 = nobody), q/r =
+  // where it is, res = resource 1-5 and amt = tokens (drain, tithe; fade: amt
+  // = the hoard it left). Broadcast. Its rising is sent by the EVT_DOWNED
+  // handler itself, which has the name to hand.
+  EVT_GHOST         = 40,
+  // ── RUNAWAY SCIENCE (lab.hpp) ──
+  // Doctor Gaunt's clinic moved: amt = what (LAB_EV_*), q/r = the room it
+  // happened at (a G.tunnel cell), pid = who (255 = a dawn's doing), res = for LAB_EV_CALL the
+  // hexes to the theatre, LAB_EV_TAUNT which parts they DO carry, LAB_EV_LOST
+  // the part put back. Broadcast, except the call and the taunt (unicast).
+  EVT_LAB           = 41,
+  // ── Dshingus (dshingus.hpp) ──
+  // Somebody caught it, left a spot or got over it: actType = what
+  // (DSH_EV_*), pid = who, tradeTo = the seat they caught it off
+  // (DSH_SRC_BAND = a scene), q/r = where, amt = days left. Broadcast.
+  EVT_DSH           = 42,
+  // ── ONE-HAND BONNEY (bonney.hpp) ──
+  // Her fire or her hand did something: amt = what (BON_EV_*), q/r = her
+  // fire, pid = who (255 = a dawn's doing), res = the item (pinch, caught,
+  // rescue, bargain; 0 = lint or a real apple) or, for the call, a line
+  // index. Broadcast, except the call and the pinch (unicast).
+  EVT_BONNEY        = 43,
+  // A Bright Bad Idea went up (handleMsg_use_item): pid = who, q/r = the
+  // surface hex, amt = depth (1 = it burns in the hand, below). Broadcast, so
+  // every phone sees the flare, or its red glow toward it (data/flare-field.js).
+  EVT_FLARE         = 44
 };
 static constexpr uint8_t TRAP_OUT_KNOWN  = 0;   // escaped: still armed, now on this survivor's map
 static constexpr uint8_t TRAP_OUT_SPRUNG = 1;   // a check failed: it went off, and it is gone
@@ -746,15 +795,16 @@ enum DownCause : uint8_t {
   DC_UNKNOWN = 0, DC_THIRST, DC_HUNGER, DC_EXPOSURE, DC_BAD_AIR, DC_RADIATION,
   DC_FIRE, DC_LIGHTNING, DC_FLOOD, DC_DOOM, DC_ENC_HAZARD, DC_ENC_COST,
   DC_ACTION, DC_CHEM, DC_FOG,
-  DC_DAISY,   // a bloomed Wasteland Daisy bit (ecology.hpp) -- the Understory's one mechanical effect
+  DC_DAISY,   // a bloomed Wasteland Daisy bit (ecology.hpp ecoBiteCheck)
   DC_KANE,    // caught in the open by Machine Gun Kane's burst (kane.hpp)
+  DC_SLIME,   // walked on the slime mould, 1 LL more each step (ecology.hpp ecoBiteCheck)
   DC_COUNT
 };
 static const char* const DC_NAME[DC_COUNT] = {
   "unattributed", "thirst", "hunger", "exposure", "bad air", "radiation",
   "fire", "lightning", "flood", "creeping doom", "encounter hazard",
   "encounter cost", "action", "chem storm", "strangle fog", "wasteland daisy",
-  "machine gun kane"
+  "machine gun kane", "slime mould"
 };
 static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] : DC_NAME[0]; }
 
@@ -789,14 +839,45 @@ static inline const char* dcName(uint8_t c) { return c < DC_COUNT ? DC_NAME[c] :
 //  10: VACANCY (vacancy.hpp, docs/vacancy.md): sync, the tick broadcast and
 //      /state carry world "vac"; ev vac; enc_start and enc_path carry "vac"
 //      (the part); item_result act "vac_out".
-static constexpr int PROTO_VERSION = 10;
+//  11: the slime mould hurts (ecology.hpp ecoBiteCheck): ev dmg and
+//      downed/left carry the cause "slime mould", amt 1, 2, 3... as the run
+//      of slime steps grows.
+//  12: wasteland ghosts (ghosts.hpp): sync, the tick broadcast and /state
+//      carry world "ghosts"; ev ghost (w rise/latch/letgo/drain/tithe/fade).
+//      A haunted survivor's collect, act and enc_bank amounts are what they
+//      kept, after the ghost's third.
+//  13: RUNAWAY SCIENCE (lab.hpp, docs/runaway-science.md): sync, the tick
+//      broadcast and /state carry world "lab"; ev lab (w call/needle/jar/
+//      wires/graft/lost/taunt); enc_start and enc_path carry "lab" (the
+//      part); item_result act "lab_graft". Encounter choices may cost
+//      "score" and may be "sure" (no roll): enc_res carries "sure". A
+//      cursed item's drop_item is refused.
+//  14: ONE-HAND BONNEY (bonney.hpp, docs/one-hand-bonney.md): sync, the tick
+//      broadcast and /state carry world "bon"; ev bonney (w call/pinch/
+//      caught/supper/rescue/bargain/back); enc_start and enc_path carry
+//      "bonney" (the section), and for section 2 "apple" and "own"; item_result
+//      acts "bonney_pinch", "bonney_caught", "bonney_rescue". A hazard may
+//      carry "steal": 1.
+//  15: reveal items work on the board (docs: items.cfg reveal_fog). A one-shot
+//      reveal answers its use with an ev surv band (the rings from past sight
+//      out to sight + param) instead of a plain vis; the whole-map read sends
+//      ev rvl, "map" = 2 hex chars a cell (terrain << 4 | art variant),
+//      row-major. A refused use_item may carry "why" ("underground").
+//  16: an enc_start from a survivor already in a scene is answered with that
+//      scene's enc_path again (no longer err "Already in an encounter" + nack
+//      in_enc), carrying "rs":1, "node", "tm" (terminal reached), "pl"
+//      (tokens on the tray), "pi" ([item, qty] pairs), "pr" (recipe bits) and
+//      "as" (allies behind the next roll). The client asks this way when the
+//      board says it is in a scene and none is on screen (encPathJson).
+static constexpr int PROTO_VERSION = 16;
 
 // ── The Understory (ecology.hpp) ──────────────────────────────────────────
 // Hooks the earlier includes call into. ecology.hpp itself comes after
 // tunnels.hpp (it needs W_hex and the tunnel board); with ECO_ENABLE=0 in
 // build_opt.h every one of these is a no-op.
 static void ecoNoteHurt(int pid, uint8_t cause);   // an injury happened here: the daisies' seed
-static bool ecoBiteCheck(int pid);                 // just entered a surface hex: bloomed daisies bite
+static bool ecoBiteCheck(int pid, bool step = false);   // just entered a surface hex: slime and daisies bite
+                                                        // (step: walked in, so a slime run goes on)
 static void ecoOnIgnite(int16_t q, int16_t r);     // fire clears the bloom bit at once
 static const uint8_t* ecoPublishedDensity();       // per-hex vein density for the LCD minimap
 static uint32_t ecoLcdTint(uint32_t base, uint8_t dens);
@@ -826,6 +907,10 @@ struct GameEvent {
   // Without this the Motorbike's "+5 AP" simply failed to appear and nothing
   // -- no event, no log, no UI state -- said the fuel had run out.
   uint8_t  dawnUnfuelled;
+  // Slept out in it (dawnUpkeep's exposure test failed): 0 under cover, 1 on
+  // the open ground, 2 up a tree in the Rust Forest. The LCD laughs at one of
+  // them a dawn (network-events.hpp, FXK_ROUGH).
+  uint8_t  dawnRough;
   uint8_t  actWhy;        // ABW_* — why an AO_BLOCKED action was refused
   uint8_t  actType;
   uint8_t  actOut;
@@ -851,7 +936,7 @@ struct GameEvent {
   uint8_t  tradeGive[5];
   uint8_t  tradeWant[5];
   uint8_t  tradeResult;
-  uint8_t  tradeItem;     // caravan purchase (tradeTo == CARAVAN_PID): item bought; 0 = plain resource swap
+  uint8_t  tradeItem;     // caravan purchase (tradeTo == CARAVAN_PID): item bought; 0 on a survivor↔survivor trade
   uint8_t  tradeItemQty;
   // ── Encounter fields (active when type is EVT_ENC_*) ───────────
   uint8_t  encOut;       // 0=fail/reason-code, 1=success
@@ -872,6 +957,11 @@ struct GameEvent {
   uint8_t  encAssist;     // enc_res: allies who steadied this roll (its DN is already lowered by it);
                           // enc_ast: allies now behind the next roll
   uint8_t  actTgt;        // ACT_TREAT: whose wounds/LL the event reports (== pid when treating yourself)
+  uint8_t  encLab;        // enc_start: a RUNAWAY SCIENCE part (lab.hpp), wire "lab"
+  uint8_t  encSure;       // enc_res: a "sure" choice -- paid for, never rolled (wire "sure")
+  uint8_t  encBonney;     // enc_start: a ONE-HAND BONNEY section (bonney.hpp), wire "bonney"
+  uint8_t  encBonApple;   // ...section 2: what is in Turnbull's mouth (0 = a real apple), wire "apple"
+  uint8_t  encBonOwn;     // ...and whether it was the reader's own, wire "own"
   // Which board q/r refer to: 0 = G.map, 1 = G.tunnel. Every event that names
   // a hex needs this now that there are two boards -- without it the client
   // would patch a surface cell with a tunnel coordinate. Serialised as "dp"
@@ -915,6 +1005,11 @@ struct ActiveEncounter {
   uint8_t  kane;            // 1-5 = a Machine Gun Kane chapter (kane.hpp), opened by arrival;
                             // its state is the world's, so there is no POI to put back
   uint8_t  vac;             // 1-4 = a VACANCY part (vacancy.hpp), opened by arrival; likewise
+  uint8_t  lab;             // 1-4 = a RUNAWAY SCIENCE part (lab.hpp), opened by arrival; likewise
+  uint8_t  bonney;          // 1-2 = a ONE-HAND BONNEY section (bonney.hpp), opened by arrival; likewise
+  uint8_t  bonStole;        // ...what Pinch took this scene (255 = only lint, 0 = not yet)
+  uint8_t  bonApple;        // ...section 2: what is in Turnbull's mouth (0 = a real apple)
+  uint8_t  bonFrom;         // ...and the seat it was stolen from (255 = none)
   uint8_t  assistMask;      // bit per seat: allies who steadied the NEXT roll (enc_assist).
                             // Spent by that roll, so every node is helped afresh
 };
@@ -972,6 +1067,48 @@ static void vacDawn(bool watched);
 static bool vacOnArrival(int pid);
 static bool vacTakeSaveWanted();
 static void vacSnapshot(int16_t& q, int16_t& r, uint8_t& stage);
+// Wasteland ghosts (ghosts.hpp, included after vacancy.hpp). ghostInit: from
+// wInit(). tickGhosts: the world tick. ghostDawn: the dawn block, true when a
+// fading ghost left its hoard on the ground. ghostOnArrival: the surface
+// step, after VACANCY's. ghostTithe: a haunted survivor's gain of resource
+// idx 0-4, returns what they keep. ghostTakeSaveWanted: read-and-clear.
+// Caller holds G.mutex for all of them.
+static void ghostInit();
+static void tickGhosts();
+static bool ghostDawn();
+static void ghostOnArrival(int pid, int fromQ, int fromR);
+static uint8_t ghostTithe(int pid, uint8_t idx, uint8_t gain);
+static bool ghostTakeSaveWanted();
+// RUNAWAY SCIENCE (lab.hpp, included after ghosts.hpp). labInit: from
+// wInit(). labDawn: the dawn block, after the scenes are cut short.
+// labOnArrival: the step below (moveTunnel) -- the clinic is only ever in the
+// tunnels. labTakeSaveWanted: read-and-clear, the quest moved. Caller holds
+// G.mutex for all of them.
+static void labInit();
+static void labDawn();
+static bool labOnArrival(int pid);
+static bool labTakeSaveWanted();
+// Dshingus (dshingus.hpp, included after lab.hpp). dshInit: from wInit().
+// dshDawn: the dawn block. dshOnArrival: the end of every step, surface and
+// tunnel. dshOnRest: doRest(). dshCatch: a scene's "dshingus" hazard.
+// dshReleaseSeat: a seat that takes a new survivor. dshTakeSaveWanted:
+// read-and-clear. Caller holds G.mutex for all of them.
+static void dshInit();
+static void dshDawn();
+static void dshOnArrival(int pid);
+static void dshOnRest(int pid);
+static void dshCatch(int pid, uint8_t src);
+static void dshReleaseSeat(int pid);
+static bool dshTakeSaveWanted();
+// ONE-HAND BONNEY (bonney.hpp, included after dshingus.hpp). bonneyInit: from
+// wInit(). bonneyDawn: the dawn block, after the scenes are cut short (her
+// comeback). bonneyOnArrival: the surface step, after VACANCY's. Her theft
+// and endings are called from the encounter code, included after her.
+// bonneyTakeSaveWanted: read-and-clear. Caller holds G.mutex for all of them.
+static void bonneyInit();
+static void bonneyDawn();
+static bool bonneyOnArrival(int pid);
+static bool bonneyTakeSaveWanted();
 
 struct EncPoolInfo {
   uint8_t count;
@@ -986,7 +1123,11 @@ static constexpr uint8_t ENC_POOL_TRAP  = NUM_TERRAIN;
 static constexpr uint8_t ENC_POOL_KANE  = NUM_TERRAIN + 1;
 // VACANCY's four parts (vacancy.hpp): index.json "vacancy", file = part.
 static constexpr uint8_t ENC_POOL_VAC   = NUM_TERRAIN + 2;
-static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 3;
+// RUNAWAY SCIENCE's four parts (lab.hpp): index.json "lab", file = part.
+static constexpr uint8_t ENC_POOL_LAB   = NUM_TERRAIN + 3;
+// ONE-HAND BONNEY's two sections (bonney.hpp): index.json "bonney", file = section.
+static constexpr uint8_t ENC_POOL_BONNEY = NUM_TERRAIN + 4;
+static constexpr uint8_t ENC_POOL_COUNT = NUM_TERRAIN + 5;
 static EncPoolInfo encPools[ENC_POOL_COUNT];
 // Trap tiers: contiguous file-id ranges inside the traps pool, from
 // index.json "traps"."tiers" (counts per tier, cheap first). Tier t is ids
@@ -1098,6 +1239,28 @@ static constexpr uint32_t KANE_SAVE_MAGIC = 0x454E414Bul;     // "KANE"
 // again -- a save without it loads with a freshly rolled sign.
 static const char         SAVE_VAC_F[] = "/save/vac.bin";
 static constexpr uint32_t VAC_SAVE_MAGIC = 0x59434156ul;      // "VACY"
+// Wasteland ghosts (ghosts.hpp). Same reason again -- a save without it
+// loads with no ghosts walking.
+static const char         SAVE_GHOST_F[] = "/save/ghosts.bin";
+static constexpr uint32_t GHOST_SAVE_MAGIC = 0x54534847ul;    // "GHST"
+// RUNAWAY SCIENCE (lab.hpp): the clinic's three buildings and what has been
+// taken out of them. Same reason again -- a save without it loads with a
+// freshly placed clinic.
+static const char         SAVE_LAB_F[] = "/save/lab.bin";
+static constexpr uint32_t LAB_SAVE_MAGIC = 0x5342414Cul;      // "LABS"
+// Dshingus (dshingus.hpp): who has it, and the spots. Same reason again -- a
+// save without it loads with nobody infected.
+static const char         SAVE_DSH_F[] = "/save/dsh.bin";
+static constexpr uint32_t DSH_SAVE_MAGIC = 0x47485344ul;      // "DSHG"
+// ONE-HAND BONNEY (bonney.hpp): her fire, its section, her hoard. Same reason
+// again -- a save without it loads with a freshly placed Bonney.
+static const char         SAVE_BONNEY_F[] = "/save/bonney.bin";
+static constexpr uint32_t BONNEY_SAVE_MAGIC = 0x594E4E42ul;   // "BNNY"
+// Daily-cost gear paid for today (inventory_items.hpp, s_paidItem). Same
+// reason again -- a save without it loads with whatever is equipped counted
+// as paid, as every boot did before the file existed.
+static const char         SAVE_FUEL_F[] = "/save/fuel.bin";
+static constexpr uint32_t FUEL_SAVE_MAGIC = 0x4C455546ul;     // "FUEL"
 
 struct __attribute__((packed)) SaveHeader {
   uint32_t magic;
@@ -1164,7 +1327,8 @@ struct __attribute__((packed)) SaveGroundItem {
 };
 
 // /save/ground.bin: this header, then nGround uint16 days (groundItems[] order,
-// matching map.bin's ground block), then nRemains SaveRemains.
+// matching map.bin's ground block), then -- version 2 on -- nGround uint8
+// depths in the same order, then nRemains SaveRemains.
 struct __attribute__((packed)) SaveGroundHdr {
   uint32_t magic;
   uint8_t  version;
@@ -1247,6 +1411,8 @@ enum K10Glyph : uint8_t {
   GLY_DEATH, GLY_DOOM, GLY_FIRE, GLY_FLOOD, GLY_QUAKE, GLY_SETTLE,
   GLY_RAIN, GLY_STORM, GLY_CHEM, GLY_FOG,
   GLY_RAD, GLY_MEDAL,
+  GLY_TRIP, GLY_GUNFIRE,   // a tripwire found; Kane's gun (CLASH is the place itself hurting them)
+  GLY_ROUGH, GLY_ROUGH_TREE, GLY_ROUGH_CHALK,   // slept rough: the vulture, the branch, the chalk outline
   GLY_COUNT
 };
 // A few moments are too big for one line of handwriting, so the chronicle
@@ -1448,6 +1614,10 @@ static void makeEtag(char* out, size_t outLen, const uint8_t* buf, size_t len) {
 #include "traps.hpp"               // booby traps: placement, forced entry, knowledge
 #include "kane.hpp"                // Machine Gun Kane: the roaming jeep and its five-chapter arc
 #include "vacancy.hpp"             // VACANCY: the sign over a town, its two errands, its nights
+#include "ghosts.hpp"              // wasteland ghosts: rise where survivors fall, ride the living, feed
+#include "lab.hpp"                 // RUNAWAY SCIENCE: Doctor Gaunt's clinic, three buildings and the Graft
+#include "dshingus.hpp"            // Dshingus: the band's parting gift -- spots where you sleep, passed on by sharing a hex
+#include "bonney.hpp"              // ONE-HAND BONNEY: her fire, Turnbull on the spit, and the hand that robs you
 
 // Network layer
 #include "network-persistence.hpp"

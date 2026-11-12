@@ -13,8 +13,9 @@
 // Usage (server.js):
 //   const eco = new Ecology({ seed, terrainAt, ... });   eco.genesis();
 //   setInterval(() => { eco.tick(inputs); broadcast(eco.wireMessage()); ... }, ECO_TICK_MS / speed);
-//   eco.noteHurt(q, r) at every injury site; eco.bloomAt(q, r) before a bite;
-//   eco.blightAt(q, r) in the resource pass (a mouldy hex holds no resource).
+//   eco.noteHurt(q, r) at every injury site; eco.mouldAt(q, r) / eco.bloomAt(q, r)
+//   before a bite; eco.blightAt(q, r) in the resource pass (a mouldy hex holds
+//   no resource).
 'use strict';
 
 const MAP_COLS = 75, MAP_ROWS = 57, NUM_TERRAIN = 16;
@@ -574,13 +575,16 @@ class Ecology {
   }
   onIgnite(q, r) { this.bloom[r * MAP_COLS + q] = 0; }
   bloomAt(q, r) { return !!this.bloom[r * MAP_COLS + q]; }
-  // The blight (ecoBlightAt in ecology.hpp): any mould the client draws --
-  // density 1+, or a mature fruiting body. Surface only, like everything here.
-  blightAt(q, r) {
-    if (!this.species || !this.blightOn) return false;
+  // Any mould the client draws -- density 1+, or a mature fruiting body. The
+  // slime that bites (ecoSlimeAt in ecology.hpp), switch or no switch.
+  // Surface only, like everything here.
+  mouldAt(q, r) {
+    if (!this.species) return false;
     if (this.hexDens[r * MAP_COLS + q]) return true;
     return this.bodies.some((b) => b.stage === 2 && b.q === q && b.r === r);
   }
+  // The blight (ecoBlightAt in ecology.hpp): the same test, behind its switch.
+  blightAt(q, r) { return this.blightOn && this.mouldAt(q, r); }
 
   // ── Per-hex derivation ──
   stripMean(x0, y0, w, h) {
@@ -772,6 +776,19 @@ class Ecology {
     this.bloom.fill(0);
     for (const x of this.daisies) if (x.stage === 3) this.bloom[x.r * MAP_COLS + x.q] = 1;
     return d;
+  }
+  // Test-only: smear thick mould over `n` land hexes running east from q, r
+  // (the trail itself, so it fades like the real thing). Returns how many.
+  paintMould(q, r, n) {
+    let painted = 0;
+    for (let i = 0; i < n; i++) {
+      const hq = wrapQ(q + i);
+      if (isWater(this.snap.terrain[r * MAP_COLS + hq])) continue;
+      for (let y = r * SUB; y < (r + 1) * SUB; y++) this.trail.fill(255, y * W + hq * SUB, y * W + hq * SUB + SUB);
+      painted++;
+    }
+    this.derive(false);
+    return painted;
   }
 }
 

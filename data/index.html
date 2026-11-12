@@ -68,6 +68,12 @@
     <!-- Depth replaces weather in the same slot: underground the weather does
          not apply at all (the hazard loops skip depth>0 players), and
          #hud-status is overflow:hidden, so showing both clips one away. -->
+    <!-- A ghost riding you (ghosts.js): first in the slot, since it costs you
+         every minute it stays and the weather does not. -->
+    <span id="hud-haunt" class="hud-haunt" aria-label="haunted" aria-live="polite" style="display:none"></span>
+    <!-- The Dshingus (dshingus.js): days left on it. Costs nothing, so after
+         the ghost. -->
+    <span id="hud-dsh" class="hud-dsh" aria-label="dshingus" aria-live="polite" style="display:none"></span>
     <span id="hud-depth" class="hud-depth" aria-label="depth" aria-live="polite" style="display:none"></span>
     <span id="hud-weather" class="hud-weather" aria-label="weather" aria-live="polite"></span>
     <span id="hud-rest" class="hud-rest" aria-label="rest state" aria-live="polite"></span>
@@ -176,13 +182,15 @@
             <div id="trade-pay-row" class="trade-res-row"></div>
             <button id="action-trade-buy" class="chk-action-btn" style="margin-top:10px">&#x21C4; BUY</button>
           </div>
-          <div class="check-lbl" style="margin-top:14px">SWAP RESOURCES</div>
         </div>
-        <div class="check-lbl" style="margin-top:10px">OFFERING</div>
-        <div id="trade-give-row" class="trade-res-row"></div>
-        <div class="check-lbl" style="margin-top:8px">REQUESTING</div>
-        <div id="trade-want-row" class="trade-res-row"></div>
-        <button id="action-trade-send" class="chk-action-btn" style="margin-top:10px">&#x21C4; SEND OFFER</button>
+        <!-- Survivors only: the caravan sells, it never swaps tokens -->
+        <div id="trade-swap-sec">
+          <div class="check-lbl" style="margin-top:10px">OFFERING</div>
+          <div id="trade-give-row" class="trade-res-row"></div>
+          <div class="check-lbl" style="margin-top:8px">REQUESTING</div>
+          <div id="trade-want-row" class="trade-res-row"></div>
+          <button id="action-trade-send" class="chk-action-btn" style="margin-top:10px">&#x21C4; SEND OFFER</button>
+        </div>
       </div>
     </div>
     <!-- CRAFT recipe sub-control -->
@@ -282,11 +290,22 @@
     </div>
 
     <footer id="enc-foot">
+      <!-- Header row: label, a one-line summary (shown collapsed), the pack
+           readout, and the minimize toggle (phone only, see style.css). The
+           body under it is what collapses: resource steppers, items, carry. -->
       <div id="enc-haul" aria-label="pending loot">
-        <span class="enc-haul-lbl">HAUL</span>
-        <div id="enc-haul-items"></div>
-        <span id="enc-haul-empty">nothing yet</span>
-        <span id="enc-haul-carry" aria-live="polite" hidden></span>
+        <div id="enc-haul-head">
+          <span class="enc-haul-lbl">HAUL</span>
+          <span id="enc-haul-sum"></span>
+          <span id="enc-haul-empty">nothing yet</span>
+          <span id="enc-haul-pack" hidden></span>
+          <button id="enc-haul-toggle" type="button" aria-expanded="true" aria-controls="enc-haul-body" aria-label="minimize haul" hidden><span aria-hidden="true">&#x25BE;</span></button>
+        </div>
+        <div id="enc-haul-body">
+          <div id="enc-haul-res"></div>
+          <div id="enc-haul-items"></div>
+          <span id="enc-haul-carry" aria-live="polite" hidden></span>
+        </div>
       </div>
       <div id="enc-leave-wrap">
         <button id="enc-leave-btn" type="button">WALK AWAY</button>

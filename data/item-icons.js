@@ -863,6 +863,98 @@
     k.solid(poly([22.6, 11.8, 25.8, 12.2, 23.8, 14.2]), 'bone');
   };
 
+  // ── Jack's Friend Chicken (settlement/24.json) ──────────────────
+
+  // 77 Fried Chicken: a red-striped takeout box gone see-through with grease,
+  // craggy golden pieces heaped over the rim, one drumstick bone up.
+  I[77] = (k) => {
+    const crust = { shade: { t: 'round', r: 3 }, grime: 0.1, speck: 0.3, wear: 0.7 };
+    k.solid(rough(ellipse(11, 13.2, 5.4, 4.6), 0.9, 1.1, 3), 'copper', crust);
+    k.solid(rough(ellipse(21.4, 12.6, 5.2, 4.8), 0.9, 1.1, 4), 'copper', crust);
+    k.solid(union(seg(17.6, 10.4, 20.8, 4.6, 1), circle(20.4, 3.9, 1.3), circle(21.8, 4.9, 1.2)), 'bone', { grime: 0.1 });
+    k.solid(rough(ellipse(16, 12.4, 4.4, 4.4), 0.8, 1.2, 5), 'copper', crust);
+    const tub = poly([5.2, 14.2, 26.8, 14.2, 23.4, 29, 8.6, 29]);
+    k.solid(tub, 'white', { shade: cyl(16, 0, 16, 32, 10), grime: 0.3 });
+    k.decal(inter(tub, stripes(5, 1, 0)), 'red', { dt: 0 });
+    k.decal(rough(circle(19.6, 22.6, 3.2), 1.2, 0.6, 7), null, { dt: -1, p: 0.85 });   // grease soaking through
+    k.decal(box(16, 15.2, 11, 1), 'white', { tone: HI });                           // the rolled rim
+    k.line(stroke([5.6, 16.3, 26.4, 16.3]), { tone: SHD });
+  };
+
+  // 78 Hot Sauce: Romper Red. A slim bottle glowing like a warning light, a
+  // skull on the label and, under it, a smaller skull. The air over it wavers.
+  I[78] = (k) => {
+    k.fx(union(curve(21.4, 9, 22.6, 6.8, 21.6, 4.6, 0.3), curve(10.6, 10.6, 9.4, 8.4, 10.4, 6.2, 0.3)),
+      'fire', { tone: SHD, w: 1, p: 0.7 });
+    const bottle = union(box(16, 21.8, 5.4, 7.6, 2), ellipse(16, 14.6, 5.4, 2.6), box(16, 10.4, 1.9, 3.4, 0.4));
+    k.solid(bottle, 'glass', { shade: cyl(16, 0, 16, 32, 5.4), grime: 0.12 });
+    k.decal(union(box(16, 22.4, 4.4, 6.8, 1.6), ellipse(16, 15.4, 4.4, 1.8)), 'red', { shade: { t: 'glow', rim: 0.9, core: 2.6 } });
+    k.decal(union(circle(16, 20.8, 2.6), box(16, 23.9, 1.6, 0.9)), 'white', { tone: HI });          // the skull
+    k.decal(dots([14.5, 21.5, 17.5, 21.5]), 'black', { tone: BASE, w: 1 });                        // eyes on pixel centres
+    k.decal(union(circle(16, 26.8, 1.2), box(16, 28, 0.7, 0.5)), 'white', { tone: SHD });           // the smaller skull
+    k.decal(stroke([12.2, 15.4, 12.2, 17.8]), 'glass', { tone: GLINT, w: 1 });
+    k.solid(box(16, 6.2, 2.5, 1.7, 0.6), 'red', { shade: { t: 'round', r: 1.4 }, grime: 0.1, wear: 0 });
+  };
+
+  // ── Dshinguest Ron (settlement/25.json) ─────────────────────────
+
+  // 79 Bender Strat: Ron's Bender Stratocaster, slung on the diagonal. A
+  // beat-up red offset body, black guard, three white pickups, a maple neck
+  // and the six-a-side headstock (the F filed into a B is too small to see).
+  // It has been places: a brown smear on the lower bout, and it stinks.
+  // Drawn upright, then turned R degrees as one piece.
+  I[79] = (k) => {
+    const R = 38, up = (f) => rotate(f, R);
+    const body = minus(union(ellipse(16, 24.6, 6.6, 5.2), ellipse(16, 19.8, 5.2, 3.4),
+      rotate(ellipse(11.4, 16.6, 1.7, 3.4), -12, 11.4, 16.6), rotate(ellipse(20.4, 17.6, 1.6, 2.6), 10, 20.4, 17.6)),
+      ellipse(13.5, 15.2, 1.4, 2.2), ellipse(18.6, 15.6, 1.2, 1.8));
+    k.fx(union(stroke(jit([4.6, 15.6, 3.6, 13, 5, 10.6, 4, 8], 0.25, 3)), stroke(jit([8.4, 13.4, 7.4, 11, 8.8, 8.6, 7.8, 6.2], 0.25, 4))),
+      'bile', { tone: HI, w: 1, p: 0.8, under: true });
+    k.solid(up(body), 'red', { shade: { t: 'round', r: 3 }, grime: 0.25, wear: 0.35 });
+    k.decal(up(inter(grow(body, -1.1), union(ellipse(14.8, 21.6, 4.4, 4.4), box(17.4, 18.6, 2.2, 2.6, 1)))), 'black', { tone: SHD });   // the guard
+    k.decal(up(union(box(16, 19.6, 1.9, 0.45), box(16, 22, 1.9, 0.45), rotate(box(16, 24.4, 1.9, 0.45), -8, 16, 24.4))), 'white', { tone: HI });
+    k.decal(up(box(16, 26.8, 2.2, 0.6)), 'steel', { tone: HI });                                        // the bridge
+    k.decal(up(dots([19.4, 25.6, 20.2, 23.4], 0.6)), 'bone', { tone: HI });                              // knobs
+    k.decal(up(rough(ellipse(12.4, 27, 2.2, 1.4), 0.7, 0.9, 3)), 'clay', { dt: -1, p: 0.75 });           // the front row
+    k.solid(up(box(16, 11.2, 1.25, 6.6)), 'tan', { grime: 0.2, wear: 0.1 });
+    k.line(up(union(...[7.2, 9.6, 11.8, 13.8, 15.6].map((y) => stroke([14.9, y, 17.1, y])))), { tone: SHD });
+    k.solid(up(stroke([16, 26.4, 16, 5])), 'steel', { w: 0.45, shade: { t: 'flat', tone: HI }, outline: false, wear: 0 });
+    k.solid(up(poly([17.2, 5.2, 14.8, 5.2, 13.2, 3.2, 13.4, 1.2, 15.2, 0.6, 17.6, 1.6, 17.8, 3.4])), 'tan', { grime: 0.2, wear: 0.15 });
+    k.decal(up(dots([13.9, 1.8, 13.7, 3.2, 14.4, 4.4])), 'steel', { tone: HI, w: 0.6 });               // tuners
+  };
+
+  // ── The Medic's trade (recipes.cfg 22) ──────────────────────────
+
+  // 80 Super Juice: two doses of medicine cooked down with fuel. A squat
+  // medicine bottle of fizzing toxic green, a mustard label with a black
+  // lightning bolt on it, and a white cap with the Medic's red cross.
+  I[80] = (k) => {
+    const bottle = union(box(16, 21.6, 6.6, 7.4, 2.2), ellipse(16, 14.4, 6.6, 2.6), box(16, 10, 2.5, 2.6, 0.4));
+    k.solid(bottle, 'glass', { shade: cyl(16, 0, 16, 32, 6.6), grime: 0.12, glow: { r: 4, mat: 'toxic', p: 0.4 } });
+    k.decal(union(box(16, 22.4, 5.6, 6.2, 1.8), ellipse(16, 16.4, 5.6, 1.4)), 'toxic', { shade: { t: 'glow', rim: 0.9, core: 2.8 } });
+    k.decal(inter(bottle, box(16, 22.8, 8, 3.4)), 'mustard', { dt: 0 });                                       // the label
+    k.decal(poly([19, 19.2, 12.8, 23.4, 16.2, 23.4, 13.4, 26.6, 19.4, 21.6, 16.2, 21.6]), 'black', { tone: BASE });  // the bolt
+    k.decal(dots([12.4, 18, 19.4, 17.6, 17.4, 14.8]), 'toxic', { tone: GLINT, w: 1 });                         // the fizz
+    k.decal(stroke([10.8, 15.4, 10.8, 18.2]), 'glass', { tone: GLINT, w: 1 });
+    k.solid(box(16, 6, 3.4, 2.2, 0.8), 'white', { shade: { t: 'round', r: 1.4 }, grime: 0.15, wear: 0 });
+    k.decal(union(box(16, 6, 2.2, 0.7), box(16, 6, 0.7, 1.8)), 'red', { tone: BASE });                          // the red cross
+  };
+
+  // 81 Liquid Bread: the Medic's home brew. A dented brown long-neck, cloudy amber
+  // inside, a hand-cut bone label with a crude red cross on it, a bent cap,
+  // and a head of foam spilling down the neck.
+  I[81] = (k) => {
+    const bottle = union(box(16, 22.4, 5.4, 6.8, 2), ellipse(16, 15.6, 5.4, 2.4), box(16, 10.6, 2, 4.4, 0.4));
+    k.solid(bottle, 'brownglass', { shade: cyl(16, 0, 16, 32, 5.4), grime: 0.18 });
+    k.decal(union(box(16, 23.2, 4.4, 5.6, 1.6), ellipse(16, 17.8, 4.4, 1.2)), 'amber', { shade: { t: 'glow', rim: 0.7, core: 1.6 } });
+    k.decal(rough(inter(bottle, box(16, 23.4, 8, 3.2)), 0.4, 0.8, 7), 'bone', { dt: 0 });                      // the label
+    k.decal(union(box(16, 23.4, 2, 0.6), box(16, 23.4, 0.6, 1.9)), 'red', { tone: BASE });                     // the Medic's cross
+    k.decal(stroke([11.6, 16.6, 11.6, 19.4]), 'brownglass', { tone: GLINT, w: 1 });
+    k.solid(rough(union(ellipse(16, 6.6, 3, 1.6), ellipse(13.8, 8.2, 1.2, 1.6), ellipse(18.4, 9, 1, 1.8)), 0.35, 0.9, 5),
+      'white', { shade: { t: 'round', r: 1.4 }, grime: 0, speck: 0, wear: 0 });                                  // the foam
+    k.solid(rough(box(16, 5, 2.6, 1, 0.3), 0.3, 0.9, 2), 'steel', { wear: 0.3 });                              // the bent cap
+  };
+
   // ── Bolt-Ons, worn ──────────────────────────────────────────────
 
   // 11 Dent Absorber: sleeveless vest with cracked ceramic plates stitched
@@ -1220,6 +1312,172 @@
     k.line(union(stroke([3.4, 6.4, 9.8, 6.4]), stroke([4.4, 8, 8.8, 8])), { mat: 'white', tone: HI });
     // warm: the air over it wavers
     k.fx(union(curve(20.4, 13, 21.6, 10.8, 20.6, 8.6, 0.3), curve(24.4, 15.6, 25.6, 13.4, 24.6, 11.2, 0.3)), 'fire', { tone: SHD, w: 1, p: 0.7 });
+  };
+
+  // ── RUNAWAY SCIENCE (docs/runaway-science.md) ───────────────────
+
+  // 72 Needlecap: a fist of hypodermic needles, points out, and out of the
+  // top of it a crown of bruise-purple caps on pale stalks, wet, breathing.
+  I[72] = (k) => {
+    // the needles first, splayed out of the cushion like a burr: glass
+    // barrels with an inch of amber in them, steel points
+    const needle = (deg, i) => {
+      const a = deg * PI / 180, c = Math.cos(a), s = Math.sin(a), L = 9.4 + k.rnd(i) * 2.6;
+      const x0 = 16 + c * 4.4, y0 = 23 + s * 3.2, xm = 16 + c * (4.4 + L * 0.62), ym = 23 + s * (3.2 + L * 0.5);
+      const x1 = 16 + c * (4.4 + L), y1 = 23 + s * (3.2 + L * 0.8);
+      return { barrel: seg(x0, y0, xm, ym, 1.15), plunger: seg(x0 - c * 1.2, y0 - s * 1.2, x0, y0, 1.5), tip: seg(xm, ym, x1, y1, 0.32), xm, ym, x0, y0 };
+    };
+    const ns = [158, 188, 218, 322, 352, 22, 62, 118].map((d, i) => needle(d + (k.rnd(i + 40) - 0.5) * 8, i));
+    k.solid(union(...ns.map((n) => n.tip)), 'steel', { shade: { t: 'flat', tone: GLINT }, wear: 0, outline: false });
+    k.solid(union(...ns.map((n) => n.barrel)), 'glass', { shade: { t: 'flat', tone: HI }, wear: 0, grime: 0.05 });
+    for (const n of ns) k.decal(seg(n.x0, n.y0, n.x0 + (n.xm - n.x0) * 0.55, n.y0 + (n.ym - n.y0) * 0.55, 0.6), 'amber', { tone: HI });
+    // the cushion: a lump of grey felt gone to mould, more needles stuck in it
+    k.solid(rough(ellipse(16, 23.4, 6.8, 4.4), 0.45, 0.8, 3), 'ash', { shade: { t: 'round', r: 3 }, grime: 0.3, speck: 0.1 });
+    k.decal(rough(ellipse(13.6, 22, 3, 1.5), 0.5, 0.9, 4), 'purple', { dt: 0, p: 0.8 });
+    k.decal(dots(jit([12, 24.6, 14.6, 25.8, 17.4, 25.6, 20, 24.2, 18.6, 22.4], 0.4, 6)), 'steel', { tone: GLINT, w: 1 });
+    // stalks, pale, a little translucent
+    k.solid(union(curve(16, 21.4, 15.4, 15.6, 16.2, 10.6, 1.3, 1), curve(12.8, 21.6, 10.4, 18.6, 8.8, 14, 1, 0.75),
+      curve(19.4, 21.4, 22.2, 18.6, 23.6, 13.2, 1, 0.75)), 'bone', { shade: { t: 'round', r: 1 }, grime: 0.15, wear: 0.1 });
+    // the caps, domed, gills dark under the rim, wet on top
+    const cap = (cx, cy, rx, ry, i) => {
+      const f = rough(minus(ellipse(cx, cy, rx, ry), box(cx, cy + ry * 0.95, rx + 1, ry * 0.55)), 0.35, 0.9, 10 + i);
+      k.solid(f, 'purple', { shade: { t: 'sphere', cx: cx - rx * 0.35, cy: cy - ry * 0.55, r: rx * 1.25, hi: 0.7, g: 0.93 },
+        grime: 0.12, speck: 0.04, wear: 0, glow: { r: 3, mat: 'purple', p: 0.3 } });
+      k.decal(box(cx, cy + ry * 0.38, rx, 0.55), 'purple', { tone: LINE });
+      k.decal(dots(jit([cx - rx * 0.4, cy - ry * 0.25, cx + rx * 0.3, cy - ry * 0.5, cx + rx * 0.05, cy + ry * 0.05], 0.4, 20 + i)),
+        'bone', { tone: HI, w: 1, p: 0.85 });
+    };
+    cap(8.6, 12.8, 3.4, 2.6, 0);
+    cap(23.6, 12, 3.6, 2.7, 1);
+    cap(16.2, 8.8, 5.6, 4, 2);
+    k.decal(dots([14, 6.6]), 'purple', { tone: GLINT, w: 1 });
+    // it breathes: a spore or two coming off the crown
+    k.fx(dots(jit([11.6, 3.4, 20.8, 2.8, 27.6, 7.4, 4.4, 8.2], 0.6, 31)), 'purple', { tone: HI, w: 1, p: 0.9 });
+  };
+
+  // 73 Brine Heart: a pickling jar of pink brine, waxed shut with a thumbprint
+  // in the wax, and in it a human heart, still going. The label says
+  // G. - SPARE - 1966 in a neat, upright hand.
+  I[73] = (k) => {
+    const jar = union(box(16, 19.6, 9.4, 9.8, 3), box(16, 9.6, 7.4, 1.6, 0.6));
+    const ji = k.solid(jar, 'glass', { shade: cyl(16, 0, 16, 32, 9.4, { hi: 0.82 }), grime: 0.15, speck: 0.02, wear: 0.15 });
+    // the brine: pale pink and cloudy, with a skin of something on top
+    k.decal(box(16, 20.6, 8.4, 8.4, 2.4), 'jelly', { shade: cyl(16, 0, 16, 32, 8.6, { hi: 0.95, lo: 0.2 }), on: ji });
+    k.decal(rough(box(16, 20.6, 8.4, 8.4, 2.4), 0.6, 0.5, 4), 'gum', { dt: 0, on: ji, p: 0.35 });
+    k.decal(rough(box(16, 12.4, 8.2, 0.7), 0.3, 1.2, 5), 'gum', { tone: SHD, on: ji });
+    // the heart: two lobes and a point, aorta and vessels off the top,
+    // outlined so it reads through the glass
+    const heart = rough(union(circle(13.4, 17.8, 3.8), circle(18.8, 17.4, 4.1),
+      poly([9.8, 18.8, 23, 18.2, 16.8, 26.8]), seg(17.8, 13.8, 19.6, 11.4, 1.5), seg(14, 14.4, 12.4, 12, 1.1)), 0.3, 0.9, 7);
+    k.decal(grow(heart, 0.7), 'blood', { tone: LINE, on: ji });
+    k.decal(heart, 'red', { shade: { t: 'round', r: 3.4, hi: 0.68 }, on: ji });
+    k.decal(union(curve(17.6, 16.4, 16, 20, 17.4, 24, 0.3), curve(13.6, 16, 12.6, 18.8, 14, 21.2, 0.3)),
+      'blood', { tone: BASE, w: 1, on: ji, p: 0.9 });
+    k.decal(dots([20.4, 15.4, 12.2, 16]), 'red', { tone: GLINT, w: 1, on: ji });
+    // the label, low on the jar, in his hand
+    k.decal(rough(box(16, 26, 6.4, 2, 0.3), 0.25, 1, 9), 'bone', { dt: 0, on: ji });
+    k.line(union(stroke(jit([11.2, 25.4, 12.8, 25, 14.4, 25.5, 16, 25, 17.6, 25.4, 20.6, 25.1], 0.25, 11)),
+      stroke(jit([11.8, 27, 14.2, 26.7, 16.6, 27.1, 19.8, 26.8], 0.25, 12))), { mat: 'blood', tone: SHD, on: ji });
+    // glass glints, down the left of the jar
+    k.decal(union(stroke([8.4, 13.4, 8.4, 19.6]), stroke([8.4, 22, 8.4, 23.4])), 'glass', { tone: GLINT, w: 1, on: ji });
+    // the lid, and the wax over it, run down in drips, thumbprinted
+    k.solid(box(16, 7.2, 8.4, 2, 0.8), 'iron', { rust: 0.45, grime: 0.3 });
+    k.solid(rough(union(box(16, 6, 7.8, 1.6, 1), seg(10.4, 7, 10.4, 10.6, 0.9, 0.7), seg(19.6, 7, 19.8, 9.4, 0.8, 0.6),
+      seg(22.6, 7, 22.8, 8.6, 0.7)), 0.2, 1, 13), 'blood', { shade: { t: 'round', r: 1.4 }, grime: 0.15, wear: 0 });
+    k.decal(union(arc(16.2, 6, 1.4, 180, 360), arc(16.2, 6.2, 0.6, 180, 360)), 'blood', { tone: SHD, w: 1 });
+    // the beat: once to every four of yours
+    k.fx(union(arc(16, 19.6, 13.4, 200, 230), arc(16, 19.6, 13.4, -50, -20)), 'red', { tone: HI, w: 1, p: 0.85, under: true });
+  };
+
+  // 74 Spine Wires: a loom of insulated wire braided red and yellow, coiled
+  // once, bound in rotten cloth tape, a bakelite plug on one end with its
+  // pins out, and on the other the wire fraying into the wet grey bulb that
+  // was in his neck. It still twitches.
+  I[74] = (k) => {
+    const path = jit([24.4, 8.2, 19.4, 6.4, 12.6, 7.2, 8.4, 11.6, 8.6, 17.8, 12.8, 22.2, 18.8, 22, 22.2, 17.4, 20, 12.6,
+      14.6, 13, 11.4, 18.4, 8.8, 23.4, 7.4, 25.6], 0.25, 2);
+    const cable = stroke(path, 1.75);
+    k.solid(cable, 'red', { shade: { t: 'round', r: 1.6 }, grime: 0.25, speck: 0.05, wear: 0.1 });
+    // the braid: a yellow wire wound through the red
+    k.decal(inter(stroke(path, 1.6), stripes(3, 1, 1)), 'mustard', { shade: { t: 'round', r: 1.4 }, p: 0.95 });
+    // cloth tape, wound on where it chafed
+    k.decal(inter(cable, union(circle(12.4, 7.4, 1.6), circle(8.4, 17.4, 1.6), circle(21.4, 18.8, 1.6))), 'canvas',
+      { dt: 0, p: 0.95 });
+    // the plug: a copper ferrule, a bakelite block, three pins out
+    k.solid(rotate(box(25.6, 8.4, 1.3, 1.9, 0.4), -18, 25.6, 8.4), 'copper', { shade: rcyl(-18, 25.6, 0, 25.6, 32, 1.3), rust: 0.25 });
+    k.solid(rotate(box(28.2, 7.6, 2, 2.8, 0.6), -18, 28.2, 7.6), 'black', { shade: { t: 'bevel', hw: 1, sw: 1.2 }, grime: 0.2 });
+    k.solid(rotate(union(box(28.2, 3.4, 0.4, 1.4), box(26.6, 3.8, 0.4, 1.4), box(29.8, 3.8, 0.4, 1.4)), -18, 28.2, 7.6),
+      'steel', { shade: { t: 'flat', tone: GLINT }, wear: 0, outline: false });
+    // the far end: bare copper fraying into the bulb, filaments off it
+    k.fx(union(curve(4.6, 24, 2.2, 21.6, 2.6, 18.6, 0.3), curve(5.4, 28.4, 3.6, 30, 1.6, 30.6, 0.3),
+      curve(8.4, 28.4, 9.6, 30, 11.6, 30.4, 0.25)), 'copper', { tone: HI, w: 1 });
+    k.solid(rough(ellipse(6.2, 26.2, 3.2, 2.7), 0.4, 1, 5), 'ash', { shade: { t: 'sphere', cx: 5.2, cy: 25.2, r: 3.8, hi: 0.62, g: 0.9 },
+      grime: 0.15, wear: 0 });
+    k.decal(union(curve(4.2, 25.4, 5.8, 24.4, 7.8, 25.6), curve(4.4, 27.2, 6.2, 26.6, 8.2, 27.6)), 'flesh', { tone: SHD, w: 1 });
+    k.decal(dots([4.8, 24.8]), 'jelly', { tone: GLINT, w: 1 });
+    // it carries something still: the hair-stand crackle off the pins
+    k.fx(union(stroke([24.4, 1.2, 23.2, 2.4, 24.6, 3]), stroke([31.4, 1.6, 30.6, 0.4])), 'amber', { tone: HI, w: 1 });
+  };
+
+  // 75 Runaway Heart: the Graft, out of you for the picture. A heart with a
+  // crown of Needlecap growing from the vessels, bound round with copper loom
+  // and catgut stitches, two needles still in it, and the fungus glowing.
+  I[75] = (k) => {
+    const heart = union(circle(12.6, 15.6, 5.6), circle(19.8, 15, 6),
+      poly([7.4, 17.4, 25.6, 16.8, 16.6, 29]), seg(18.6, 10.6, 21, 6.6, 2), seg(13.2, 11, 11.2, 7.8, 1.5));
+    k.solid(rough(heart, 0.45, 0.8, 1), 'blood', { shade: { t: 'round', r: 5 }, grime: 0.2, speck: 0.05,
+      glow: { r: 4, mat: 'purple', p: 0.42 } });
+    k.decal(union(curve(18.2, 13.6, 15.4, 18.6, 17.6, 24.2, 0.5), curve(12.4, 13, 10.8, 16.6, 12.4, 20.2, 0.4)),
+      'red', { tone: HI, w: 1, p: 0.9 });
+    k.decal(dots([21.4, 12.2]), 'red', { tone: GLINT, w: 1 });
+    // catgut: a seam down the middle, cross-stitched
+    k.line(stroke(jit([15.2, 11.6, 15.8, 15, 15.4, 18.6, 16.2, 22.4], 0.2, 3)), { tone: LINE });
+    k.decal(union(stroke([14, 12.4, 17, 13.4]), stroke([14.4, 15.4, 17.4, 16.2]), stroke([14, 18.6, 17, 19.4]),
+      stroke([14.8, 21.6, 17.6, 22.4])), 'bone', { tone: HI, w: 1 });
+    // the loom, wrapped twice round it
+    const band = (y0, y1) => inter(seg(5, y0, 28, y1, 1.2), grow(heart, 1.1));
+    k.solid(union(band(17.6, 13.4), band(23.4, 19.6)), 'copper', { shade: { t: 'round', r: 1.1 }, wear: 0.1, rust: 0.2 });
+    k.decal(inter(union(band(17.6, 13.4), band(23.4, 19.6)), stripes(2, 1, -1)), 'copper', { tone: SHD });
+    // two needles still in it
+    k.solid(union(seg(24.6, 22.8, 29.6, 26.4, 0.9), seg(6, 23.6, 2.4, 27.2, 0.8)), 'glass', { shade: { t: 'flat', tone: HI }, wear: 0 });
+    k.decal(union(seg(25.6, 23.5, 28.6, 25.7, 0.5), seg(5.2, 24.4, 3.2, 26.4, 0.4)), 'amber', { tone: BASE });
+    // the crown: Needlecap growing out of the vessels
+    const cap = (cx, cy, rx, ry, i) => {
+      k.solid(rough(minus(ellipse(cx, cy, rx, ry), box(cx, cy + ry, rx + 1, ry * 0.55)), 0.3, 0.9, 10 + i), 'purple',
+        { shade: { t: 'sphere', cx: cx - rx * 0.35, cy: cy - ry * 0.55, r: rx * 1.25, hi: 0.7, g: 0.93 }, grime: 0.1, wear: 0,
+          glow: { r: 3, mat: 'purple', p: 0.4 } });
+      k.decal(dots([cx - rx * 0.35, cy - ry * 0.4]), 'bone', { tone: HI, w: 1 });
+    };
+    cap(21.4, 5.2, 3.6, 2.6, 0);
+    cap(10.8, 6.8, 2.8, 2, 1);
+    // and it is going: the beat, off both shoulders
+    k.fx(union(arc(16, 17, 14.8, 196, 222), arc(16, 17, 14.8, -42, -16)), 'purple', { tone: HI, w: 1, under: true });
+  };
+
+  // 76 Cursed Note: folded twice, yellowed, crumpled and smoothed out again.
+  // Neat, upright handwriting, a purple thumbprint, and -- in the fold -- a
+  // small ink grin. It is already laughing.
+  I[76] = (k) => {
+    const r = (f) => rotate(f, -8);
+    const sheet = r(rough(box(15.4, 17, 10.4, 11.4, 0.6), 0.45, 0.9, 1));
+    const ni = k.solid(sheet, 'note', { shade: { t: 'flat', tone: BASE }, grime: 0.42, speck: 0.07, wear: 0 });
+    // the folds: the middle third sits a tone down, creased both edges
+    k.decal(r(box(15.4, 17, 10.6, 3.8)), 'note', { dt: -1, on: ni });
+    k.line(r(union(stroke([5, 13.2, 25.8, 13.2]), stroke([5, 20.8, 25.8, 20.8]))), { tone: SHD, on: ni });
+    // a dog-eared corner
+    k.decal(r(poly([25.8, 5.6, 21.6, 5.6, 25.8, 9.8])), 'note', { tone: SHD, on: ni });
+    // his hand: neat, upright, small
+    const hand = (y, x0, x1, s) => stroke(jit((() => { const p = []; for (let x = x0; x <= x1; x += 1.3) p.push(x, y + ((x * 7) % 3 < 1.5 ? -0.4 : 0.4)); return p; })(), 0.15, s));
+    k.line(r(union(hand(8.4, 7.6, 21.4, 1), hand(10.6, 7.6, 18.4, 2), hand(24.2, 7.6, 22.2, 3), hand(26.4, 7.6, 15.6, 4))),
+      { mat: 'black', tone: BASE, on: ni });
+    // in the fold: the grin, and the two dots over it
+    k.line(r(curve(11, 16.4, 15.4, 19.6, 20.2, 16)), { mat: 'blood', tone: SHD, on: ni });
+    k.decal(r(dots([12.8, 15, 18.4, 14.8])), 'blood', { tone: SHD, w: 1, on: ni });
+    // Gaunt's thumbprint, in the same purple as the fungus
+    k.decal(r(union(arc(21.6, 24.4, 2.4, 0, 360), arc(21.6, 24.4, 1.3, 20, 340), dots([21.6, 24.4]))), 'purple',
+      { tone: BASE, w: 1, on: ni, p: 0.85 });
+    // laughing
+    k.fx(union(stroke([27.4, 4.2, 29.6, 2.4]), stroke([28.8, 8, 31, 7.4]), stroke([24.2, 2.4, 25, 0.6])), 'amber', { tone: HI, w: 1 });
   };
 
   // ── Bolt-Ons, vehicles ──────────────────────────────────────────

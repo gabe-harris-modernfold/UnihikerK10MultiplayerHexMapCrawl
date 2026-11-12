@@ -239,6 +239,23 @@ Forced entry plus wildly varying damage plus city-dense placement is a large
 lethality swing. Measure with the bot harness (`docs/bot-testing.md`) before
 flashing.
 
+**Riskier, 2026-11-06** (the user: "traps need to be riskier"). Data only,
+no flash: every check moved up one DN band, and the cheap and mid hazards
+bite harder. The LL floor of 1 is unchanged.
+
+| Tier | Back out | Work it | Deeper | Deepest |
+|---|---|---|---|---|
+| Cheap | 20 → **35** | 30-35 → **45** | 45-50 → **60** | — |
+| Mid | 25-30 → **40** | 35-40 → **50-55** | 50 → **65** | — |
+| Top | 30 → **50** | 40 → **60** | 55 → **70** | 70 → **80** |
+
+Hazard LL: cheap back-out −1 → −1..−2, cheap work-it −1..−2 → −1..−3,
+cheap deeper −1..−3 → −2..−3, mid back-out → −1..−3. Averaged over the six
+survivors' skills at clock 0, the cheap back-out goes from 89% → 81%
+at full LL (81% → 69% at LL 4), and a top trap's last cache from 56% → 41%
+(41% → 27%). The full-LL DN bonus in `computeEncounterDN` still applies to
+traps; that and the floor are the next two levers, and both need a flash.
+
 ---
 
 ## Schema additions

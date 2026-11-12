@@ -11,7 +11,7 @@
         {
           "label": "Leave the can and back out the way you came",
           "cost": {},
-          "base_risk": 20,
+          "base_risk": 35,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_ankle"
@@ -19,7 +19,7 @@
         {
           "label": "Find the battery terminal and pull the lead",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 45,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_flap"
@@ -43,7 +43,7 @@
         {
           "label": "Lever the back panel off and see what else it kept",
           "cost": {},
-          "base_risk": 45,
+          "base_risk": 60,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "the_savings"
@@ -63,21 +63,21 @@
   "hazards": {
     "the_ankle": {
       "text": "You step on a jump lead on the way out and the clip flips up and bites you through the sock. Your leg performs a short, vigorous dance without consulting you, and you kick the machine hard enough to hurt the machine. Afterwards there is a neat round burn on your ankle the size of a coin. Exact change.",
-      "penalty": { "ll": -1 },
+      "penalty": { "ll": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_flap": {
       "text": "You reach round the back for the terminal and lean your forearm on the side of the machine, which it turns out is also on the circuit. Every muscle you own agrees to do the same thing at once. Your teeth shut on your tongue. Your hair gets up to look around. Your bladder makes a unilateral decision, and when you come round on the floor the little box is still going, click, click, adding you to the tally.",
-      "penalty": { "ll": [-1, -2], "water": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "water": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_savings": {
       "text": "The little black box was not just counting. It was saving up. Your pry bar finds the one screw it is wired to, and everything it has put by since the last visitor arrives in a single white snap. You wake across the room smelling of burnt eyebrow, which is what it is, your fillings humming a note you can feel in your knees. The pry bar stays where it was, welded to the screw.",
-      "penalty": { "ll": [-1, -3], "scrap": [-1, -2] },
+      "penalty": { "ll": [-2, -3], "scrap": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 1],
       "ends_encounter": true

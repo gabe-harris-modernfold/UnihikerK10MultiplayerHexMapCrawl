@@ -10,6 +10,9 @@ const quakeField = (typeof QuakeField === 'undefined')
 // Space debris coming down (debris-field.js), fed by the 'debris' event.
 const debrisField = (typeof DebrisField === 'undefined')
   ? null : new DebrisField();
+// The Bright Bad Idea going up (flare-field.js), fired from _evItemResult.
+const flareField = (typeof FlareField === 'undefined')
+  ? null : new FlareField();
 const fireField = (typeof FireField === 'undefined')
   ? null : new FireField();
 // The Understory (eco-field.js, docs/ecology-spec.md): veins, fruiting
@@ -81,8 +84,9 @@ const STORM_WASH_BLEED = 0.75;
 // face: which way the pawn's bike points, +1 right as painted, -1 mirrored.
 // dq, dr: how far the marker moved this frame (what the bike's dust feeds on).
 // bike: how much of the Motorbike is on the map, 0..1 (easeBikes()); null
-// until the seat is first drawn, so it starts where it belongs.
-const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0, face: 1, dq: 0, dr: 0, bike: null }));
+// until the seat is first drawn, so it starts where it belongs. kick: seconds
+// into a kick-start, null when there is none.
+const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0, face: 1, dq: 0, dr: 0, bike: null, kick: null }));
 
 // ── Name-tag width cache ──────────────────────────────────────────
 // Avoids a ctx.measureText() call every frame per visible player.
@@ -90,9 +94,11 @@ const renderPos = Array.from({ length: MAX_PLAYERS }, () => ({ q: 0, r: 0, face:
 const nameWidthCache = new Array(MAX_PLAYERS).fill(null);
 
 // ── Surveyed cells ────────────────────────────────────────────────
-// Cells revealed by the SURVEY action beyond normal vision radius.
-// Rendered at reduced opacity as scouted-but-not-directly-visible.
-// Cleared whenever the local player moves.
+// Cells revealed by the SURVEY action, one ring past normal vision radius, or
+// by a reveal item (Static Chew, the flare, Diary, Pendulum), its param in
+// rings past it. While they are out they ARE the edge of sight: the sight fade and the fog
+// ramp behind it step out onto them (sightEdgeR()). Cleared whenever the
+// local player moves.
 const surveyedCells = new Set(); // 'q_r' keys — populated from network.js (cross-file; ignore S4158)
 /* global displayAP, nightFade, fireHexPhase */
 
@@ -303,9 +309,10 @@ function drawResourceIcon(ctx, cx, cy, hexSz, resourceType) {
 // BIKE_ART is the painted part of the cell; the middle of rider-plus-bike is
 // what sits on the hex centre, and its bottom is where the tyres meet the
 // ground. rearX, rearY: where the back tyre does, which is where the dust
-// comes from (bike-dust.js).
+// comes from (bike-dust.js). exhX, exhY: the tailpipe's mouth, where a
+// kick-start's smoke comes out.
 const BIKE_RIDER = { x: 54, y: 44, r: 70.7 };
-const BIKE_ART   = { left: 3, top: 33, right: 268, bottom: 239, rearX: 42, rearY: 200 };
+const BIKE_ART   = { left: 3, top: 33, right: 268, bottom: 239, rearX: 42, rearY: 200, exhX: 36, exhY: 179 };
 const MOTORBIKE_ITEM = 26;
 
 // A Motorbike that has run dry: today's fuel is not paid for, so it gives no
@@ -322,11 +329,28 @@ function bikeStalled(p) {
   return p.unf === undefined || !!(p.unf & (1 << slot));
 }
 
+// A bike that comes to life -- fuel turned up for a stalled one
+// (kickStartItems), or it went on -- is kick-started, not faded in. It is
+// there in BIKE_MOUNT_S with the rider up on it. Two kicks only cough, and the
+// third catches in a blast of exhaust and shakes the whole bike until it
+// settles to an idle. Seconds from the moment the tick says it runs. A stomp's
+// time is the bottom of the kick, when the smoke comes out. The K10 plays
+// SFX_KICKSTART (snd-sfx.hpp) to the same clock.
+const BIKE_MOUNT_S = 0.3;
+const KICK_STOMPS  = [0.6, 1.1, 1.6];
+const KICK_CATCH   = 1.6;                 // the last stomp is the one that catches
+const KICK_END_S   = 2.6;
+// The kick-start's smoke, by that clock: [time, what] (BikeDust.exhaust).
+const KICK_SMOKE = [[0.6, 'cough'], [1.1, 'cough'], [1.17, 'cough'],
+                    [KICK_CATCH, 'catch'], [KICK_CATCH + 0.07, 'catch'], [KICK_CATCH + 0.16, 'catch']];
+for (let t = KICK_CATCH + 0.26; t < KICK_END_S - 0.15; t += 0.13) KICK_SMOKE.push([t, 'putt']);
+
 // Eases every seat's renderPos.bike toward 1 while its Motorbike runs and 0
 // while it is stalled or not equipped, over BIKE_FADE_S: the bike fades away
-// when the fuel runs out and back in when fuel turns up (and in or out on an
-// equip or unequip). A seat just come online starts at its target rather
-// than fading in from nothing.
+// when the fuel runs out (and on an unequip). Coming back it is kick-started
+// instead: renderPos.kick is the seconds since it began (null when not), and
+// kick0 is last frame's, so each puff of smoke goes out once. A seat just come
+// online starts at its target rather than fading in from nothing.
 const BIKE_FADE_S = 0.9;
 let bikeClock = 0;
 function easeBikes() {
@@ -335,12 +359,56 @@ function easeBikes() {
   bikeClock = now;
   for (let i = 0; i < MAX_PLAYERS; i++) {
     const p = players[i], rp = renderPos[i];
-    if (!p.on) { rp.bike = null; continue; }
+    if (!p.on) { rp.bike = null; rp.kick = null; continue; }
     const want = p.eq?.includes(MOTORBIKE_ITEM) && !bikeStalled(p) ? 1 : 0;
-    if (rp.bike === null) { rp.bike = want; continue; }
-    const step = dt / BIKE_FADE_S;
+    const was  = rp.run;
+    rp.run = want;
+    if (rp.bike === null) { rp.bike = want; rp.kick = null; continue; }
+    if (!want) rp.kick = null;
+    else if (was === 0) { rp.kick = 0; rp.kick0 = 0; }
+    else if (rp.kick !== null) {
+      rp.kick0 = rp.kick;
+      rp.kick += dt;
+      if (rp.kick > KICK_END_S) rp.kick = null;
+    }
+    const step = dt / (rp.kick !== null ? BIKE_MOUNT_S : BIKE_FADE_S);
     rp.bike = want > rp.bike ? Math.min(want, rp.bike + step) : Math.max(want, rp.bike - step);
   }
+}
+
+// Where a kick-start has the rider and the bike, t seconds in, in portrait
+// radii (down is +). On each kick the rider rises on the pegs and stamps down
+// on the lever (rider), and the bike sinks on its springs under the stamp
+// (squat). Once it catches it shudders (sx, sy): hard at first, then a
+// tremble that dies away. The shudder is hashed noise, not a wave, because
+// an engine catching is ragged.
+function kickPose(t) {
+  const ss = (x) => x * x * (3 - 2 * x);
+  let d = 0;
+  for (const ts of KICK_STOMPS) {
+    const u = (t - ts) / 0.36 + 0.55;    // 0..1 across the kick, 0.55 at the bottom
+    if (u <= 0 || u >= 1) continue;
+    d += u < 0.4  ? -0.3 * ss(u / 0.4)
+       : u < 0.55 ? -0.3 + 1.3 * ss((u - 0.4) / 0.15)
+       :             1 - ss((u - 0.55) / 0.45);
+  }
+  let a = 0;
+  if (t > KICK_CATCH) {
+    const k = t - KICK_CATCH;
+    a = 0.14 * Math.exp(-k / 0.22) + 0.04 * Math.max(0, 1 - k / (KICK_END_S - KICK_CATCH));
+  }
+  return { rider: d * 0.34, squat: Math.max(0, d) * 0.08, sx: a * kickJitter(t, 1), sy: a * 0.7 * kickJitter(t, 7) };
+}
+// Value noise in -1..1 at 38 Hz: a fresh random offset every 26 ms, slid
+// between, so the bike judders rather than vibrating like a tuning fork.
+function kickJitter(t, seed) {
+  const h = (n) => {
+    let x = Math.imul((n + seed * 7919) | 0, 0x9E3779B1);
+    x ^= x >>> 15; x = Math.imul(x, 0x85EBCA6B); x ^= x >>> 13;
+    return (x >>> 0) / 2147483648 - 1;
+  };
+  const f = t * 38, i = Math.floor(f);
+  return h(i) + (h(i + 1) - h(i)) * (f - i);
 }
 
 /**
@@ -355,11 +423,13 @@ function easeBikes() {
  * @param {object} opts - { color, label, isMe, nm, arch, sc, ride, face } --
  *   ride: how much of the bike is there, 0 (on foot) .. 1 (riding); in
  *   between, the bike is fading and the rider stepping off or back on;
- *   face: +1 rides right (as painted), -1 left
+ *   face: +1 rides right (as painted), -1 left; kick: seconds into a
+ *   kick-start (kickPose()), or null
  * @returns {{x: number, y: number}|null} where the bike's rear tyre meets the
- *   ground, screen px, or null when there is no bike under the rider
+ *   ground, screen px, or null when there is no bike under the rider. The
+ *   tailpipe's mouth is left in drawCharIcon.exhaust, null likewise.
  */
-function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ride = 0, face = 1 } = {}) {
+function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ride = 0, face = 1, kick = null } = {}) {
   const scale      = hexSz * ICON_SIZE_SCALE;
   const r          = Math.max(10, hexSz * 0.28);   // portrait circle radius
   let   portraitCX = cx;
@@ -369,6 +439,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ri
 
   const bike = ride > 0 ? bikeSprite() : null;
   const e    = bike ? ride * ride * (3 - 2 * ride) : 0;   // eased: 0 standing .. 1 in the saddle
+  drawCharIcon.exhaust = null;
   if (bike) {
     // Rider-plus-bike is centred on the hex, so the saddle sits up and back
     // from the centre, and swaps sides when the bike is mirrored.
@@ -378,21 +449,30 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ri
     const midY  = (Math.min(R.y - R.r, BIKE_ART.top)  + Math.max(R.y + R.r, BIKE_ART.bottom)) / 2;
     const seatX = cx - (midX - R.x) * k * face;
     const seatY = cy - (midY - R.y) * k;
+    // A kick-start moves the bike on its springs and shakes it once it
+    // catches; the rider rides that and stamps on top of it.
+    const kp    = kick !== null ? kickPose(kick) : null;
+    const bikeX = seatX + (kp ? kp.sx * r : 0);
+    const bikeY = seatY + (kp ? (kp.squat + kp.sy) * r : 0);
     ctx.save();
     ctx.globalAlpha = e;
-    ctx.translate(seatX, seatY);
+    ctx.translate(bikeX, bikeY);
     if (face < 0) ctx.scale(-1, 1);
     drawAtlasCell(ctx, bike.page, bike.sx, bike.sy, bike.s, bike.s,
                   -BIKE_RIDER.x * k, -BIKE_RIDER.y * k, bike.s * k, bike.s * k);
     ctx.restore();
     // The rider slides between the saddle and where a walker stands, so a
     // bike fading away sets them down on the hex.
-    portraitCX += (seatX - portraitCX) * e;
-    portraitCY += (seatY - portraitCY) * e;
+    portraitCX += (bikeX - portraitCX) * e;
+    portraitCY += (seatY + (kp ? (kp.rider + kp.sy) * r : 0) - portraitCY) * e;
     bottomY    += (seatY + (BIKE_ART.bottom - R.y) * k - bottomY) * e;
-    if (e > 0.5) rearTyre = { x: seatX + (BIKE_ART.rearX - R.x) * k * face,
-                              y: seatY + (BIKE_ART.rearY - R.y) * k };
+    if (e > 0.5) rearTyre = { x: bikeX + (BIKE_ART.rearX - R.x) * k * face,
+                              y: bikeY + (BIKE_ART.rearY - R.y) * k };
+    drawCharIcon.exhaust = { x: bikeX + (BIKE_ART.exhX - R.x) * k * face,
+                             y: bikeY + (BIKE_ART.exhY - R.y) * k };
   }
+  // Where the portrait went, for a ghost riding this survivor (ghosts.js).
+  drawCharIcon.portrait = { x: portraitCX, y: portraitCY, r };
   if (e < 1) {
     // Ground shadow — fuzzy ellipse beneath the circle. The bike brings its
     // own painted one, so this one comes up as the bike fades.
@@ -820,7 +900,7 @@ function drawCellOverlays(cx, cy, cell, mapQ, mapR) {
 
 function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
   if (visible || surveyed) {
-    ctx.globalAlpha = surveyed ? 0.7 : 1;
+    ctx.globalAlpha = 1;
     ctx.fillStyle   = TERRAIN[cell.terrain]?.fill || '#2A2010';
   } else if (remembered) {
     // Base coat only — renderMemoryHex draws the art over this and then
@@ -842,7 +922,7 @@ function applyHexFill(cell, dist, visible, surveyed, vr, remembered) {
 // that stands up into the hex behind; that part is ghosted by the same amount
 // instead, and a peak at the edge of sight fades out with its own hex.
 function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
-  ctx.globalAlpha = surveyed ? 0.7 : 1;
+  ctx.globalAlpha = 1;
   // Underground the art follows the cell's open sides (tunnelTile).
   const tile = (myDepth && tunnelTile(cell)) || terrainTile(cell.terrain, cell.variant, mapQ, mapR);
   if (tile) {
@@ -855,7 +935,11 @@ function renderHexContent(cx, cy, cell, mapQ, mapR, surveyed, ghost = 0) {
     if (cell.terrain === 11) drawRiverRipples(cx, cy);
   }
   ctx.globalAlpha = 1;
+  if (!myDepth) drawHexTint(cx, cy, cell.terrain, mapQ, mapR);
   drawTrails(cx, cy, cell, mapQ, mapR);
+  // A brown spot somebody with the Dshingus left here (dshingus.js). Beside
+  // the footprints, so it is seen exactly where they are.
+  if (!myDepth && typeof dshDrawHexSpot === 'function') dshDrawHexSpot(ctx, cx, cy, mapQ, mapR);
   drawCellOverlays(cx, cy, cell, mapQ, mapR);
   if (groundFx && !myDepth && !surveyed) groundFx.collect(cx, cy, cell, mapQ, mapR, tile, ghost);
 }
@@ -879,6 +963,7 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   } else if (cell.terrain !== 11) {
     drawTerrainIcon(ctx, cx, cy, HEX_SZ, cell.terrain, false);
   }
+  if (!myDepth) drawHexTint(cx, cy, cell.terrain, mapQ, mapR);   // as it was when seen
   if (cell.shelter) drawShelterIcon(cx, cy, cell, mapQ, mapR);
   if (groundFx && !myDepth) groundFx.noteRemembered(cx, cy, cell.terrain, mapQ, mapR);
   drawHexPath(ctx, cx, cy, HEX_SZ);
@@ -887,6 +972,49 @@ function renderMemoryHex(cx, cy, cell, mapQ, mapR) {
   // Over the veil, not under it: a trap you escaped is the one remembered
   // thing that should still read at a glance (docs/trap-system-spec.md).
   if (cell.trap) drawTrapMark(cx, cy, 0.85);
+}
+
+// ── Per-hex tint ──────────────────────────────────────────────────
+// Every surface hex gets a faint wash of its own, keyed to its map position,
+// so a field of one terrain stops reading as one stamp repeated. One
+// low-alpha fill over the tile -- no clip needed, the fill is the hex --
+// under trails, weather and the sight veil. Nine steps from a touch darker
+// to a touch lighter; at most HEX_TINT_DARK / HEX_TINT_LIGHT, barely there
+// on purpose. Ash Dunes and Nuke Crater stay dead grey (the Amber Dusk
+// rule, docs/hex-tile-art.md "Palette") and water never warms.
+const HEX_TINT_DARK  = 0.05;
+const HEX_TINT_LIGHT = 0.03;
+const HEX_TINT_STEPS = 4;
+const HEX_TINT_RGB = {          // [darker, lighter]
+  warm:    ['34,20,8', '255,196,120'],
+  cool:    ['8,18,28', '200,220,235'],
+  neutral: ['0,0,0',   '240,236,228'],
+};
+const HEX_TINT_FILLS = Object.fromEntries(Object.entries(HEX_TINT_RGB).map(([fam, [dk, lt]]) => {
+  const fills = [];
+  for (let s = -HEX_TINT_STEPS; s <= HEX_TINT_STEPS; s++) {
+    const a = Math.abs(s) / HEX_TINT_STEPS * (s < 0 ? HEX_TINT_DARK : HEX_TINT_LIGHT);
+    fills.push(s ? `rgba(${s < 0 ? dk : lt},${a.toFixed(4)})` : null);
+  }
+  return [fam, fills];
+}));
+const HEX_TINT_FAMS  = ['warm', 'warm', 'cool', 'neutral'];
+const HEX_TINT_WET   = ['cool', 'neutral'];
+const HEX_TINT_GREY  = new Set([1, 10]);      // Ash Dunes, Nuke Crater
+const HEX_TINT_WATER = new Set([3, 5, 11]);   // Marsh, Flooded District, River Channel
+
+function drawHexTint(cx, cy, terrain, q, r) {
+  let h = Math.imul(q | 0, 374761393) ^ Math.imul(r | 0, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  const fam = HEX_TINT_GREY.has(terrain) ? 'neutral'
+            : HEX_TINT_WATER.has(terrain) ? HEX_TINT_WET[(h >>> 8) % HEX_TINT_WET.length]
+            : HEX_TINT_FAMS[(h >>> 8) % HEX_TINT_FAMS.length];
+  const fill = HEX_TINT_FILLS[fam][h % (2 * HEX_TINT_STEPS + 1)];
+  if (!fill) return;
+  drawHexPath(ctx, cx, cy, HEX_SZ);
+  ctx.fillStyle = fill;
+  ctx.fill();
 }
 
 // A tile masked to its own hex. The sheet tiles carry bleed past the rim (and
@@ -924,6 +1052,24 @@ function drawTileSplit(tile, cx, cy, overAlpha, hexOnly = false) {
   ctx.restore();
 }
 
+// The radius the sight fade runs out to: live sight, or the survey ring when
+// one is out past it. The ring sits one hex beyond visR, so fading only to
+// visR put the darkest veil on the last ring of live sight and left the peek
+// outside it brighter than the ground in between -- a dark band one ring in.
+// A survey ring is ~60 keys; a reveal item's band (network-msg-items.hpp
+// buildItemReveal) a few hundred at most, out to REVEAL_R_MAX. Cleared on
+// every step, so walking the set per frame is still cheaper than keeping a
+// radius in step with every place that clears it.
+function sightEdgeR(meAct, vr) {
+  let edge = vr;
+  for (const key of surveyedCells) { // NOSONAR S4158 — populated in network.js
+    const i = key.indexOf('_');
+    const d = boardDist(meAct.q, meAct.r, +key.slice(0, i), +key.slice(i + 1));
+    if (d > edge) edge = d;
+  }
+  return edge;
+}
+
 // ── Pass 1: Hex fills + terrain icons + resources ─────────────────
 // Rows go back to front (r outer, q inner): in axial coords every neighbour
 // above a hex has a smaller r, or the same r and a smaller q, so a tile that
@@ -931,6 +1077,7 @@ function drawTileSplit(tile, cx, cy, overAlpha, hexOnly = false) {
 function renderHexTerrain(cam) {
   const { ox, oy, centreQ, centreR, viewQ, viewR, meAct } = cam;
   const effectiveVR = getEffectiveVR();
+  const edgeVR      = sightEdgeR(meAct, effectiveVR);
   tiledHexes.clear();
   // A surface quake is felt below (see renderTunnelTremor), but its fault
   // line indexes the surface map -- so underground no per-hex jitter, just
@@ -975,15 +1122,14 @@ function renderHexTerrain(cam) {
       const remembered = (!visible && !surveyed)
         ? (myDepth ? (cell?.trap ? cell : null) : (cell || memoryCells.get(key) || null))
         : null;
-      // Survey peeks sit one ring past the edge and already read as "not here
-      // right now" through their 0.7 alpha, so only live sight gets the ring
-      // fade — stacking both would make a surveyed hex darker than the fog.
-      // Nor does the edge of sight veil a lit one: the light is not yours.
-      const fade     = visible && !lit ? sightFadeLevel(dist, effectiveVR) : 0;
+      // A survey ring is the edge of sight while it is out, so it takes the
+      // heaviest veil and live sight inside it fades one ring more gently.
+      // The edge of sight does not veil a lit cell: the light is not yours.
+      const fade     = (visible && !lit) || surveyed ? sightFadeLevel(dist, edgeVR) : 0;
       if (lit) tunnelLitThisFrame.push({ x: cx, y: cy, level: light, op: cell.op | 0, terrain: cell.terrain });
 
       drawHexPath(ctx, cx, cy, HEX_SZ);
-      applyHexFill(cell, dist, visible, surveyed, effectiveVR, remembered);
+      applyHexFill(cell, dist, visible, surveyed, edgeVR, remembered);
       ctx.fill();
       ctx.globalAlpha = 1;
 
@@ -1069,8 +1215,12 @@ function isPOIRenderable(mapQ, mapR, meAct) {
   const cell = boardCells()[mapR]?.[mapQ];
   // Machine Gun Kane's next chapter (kane-jeep.js) is a quest hex too, and so
   // is VACANCY's next step (vacancy.js).
+  // So is a room of Gaunt's clinic below that holds the next step (lab.js),
+  // and Bonney's fire (bonney.js).
   if (!cell?.poi && !(typeof kaneQuestAt === 'function' && kaneQuestAt(mapQ, mapR)) &&
-      !(typeof vacQuestAt === 'function' && vacQuestAt(mapQ, mapR))) return false;
+      !(typeof vacQuestAt === 'function' && vacQuestAt(mapQ, mapR)) &&
+      !(typeof labQuestAt === 'function' && labQuestAt(mapQ, mapR)) &&
+      !(typeof bonneyQuestAt === 'function' && bonneyQuestAt(mapQ, mapR))) return false;
   const dist = boardDist(meAct.q, meAct.r, mapQ, mapR);
   const effectiveVR = getEffectiveVR();
   return dist <= effectiveVR || surveyedCells.has(`${mapQ}_${mapR}`); // NOSONAR S4158
@@ -1359,6 +1509,9 @@ function packSlot(idx, n) {
 }
 
 // ── Pass 2: Character icons ────────────────────────────────────────
+// Per seat, the portrait circle's offset from the pawn's anchor, as drawn last
+// frame: where a riding ghost goes BEFORE the pawn is drawn (ghosts.js).
+const pawnPortraitOff = [];
 function renderCharacters(cam) {
   const { ox, oy, meRp } = cam;
   easeBikes();
@@ -1394,6 +1547,11 @@ function renderCharacters(cam) {
     if (y < -HEX_SZ * 2 || y > cssHeight + HEX_SZ * 2) continue;
     const p = players[i];
     const _archColor = ARCHETYPE_COLORS[p.arch ?? 0] ?? PLAYER_COLORS[i];
+    // A ghost riding them (ghosts.js) looms behind the portrait -- placed by
+    // last frame's portrait offset, which only moves as a bike eases in --
+    // and grips its rim after it, on this frame's exact circle.
+    const pOff = pawnPortraitOff[i] || { dx: 0, dy: -HEX_SZ * s * ICON_SIZE_SCALE * 0.15, r: Math.max(10, HEX_SZ * s * 0.28) };
+    if (typeof ghostBehindPawn === 'function') ghostBehindPawn(i, x + pOff.dx, y + pOff.dy, pOff.r);
     const tyre = drawCharIcon(ctx, x, y, HEX_SZ * s, {
       color: _archColor,
       label: i,
@@ -1405,13 +1563,31 @@ function renderCharacters(cam) {
       sc:    n > 1 ? undefined : (p.sc ?? 0),
       ride:  renderPos[i].bike ?? 0,
       face:  renderPos[i].face,
+      kick:  renderPos[i].kick,
     });
-    if (tyre && bikeDust) {
-      const rp   = renderPos[i];
-      const v    = hexToPixel(rp.dq, rp.dr, 1);
+    const pt = drawCharIcon.portrait;
+    pawnPortraitOff[i] = { dx: pt.x - x, dy: pt.y - y, r: pt.r };
+    if (typeof ghostOverPawn === 'function') ghostOverPawn(i, pt.x, pt.y, pt.r);
+    // The flies and the stink round whoever has the Dshingus (dshingus.js).
+    if (typeof dshOverPawn === 'function') dshOverPawn(i, pt.x, pt.y, pt.r);
+    const rp  = renderPos[i];
+    const exh = drawCharIcon.exhaust;
+    if ((tyre || (exh && rp.kick !== null)) && bikeDust) {
       const cell = boardCell(Math.round(rp.q), Math.round(rp.r));
-      bikeDust.kick(i, (tyre.x - ox) / HEX_SZ, (tyre.y - oy) / HEX_SZ, v.x, v.y,
-                    cell ? cell.terrain : null, s);
+      const terr = cell ? cell.terrain : null;
+      if (tyre) {
+        const v = hexToPixel(rp.dq, rp.dr, 1);
+        bikeDust.kick(i, (tyre.x - ox) / HEX_SZ, (tyre.y - oy) / HEX_SZ, v.x, v.y, terr, s);
+      }
+      // The kick-start's smoke, each puff on the frame its time comes round.
+      // The one that catches spins the back tyre too, and that throws dirt.
+      if (exh && rp.kick !== null) {
+        for (const [t, what] of KICK_SMOKE) {
+          if (t <= rp.kick0 || t > rp.kick) continue;
+          bikeDust.exhaust((exh.x - ox) / HEX_SZ, (exh.y - oy) / HEX_SZ, -rp.face, what, s);
+          if (t === KICK_CATCH && tyre) bikeDust.spin((tyre.x - ox) / HEX_SZ, (tyre.y - oy) / HEX_SZ, -rp.face, terr, s);
+        }
+      }
     }
   }
 
@@ -1568,7 +1744,9 @@ function renderUnderground() {
 // distance and at any hour, and the dark closes in again between them.
 let _darkCanvas = null, _darkCtx = null;
 function drawDarkUnderLights(fill) {
-  if (!tunnelLitThisFrame.length) {
+  // A burning flare (flare-field.js) cuts its own hole, on either board.
+  const flareLit = flareField ? flareField.lit : [];
+  if (!tunnelLitThisFrame.length && !flareLit.length) {
     ctx.save();
     fill(ctx);
     ctx.restore();
@@ -1602,6 +1780,22 @@ function drawDarkUnderLights(fill) {
     c.beginPath();
     c.arc(L.x, L.y, rad, 0, Math.PI * 2);
     c.fill();
+  }
+  // The flare's patch is wide and flat-topped, squashed into the 3/4 view.
+  for (const L of flareLit) {
+    const a = 0.88 * L.level;
+    c.save();
+    c.translate(L.x, L.y);
+    c.scale(1, 0.75);
+    const g = c.createRadialGradient(0, 0, 0, 0, 0, L.rad);
+    g.addColorStop(0,    `rgba(0,0,0,${a})`);
+    g.addColorStop(0.5,  `rgba(0,0,0,${a * 0.85})`);
+    g.addColorStop(1,    'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.beginPath();
+    c.arc(0, 0, L.rad, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
   }
   c.restore();
   ctx.save();
@@ -1665,7 +1859,8 @@ function renderTimeOfDay() {
     c.fillStyle   = `rgb(${phase.r},${phase.g},${phase.b})`;
     c.fillRect(0, 0, cssWidth, cssHeight);
   };
-  if (myDepth && phase.a > 0.02) { drawDarkUnderLights(tint); return; }
+  // On the surface a burning flare cuts the night the same way.
+  if ((myDepth || flareField?.lit.length) && phase.a > 0.02) { drawDarkUnderLights(tint); return; }
   ctx.save();
   tint(ctx);
   ctx.restore();
@@ -1715,12 +1910,21 @@ const LAYERS = [
   // VACANCY (vacancy.js): the sign's pole and dead tubes, the front desk, the
   // corridor's doorway -- under the pawns. What is lit is vacancy_light.
   { name: 'vacancy',      draw: (cam) => { if (!myDepth) renderVacancy(cam); } },
+  // ONE-HAND BONNEY (bonney.js): her at her fire, Turnbull on the spit; the ash ring she leaves.
+  { name: 'bonney',       draw: (cam) => { if (!myDepth && typeof renderBonney === 'function') renderBonney(cam); } },
   // The dust the Motorbikes kick up (bike-dust.js), under the pawns so each
   // bike sits in front of its own cloud. Fed by renderCharacters() below, so
   // it draws what the bikes threw up to last frame.
   { name: 'bike_dust',    draw: (cam) => { if (bikeDust) { bikeDust.update(); bikeDust.render(ctx, cam.ox, cam.oy, HEX_SZ, myDepth, cssWidth, cssHeight); } } },
   // The tunnel's section lights, under the survivors (renderTunnelLights).
   { name: 'tunnel_lights', draw: (_)  => renderTunnelLights() },
+  // RUNAWAY SCIENCE (lab.js): Gaunt's three rooms, below only -- the needles,
+  // the jars, his table. What glows is lab_light.
+  { name: 'lab',          draw: (cam) => { if (myDepth && typeof renderLab === 'function') renderLab(cam); } },
+  // Drifting ghosts (ghosts.js), under the pawns so a survivor walking through
+  // one stays in front of it. A riding one is drawn round its pawn, inside
+  // renderCharacters, on whichever board that pawn is on.
+  { name: 'ghosts',       draw: (cam) => { if (!myDepth) renderGhosts(cam); } },
   { name: 'characters',   draw: (cam) => renderCharacters(cam) },
   // His bursts: tracers, the muzzle flash, the brass -- over the pawns they hit.
   { name: 'kane_fx',      draw: (cam) => { if (!myDepth) renderKaneFx(cam); } },
@@ -1746,18 +1950,29 @@ const LAYERS = [
   // Debris smoke trails and plumes: high over everything, but still under the
   // time-of-day tint -- smoke is not a light source and goes dark at night.
   { name: 'debris_air',   draw: (cam) => { if (debrisField && !myDepth) debrisField.drawAir(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
+  // A flare's smoke and chute, under the tint like the debris smoke. It also
+  // records where the flare's light falls, so it must run before the
+  // 'underground' and 'time_of_day' darkness passes that cut holes for it.
+  // Not depth-gated: below ground the flare burns in the hand.
+  { name: 'flare_air',    draw: (cam) => { if (flareField) flareField.drawAir(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
   { name: 'underground',  draw: (_)   => renderUnderground() },
   { name: 'time_of_day',  draw: (_)   => renderTimeOfDay() },
   { name: 'night_fade',   draw: (_)   => renderNightFade() },
   // The fireballs, sparks, flashes and glowing craters go OVER the tint: they
   // are light, and a fireball at night should be the brightest thing there.
   { name: 'debris_light', draw: (cam) => { if (debrisField && !myDepth) debrisField.drawLight(ctx, cam, HEX_SZ, cssWidth, cssHeight); } },
+  // The flare's red light, its star, drips and flashes: over the tint.
+  { name: 'flare_light',  draw: (cam) => { if (flareField) flareField.drawLight(ctx, cam, HEX_SZ, cssWidth, cssHeight, myDepth ? 1 : 1 - sunState().day); } },
   // Kane's fire (kane-jeep.js): he only lights it after dusk, so it is light
   // over the tint, the same reasoning as the fireballs above.
   { name: 'kane_light',   draw: (cam) => { if (!myDepth) renderKaneLight(cam); } },
   // VACANCY's neon, the desk lamp, the corridor's strip light and the windows
   // of the houses that checked in (vacancy.js): light, so over the tint too.
   { name: 'vacancy_light', draw: (cam) => { if (!myDepth) renderVacancyLight(cam); } },
+  // The fungus, the brine and the sixty-year lamp in Gaunt's rooms (lab.js).
+  { name: 'lab_light',    draw: (cam) => { if (myDepth && typeof renderLabLight === 'function') renderLabLight(cam); } },
+  // Bonney's fire is a light, and its smoke stands up past your vision (bonney.js).
+  { name: 'bonney_light', draw: (cam) => { if (!myDepth && typeof renderBonneyLight === 'function') renderBonneyLight(cam); } },
 ];
 
 // ── Render ──────────────────────────────────────────────────────
@@ -1782,6 +1997,7 @@ function render() {
   if (groundFx) groundFx.beginFrame();
   if (quakeField) quakeField.update(weatherNow);
   if (debrisField) debrisField.update(weatherNow);
+  if (flareField) flareField.update(weatherNow);
 
   lerpPlayerPositions();
   const cam = buildCamera();

@@ -119,3 +119,8 @@ SURVIVORS | survivors remain.
 LAUGH0 | @laugh 0 the villain: mwa ha ha ha haaa
 LAUGH1 | ha! you dead.
 LAUGH2 | @laugh 2 the gloat: ho. ho. ho. ho ho ho HOOO
+
+# ── the terminal's jokes when a ghost takes hold of someone (ghosts.hpp, SS_GHOST) ──
+GHOST0 | you make friends easily.
+GHOST1 | someone is very attached to you.
+GHOST2 | you will never be lonely again.

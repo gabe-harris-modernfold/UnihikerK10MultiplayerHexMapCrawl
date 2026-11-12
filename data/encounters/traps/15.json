@@ -11,7 +11,7 @@
         {
           "label": "Back out between the shelves, elbows in, minding the lines",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_feeder_mice"
@@ -19,7 +19,7 @@
         {
           "label": "Cut the lines one at a time and work your way to the till",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_net"
@@ -44,7 +44,7 @@
         {
           "label": "Shake a bag of feeder mice and coax it off the stockroom door",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 1,
           "success_node": "cache_2",
           "hazard_id": "the_squeeze"
@@ -65,7 +65,7 @@
   "hazards": {
     "the_feeder_mice": {
       "text": "Your shoulder brushes a line. A lolly stick drops, a cage door claps shut, and the bag hung above it tips a kilo of freeze-dried feeder mice over your head and down your collar. That part is survivable. Then come the rats — the shop's own, fat and free-range, who have waited years for somebody to tip those mice — and they go down your collar and into your pack after them with no regard at all for where the mice stop and you begin.",
-      "penalty": { "ll": [-1, -2], "food": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "food": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

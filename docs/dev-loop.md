@@ -306,8 +306,12 @@ python scripts/fxsim/fxsim.py quake eye       # just these (--list for names)
 python scripts/fxsim/fxsim.py below crafted crawl   # the cut scenes
 python scripts/fxsim/fxsim.py death0 death1 death2  # the death takeover: the Doom laughing (doom-laugh.h)
 python scripts/fxsim/fxsim.py tripwire beartrap      # the traps' two
+python scripts/fxsim/fxsim.py rough0 rough1 rough2   # slept rough, laughed at: the vulture, the branch, the chalk outline
+python scripts/fxsim/fxsim.py rough_dawn             # a morning as cued: the DAY card, then the laugh waiting its turn
 python scripts/fxsim/fxsim.py road_day road_storm road_night admired   # the picture screens
-python scripts/fxsim/fxsim.py chronicle chron_g0 chron_g10   # the comic page; chron_g0-10 = every event picture
+python scripts/fxsim/fxsim.py chronicle chron_g0 chron_g11   # the comic page; chron_g0-11 = every event picture
+python scripts/fxsim/fxsim.py chron_clash chron_trip chron_kane chron_kane_miss   # the hurts, live: the place, the wire, Kane hit / miss
+python scripts/fxsim/fxsim.py chron_rough chron_rough_tree chron_rough_chalk     # the three slept-rough panels, live
 python scripts/fxsim/fxsim.py stash odds_win odds_lose waste       # screens 3-5
 python scripts/fxsim/fxsim.py figs figs_big figs_night              # the party: every archetype x pose (scFigure), no FX
 ```
@@ -402,6 +406,16 @@ play with no router anywhere. Measured 2026-10-23 with `bots/wroom_swarm`
   `heap_caps_get_largest_free_block()` has room), and `broadcastState()` skips
   a tick rather than copy into nothing. `/state` → `mem.psramMax`,
   `syncWaits`, `syncQueued`, `broadcastNoRoom` show how close it runs.
+
+- **Don't `ps_malloc` per request on a route the game is waiting on.** PSRAM
+  fragments: on 2026-11-07, 38 min into a session, it had 160 KB free but no
+  block over 6 KB (`mem.psramMax` 4–6 KB), and `ps_malloc` never falls back
+  to the internal heap. `/enc` did exactly that, so every scene file over
+  ~4 KB came back 404 after `enc_start` had already opened it, and the client
+  toasted "encounter failed to load". `/enc` now reads into a 16 KB block
+  reserved at boot (`encReplyBlock()`, game-server.hpp). A second request at
+  the same moment falls back to PSRAM, then the internal heap above a 32 KB
+  spare, then a 503. The engine's own `encFileBuf` is taken at boot too.
 
 - **The full sweep is still needed** to find a home network on a different
   channel than the softAP, so: the first sweep after boot is always full (the
@@ -577,6 +591,19 @@ the River Channel sheet and five scripts, two of them the observer TV's, were
 dropped at every boot. With a `.gz` beside every root web file those 1.4 MB are
 ~0.5 MB; everything fits with ~380 KB of PSRAM to spare (42 web files, 51
 images). After adding art, check the boot log for `ps_malloc FAIL`.
+On 2026-11-06 the new Rust Forest page (812 KB, was 236) pushed it over
+again and four survivors lost their portraits. Since then `/data/img` caches
+its subfolders (`survivors/`, `items/`) before the sheets, so the next
+overflow costs whichever sheet loads last instead, and it skips what the
+route never serves: non-image files (the `.md` prompt notes) and the dead
+`tile-alts*` page. The root scripts `app.bundle.js` is built from are no
+longer cached either when `assets.json` is on the card (only the
+`web-assets.json` fallback asks for them, and only without it), except the
+ones another page names: `observer.html`'s `game-data.js`, `wind.js` and
+`ground-fx.js` (`findBundledOnly()` in boot-assets.hpp). That was 337 KB.
+Everything fits again, `tunRoom.webp` included: 17 web files, 44 images,
+~470 KB of PSRAM free after boot. A bundled script fetched by name now 404s,
+so a new page that loads one must name it in quotes in its `.html`.
 
 Verifying on hardware (board on the LAN):
 
@@ -674,7 +701,13 @@ each:
 python scripts/hex_sheets.py build --check      # validate + sizes, write nothing
 python scripts/hex_sheets.py build              # art/hex-sheets/*.png -> data/img/hex<Name>.webp + tiles.json
 python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, for per-tile tools
+python scripts/hex_sheets.py build --no-grade   # same, without the colour grade
+python scripts/palette_grade.py measure         # re-freeze grade anchors after repainting a sheet wholesale
 ```
+
+- **The build colour-grades the map** (terrain and tunnel pages, not sprites):
+  `scripts/palette_grade.py`, docs/hex-tile-art.md "Palette". What you see in
+  `data/img/` is graded; the masters are not.
 
 - **Edit the masters, not `data/img/`.** The lossless master is
   `art/hex-sheets/hex<Name>.png`, outside `data/` so `sync_data` never pushes
@@ -756,10 +789,23 @@ python scripts/hex_sheets.py split Ridge        # a sheet -> one PNG per cell, f
   - **Drawing it.** The tick broadcast carries `uf` (`unfuelledMask()`, the
     unpaid slots). `bikeStalled()` in renderer.js reads it, and the bike fades
     out over `BIKE_FADE_S` (0.9 s) while the rider slides off the seat onto
-    the ground shadow. Fuel fades it back in. It stays equipped, and its +2
-    slots still count. Equipping or unequipping fades it too (`easeBikes()`,
-    `renderPos[i].bike`). A board without `uf` falls back to dawn's `unf`
-    plus an empty pack.
+    the ground shadow. It stays equipped, and its +2 slots still count.
+    Unequipping fades it out too (`easeBikes()`, `renderPos[i].bike`). A
+    board without `uf` falls back to dawn's `unf` plus an empty pack.
+  - **Coming back, it is kick-started, not faded in** (2026-10-23; before,
+    fuel just faded the rider back onto the bike). Any running edge does this,
+    whether fuel arrived or the bike was equipped. `renderPos[i].kick` is a
+    2.6 s clock (`KICK_*` in renderer.js):
+    - The bike is there in 0.3 s with the rider up on it.
+    - Kicks at 0.6 and 1.1 s cough grey puffs. The rider stamps down
+      (`kickPose()`) and the bike sinks on its springs.
+    - The kick at 1.6 s catches. Three dark bursts come out of the tailpipe
+      (`BIKE_ART.exhX/exhY`), the rear tyre throws a spray of ground dust,
+      and the bike shudders on hashed noise until it settles.
+    - The smoke is `BikeDust.exhaust()` / `spin()` (data/bike-dust.js), the
+      dust's own puffs, but round and buoyant.
+    - The K10 plays `SFX_KICKSTART` to the same clock (`SS_KICKSTART` on
+      EVT_REFUEL, docs/sound-engine.md).
   - Survivors sharing a hex ride as a pack (`packSlot()` in renderer.js): two
     staggered lanes, each pawn shrunk by `PACK_SCALE[n]`, call signs and
     scores hidden. This replaced the ring of full-size markers, which buried
@@ -937,6 +983,7 @@ Drive the stages from the browser console (`socket.send(JSON.stringify(…))`):
 {"t":"dbg_eco","act":"burst"}                         every fruiting body bursts (spore flights)
 {"t":"dbg_eco","act":"germinate"}                     every dormant spore wakes
 {"t":"dbg_eco","act":"daisy","stage":3,"count":3}     a bloomed patch on your hex (or q/r) — step off and back to be bitten
+{"t":"dbg_eco","act":"slime","n":5}                   thick mould on n hexes running east of you (or of q/r) — walk along it for 1, 2, 3 LL
 {"t":"dbg_eco","act":"speed","n":50}                  eco clock multiplier
 {"t":"dbg_eco","act":"regen","seed":0}                new species, scars cleared
 {"t":"dbg_eco","act":"bite","on":0}                   the NVS eco/bite switch
@@ -976,6 +1023,7 @@ from the browser console:
 send({ t: 'dbg_enc',   biome: 'urban', id: 3 });  // open a specific encounter JSON, ignoring position/POI
 send({ t: 'dbg_force', out: 0 });                 // force the NEXT roll to fail (out: 1 = succeed)
 send({ t: 'dbg_weather', phase: 2 });             // force weatherPhase (0 clear, 1 rain, 2 storm, 3 chem, 4 strangle fog, 5 mist/fog)
+send({ t: 'dbg_day', day: 365 });                 // set the day counter; the next dawn wraps 365 -> day 1 (DAYS_PER_YEAR)
 send({ t: 'dbg_quake' });                         // force an earthquake near the sender, ignoring the cooldown
 send({ t: 'dbg_caravan' });                       // teleport the mock caravan onto the sender's hex (world-system-spec.md)
 send({ t: 'dbg_ignite' });                        // ignite the sender's own hex at intensity 2 (world-system-spec.md)
@@ -986,10 +1034,15 @@ send({ t: 'dbg_settle' });                        // force a settlement to form 
 send({ t: 'dbg_flood' });                         // force-flood the sender's hex at intensity 2, ignoring the water/storm gates
 send({ t: 'dbg_tunnel', h: 2 });                  // stand the sender on bunker hatch #h and refill AP (tunnel-system-spec.md)
 send({ t: 'dbg_tunnel', h: 2, below: 1, ap: 0 }); // ...underground on that shaft instead, with a pinned AP budget
+send({ t: 'dbg_oasis', n: 2 });                   // stand the sender in forest oasis #n's bed, AP refilled (forest-oasis.md)
+send({ t: 'dbg_oasis', n: 2, d: 4 });             // ...or on its ring, side d (0-5, firmware DQ/DR)
+send({ t: 'dbg_hurt', ll: 3, f: 1, w: 1 });       // set LL (and the F/W tracks, 1-6) -- a grove heals below the F>=2/W>=2 gate
 send({ t: 'dbg_collapse', d: 0 });                // cave in the tunnel hex in direction d from the sender
 send({ t: 'dbg_die' });                           // the sender's survivor goes down on the spot (death drops, below)
 send({ t: 'dbg_age', days: 29 });                 // age every ground pile + remains by N days, then run the dawn sweep
 send({ t: 'dbg_trap', d: 0, id: 16, known: 1 });  // arm trap file #id (default random) on the hex in direction d; known:1 = its icon on your map now
+send({ t: 'dbg_dsh' });                           // you catch the Dshingus now (dshinguest-ron.md); pid:N for another seat, days:N sets a count
+send({ t: 'dbg_dsh', spot: 1 });                  // the next REST leaves a brown spot (0: it does not); lay:1 lays one under you now, dawn:1, clear:1
 ```
 
 ### Booby traps in the mock
@@ -1167,6 +1220,31 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
   `worldSun()` on the board's `dayTick`, which also drives the page's
   `--night` dimming: dawn at tick 0 and dusk at 78% (the SS_DUSK sting). The
   old `cos()` arc there was inverted and dimmed the page at mid-day.
+- **The ground is the game's view, one panel per survivor:** every seated
+  survivor gets a panel zoomed in like their phone (ring 1 whole, ring 2 cut
+  by the frame): their pawn (the archetype portrait,
+  `img/survivors/<arch>Pawn.jpg`, like `drawCharIcon`), anyone within range
+  on their own hex, and their name and condition word along the foot. The
+  panels are the main event: `camLayout()` cuts everything right of the type
+  into whichever grid makes each panel biggest (1 = all of it, 4 = 2 x 2,
+  5 = 3 + 2), the camera subject's first with a bright frame and a `▶`. Its
+  panel is drawn from the `?pid=` view on `#s-disk` with the air clipped over
+  it; the rest come off `/state` `near` on `#s-cams`. Both sit over the
+  plinth, so they stay up through a scene. A step of 1-3 hexes glides over
+  520 ms (`Glide`, `setTimeout`-paced; `OBS.Glide` in the console).
+- **THE ADMIRED** sits at the foot of the type column in the open (shrunk by
+  `fitAdmired()` if it would reach the place line) and steps off during a
+  scene. It is spray-painted on salvage: `Grime` in observer.js paints the
+  plate procedurally (rusting steel, scratches, weeping rivets, two bullet
+  holes, duct tape, drips under the title), with ash falling past a dying
+  bulb and a bottle cap stamped 1ST swinging on a wire (`drawMedal`). It
+  moves on change: a climb slides up with CLAWING UP, a drop slides down
+  SLIPPING and shakes, a gain rolls the score and floats `+N`, a new leader
+  gets a hazard-tape stamp ("PROMOTED. CONDOLENCES."), and a subtitle of
+  small print changes daily. The panels share the look: salvaged frames
+  with chipped paint in the survivor's colour, soot, cracked glass over
+  anyone critical, and an epithet on tape ("MEASURE FOR A BOX",
+  `EPITHETS`) picked by state and day.
 - **`observer-fx.js` is the LCD's FX engine ported to a canvas overlay**
   (same hash, noise, halftone, SFX glyphs — embedded from LovyanGFX by
   `python scripts/gen_observer_fx_fonts.py`). With firmware that publishes
@@ -1177,7 +1255,10 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
   in `/state`, so the commendation only ever comes off the ring. To look at
   one on the desktop, `OBS.FX.cue('BELOW', 'Mox', 'goes down into the dark.')`
   (or `'CRAFTED', name, 'Sock Puppet Bandage'`, or `'CRAWL', name`) in the
-  console. `?fx=reel` plays every panel in turn, `?fx=0|1|2` sets the level,
+  console. Sleeping rough is `OBS.FX.cue('ROUGH', 'Mox', 'slept in a tree.
+  Briefly.', '', arg)` with arg = story (0 vulture, 1 tree, 2 chalk) |
+  archetype << 4 | seat << 8; without the ring the TV derives it at dawn for
+  the survivor its `view` is on. `?fx=reel` plays every panel in turn, `?fx=0|1|2` sets the level,
   `?fxmad=N` pins the madness. It is paced by `setTimeout`, not
   `requestAnimationFrame` — the desktop app's browser pane never ticks rAF.
 - **Budget check before adding more:** the board caches one PSRAM entry and
@@ -1195,7 +1276,7 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
   (samples, debt ledger, obituaries), `OBS.Director` (subject, phase, cuts),
   `OBS.Narrator`, and `OBS.handle(raw)` to step the whole pipeline a frame at
   a time without waiting out the poll interval.
-- **Two firmware dependencies**, both already in:
+- **Firmware dependencies:**
   - `encBiome` + `encId` on the `/state` player block
     ([game-server.hpp:582](../game-server.hpp:582)). Without them a scene is
     anonymous and the prose, choices and hazards are all unreachable.
@@ -1203,6 +1284,10 @@ http://localhost:8765/observer.html?host=192.168.1.42    desktop dev
     Without them the vision disk can only draw flat `TERRAIN[]` colours; with
     them it draws the same terrain sheets (`/img/tiles.json`) the players see.
     A terrain with no art (River Channel) still falls back to flat colour.
+  - `near` on each connected `/state` player block (game-server.hpp, mirrored
+    in the mock and `?feed=fake`): the 19 hexes within 2 as flat triples
+    terrain, variant, shelter | 4 for a POI, walked dr -2..2, dq -2..2 like
+    `view`. Without it a panel shows the pawn on black.
 
 **Gotcha this screen is uniquely exposed to:** the ways a bot run fails
 silently. [bot-testing.md](bot-testing.md) warns that a `pick` can be refused

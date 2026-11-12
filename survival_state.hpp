@@ -33,6 +33,7 @@ static void duskCheck() {
   for (int pid = 0; pid < MAX_PLAYERS; pid++) {
     Player& p = G.players[pid];
     if (!p.connected || p.ll == 0 || p.radiation < 7) continue;
+    if (inOasis(p)) continue;   // the grove keeps the sickness off tonight (docs/forest-oasis.md)
 
     GameEvent ev = {};
     ev.type  = EVT_DUSK;
@@ -103,6 +104,10 @@ static void dawnUpkeep() {
     //    Settlement still guarantees the rest-recovery heal below regardless
     //    of supply levels, same as it always has.
     bool inSettlement = (G.map[p.r][p.q].terrain == 9);
+    // A forest oasis rests like a Settlement (docs/forest-oasis.md): cover
+    // from the exposure bite, and the heal below whatever the tracks say.
+    // Food and water are still eaten -- the grove beds you, it does not feed you.
+    const bool oasis = inOasis(p);
 
     // ── Quartermaster trait: in a Camp (2+ survivors sharing a hex, one of
     //    them the Quartermaster) every 2 tokens consumed restores 1 extra
@@ -147,6 +152,7 @@ static void dawnUpkeep() {
     // player who builds and one who does not rather than taxing everyone.
     static constexpr int EXPOSURE_BITE = 2;
     int8_t expDelta = 0;
+    uint8_t rough = 0;   // slept out in it: 1 on the ground, 2 up a tree (EVT_DAWN's dawnRough)
     {
       uint8_t terr   = G.map[p.r][p.q].terrain < NUM_TERRAIN ? G.map[p.r][p.q].terrain : 0;
       uint8_t sv     = TERRAIN_SV[terr];
@@ -161,12 +167,13 @@ static void dawnUpkeep() {
       // weather, opposite answer, settled by which hole they happened to use.
       // What the tunnels charge instead is bad air, below, and only if you
       // sleep down there.
-      bool    covered = (shelt > 0) || (sv >= 2) || (p.depth != 0)
+      bool    covered = (shelt > 0) || (sv >= 2) || (p.depth != 0) || oasis
                      || (p.archetype == 5)                       // Endurer needs no shelter
                      || hasNarrativeParam(pid, NAR_COLD_IMMUNE); // Bear Skin Cape
       if (!covered) {
         llDelta  -= EXPOSURE_BITE;
         expDelta  = (int8_t)-EXPOSURE_BITE;
+        rough     = (terr == 2) ? 2 : 1;   // the Rust Forest has trees to try
       }
     }
 
@@ -244,7 +251,7 @@ static void dawnUpkeep() {
     //    raising this re-creates the same trap silently -- it was caught by a
     //    smoke test rather than by a run, which is the only reason it is not
     //    in this build. Tie them together and the property survives retuning.
-    bool restedWell = p.resting && ((p.food >= 2 && p.water >= 2) || inSettlement);
+    bool restedWell = p.resting && ((p.food >= 2 && p.water >= 2) || inSettlement || oasis);
     if (restedWell && p.ll < (uint8_t)effectiveMaxLL(pid)) {
       llDelta += (p.ll <= 2) ? (EXPOSURE_BITE + 1) : 1;
     }
@@ -338,6 +345,7 @@ static void dawnUpkeep() {
     ev.dawnWndMin  = p.wounds[WOUND_MINOR];
     ev.dawnWndMaj  = p.wounds[WOUND_MAJOR];
     ev.dawnUnfuelled = unfuelled;
+    ev.dawnRough   = rough;
     enqEvt(ev);
   }
 }
@@ -386,8 +394,12 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
     return;
   }
 
-  p.inv[idx] = (uint8_t)min((int)p.inv[idx] + gain, 99);
-  p.score   += gain * 10;
+  // A ghost riding them takes its third off the top (ghosts.hpp). The pile
+  // still loses everything picked up -- the ghost's share came out of it --
+  // and only what reaches the pack scores.
+  const uint8_t kept = ghostTithe(pid, idx, gain);
+  p.inv[idx] = (uint8_t)min((int)p.inv[idx] + kept, 99);
+  p.score   += kept * 10;
 
   // Partial-pickup leak fix: only zero the cell when we drained it. If we
   // took less than was there (inv room < pile size), leave the remainder
@@ -396,13 +408,13 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
   cell.amount = remaining;
   if (remaining == 0) {
     cell.resource     = 0;
-    cell.respawnTimer = RESPAWN_TICKS;
+    cell.respawnTimer = respawnTicksFor(idx + 1);   // only food grows back
   }
 
   { GameEvent ev = {}; ev.type = EVT_COLLECT; ev.pid = (uint8_t)pid;
     ev.q = (int16_t)q; ev.r = (int16_t)r; ev.depth = depth;
     ev.res = (uint8_t)(idx + 1);   // original resource type (1-5)
-    ev.amt = gain;
+    ev.amt = kept;                 // what reached the pack: the client adds it to inv[]
     // Reuse dawnLL to carry post-pickup remaining amount (0 = hex now empty).
     // dawnLL is unused for collect events; lets the client update gameMap.amount
     // for partial pickups without a second event.
@@ -423,6 +435,10 @@ static void collectResource(int pid, int q, int r, uint8_t depth = 0) {
 // later, after the client had been told it was still there).
 // Either way the 10 pts/token collectResource() granted comes back off —
 // without that, drop→collect on the same hex is an infinite score pump.
+// Below ground the pile goes on the tunnel cell they are standing on, which
+// moveTunnel()'s collectResource(depth 1) picks up again; there is no mould
+// down there. It used to land on the hatch overhead (p.q/p.r stay pinned to
+// it), where the next survivor through took it.
 // Mirrored in mock-server/server.js (dropResource).
 // Returns tokens removed from the pack (0 = nothing happened). *outOnGround is
 // true when they landed on the hex, *outRem is the hex pile after the drop.
@@ -442,8 +458,10 @@ static uint8_t dropResource(int pid, uint8_t res, uint8_t qty,
   uint16_t refund = (uint16_t)take * 10;
   p.score = (p.score > refund) ? (uint16_t)(p.score - refund) : 0;
 
-  HexCell& cell = G.map[p.r][p.q];
-  bool onGround = !ecoBlightAt(ecoBlightMap(), p.q, p.r) &&
+  int16_t bq, br;
+  const uint8_t d = boardPos(p, &bq, &br);
+  HexCell& cell = d ? G.tunnel[br][bq] : G.map[br][bq];
+  bool onGround = (d || !ecoBlightAt(ecoBlightMap(), bq, br)) &&
                   (cell.resource == 0 || cell.resource == res);
   if (onGround) {
     int pile = (cell.resource == res ? (int)cell.amount : 0) + (int)take;
@@ -453,8 +471,8 @@ static uint8_t dropResource(int pid, uint8_t res, uint8_t qty,
     if (outRem) *outRem = cell.amount;
   }
   if (outOnGround) *outOnGround = onGround;
-  Log.notice("drop_res OK pid=%d q=%d r=%d res=%d qty=%d ground=%d pile=%d sc=%d",
-             pid, (int)p.q, (int)p.r, (int)res, (int)take,
+  Log.notice("drop_res OK pid=%d q=%d r=%d dp=%d res=%d qty=%d ground=%d pile=%d sc=%d",
+             pid, (int)bq, (int)br, (int)d, (int)res, (int)take,
              onGround ? 1 : 0, (int)cell.amount, (int)p.score);
   return take;
 }
@@ -564,6 +582,13 @@ static const char* moveTunnel(int pid, int dir) {
   // pickup, like the surface. A shaft never carries one, so this and the
   // climb-out below cannot both happen on one step.
   trapOnArrival(pid);
+  // The Dshingus passes in the corridors too (dshingus.hpp): samehex() is
+  // the same cell down here.
+  dshOnArrival(pid);
+  // RUNAWAY SCIENCE (lab.hpp), which is only ever down here: close enough
+  // and Gaunt calls; one of his rooms opens its scene. Never on a shaft --
+  // the rooms are plain floor -- so the climb-out below cannot follow it.
+  labOnArrival(pid);
   // Landing on a shaft climbs out (tunnels.hpp).  After the pickup, so the
   // last thing you grab on the way past still lands in the pack.
   tunnelStepUp(pid);
@@ -659,7 +684,8 @@ static const char* movePlayer(int pid, int dir) {
   if (G.weatherPhase == WEATHER_CHEM) {
     bool destCovered = (G.map[p.r][p.q].shelter >= 1)
                     || destTerrain == 9
-                    || TERRAIN_IS_RUINS[destTerrain];
+                    || TERRAIN_IS_RUINS[destTerrain]
+                    || inOasis(p);   // under the canopy (docs/forest-oasis.md)
     if (!destCovered) {
       if (p.chemMoves < 255) p.chemMoves++;
       if (p.chemMoves > CHEM_FREE_MOVES && p.ll > 0) {
@@ -702,10 +728,11 @@ static const char* movePlayer(int pid, int dir) {
     ev.amt = laidTrack ? 1 : 0;  // EVT_MOVE-specific reuse of the generic amt field: 1 = this step laid a tire track
     ev.res = (uint8_t)(dir + 1);  // and of res: the side stepped through, +1 (0 = unknown), wire "d"
     enqEvt(ev); }
-  // Wasteland Daisies (ecology.hpp): stepping onto a bloomed patch costs 1 LL.
-  // After the move event so the client sees the step, then the bite; before
-  // the pickup so a survivor downed by the flowers takes nothing with them.
-  ecoBiteCheck(pid);
+  // The Understory bites (ecology.hpp): slime costs 1 LL more with every step
+  // along it, a bloomed daisy patch 1 LL. After the move event so the client
+  // sees the step, then the bite; before the pickup so a survivor downed by
+  // it takes nothing with them.
+  ecoBiteCheck(pid, /*step=*/true);
   collectResource(pid, p.q, p.r);
   // A booby trap under this hex fires now (traps.hpp), opening a scene the
   // survivor did not ask for. After collectResource() on purpose: you grab
@@ -718,6 +745,17 @@ static const char* movePlayer(int pid, int dir) {
   // VACANCY (vacancy.hpp): the town under the sign, the front desk, the
   // corridor. Never on a hatch -- the sites are placed off them.
   vacOnArrival(pid);
+  // ONE-HAND BONNEY (bonney.hpp): walking into her firelight opens the
+  // section it holds; within a few hexes of it she calls. Never on a hatch --
+  // her fire is never lit on one.
+  bonneyOnArrival(pid);
+  // A ghost (ghosts.hpp): one riding them follows, or stays outside the town
+  // they just walked into; one drifting on this hex takes hold. Before the
+  // hatch, so a ghost taken on at its mouth goes down with them.
+  ghostOnArrival(pid, fromQ, fromR);
+  // The Dshingus (dshingus.hpp): sharing this hex passes it on, either way.
+  // Before the hatch, like the ghost: the descent's own step does not count.
+  dshOnArrival(pid);
   // Landing on a Bunker Entrance / Vent Shaft drops you into the tunnels
   // (tunnels.hpp).  Last, so the surface EVT_MOVE reaches clients before the
   // EVT_TUNNEL_ENTER that follows it.

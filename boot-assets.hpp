@@ -26,6 +26,82 @@ static int findWebFile(const char* url) {
   return -1;
 }
 
+// ── Scripts only the bundle needs ─────────────────────────────
+// With assets.json on the card the game client loads app.bundle.js and never
+// asks for the scripts it was built from; only the web-assets.json fallback,
+// for a card without assets.json, loads them one by one. Caching them anyway
+// was 337 KB of PSRAM -- more than tunRoom.webp, which went missing for it
+// (2026-11-06). A source another page loads by name stays: observer.html
+// takes game-data.js, wind.js and ground-fx.js straight off the board.
+static const int BUNDLED_NAME_MAX = 32;
+static char (*g_bundledOnly)[BUNDLED_NAME_MAX] = nullptr;   // only while loadWebFilesToRAM runs
+static int  g_bundledOnlyN = 0;
+
+// A small SD text file in internal RAM, NUL-terminated (free() it). Kept out
+// of PSRAM so the hole it leaves is not in the middle of the cache.
+static char* sdReadText(const char* path) {
+  File f = SD.open(path);
+  if (!f) return nullptr;
+  size_t sz = f.size();
+  char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (buf) buf[f.read((uint8_t*)buf, sz)] = 0;
+  f.close();
+  return buf;
+}
+
+static void findBundledOnly() {
+  char* man = sdReadText("/data/assets.json");
+  if (!man) return;                                  // no manifest: the fallback needs every script
+  const char* p = strstr(man, "\"sources\"");
+  p = p ? strchr(p, '[') : nullptr;
+  const char* end = p ? strchr(p, ']') : nullptr;
+  if (end) g_bundledOnly = (char(*)[BUNDLED_NAME_MAX])malloc(sizeof(*g_bundledOnly) * MAX_WEB_FILES);
+  while (g_bundledOnly && g_bundledOnlyN < MAX_WEB_FILES) {
+    const char* a = strchr(p, '"');
+    const char* b = a ? strchr(a + 1, '"') : nullptr;
+    if (!b || b > end) break;
+    size_t n = b - a - 1;
+    if (n > 0 && n < BUNDLED_NAME_MAX) {
+      memcpy(g_bundledOnly[g_bundledOnlyN], a + 1, n);
+      g_bundledOnly[g_bundledOnlyN++][n] = 0;
+    }
+    p = b + 1;
+  }
+  free(man);
+
+  // Every other page keeps the sources it names ('wind.js' or "wind.js").
+  File dir = SD.open("/data");
+  File f = dir ? dir.openNextFile() : File();
+  while (f && g_bundledOnlyN) {
+    String lower = String(f.name()); lower.toLowerCase();
+    String path = String("/data/") + f.name();
+    bool page = !f.isDirectory() && lower.endsWith(".html") && lower != "index.html";
+    f.close();
+    char* text = page ? sdReadText(path.c_str()) : nullptr;
+    for (int i = 0; text && i < g_bundledOnlyN; ) {
+      char q1[BUNDLED_NAME_MAX + 2], q2[BUNDLED_NAME_MAX + 2];
+      snprintf(q1, sizeof(q1), "'%s'", g_bundledOnly[i]);
+      snprintf(q2, sizeof(q2), "\"%s\"", g_bundledOnly[i]);
+      if (strstr(text, q1) || strstr(text, q2)) {
+        LOG_VERBOSE("WEB keep %s (%s loads it)", g_bundledOnly[i], path.c_str());
+        memcpy(g_bundledOnly[i], g_bundledOnly[--g_bundledOnlyN], BUNDLED_NAME_MAX);
+      } else {
+        i++;
+      }
+    }
+    free(text);
+    f = dir.openNextFile();
+  }
+  if (f) f.close();
+  if (dir) dir.close();
+}
+
+static bool isBundledOnly(const char* lowerName) {
+  for (int i = 0; i < g_bundledOnlyN; i++)
+    if (strcasecmp(g_bundledOnly[i], lowerName) == 0) return true;
+  return false;
+}
+
 // Read one /data root file into PSRAM and register it under "/<name>".
 // "<name>.gz" registers as "/<name>" with gzip=true; if both exist the gz
 // copy replaces the plain one (smaller PSRAM, ~4x fewer bytes on the wire).
@@ -36,6 +112,7 @@ static void cacheWebFile(File& f, const String& fname) {
   String plainLower = gz ? lower.substring(0, lower.length() - 3) : lower;
   const char* mime = webMimeFor(plainLower);
   if (!mime) { LOG_VERBOSE("WEB skip (not a web asset): %s", fname.c_str()); return; }
+  if (isBundledOnly(plainLower.c_str())) { LOG_VERBOSE("WEB skip (in app.bundle.js): %s", fname.c_str()); return; }
 
   char url[48];
   String plainName = gz ? fname.substring(0, fname.length() - 3) : fname;
@@ -85,14 +162,19 @@ static void cacheWebFile(File& f, const String& fname) {
 // ── Boot-time SD→PSRAM loader ─────────────────────────────────
 // Images: every file under /data/img (one subdir deep) → imgCache.
 // Web files: every web-typed file in the /data ROOT → webFiles (see the
-// WebFile comment in Esp32HexMapCrawl.ino). Order of discovery doesn't
-// matter; gz-vs-plain preference is resolved in cacheWebFile().
+// WebFile comment in Esp32HexMapCrawl.ino), less the scripts only the bundle
+// needs (findBundledOnly). Order of discovery doesn't matter; gz-vs-plain
+// preference is resolved in cacheWebFile().
 // A per-file terrain tile (hex<Name><N>.png), landmark (poi_*.png), shelter
 // sprite (shelter<Kind><N>.png, plus the unused basicShelter<N>.png copies)
 // or forage animal (forrageAnimal<N>.png) that the sprite sheets replaced.
 // An SD synced before them still has ~100; with tiles.json on the card they
 // would only burn PSRAM and cache slots. The sheets are .webp, so never match.
 static bool isLegacyTileFile(const char* name) {
+  // The pre-picker alternates page (tile-alts0.webp + tile-alts.json): the
+  // picker reads alternates out of tiles.json now and nothing loads it
+  // (docs/hex-tile-art.md), but its 288 KB cost four survivors their portraits.
+  if (strncmp(name, "tile-alts", 9) == 0) return true;
   const size_t n = strlen(name);
   if (n < 5 || strcasecmp(name + n - 4, ".png") != 0) return false;
   return strncmp(name, "hex", 3) == 0 || strncmp(name, "poi_", 4) == 0 ||
@@ -100,61 +182,70 @@ static bool isLegacyTileFile(const char* name) {
          strncmp(name, "forrageAnimal", 13) == 0;
 }
 
+// Only what the /img/ route serves goes in the cache. The prompt notes kept
+// beside the art (HEX_TILE_PROMPTS.md, items/ICON_PROMPTS.md, ...) were 44 KB
+// of PSRAM no browser ever asks for.
+static bool isImgAsset(const char* name) {
+  const char* dot = strrchr(name, '.');
+  return dot && (!strcasecmp(dot, ".png") || !strcasecmp(dot, ".webp") || !strcasecmp(dot, ".jpg") ||
+                 !strcasecmp(dot, ".jpeg") || !strcasecmp(dot, ".json"));
+}
+
+// Read one /data/img file into PSRAM under `cacheName` ("x.webp", "survivors/x.jpg").
+static void cacheImgFile(File& file, const char* cacheName) {
+  if (!isImgAsset(cacheName)) { LOG_VERBOSE("IMG skip (not an image asset): %s", cacheName); return; }
+  size_t sz = file.size();
+  uint8_t* buf = (uint8_t*)ps_malloc(sz);
+  if (!buf) { Log.error("IMG cache ps_malloc FAIL size=%u name=%s", (unsigned)sz, cacheName); return; }
+  file.read(buf, sz);
+  strncpy(imgCache[imgCacheCount].name, cacheName, 39);
+  imgCache[imgCacheCount].name[39] = 0;
+  imgCache[imgCacheCount].buf = buf;
+  imgCache[imgCacheCount].len = sz;
+  LOG_VERBOSE("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
+  imgCacheCount++;
+}
+
 static void loadWebFilesToRAM() {
   File dir = SD.open("/data");
   if (!dir) { Log.error("SD OPEN FAIL: /data"); return; }
+  findBundledOnly();
+  const int bundledOnly = g_bundledOnlyN;
   const bool atlas = SD.exists("/data/img/tiles.json");
   int legacySkipped = 0;
   File f = dir.openNextFile();
   while (f) {
     String fname = String(f.name());
     if (f.isDirectory() && fname.equalsIgnoreCase("img")) {
-      File imgFile = f.openNextFile();
-      while (imgFile && imgCacheCount < MAX_IMG_CACHE) {
-        if (imgFile.isDirectory()) {
-          String subDirName = String(imgFile.name());
-          File subFile = imgFile.openNextFile();
-          while (subFile && imgCacheCount < MAX_IMG_CACHE) {
-            if (!subFile.isDirectory()) {
-              size_t sz = subFile.size();
-              uint8_t* buf = (uint8_t*)ps_malloc(sz);
-              if (buf) {
-                subFile.read(buf, sz);
-                char cacheName[40];
-                snprintf(cacheName, sizeof(cacheName), "%s/%s", subDirName.c_str(), subFile.name());
-                strncpy(imgCache[imgCacheCount].name, cacheName, 39);
-                imgCache[imgCacheCount].name[39] = 0;
-                imgCache[imgCacheCount].buf = buf;
-                imgCache[imgCacheCount].len = sz;
-                LOG_VERBOSE("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
-                imgCacheCount++;
-              } else {
-                Log.error("IMG cache ps_malloc FAIL size=%u name=%s/%s",
-                          (unsigned)sz, subDirName.c_str(), subFile.name());
+      // Two passes: the subfolders first (survivors/, items/: small, and on
+      // every player's screen), then the sheets. When new art outgrows PSRAM
+      // it is whatever loads last that goes missing -- better one sheet than
+      // every survivor's face, which is how the portraits went on 2026-11-06.
+      for (int pass = 0; pass < 2; pass++) {
+        f.rewindDirectory();
+        File imgFile = f.openNextFile();
+        while (imgFile && imgCacheCount < MAX_IMG_CACHE) {
+          if (imgFile.isDirectory()) {
+            if (pass == 0) {
+              String subDirName = String(imgFile.name());
+              File subFile = imgFile.openNextFile();
+              while (subFile && imgCacheCount < MAX_IMG_CACHE) {
+                if (!subFile.isDirectory()) {
+                  char cacheName[40];
+                  snprintf(cacheName, sizeof(cacheName), "%s/%s", subDirName.c_str(), subFile.name());
+                  cacheImgFile(subFile, cacheName);
+                }
+                subFile.close();
+                subFile = imgFile.openNextFile();
               }
             }
-            subFile.close();
-            subFile = imgFile.openNextFile();
+          } else if (pass == 1) {
+            if (atlas && isLegacyTileFile(imgFile.name())) legacySkipped++;
+            else cacheImgFile(imgFile, imgFile.name());
           }
-        } else if (atlas && isLegacyTileFile(imgFile.name())) {
-          legacySkipped++;
-        } else {
-          size_t sz = imgFile.size();
-          uint8_t* buf = (uint8_t*)ps_malloc(sz);
-          if (buf) {
-            imgFile.read(buf, sz);
-            strncpy(imgCache[imgCacheCount].name, imgFile.name(), 39);
-            imgCache[imgCacheCount].name[39] = 0;
-            imgCache[imgCacheCount].buf = buf;
-            imgCache[imgCacheCount].len = sz;
-            LOG_VERBOSE("IMG cache: %s (%u B)", imgCache[imgCacheCount].name, (unsigned)sz);
-            imgCacheCount++;
-          } else {
-            Log.error("IMG cache ps_malloc FAIL size=%u name=%s", (unsigned)sz, imgFile.name());
-          }
+          imgFile.close();
+          imgFile = f.openNextFile();
         }
-        imgFile.close();
-        imgFile = f.openNextFile();
       }
     } else if (!f.isDirectory()) {
       cacheWebFile(f, fname);
@@ -163,6 +254,11 @@ static void loadWebFilesToRAM() {
     f = dir.openNextFile();
   }
   dir.close();
+  free(g_bundledOnly);
+  g_bundledOnly = nullptr;
+  g_bundledOnlyN = 0;
+  if (bundledOnly)
+    Log.notice("WEB cache: %d scripts left on the card, app.bundle.js carries them", bundledOnly);
   if (legacySkipped)
     Log.notice("IMG cache: tile atlas present, skipped %d superseded per-file tiles (safe to delete from SD)",
                legacySkipped);
@@ -295,6 +391,7 @@ static void loadItemRegistry() {
     else if (strcmp(key, "scrap_cost") == 0) cur.opCost[4] = (uint8_t)atoi(val);
     else if (strcmp(key, "terrain")  == 0) cur.passTerrainBits = (uint8_t)atoi(val);
     else if (strcmp(key, "tracks")   == 0) cur.leavesTracks    = (val[0] == 'y' || val[0] == 'Y' || val[0] == '1') ? 1 : 0;
+    else if (strcmp(key, "cursed")   == 0) cur.cursed          = (val[0] == 'y' || val[0] == 'Y' || val[0] == '1') ? 1 : 0;
     else if (strcmp(key, "effect")   == 0) cur.effectId       = parseEffectId(val);
     else if (strcmp(key, "param")    == 0) cur.effectParam     = (uint8_t)atoi(val);
     else if (strcmp(key, "effect2")  == 0) cur.effectId2      = parseEffectId(val);
@@ -389,6 +486,24 @@ static void loadRecipeRegistry() {
     else if (strcmp(key, "med_cost")    == 0) cur.resCost[3] = (uint8_t)atoi(val);
     else if (strcmp(key, "scrap_cost")  == 0) cur.resCost[4] = (uint8_t)atoi(val);
     else if (strcmp(key, "starter")     == 0) cur.starter    = (uint8_t)(val[0]=='y'||val[0]=='Y'||val[0]=='1');
+    else if (strcmp(key, "output_res")  == 0) {
+      // Token output: water | food | fuel | med | scrap (RES order, +1 so 0 = none).
+      static const char* const RES_KEY[5] = { "water", "food", "fuel", "med", "scrap" };
+      for (int k = 0; k < 5; k++)
+        if (strncasecmp(val, RES_KEY[k], strlen(RES_KEY[k])) == 0) { cur.outputRes = (uint8_t)(k + 1); break; }
+    }
+    else if (strcmp(key, "known_by")    == 0) {
+      // Archetype names (ARCHETYPE_NAME), comma-separated: those survivors
+      // spawn knowing this recipe, the way everybody knows a starter one.
+      char names[64];
+      strncpy(names, val, sizeof(names) - 1); names[sizeof(names) - 1] = 0;
+      for (char* tok = strtok(names, ", \t\r"); tok; tok = strtok(nullptr, ", \t\r")) {
+        bool hit = false;
+        for (int a = 0; a < NUM_ARCHETYPES; a++)
+          if (strcasecmp(tok, ARCHETYPE_NAME[a]) == 0) { cur.archMask |= (uint8_t)(1u << a); hit = true; }
+        if (!hit) Log.warning("recipes.cfg: id=%d known_by names no archetype '%s'", (int)cur.id, tok);
+      }
+    }
   }
   commitRecipe(cur, hasRecipe);
   f.close();
@@ -414,6 +529,21 @@ static uint32_t starterRecipeMask() {
   for (int i = 0; i < (int)recipeCount; i++) {
     const RecipeDef& r = recipeRegistry[i];
     if (r.starter && r.id >= 1 && r.id <= MAX_RECIPES) mask |= (1u << (r.id - 1));
+  }
+  return mask;
+}
+
+// knownRecipes bits a survivor of archetype `arch` spawns with on top of the
+// starter ones: every recipe whose `known_by` names that archetype (the
+// Medic's Medicine, Super Juice and Trauma Patch). Same registry-scan, same
+// no-flash / no-SAVE_VERSION story as starterRecipeMask(): tryLoadSave() ORs
+// it in too.
+static uint32_t archRecipeMask(uint8_t arch) {
+  if (arch >= NUM_ARCHETYPES) return 0;
+  uint32_t mask = 0;
+  for (int i = 0; i < (int)recipeCount; i++) {
+    const RecipeDef& r = recipeRegistry[i];
+    if ((r.archMask & (1u << arch)) && r.id >= 1 && r.id <= MAX_RECIPES) mask |= (1u << (r.id - 1));
   }
   return mask;
 }
@@ -536,6 +666,34 @@ static void loadEncounterIndex() {
     if (cv) vp.count = (uint8_t)jsonInt(cv);
     if (pv) jsonStr(pv, vp.path, sizeof(vp.path));
     Log.notice("VACANCY pool: %d parts at /%s", (int)vp.count, vp.path);
+  }
+  // RUNAWAY SCIENCE's four parts (lab.hpp), file N = part N.
+  //   "lab": {"count": 4, "path": "lab"}
+  if (const char* le = strstr(buf, "\"lab\"")) {
+    le += 5;
+    int copyLen = min(80, (int)(sz - (size_t)(le - buf)));
+    char tmp[84]; strncpy(tmp, le, copyLen); tmp[copyLen] = 0;
+    if (char* close = strchr(tmp, '}')) *close = 0;   // this entry only
+    EncPoolInfo& lp = encPools[ENC_POOL_LAB];
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) lp.count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, lp.path, sizeof(lp.path));
+    Log.notice("RUNAWAY SCIENCE pool: %d parts at /%s", (int)lp.count, lp.path);
+  }
+  // ONE-HAND BONNEY's two sections (bonney.hpp), file N = section N.
+  //   "bonney": {"count": 2, "path": "bonney"}
+  if (const char* be = strstr(buf, "\"bonney\"")) {
+    be += 8;
+    int copyLen = min(80, (int)(sz - (size_t)(be - buf)));
+    char tmp[84]; strncpy(tmp, be, copyLen); tmp[copyLen] = 0;
+    if (char* close = strchr(tmp, '}')) *close = 0;   // this entry only
+    EncPoolInfo& bp = encPools[ENC_POOL_BONNEY];
+    const char* cv = jsonFindKey(tmp, "count");
+    const char* pv = jsonFindKey(tmp, "path");
+    if (cv) bp.count = (uint8_t)jsonInt(cv);
+    if (pv) jsonStr(pv, bp.path, sizeof(bp.path));
+    Log.notice("ONE-HAND BONNEY pool: %d sections at /%s", (int)bp.count, bp.path);
   }
   free(buf);
 }

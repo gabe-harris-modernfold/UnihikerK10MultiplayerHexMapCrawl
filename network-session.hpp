@@ -100,6 +100,7 @@ static void refreshWsLiveness() {
     Player& p = G.players[i];
     if (!p.connected || p.wsClientId != id) continue;   // re-picked or freed since
     Log.warning("Released downed seat slot=%d wsId=%u (deferred)", i, (unsigned)id);
+    if (encounters[i].active) endEncounter(i, ENC_END_DOWNED, /*restorePoi=*/true);   // as EVT_DOWNED
     p.connected  = false;
     p.wsClientId = 0;
     p.resting    = false;

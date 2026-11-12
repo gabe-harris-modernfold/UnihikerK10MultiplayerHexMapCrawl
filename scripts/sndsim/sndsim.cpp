@@ -64,6 +64,26 @@ static void scStorm(Ctx& c) {
   if (at(c, 12.0f) || at(c, 27.0f) || at(c, 41.0f)) sndStory(SS_THUNDER);
   c.w.tcWeight = 110;
 }
+// A storm walking in, music off: four far rolls, four near booms, then the
+// cracks. The bolts flicker the way ui-leds.hpp stormBolt() fires them -- a
+// cue per lit 100 ms tick, the next bolt 1.8-6 s on.
+static void scThunder(Ctx& c) {
+  static const uint8_t PAT[4] = { 0x01, 0x05, 0x0B, 0x15 };
+  static float nextBolt = 2.0f; static uint8_t bits = 0, ticks = 0; static uint32_t r = 0x9E3779B9u;
+  c.w.weather = 2; c.w.musicLevel = 0;
+  if (!ticks && c.t >= nextBolt) {
+    r = r * 1664525u + 1013904223u; bits = PAT[r >> 30]; ticks = 6;
+    r = r * 1664525u + 1013904223u; nextBolt = c.t + 1.8f + 4.2f * (float)(r >> 8) * (1.0f / 16777216.0f);
+  }
+  if (ticks) { if (bits & 1) sndStory(SS_THUNDER); bits >>= 1; ticks--; }
+}
+// The three thunders side by side, one of each, music off: far, near, close.
+static void scThunder3(Ctx& c) {
+  if (at(c, 1.0f))  sndStory(SS_SFX, SFX_THUNDER_FAR);
+  if (at(c, 8.0f))  sndStory(SS_SFX, SFX_THUNDER_NEAR);
+  if (at(c, 15.0f)) sndStory(SS_SFX, SFX_THUNDER);
+  c.w.weather = 2; c.w.musicLevel = 0;
+}
 static void scChem(Ctx& c) {
   if (at(c, 0.5f)) sndStory(SS_WEATHER, 3);
   if (c.t > 0.5f) c.w.weather = 3;
@@ -116,6 +136,18 @@ static void scLaughs(Ctx& c) {
   for (int v = 0; v < DOOM_LAUGH_N; v++) if (at(c, 1.0f + v * 8.0f)) sndStory(SS_DOWNED, (uint8_t)v, (uint8_t)v);
   c.w.musicLevel = 0;
 }
+// A ghost takes hold three times (ghosts.hpp): the groan, then each of the
+// terminal's three jokes, over the day's music.
+static void scGhost(Ctx& c) {
+  for (int j = 0; j < 3; j++) if (at(c, 1.0f + j * 7.0f)) sndStory(SS_GHOST, 2, (uint8_t)j);
+}
+static void scGhostDry(Ctx& c) { scGhost(c); c.w.musicLevel = 0; }
+// A stalled Motorbike kick-started three times (EVT_REFUEL), over the day's
+// music; the 2.5 s cooldown is shorter than the gap.
+static void scKickstart(Ctx& c) {
+  for (int j = 0; j < 3; j++) if (at(c, 1.0f + j * 5.0f)) sndStory(SS_KICKSTART, 1);
+}
+static void scKickstartDry(Ctx& c) { scKickstart(c); c.w.musicLevel = 0; }
 static void scThreat(Ctx& c) {
   for (int b = 1; b <= 4; b++) if (at(c, 2.0f + (b - 1) * 14.0f)) { sndStory(SS_THREAT, (uint8_t)b); c.w.tcLevel = (uint8_t)b; c.w.tcWeight = (uint8_t)(b * 63); }
 }
@@ -135,6 +167,29 @@ static void scSpeech(Ctx& c) {
   c.w.musicLevel = 0;
 }
 static void scIdle(Ctx& c) { c.w.slotMask = 0; c.w.aliveMask = 0; c.w.connected = 0; }
+// The frontier with the wait for the carnival over the hill cut from 3-6
+// minutes to 30 s: it comes in at the next section change after that, plays
+// its sixteen bars, and the frontier comes back on the wind.
+static void scIdleOverhill(Ctx& c) { scIdle(c); if (at(c, 0.2f)) SMu.overhillIn = 30.0f; }
+// The open plain held in its wind section, no music and no carnival, with
+// each of the rarer noises fired once on cue (the dice still roll for more):
+// knocking 3 s, gunfire 8 s, a yell 15 s, a car alarm 22 s, gunfire 42 s,
+// a yell 48 s, knocking 53 s.
+static void scPlain(Ctx& c) {
+  scIdle(c);
+  if (at(c, 0.2f)) { SMu.fr.left = 100000; SMu.overhillIn = 1e9f; }
+  if (at(c, 3.0f) || at(c, 53.0f)) musFrontierTaps();
+  if (at(c, 8.0f) || at(c, 42.0f)) musFrontierShots();
+  if (at(c, 15.0f) || at(c, 48.0f)) musFrontierYell();
+  if (at(c, 22.0f)) musFrontierAlarm();
+}
+// The empty frontier, then the Guide connects at 50 s: the western stops at
+// the next bar and the day takes over with the Guide's signature.
+static void scIdleJoin(Ctx& c) {
+  if (c.t < 50.0f) { scIdle(c); return; }
+  if (at(c, 50.0f)) sndStory(SS_JOIN, 0);
+  c.w.slotMask = 0x01; c.w.aliveMask = 0x01; c.w.connected = 1;
+}
 // The measurement sequence GET /sndtest plays on the board: the exact digital
 // reference that scripts/sndsim/k10measure.py compares a mic recording against.
 static void scCal(Ctx& c) { if (at(c, 0.1f)) sndStory(SS_CALIBRATE); c.w.musicLevel = 0; }
@@ -193,19 +248,28 @@ static const Scene SCENES[] = {
   { "carnival_mad",  50, scCarnivalMad,   "the carnival at threat 4 and starving: faster, warped, Hungarian minor" },
   { "night_carnival",60, scNightCarnival, "a carnival night (one night in three)" },
   { "storm",         55, scStorm,         "storm: Phrygian ostinato, tremolo, timpani, thunder" },
+  { "thunder",       75, scThunder,       "a storm walks in, music off: far rolls, near booms, then the crack" },
+  { "thunder3",      21, scThunder3,      "one of each thunder, music off: far (1 s), near (8 s), close (15 s)" },
   { "chem",          45, scChem,          "chem rain: whole tones, glass, geiger" },
   { "fog",           40, scFog,           "strangle fog: the day, muffled" },
   { "rain",          40, scRain,          "rain: the day with drips in the key" },
   { "hunted",        75, scHunted,        "the Doom closes in, taunts, hunts, loses the trail" },
   { "tunnels",       50, scTunnels,       "underground: a fourth down, a long cave, water" },
   { "encounter",     40, scEncounter,     "an encounter: held breath, a hazard, a long-odds win, picked clean" },
-  { "dawn",          40, scDawn,          "dawn of day 7: the call, the roll call with the Mule's note missing, the chant" },
+  { "dawn",          40, scDawn,          "dawn of day 7: the chant, then the roll call with the Mule's note missing" },
   { "death",         45, scDeath,         "the Medic goes down: the flatline, the Doom laughs, the elegy on her signature" },
   { "laughs",        25, scLaughs,        "the Doom's three laughs as deaths play them, music off" },
+  { "ghost",         24, scGhost,         "a ghost takes hold, three times: the groan and the terminal's three jokes" },
+  { "ghost_dry",     24, scGhostDry,      "the same with the music off, to hear the groan" },
+  { "kickstart",     17, scKickstart,     "a stalled Motorbike kick-started, three times: two coughs, then it catches" },
+  { "kickstart_dry", 17, scKickstartDry,  "the same with the music off, to hear the engine" },
   { "threat",        60, scThreat,        "the threat clock turns four times" },
-  { "sfx",           94, scSfx,           "every effect in turn, music off" },
+  { "sfx",          109, scSfx,         "every effect in turn, music off" },
   { "speech",        36, scSpeech,        "the voices: radio, narrator, whisper, Doom, barker, chant" },
-  { "idle",          90, scIdle,          "nobody on the road: a carnival over the hill" },
+  { "idle",         240, scIdle,          "nobody on the road: a western with no one in it -- guitar, whistle, harmonica, coyotes" },
+  { "plain",         60, scPlain,         "the open plain, no music: gusting wind; knocking, gunfire, a yell, a car alarm on cue" },
+  { "idle_overhill",130, scIdleOverhill,  "the frontier hands over to the muffled carnival over the hill (due in 30 s, not minutes)" },
+  { "idle_join",     70, scIdleJoin,      "the empty frontier, then the Guide connects at 50 s and the day takes over" },
   { "story",        420, scStory,         "a whole evening compressed: boot to the second dawn" },
   { "cal",           26, scCal,           "the /sndtest measurement sequence (reference for k10measure.py)" },
 };

@@ -70,6 +70,8 @@ function narrateState(msg) {
 // ── Narrative effect system (EFX_NARRATIVE item params) ──────────────────
 let _trippyTurns = 0;       // turns remaining with .trippy class active
 let invertedInputTurns = 0; // turns remaining with reversed WASD
+let drunkSteps = 0;         // Liquid Bread (narrative 14): moves left that may stagger -- move() in ui-utils.js
+const BEER_DRUNK_STEPS = 6; // per beer; they stack
 function handleNarrativeEffect(param) {
   console.log('[INV] handleNarrativeEffect param=%d', param);
   if (!param || param === 0) return;
@@ -85,6 +87,13 @@ function handleNarrativeEffect(param) {
       break;
     case 29: // Uranium Hard Candy — the server has just lowered the LL ceiling by 1
       showToast('☢ The rads settle into your marrow. Your life ceiling drops by one, for good.');
+      break;
+    case 14: // Liquid Bread (the Medic's brew) — the next steps may stagger off course
+      drunkSteps += BEER_DRUNK_STEPS;
+      showToast(`🍺 Your feet have ideas of their own for the next ${drunkSteps} steps.`);
+      break;
+    case 13: // The Cursed Note (RUNAWAY SCIENCE) — it mocks whoever reads it
+      showBanner('THE NOTE SAYS', escHtml(labCurse(players[myId])));
       break;
     default:
       break;

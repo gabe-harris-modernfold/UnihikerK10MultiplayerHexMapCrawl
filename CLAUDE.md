@@ -18,6 +18,11 @@ Other key references:
   Read it before touching `bots/` or drawing conclusions from a run: the
   protocol has several failure modes that are completely silent (a refused
   `pick`, an `enc_start` without `q`/`r`, a dirty board at reset).
+- **[docs/world-log.md](docs/world-log.md)** — `bots/worldlog.py`, which
+  records a live game (people or bots) from outside over `/state` plus a
+  spectator `/ws`, then reads it back (`summary`, `events`, `track`, `at`).
+  Use it to analyse or debug a real session. Its socket uses up a lobby
+  seat, and it sees deaths as `left` with a `cause`.
 - `bots/wroom_swarm/` — an ESP32 ("the wroom", COM3) that fills all five
   seats over the K10's own hotspot to test direct-connect play; `away` on the
   K10's serial console simulates no house network. See bot-testing.md "The

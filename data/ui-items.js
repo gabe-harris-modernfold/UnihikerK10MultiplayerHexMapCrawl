@@ -168,7 +168,9 @@ function renderEquipment() {
   const grid = document.getElementById('cs-equip-grid');
   if (!grid || myId < 0) return;
   const me = players[myId];
-  const eqKey = JSON.stringify(me.eq ?? []);
+  // The fuel state is in the key too: the NO FUEL line (and the AP total it
+  // greys out) changes with a kick-start or a dry dawn, not with the gear.
+  const eqKey = JSON.stringify(me.eq ?? []) + '|' + (uiUnfuelled.val | 0);
   if (eqKey === _lastEqKey) { console.log('[INV] renderEquipment — cache hit, skip'); return; }
   _lastEqKey = eqKey;
   console.log('%c[INV] renderEquipment', 'color:#fc0', `myId=${myId} eq=${eqKey}`);
@@ -257,8 +259,11 @@ function openItemMenu(slotIdx, isEquipped) {
   }
 
   const storyEl = document.getElementById('item-menu-story');
-  storyEl.textContent = story ?? '';
-  storyEl.style.display = story ? '' : 'none';
+  // The Cursed Note (RUNAWAY SCIENCE): looking at it is reading it, and it
+  // has something new to say every time (LAB_CURSES, game-data.js).
+  const cursed = itemId === (typeof LAB_ITEM_NOTE !== 'undefined' ? LAB_ITEM_NOTE : -1);
+  storyEl.textContent = cursed ? `“${labCurse(me)}”` : (story ?? '');
+  storyEl.style.display = (story || cursed) ? '' : 'none';
 
   const btnsEl = document.getElementById('item-menu-btns');
   btnsEl.innerHTML = '';
@@ -336,9 +341,10 @@ function hexNameOf(q, r) {
 
 // Game-days before the dawn sweep takes something stamped day `d` --
 // groundAgeOut() clears it at the dawn that makes it GROUND_AGE_DAYS old.
-// dayCount is a uint16 on the board, hence the mask.
+// The day goes 365 -> 1 (DAYS_PER_YEAR), so the age is taken mod the year.
 function groundDaysLeft(d) {
-  return Math.max(0, GROUND_AGE_DAYS - (((gameState?.dc ?? 0) - (d ?? 0)) & 0xFFFF));
+  const age = ((((gameState?.dc ?? 0) - (d ?? 0)) % DAYS_PER_YEAR) + DAYS_PER_YEAR) % DAYS_PER_YEAR;
+  return Math.max(0, GROUND_AGE_DAYS - age);
 }
 
 // Close item menu on cancel button or backdrop tap

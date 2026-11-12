@@ -35,6 +35,9 @@ knows about the game it learns through the same WebSocket a browser uses.
 - **Run an arena:** `python arena.py --host 192.168.4.234 --bots 5
   --policies scoremax,contentmax,coward,rival,scoremax --target 1000`
 - **Analyse:** `python metrics.py` (newest run) or `python metrics.py runs/run-*.jsonl`
+- **Record a human game (or any game):** `python worldlog.py record --host
+  k10.local`, then `python worldlog.py summary`. No flash, never picks, and
+  steps out of the lobby so it never shuts out a fifth player. See "World log".
 - **Pool runs:** `python metrics.py --aggregate runs/run-2026*.jsonl` — one run
   is one map roll, and the map decides enough that single-run numbers mislead.
 - **Deps:** Python 3.12 + `websockets`. Nothing else.
@@ -102,6 +105,7 @@ knows about the game it learns through the same WebSocket a browser uses.
 | `metrics.py` | Post-run analysis; `--aggregate` pools runs. |
 | `gearcheck.py` | Equipment audit: declared mods vs the wire, and a survival ranking. |
 | `record.py` | JSONL per run into `runs/` (gitignored). |
+| `worldlog.py` | Records a live game (people or bots) from outside: `/state` snapshots + deltas, the spectator event stream, map cells. `summary` / `events` / `track` / `at` read it back. See [world-log.md](world-log.md). |
 | `kane_check.py` | Machine Gun Kane on the mock: real bots, staged with `dbg_kane` -- do they take cover when asked, and do they read his story to an ending. |
 | `vac_check.py` | VACANCY on the mock: a real quester, staged with `dbg_vac` -- does it read the town, bank both halves, and check the town out; and does the fall turn the town to Broken Urban. |
 | `items.py` | Item rules, as pure functions of items.cfg and recipes.cfg: when a consumable is worth using, what is litter, caravan payment, whether a trade is fair, and loot worth for the planner. |
@@ -208,6 +212,29 @@ Protocol 2 firmware answers mDNS as **`k10.local`** (`--host k10.local`), and
 `/state` → `boot.reset` says whether the last restart was a crash. Without
 mDNS on the client machine, a TCP-connect sweep of port 80 across the subnet
 still finds it in about a minute.
+
+---
+
+## World log: recording a live game
+
+`worldlog.py` records whatever is happening on a board, whether people,
+bots or both are playing, without picking a survivor or changing the
+firmware. **The full reference is [world-log.md](world-log.md)**: commands,
+file format, the `replay()` API, gotchas, and how to test it on the mock.
+
+```
+python worldlog.py record --host k10.local      # Ctrl-C to stop; runs/world-<date>-<time>.jsonl
+python worldlog.py summary [log]                # days, survivors, deaths + causes, LL lost by cause, board health
+```
+
+Two things matter if you run it next to an arena:
+
+- **Its spectator socket uses up a lobby seat.** It leaves `/ws` once 4 are
+  seated, so `arena.py --bots 5` still fills. Never combine
+  `--hold-seat` with five bots.
+- **It sees deaths as `left` with a `cause`,** never as `downed` (that goes
+  only to the player who died). So on a world log,
+  `causes.DamageLedger.deaths()` finds nothing; use `loss_ledger()`.
 
 ---
 
@@ -341,7 +368,7 @@ nack means the request was refused before it did anything.
 | `pack_full`, `no_res`, `not_needed`, `archetype`, `craft` | action refusals (`ABW_*`, also on the `act` event as `bw`) |
 | `not_here`, `no_poi`, `claimed`, `no_pool`, `load_failed`, `no_enc`, `no_choice`, `cannot_bank` | encounter refusals |
 | `trap` | `enc_abort` at a booby trap's start and the escape roll failed: still in the scene |
-| `self`, `no_target`, `not_same_hex`, `dup_offer`, `no_offer`, `stale_offer`, `empty`, `no_caravan`, `caravan_short`, `water` | trade refusals |
+| `self`, `no_target`, `not_same_hex`, `dup_offer`, `no_offer`, `stale_offer`, `empty`, `no_caravan`, `water` | trade refusals (the caravan only sells — `car_buy`; its old `car_trade` token swap is gone and nacks `unknown_cmd`) |
 | `refused` | an item function said no; it returns a bare bool, so this is as specific as it gets |
 
 `client.py` counts them per command and reason, writes each nack as a `nack`
@@ -427,7 +454,11 @@ connected client. Policies filter on their own `pid`; `metrics.py` dedupes on
 - **Re-picking a downed slot is the respawn path** — fresh survivor, lifetime
   score and steps carried over, exactly as for the browser client.
 - **Encounters gate movement.** `m` and `act` are both refused while one is
-  open; answer with `enc_choice` / `enc_bank` / `enc_abort`.
+  open; answer with `enc_choice` / `enc_bank` / `enc_abort`. A plain
+  `enc_abort` is a walk-away (the POI is gone, the threat clock ticks);
+  `{"t":"enc_abort","lf":1}` says the scene never loaded on this side, and the
+  board keeps the POI and the clock, as for a dropped socket. A trap ignores
+  `lf`: its abort is still the escape roll.
 - **`vm` is a free legal-direction bitmask** (`computeValidMoves`), and it
   already accounts for equipment unlocks like the raft. Use it for the step you
   are about to take; use `navigate.py` to choose which step that should be.
@@ -614,6 +645,13 @@ bare 8-slot pack with no room for food or water. So in practice the order is:
 The bike adds `slots = +2` of its own (saddlebags, fuelled or not). It is
 `trade = no`, so it is out of the spawn draw. Jack's Chopper (scrub 19 → 20)
 still gives one away.
+
+Since 2026-11-06 the `equip` / `unequip` `item_result` also carries `uf`
+(`unfuelledMask()` as of the swap) and, on a refusal, `why`: `orphan` (the
+pack would shrink around items in its last slots -- the loaded-saddlebag
+case), `pack_full` (no free slot for the item coming off) or `no_item`. Both
+are additive. A stalled bike no longer lays tire tracks, and which gear is
+paid for today survives a reboot in `/save/fuel.bin`.
 
 ```bash
 python arena.py --host "$HOST" --bots 3 --policies biker,biker,biker --target 0 --max-minutes 15
@@ -846,7 +884,7 @@ fixed in `SurvivorPolicy` / `EncounterRun` / `BotClient`:
 | Symptom | Cause | Fix |
 |---|---|---|
 | `enc_bank` nacked `no_enc` forever | the scene ended but its `enc_bank`/`enc_end` never arrived | a `no_enc` nack clears `obs.encounter` and the policy's run |
-| every `m`/`act` nacked `in_enc` | `enc_path` (a bare `client->text()`) was dropped, so the bot never knew it was in a scene | `lost_scene_action()`: after `LOST_SCENE_GRACE_S`, `enc_abort` on a cooldown |
+| every `m`/`act` nacked `in_enc` | `enc_path` (a bare `client->text()`) was dropped, so the bot never knew it was in a scene | `lost_scene_action()`: after `LOST_SCENE_GRACE_S`, `enc_abort` on a cooldown. Since PROTO 16 an `enc_start` sent from inside a scene is answered with that scene's `enc_path` again (`"rs":1` plus `node`, `tm`, `pl`, `pi`, `pr`, `as` -- `encPathJson()`), acked rather than nacked `in_enc`; the browser uses it to reopen a lost scene, and `ensure_run()` honours `rs` |
 | `enc_choice` nacked `no_res` forever | the first "open" choice cost more than the bot carried | `encounters.can_pay()` mirrors `canAfford`, and a nacked choice is struck off at that node (`EncounterRun.refused`) |
 | a trap choice re-sent every cycle, then `no_choice` | the next pick went out before the last roll's `enc_res` came back | one choice in flight (`EncounterRun.awaiting`, up to `CHOICE_WAIT_S`) |
 
@@ -1164,6 +1202,29 @@ Two policies had latent loops that graves made live, both fixed:
 Runs from before this are not comparable on anything to do with carrying:
 death used to reset the pack, and now it merely relocates it.
 
+## Forest oasis
+
+Every map has five 7-hex groves of Rust Forest, and a survivor inside one
+takes no environmental or creature damage. A night's rest there heals the way
+a Settlement does, whatever F/W are (see
+[forest-oasis.md](forest-oasis.md)).
+
+- **How a bot spots one:** a grove cell is `terrain == 2 and variant in
+  8..12`. The variant is the whole flag, and it is already in `mapdec.Cell`.
+  `config.is_oasis(cell)` tests for it.
+- **What the bots do with it:**
+  - `survivor.covered_at_night()` and `covered_from_weather()` count a grove
+    as cover.
+  - `bed_action()` scores a grove at twice any other roof, per AP of walk.
+  - `shelter_here()` and the sentinel's `bedtime()` / `_needs_cover()` never
+    try to build in one, because `doShelter()` refuses it with
+    `ABW_NOT_NEEDED`.
+- **Reading the metrics:** a run made after the groves landed has less
+  exposure, chem, fog and Doom damage than one made before. Five groves are
+  35 hexes out of 4,275, so the effect should be small. It is still a
+  confound for exposure deaths, like the shelter A/B in "The exposure
+  confound" below. It has not been measured.
+
 ## Machine Gun Kane
 
 A rusted jeep that roams the open road and shoots survivors caught in the
@@ -1385,7 +1446,7 @@ of `items.py`:
 |---|---|---|
 | any cycle, free | `use_item` | `choose_consumable`, first match wins (see the list below) |
 | mid-scene, before a roll | `use_item` | a threat reducer, only when it drops the clock below a tier (5/10/15/20; `computeEncounterDN` adds +5 risk at each); a heal on the last LL |
-| where there is fog | `use_item` | the Net Map once per world. The Diary and Pendulum (reusable) and Static Chew when at least 40% of their disk is unseen (60% for a one-shot). Never Bright Bad Idea when its +2 threat would cross a tier |
+| where there is fog | `use_item` | the Net Map once per world. The Diary and Pendulum (reusable) and Static Chew when at least 40% of their band is unseen (60% for a one-shot) -- the band is the rings past `vision_r` the item reveals, `vision_r + 1` to `vision_r + param` (PROTO 15). Never Bright Bad Idea when its +2 threat would cross a tier. Surface only. The bot applies the `ev surv` band and the Net Map's `ev rvl` to its map |
 | pack has no free slot | `drop_item` | litter: Panic Juice, a material no recipe uses, a key item with no effect. Never a quest item an open step still needs |
 | a trade offer to us | `trade_accept` / `trade_decline` | accept when `TOKEN_WORTH` says we come out at least even and the staple floors hold; decline the rest. The board needs both survivors still on the same hex, so this runs before anything that walks |
 | at or near a Settlement | `act` CRAFT | any learned recipe whose output it would use (fewer than 2 held) or wear (beats what that slot holds). Within 10 AP, spending only tokens above `token_reserve`. Not the starter recipes, which have their own errands |
@@ -1616,6 +1677,7 @@ Causes run on two different clocks and must not share a projection:
 | per game-day | thirst, hunger, exposure, radiation | fire once per dawn/dusk |
 | per real minute | fire, lightning, Creeping Doom, chem, fog | `WORLD_TICK_INTERVAL`, and `weatherNextGapMs` floors weather changes at ~1.1–1.9 real minutes no matter how fast game-days fly |
 | per game-day | wasteland daisy | bites on *entry*, so it scales with steps (~7 a day), not with wall time; the patches themselves grow a stage per dawn |
+| per game-day | slime mould | bites on *entry* like the daisy, 1 LL more for each step along a run of slime; the mould itself grows on the Eco task's real-time clock (6.7 s ticks), so how much ground it covers is per real minute |
 | per game-day | booby trap | fires on *entry* like the daisy; static at worldgen, and never takes the last LL |
 
 A bot fleet collapses days to a few seconds, so it lives ~85 game-days inside

@@ -33,7 +33,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from causes import CAUSE_ORDER, DamageLedger, _dedupe as _dedupe_exact
-from config import KANE_CHAPTERS
+from config import KANE_CHAPTERS, unwrap_day
 from state import KANE_CALL_TTL_S
 import findings as findings_mod
 from config import ACT_NAME, ARCHETYPE_NAME, RES_NAME, SK_NAME, WEATHER_NAME
@@ -694,12 +694,17 @@ class RunReport:
             return {}
         ticks = [t["maxTickMs"] for t in tel if t.get("maxTickMs") is not None]
         heaps = [t["minHeap"] for t in tel if t.get("minHeap") is not None]
+        # /state's day goes 365 -> 1: count on through the wrap.
+        day = None
+        for t in tel:
+            if t.get("day") is not None:
+                day = unwrap_day(day, t["day"])
         return {"samples": len(tel),
                 "maxTickMs": max(ticks) if ticks else None,
                 "minHeap": min(heaps) if heaps else None,
                 "broadcastPartial": max((t.get("broadcastPartial") or 0) for t in tel),
                 "broadcastSkips": max((t.get("broadcastSkips") or 0) for t in tel),
-                "days": max((t.get("day") or 0) for t in tel),
+                "days": day or 0,
                 "poll_failures": sum(1 for r in self.rows
                                      if r["ch"] == "telemetry" and "err" in r["d"])}
 

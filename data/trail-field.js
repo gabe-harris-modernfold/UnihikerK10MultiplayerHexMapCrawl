@@ -72,7 +72,10 @@ const TRAIL_DETAIL_PX    = 7;
 const TRAIL_WHEEL_DETAIL = 40;      // HEX_SZ from which tyre tread is drawn
 // Ruts are wide and continuous, so at a print's opacity they read far darker
 // than a line of prints does: drawn at this share of it.
-const TRAIL_WHEEL_ALPHA  = 0.525;
+const TRAIL_WHEEL_ALPHA  = 0.45;
+// The convoy's (and Kane's) doubled ruts on top of that: 20% more see-through
+// than a bike's single rut.
+const TRAIL_TWIN_ALPHA   = 0.8;
 
 // Age buckets (ms): fresh, recent, old, stale. Every inferred pass is stale --
 // it was laid before this browser was watching.
@@ -617,7 +620,7 @@ class TrailField {
     ctx.translate(cx, cy);
     ctx.scale(S, S);
     for (const l of geo.groups) {
-      const A = TRAIL_AGE_ALPHA[l.age] * (l.wheel ? TRAIL_WHEEL_ALPHA : 1);
+      const A = TRAIL_AGE_ALPHA[l.age] * (l.wheel ? TRAIL_WHEEL_ALPHA : 1) * (l.twin ? TRAIL_TWIN_ALPHA : 1);
       ctx.fillStyle   = rim;
       ctx.globalAlpha = G.rimA * A;
       ctx.fill(l.rim);
@@ -639,12 +642,13 @@ class TrailField {
   _build(segs, terrain, S, cut = null) {
     const ground = TRAIL_GROUND[terrain] || TRAIL_GROUND[0];
     const driving = (sg) => cut && sg.k === 'v' && ((cut.o >= 0 && sg.o === cut.o) || (cut.i >= 0 && sg.i === cut.i));
-    const groups = new Map();   // age bucket + feet/wheels -> paths
+    const groups = new Map();   // age bucket + feet/bike/doubled ruts -> paths
     for (const sg of segs) {
-      const wheel = sg.k !== 'f', key = sg.age * 2 + (wheel ? 1 : 0);
+      const wheel = sg.k !== 'f', twin = sg.k === 'v';
+      const key = sg.age * 3 + (twin ? 2 : wheel ? 1 : 0);
       let g = groups.get(key);
       if (!g) {
-        g = { age: sg.age, wheel, rim: new Path2D(), dark: [new Path2D(), new Path2D(), new Path2D()], deep: new Path2D(), used: [0, 0, 0, 0] };
+        g = { age: sg.age, wheel, twin, rim: new Path2D(), dark: [new Path2D(), new Path2D(), new Path2D()], deep: new Path2D(), used: [0, 0, 0, 0] };
         groups.set(key, g);
       }
       const rng = _trailRng(sg.s);

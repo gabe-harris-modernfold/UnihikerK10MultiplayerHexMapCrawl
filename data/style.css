@@ -852,6 +852,21 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 }
 .toast-item.toast-kane.dying{animation:toast-out 0.3s ease-in forwards}
 
+/* A ghost (ghosts.js). Not a voice -- it never speaks -- but not the UI
+   either: what it does to you, told in its own cold. Ash-pale on blue-black,
+   italic like the other things out there, a slow chill rather than a glow. */
+.toast-item.toast-ghost{
+  background:rgba(8,10,14,0.94);border-color:#7d8a96;
+  color:#dde6ee;text-transform:none;font-style:italic;
+  letter-spacing:normal;text-shadow:0 0 6px rgba(190,210,230,0.35);
+  animation:toast-in 0.22s ease-out forwards, toast-ghost-chill 4s ease-in-out 0.22s infinite
+}
+.toast-item.toast-ghost.dying{animation:toast-out 0.3s ease-in forwards}
+@keyframes toast-ghost-chill{
+  0%,100%{box-shadow:0 0 0 0 rgba(180,200,220,0)}
+  50%    {box-shadow:0 0 16px 2px rgba(180,200,220,0.28)}
+}
+
 /* VACANCY's sign talking (vacancy.js). Not a voice, a hum: no italics, a
    motel-neon pink on near-black, and a glow that never quite settles. */
 .toast-item.toast-vac{
@@ -862,6 +877,22 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
   animation:toast-in 0.22s ease-out forwards, vac-hum 2.3s ease-in-out 0.22s infinite;
 }
 .toast-item.toast-vac.dying{animation:toast-out 0.3s ease-in forwards}
+/* RUNAWAY SCIENCE (lab.js): Gaunt on the ceiling speakers -- bruise-purple, steady */
+.toast-item.toast-lab{
+  background:rgba(14,8,16,0.94);border-color:#7e4478;
+  color:#e6cfe8;text-transform:none;font-style:italic;
+  letter-spacing:0.02em;text-shadow:0 0 6px rgba(168,90,200,0.6);
+  box-shadow:0 0 12px rgba(168,90,200,0.28),0 4px 18px rgba(0,0,0,0.7);
+}
+/* ONE-HAND BONNEY calling from her fire (bonney.js): a voice, so italic, but
+   wet and warm -- ash grey on firelight, with a sick green edge. */
+.toast-item.toast-bonney{
+  background:rgba(16,12,8,0.94);border-color:#7d8a4a;
+  color:#e8d9b0;text-transform:none;font-style:italic;
+  letter-spacing:normal;text-shadow:0 0 6px rgba(240,140,60,0.45);
+  box-shadow:0 0 12px rgba(240,120,40,0.25),0 4px 18px rgba(0,0,0,0.7);
+}
+.toast-item.toast-bonney.dying{animation:toast-out 0.3s ease-in forwards}
 @keyframes vac-hum{
   0%,100%{box-shadow:0 0 14px rgba(255,62,150,0.3),0 4px 18px rgba(0,0,0,0.7)}
   47%{box-shadow:0 0 20px rgba(255,62,150,0.45),0 4px 18px rgba(0,0,0,0.7)}
@@ -1000,7 +1031,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
   background:currentColor;box-shadow:0 0 6px rgba(255,170,40,0.55)
 }
 .cs-section h3::before{margin-right:0;align-self:center}
-.ctrl-ref{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ctrl-ref{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
 .key-grid{display:grid;grid-template-columns:repeat(3,28px);gap:3px;margin-bottom:6px}
 .key-badge{
   display:inline-flex;align-items:center;justify-content:center;
@@ -1013,25 +1044,11 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
   display:grid;grid-template-columns:repeat(3,28px);
   gap:3px;font-size:var(--fs-d);color:var(--txt-dim);text-align:center
 }
-.terrain-grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:5px
-}
-.terrain-ref-card{
-  background:var(--bg-input);border:1px solid var(--bdr);
-  border-radius:2px;padding:6px 7px
-}
-.tr-head{display:flex;align-items:flex-start;gap:5px;margin-bottom:3px}
-.tr-icon{flex-shrink:0;margin-top:1px}
 /* One 16px cell of the pixel-glyph strip (index order = game-data.js GLYPH / TERRAIN) */
 .ui-glyph{
   display:inline-block;width:16px;height:16px;
   background:url(img/ui_glyphs.png) no-repeat 0 0;image-rendering:pixelated
 }
-.tr-name{font-size:var(--fs-b);color:var(--gold);font-weight:bold;letter-spacing:var(--ls-b);line-height:1.25}
-.tr-stats{font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
-.tr-vis-hi {color:var(--crt-hi)}
-.tr-vis-pen{color:var(--crt-alarm)}
 .settings-row{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--bdr)}
 .settings-row:last-child{border-bottom:none;margin-bottom:0}
 .settings-label{
@@ -1162,12 +1179,14 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
   #menu-btn{padding:3px 7px}
   .hud-btn-txt{display:none}
   #hud-title{font-size:15px;letter-spacing:1px;flex-shrink:0}
-  /* DAY n + weather (or the depth chip below ground) ride the status slot
-     at chip size; the row is overflow:hidden so they ellipsise, never wrap. */
+  /* DAY n (and the depth chip below ground) ride the status slot at chip
+     size; the row is overflow:hidden so they ellipsise, never wrap. No
+     weather chip on a phone: a change of weather is a toast instead
+     (toastWeatherChange, ui-hud.js). */
   #hud-status{gap:2px;font-size:12px}
-  #hud .hud-day,#hud .hud-weather,#hud .hud-depth{font-size:12px;letter-spacing:0;padding:0 2px}
+  #hud .hud-day,#hud .hud-depth,#hud .hud-haunt,#hud .hud-dsh{font-size:12px;letter-spacing:0;padding:0 2px}
   #hud .hud-day{display:inline}
-  #hud .hud-weather{display:inline;flex-shrink:1}
+  #hud .hud-weather{display:none}
   #hud-ll{padding:0;border:none;background:transparent;gap:1px;margin-left:auto}
   .hud-ll-row{gap:3px}
   .hud-ll-lbl{width:auto;margin-right:2px;font-size:11px;letter-spacing:0}
@@ -1340,37 +1359,24 @@ meter.track-boxes{appearance:none;-webkit-appearance:none;background:none}
 /*──────────── Key-badge invisible spacer ───────────────────────*/
 .key-badge-hidden{visibility:hidden}
 
-/*──────────── Terrain ref: vis-type / movement-cost labels ─────*/
-.vis-std {color:var(--txt-dim)}
-.mc-block{color:var(--crt-alarm)}
-
-
 /*──────────── Menu how-to-play body text / section labels ──────*/
 .menu-text-body{font-size:var(--fs-b);color:var(--txt-dim);line-height:1.75}
-
-/* Survival tracks list */
-.ht-track-list{display:flex;flex-direction:column;gap:6px;margin-top:4px}
-.ht-track-row{display:grid;grid-template-columns:90px 44px 1fr;gap:6px;align-items:baseline}
-.ht-track-lbl{font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);color:var(--gold);white-space:nowrap}
-.ht-track-val{font-size:var(--fs-d);color:var(--txt-dim);white-space:nowrap}
-.ht-track-desc{font-size:var(--fs-b);color:var(--txt-dim);line-height:1.5}
+.menu-text-body + .menu-text-body{margin-top:8px}
+.ht-lead{font-size:var(--fs-b);color:var(--gold);line-height:1.75;margin-bottom:14px}
+.ht-em {color:var(--gold-hi)}
+.ht-url{color:var(--gold-hi);overflow-wrap:anywhere}
 
 /* Actions list */
 .ht-act-list{display:flex;flex-direction:column;gap:8px;margin-top:4px}
-.ht-act-row{display:grid;grid-template-columns:130px 44px 1fr;gap:6px;align-items:baseline}
+.ht-act-row{display:grid;grid-template-columns:130px 6ch 1fr;gap:6px;align-items:baseline}
 .ht-act-name{font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);color:var(--gold-hi)}
 .ht-act-cost{font-size:var(--fs-d);color:var(--txt-dim);white-space:nowrap}
 .ht-act-desc{font-size:var(--fs-d);color:var(--txt-dim);line-height:1.5}
-.ht-treat-list{display:flex;flex-direction:column;gap:2px;margin-top:4px;padding-left:8px;
-  border-left:2px solid var(--rust)}
-.ht-treat-list span{font-size:var(--fs-d);color:var(--txt-dim);letter-spacing:var(--ls-d)}
-
-/* Vision list */
-.ht-vis-list{display:flex;flex-direction:column;gap:5px;margin-top:4px}
-.ht-vis-row{display:flex;align-items:baseline;gap:8px}
-.ht-vis-tag{font-family:var(--stencil);font-size:var(--fs-l);letter-spacing:var(--ls-l);min-width:72px;white-space:nowrap}
-.ht-vis-tag.hi{color:var(--crt-hi)}
-.ht-vis-tag.lo{color:var(--crt-alarm)}
+/* A phone can't spare 130px of name column: the line drops under name + cost */
+@media(max-width:480px){
+  .ht-act-row{grid-template-columns:1fr 6ch;row-gap:2px}
+  .ht-act-desc{grid-column:1 / -1}
+}
 .menu-text-hint{font-size:var(--fs-d);color:var(--txt-dim);margin-top:6px}
 .ctrl-label    {font-size:var(--fs-l);color:var(--ash);letter-spacing:var(--ls-l);margin-bottom:6px}
 
@@ -2255,40 +2261,74 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
   background:rgba(255,180,58,0.04)
 }
-#enc-haul{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
+/* Tray = header row (HAUL · folded summary · pack load · minimize) over a
+   body (resource steppers, item chips, carry line). The summary and the
+   minimize toggle are phone-only; see "Phone" below. */
+#enc-haul{display:flex;flex-direction:column;gap:8px;flex:1;min-width:0}
+#enc-haul-head{display:flex;align-items:center;gap:8px;min-width:0}
 .enc-haul-lbl{
-  font-weight:700;font-size:var(--crt-fs-small);letter-spacing:3px;
+  flex-shrink:0;font-weight:700;font-size:var(--crt-fs-small);letter-spacing:3px;
   background:var(--crt-mid);color:var(--crt-void);padding:2px 8px
 }
-#enc-haul-items{display:flex;flex-wrap:wrap;gap:6px}
-#enc-haul-items:empty{display:none}
-.enc-haul-chip{
-  display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:0;
-  border:1px solid var(--crt-rule);background:transparent;
-  font-size:var(--crt-fs-meta);font-weight:700;color:var(--crt-ink)
+#enc-haul-sum{
+  display:none;flex:1;min-width:0;
+  font-size:var(--crt-fs-meta);font-weight:700;color:var(--crt-ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
-.enc-haul-chip img{width:16px;height:16px;object-fit:cover;border-radius:1px;image-rendering:pixelated}
-.enc-haul-qty{color:var(--crt-hi);font-weight:700;text-shadow:var(--crt-bloom)}
 #enc-haul-empty{font-size:var(--crt-fs-meta);color:var(--crt-dim)}
-/* Haul steppers — trim what you'll actually bank before leaving. Button and
-   value sizing deliberately matches .trade-stepper so the tray reads like the
-   trade panel's controls rather than a second, unrelated idiom. */
-.enc-haul-chip.trim{padding:1px 4px 1px 9px;gap:4px}
-.enc-haul-chip.trim button{
+/* Pack load once the kept haul lands -- in the header so a folded tray
+   still shows it; alarm colour when the bank would push past the cap. */
+#enc-haul-pack{
+  margin-left:4px;flex-shrink:0;white-space:nowrap;
+  font-size:var(--crt-fs-small);letter-spacing:1px;color:var(--crt-dim)
+}
+#enc-haul-pack[hidden]{display:none}
+#enc-haul-pack b{color:var(--crt-ink)}
+#enc-haul-pack.over,#enc-haul-pack.over b{color:var(--crt-alarm);font-weight:700}
+#enc-haul-toggle{display:none}
+#enc-haul-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+#enc-haul.empty #enc-haul-body{display:none}
+#enc-haul-res,#enc-haul-items{display:flex;flex-wrap:wrap;gap:6px}
+#enc-haul-res:empty,#enc-haul-items:empty{display:none}
+/* Resource stepper cell — trim what you'll actually bank before leaving.
+   Desktop: one inline chip "● Water − 2/3 +". The grid areas let the phone
+   rule stack the same four children into a column cell without new markup.
+   Button sizing matches .trade-stepper so it reads like the trade panel. */
+.enc-haul-cell{
+  display:inline-grid;grid-template-columns:auto auto auto auto;grid-template-areas:"name dec qty inc";
+  align-items:center;padding:1px 4px 1px 9px;
+  border:1px solid var(--crt-rule);font-size:var(--crt-fs-meta);font-weight:700;color:var(--crt-ink)
+}
+.enc-haul-name{grid-area:name;display:inline-flex;align-items:center;gap:6px;margin-right:4px;white-space:nowrap}
+.enc-haul-count{grid-area:qty;min-width:14px;text-align:center;white-space:nowrap}
+.enc-haul-dec{grid-area:dec}
+.enc-haul-inc{grid-area:inc}
+.enc-haul-cell button{
   background:transparent;border:none;color:var(--crt-hi);
   font-family:inherit;font-weight:700;font-size:18px;cursor:pointer;padding:0 5px;line-height:1
 }
-.enc-haul-chip.trim button:disabled{opacity:.25;cursor:default}
-.enc-haul-chip.trim .enc-haul-qty{min-width:14px;text-align:center}
-.enc-haul-chip.trim .enc-haul-of{color:var(--crt-dim);font-weight:400}
-.enc-haul-chip.trimmed{border-style:dashed}
-.enc-haul-chip.zeroed {opacity:.45}
-/* Carry readout: pack pressure + what the haul is worth, on its own row */
-#enc-haul-carry{flex-basis:100%;font-size:var(--crt-fs-small);color:var(--crt-dim);letter-spacing:0.3px}
+.enc-haul-cell button:disabled{opacity:.25;cursor:default}
+.enc-haul-qty{color:var(--crt-hi);font-weight:700;text-shadow:var(--crt-bloom)}
+.enc-haul-of{color:var(--crt-dim);font-weight:400}
+.enc-haul-cell.trimmed{border-style:dashed}
+.enc-haul-cell.zeroed{opacity:.45}
+/* Items and recipes: all-or-nothing, so plain chips */
+.enc-haul-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 9px;min-width:0;
+  border:1px solid var(--crt-rule);
+  font-size:var(--crt-fs-meta);font-weight:700;color:var(--crt-ink)
+}
+.enc-haul-chip img{width:16px;height:16px;flex-shrink:0;object-fit:cover;border-radius:1px;image-rendering:pixelated}
+.enc-haul-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Carry line: what the kept haul pays, and what it costs */
+#enc-haul-carry{font-size:var(--crt-fs-small);color:var(--crt-dim);letter-spacing:0.3px}
 #enc-haul-carry[hidden]{display:none}
 #enc-haul-carry .cap-over{color:var(--crt-alarm);font-weight:700}
-#enc-haul-carry .cap-ok  {color:var(--crt-ink);font-weight:700}
 #enc-haul-carry .pts     {color:var(--crt-hi);font-weight:700}
+@keyframes enc-haul-bump{
+  0%  {background:var(--crt-hi);box-shadow:0 0 14px rgba(255,190,70,0.75)}
+  100%{background:var(--crt-mid);box-shadow:none}
+}
 #enc-leave-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
 #enc-leave-btn{
   background:transparent;border:2px solid var(--crt-rule);color:var(--crt-ink);
@@ -2305,7 +2345,7 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
 #enc-leave-hint{font-size:var(--crt-fs-small);color:var(--crt-dim);text-align:right;max-width:300px;line-height:1.35}
 
 @media(prefers-reduced-motion:reduce){
-  #enc-box,#enc-node-text::after{animation:none}
+  #enc-box,#enc-node-text::after,#enc-haul .enc-haul-lbl{animation:none}
 }
 
 /* Phone: go full-screen, keep footer pinned */
@@ -2318,11 +2358,50 @@ img.item-icon-img[src=""],.item-icon-img:not([src]){visibility:hidden}
   #enc-scroll{padding:14px 14px 10px;gap:14px}
   .enc-choice{padding:11px 12px;gap:12px}
   .enc-choice-num{min-width:26px;height:26px;font-size:16px}
-  #enc-foot{padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px));flex-direction:column;align-items:stretch}
-  /* Fatter tap targets for the haul steppers on a phone */
-  .enc-haul-chip.trim button{padding:4px 8px;font-size:20px}
+  /* nowrap: a wrapping column sizes its line to the widest child's
+     max-content, and the folded summary would push the tray off-screen */
+  #enc-foot{padding:8px 14px calc(10px + env(safe-area-inset-bottom,0px));flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px}
+  /* The header row is the minimize toggle: a thumb-wide strip. Folded, the
+     body goes and the summary takes its place on the strip. */
+  #enc-haul-head{min-height:32px}
+  #enc-haul-pack{margin-left:auto}
+  #enc-haul:not(.empty) #enc-haul-head{cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #enc-haul-toggle:not([hidden]){
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    width:36px;height:30px;padding:0;margin-left:auto;
+    background:transparent;border:1px solid var(--crt-rule);border-radius:0;
+    color:var(--crt-hi);font-family:inherit;font-size:16px;line-height:1;cursor:pointer
+  }
+  #enc-haul-toggle span{display:inline-block;transition:transform .15s}
+  #enc-haul.folded #enc-haul-toggle span{transform:rotate(180deg)}
+  #enc-haul-pack:not([hidden]) + #enc-haul-toggle{margin-left:0}
+  #enc-haul.folded #enc-haul-body{display:none}
+  #enc-haul.folded:not(.empty) #enc-haul-sum{display:block}
+  /* Folded, the strip only has room for the pack load when it is a warning */
+  #enc-haul.folded #enc-haul-pack:not(.over){display:none}
+  #enc-haul.folded.bump .enc-haul-lbl{animation:enc-haul-bump .45s ease-out 3}
+  /* Resources: an even row of column cells, always in Water..Scrap order —
+     name, amount, then a split −|+ bar as the tap target. */
+  #enc-haul-res{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+  .enc-haul-cell{
+    display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"name name" "qty qty" "dec inc";
+    padding:0;text-align:center
+  }
+  .enc-haul-name{
+    justify-content:center;gap:4px;margin:0;padding:5px 2px 0;
+    font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--crt-mid)
+  }
+  .enc-haul-name .res-dot{width:7px;height:7px}
+  .enc-haul-count{padding:1px 0 3px;font-size:20px;line-height:1.2}
+  .enc-haul-of{font-size:13px}
+  .enc-haul-cell button{height:34px;padding:0;font-size:22px;border-top:1px solid var(--crt-rule)}
+  .enc-haul-cell .enc-haul-dec{border-right:1px solid var(--crt-rule)}
+  .enc-haul-cell button:active:not(:disabled){background:var(--crt-ink);color:var(--crt-void)}
+  /* Items: two even columns, long names ellipsised */
+  #enc-haul-items{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .enc-haul-chip{padding:5px 8px;font-size:13px}
   #enc-leave-wrap{align-items:stretch}
-  #enc-leave-btn{width:100%;padding:13px}
+  #enc-leave-btn{width:100%;padding:12px}
   #enc-leave-hint{text-align:center;max-width:none}
 }
 
@@ -2392,3 +2471,56 @@ body.trippy{filter:hue-rotate(180deg) saturate(3) invert(0.08);transition:filter
 /* Weather is meaningless underground — the hazard loops skip depth>0
    players — so the chip fades rather than reporting a storm you cannot feel. */
 .hud-muted { opacity: 0.32; filter: grayscale(1); }
+
+/* ── Wasteland ghosts (ghosts.js) ─────────────────────────────── */
+/* A ghost riding you: first in the status row, ash-pale like the thing
+   itself, breathing slowly. Shrinks and ellipsises like the depth chip. */
+.hud-haunt {
+  font-family: var(--stencil);
+  font-size: var(--fs-d);
+  letter-spacing: var(--ls-l);
+  padding: 0 4px;
+  color: #d8e2ea;
+  font-weight: bold;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: hud-haunt-breathe 3.6s ease-in-out infinite;
+}
+@keyframes hud-haunt-breathe {
+  0%, 100% { color: #aeb8c2; text-shadow: none }
+  50%      { color: #eef4fa; text-shadow: 0 0 8px rgba(200, 220, 236, 0.75) }
+}
+/* And its dark closes in at the edges of the map while it stays. */
+#canvas-wrap::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 90px 24px rgba(0, 0, 0, 0.62);
+  opacity: 0; transition: opacity 1.2s ease;
+}
+body.haunted #canvas-wrap::after { opacity: 1 }
+
+/* ── The Dshingus (dshingus.js) ───────────────────────────────── */
+/* Days left on it, in a sick mustard-brown that never quite holds still. */
+.hud-dsh {
+  font-family: var(--stencil);
+  font-size: var(--fs-d);
+  letter-spacing: var(--ls-l);
+  padding: 0 4px;
+  color: #b89a4a;
+  font-weight: bold;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: hud-dsh-queasy 2.2s ease-in-out infinite;
+}
+@keyframes hud-dsh-queasy {
+  0%, 100% { color: #a08440; transform: translateY(0) }
+  50%      { color: #c8b060; transform: translateY(-1px) }
+}
+.log-dsh { color: #b89a4a }
+.toast-item.toast-dsh{
+  background:rgba(20,14,6,0.94);border-color:#7a5a24;
+  color:#e0c88a;text-transform:none;font-style:normal;letter-spacing:0.02em;
+}

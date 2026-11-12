@@ -1,0 +1,184 @@
+{
+  "id": "bonney_1_guess_which_hand",
+  "title": "Guess Which Hand",
+  "bonney": {
+    "section": 1
+  },
+  "start_node": "her_fire",
+  "nodes": {
+    "her_fire": {
+      "text": "You smell her before you see her: tyre smoke, hot fat, and something under both that makes your stomach growl before your head can stop it. Then you are over the dune and there it is. A pit dug in the ash and full of fire, tyres and chair legs burning in it, and over it, on two engine blocks, a spit made from the back axle of a truck. A man is trussed to the spit with fence wire, in his underwear, with an apple in his mouth, turning slowly. He rolls his eyes at you as he comes round, apologetically. Propped against the wind behind the fire is the bonnet of a car, piled with jars; across its front, chrome letters once spelled a longer word, five are left, B O N N E, and someone has scratched a Y after them with a nail. At the crank stands a woman, if she is one. She is tall when she straightens up, and then she straightens some more: a hump like a sack of rocks under a coat of stitched tarp, skin the yellow-grey of old lard, a hooked nose with a wart on it that has hairs of its own, wild grey hair under a rag, a brass hoop through an ear stretched long. Her eyes are the wrong colour, a muddy gold, and they do not blink enough. Her tongue comes out and tastes the air in your direction. 'Ohhh,' she says, in a voice like a drain. 'You smell like you've got something for Bonney.' She looks you up and down the way a butcher looks at a pig. 'Skinny. Bit of gristle. Still.' Her left sleeve hangs empty, knotted at the wrist with a bootlace. Her right hand is the size of a shovel, all knuckle, with somebody else's rings on it, and it never stops turning the crank.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Stand your ground and let her have a sniff.",
+          "cost": {},
+          "base_risk": 35,
+          "skill": 4,
+          "success_node": "the_jars",
+          "hazard_id": "the_sniff"
+        },
+        {
+          "label": "Ask her what she has in all those jars.",
+          "cost": {},
+          "base_risk": 30,
+          "skill": 0,
+          "success_node": "the_jars",
+          "hazard_id": "pinched_lean"
+        },
+        {
+          "label": "Back off slowly, with your pack in front of you.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "walk_away",
+          "sure": true
+        }
+      ]
+    },
+    "the_jars": {
+      "text": "She lets go of the crank to show you, because she can't not, and the spit stops, and the man on it says 'Oh, thank God,' very quietly. Jar after jar off the bonnet, held up to the firelight in the one hand. Teeth, sorted by size in a muffin tin, the gold ones at the front. Toenails in a snuff tin, 'from all over'. A ball of belly-button fluff as big as your head, 'sixty years of it, everybody's, every colour'. Candles that smell of ears, because that is what they are made of. Jars of grey fog: 'Last breaths, dumpling. You catch them at the very end. It's all in the wrist.' She has, you notice, only the one wrist. Then she smiles, and the teeth in her mouth are not all the same size, and not all hers. 'Bonney's short a back one,' she says, tapping her gum with a nail like an oyster shell. 'Little molar. You've got loads.' Behind you, very softly, the ash shifts.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Give her a tooth. A little one, at the back.",
+          "cost": {
+            "ll": 1
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "guess_which",
+          "sure": true
+        },
+        {
+          "label": "Keep your teeth, and keep your eyes on her hand.",
+          "cost": {},
+          "base_risk": 40,
+          "skill": 0,
+          "success_node": "guess_which",
+          "hazard_id": "pinched_watch"
+        },
+        {
+          "label": "Spin round fast and look at the ash behind you.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 1,
+          "success_node": "guess_which",
+          "hazard_id": "the_burrow"
+        }
+      ]
+    },
+    "guess_which": {
+      "text": "'Let's have a game,' says Bonney. 'Bonney's favourite.' She puts the one hand behind her back, does something there with a great deal of knuckle-cracking, and brings it round in front of your face, closed into a fist the size of a cabbage. 'Guess which hand.' There is only one hand. You look at it. She looks at you looking at it, and her gold eyes do not blink once. The empty left sleeve, knotted at the wrist, gives a small and definite twitch. 'Go on,' she says, sweet as rot. 'Guess.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Laugh along, and shake on it.",
+          "cost": {},
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_deal",
+          "sure": true
+        },
+        {
+          "label": "Grab the empty sleeve.",
+          "cost": {},
+          "base_risk": 45,
+          "skill": 2,
+          "success_node": "caught_it",
+          "hazard_id": "the_slap"
+        },
+        {
+          "label": "Ignore her. Slap a hand down on your own pack.",
+          "cost": {},
+          "base_risk": 50,
+          "skill": 4,
+          "success_node": "caught_it",
+          "hazard_id": "pinched_bite"
+        }
+      ]
+    },
+    "the_deal": {
+      "text": "You laugh, because what else is there, and you shake on it. Her hand closes round yours, warm and damp, every joint working, and it does not let go. She keeps you there pumping your arm, telling you how she came down out of the bright on the Friday, and how she was born in a tent at the county fair, which she says was the same day, while something light and quick runs up the back of your leg, over your pack, and away. When she lets go, your pack is open. Across the ash a hand is running for the bonnet on its fingertips like a crab, her other hand, holding {{stolen}} over its head like a trophy. 'Pinch,' says Bonney fondly. 'Left me years ago. Got ideas. Still comes home for supper.' She presses something into your palm: a pickled egg, or something egg-shaped that has been pickled. 'Fair trade. Come back and eat with Bonney, sweetmeat. Supper won't be long.' Then she takes up her crank again, humming, and Turnbull comes round over the flames and looks at you like a man who knows exactly what you have just lost.",
+      "bonney_ending": "deal",
+      "can_bank": true,
+      "loot": [
+        {
+          "res": 1,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    },
+    "caught_it": {
+      "text": "Your hand closes on something that is not yours. It is cold and leathery and fighting: a hand, on its own, ending at the wrist in a neat puckered knot, with the strap of your pack wound round two of its fingers. On its back is a faded tattoo of an eye. It bucks like a landed fish, then goes limp and sulky, and you prise back everything it had hold of, a finger at a time. Bonney's face does several things at once, none of them a face's job. Then she laughs, a long, wet, delighted noise. 'Quick eyes,' she says. 'Bonney likes eyes. That's Pinch. Left me years ago. Got ideas.' She holds out her sleeve and the hand climbs up into it and lies there, sulking. 'Come back for supper, quick eyes. Bonney's got a roast on.' She leaves you a jar off the bonnet for your trouble and takes up her crank again. Turnbull, going round, gives you a small, careful nod.",
+      "bonney_ending": "caught",
+      "can_bank": true,
+      "loot_table": "dunes_common",
+      "choices": []
+    },
+    "walk_away": {
+      "text": "You back away up the dune with your pack held in front of you like a shield. She doesn't follow. She goes back to her crank and watches you go over it, licking her one hand clean a finger at a time. The man on the spit watches you go too, with something like envy. 'Bonney'll see you again,' she calls after you. 'Bonney always does.'",
+      "escape": true,
+      "can_bank": false,
+      "choices": []
+    }
+  },
+  "hazards": {
+    "the_sniff": {
+      "text": "She closes the distance in two long steps and sniffs you, hard, from boots to crown, like a dog at a gate. Then the tongue comes out and licks one of your eyes. Just the one. You bring up everything you drank today.",
+      "penalty": {
+        "water": -1
+      },
+      "ends_encounter": false
+    },
+    "pinched_lean": {
+      "text": "She leans down to answer, and down, and down, until her face is all you can see and her breath is all you can smell: hot pennies and lard. Behind you something tugs at your pack, gently, twice. When she straightens up and you turn round there is nothing there, only a line of small holes running off across the ash, like the tracks of a crab.",
+      "penalty": {
+        "steal": 1
+      },
+      "ends_encounter": false
+    },
+    "pinched_watch": {
+      "text": "You watch her hand, and only her hand, and it doesn't do a thing. That is the trick. Something brushes your hip, quick as a moth, and when you look down the flap of your pack is open and a line of little holes runs off across the ash.",
+      "penalty": {
+        "steal": 1
+      },
+      "ends_encounter": false
+    },
+    "the_burrow": {
+      "text": "The ash bursts open at your heel. Something hard and five-fingered clamps on your ankle and squeezes, nails first, then dives back under like a mole. Bonney giggles behind her hand.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    },
+    "the_slap": {
+      "text": "You grab for the sleeve and get her other hand instead, the big one, across the side of your head. It is like being hit with a wet saddle. When the lights stop going off she is tutting at you.",
+      "penalty": {
+        "ll": -1
+      },
+      "ends_encounter": false
+    },
+    "pinched_bite": {
+      "text": "You slap your hand down on your pack and find a hand already in it, a cold one, which bites you. Hands should not be able to bite. By the time you have stopped shouting it is gone, and so is something of yours.",
+      "penalty": {
+        "ll": -1,
+        "steal": 1
+      },
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "stolen": [
+      "something of yours"
+    ]
+  }
+}

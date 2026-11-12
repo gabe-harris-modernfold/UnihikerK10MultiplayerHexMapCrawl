@@ -198,7 +198,7 @@ void saveGame() {
       // panel whose section the scene has already lit stays spent.
       // A Kane chapter has no POI either: its camp and stage live in kane.bin.
       auto savedHex = [](const ActiveEncounter& e) -> HexCell* {
-        if (!e.active || e.trap || e.kane || e.vac) return nullptr;
+        if (!e.active || e.trap || e.kane || e.vac || e.lab || e.bonney) return nullptr;
         if (e.depth) return tunnelPanelDark(e.hexQ, e.hexR) ? &G.tunnel[e.hexR][e.hexQ] : nullptr;
         return &G.map[e.hexR][e.hexQ];
       };
@@ -208,6 +208,21 @@ void saveGame() {
         if (!c) continue;
         savedPoi[i] = c->poi;
         c->poi = encounters[i].encIdx;
+      }
+      // A trap's armed bit is held clear while its scene runs (trapOnArrival).
+      // Written that way, a reboot mid-scene left a trap that could never
+      // fire again: armed again for the write, as an involuntary end would.
+      auto trapHex = [](const ActiveEncounter& e) -> HexCell* {
+        if (!e.active || !e.trap) return nullptr;
+        if (e.depth) return tunIn(e.hexQ, e.hexR) ? &G.tunnel[e.hexR][e.hexQ] : nullptr;
+        return (e.hexQ < MAP_COLS && e.hexR < MAP_ROWS) ? &G.map[e.hexR][e.hexQ] : nullptr;
+      };
+      uint8_t savedTrap[MAX_PLAYERS] = {0};
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        HexCell* c = trapHex(encounters[i]);
+        if (!c) continue;
+        savedTrap[i] = c->trap;
+        if (c->trapEnc) c->trap |= TRAP_ARMED;
       }
       mapBytes += f.write((uint8_t*)&hdr, sizeof(hdr));
       mapBytes += f.write((uint8_t*)G.map, MAP_BYTES);
@@ -221,6 +236,8 @@ void saveGame() {
       mapBytes += f.write((uint8_t*)G.tunnelOp, TUNNEL_OP_BYTES);
       for (int i = 0; i < MAX_PLAYERS; i++)
         if (HexCell* c = savedHex(encounters[i])) c->poi = savedPoi[i];
+      for (int i = 0; i < MAX_PLAYERS; i++)
+        if (HexCell* c = trapHex(encounters[i])) c->trap = savedTrap[i];
       f.close();
       Log.notice("SD WRITE: %s bytes=%u", SAVE_MAP_F, (unsigned)mapBytes);
     } else {
@@ -282,12 +299,15 @@ void saveGame() {
     // days are in groundItems[] order, the same order as the block above.
     SaveOut gd = saveOpen(SAVE_GND_F);
     if (gd) {
-      SaveGroundHdr gh = { GROUND_SAVE_MAGIC, 1, MAX_GROUND, 0 };
+      // v2 adds the depths: which board each pile lies on (tunnel piles).
+      SaveGroundHdr gh = { GROUND_SAVE_MAGIC, 2, MAX_GROUND, 0 };
       for (int i = 0; i < MAX_REMAINS; i++) if (remainsTable[i].used) gh.nRemains++;
       uint16_t days[MAX_GROUND];
-      for (int g = 0; g < MAX_GROUND; g++) days[g] = groundItems[g].day;
+      uint8_t  depths[MAX_GROUND];
+      for (int g = 0; g < MAX_GROUND; g++) { days[g] = groundItems[g].day; depths[g] = groundItems[g].depth; }
       size_t gdBytes = gd.write((uint8_t*)&gh, sizeof(gh));
       gdBytes += gd.write((uint8_t*)days, sizeof(days));
+      gdBytes += gd.write(depths, sizeof(depths));
       for (int i = 0; i < MAX_REMAINS; i++) {
         const Remains& rm = remainsTable[i];
         if (!rm.used) continue;
@@ -311,6 +331,16 @@ void saveGame() {
     saveKaneFile();
     // VACANCY (vacancy.hpp): the sign, its count, its two sites.
     saveVacFile();
+    // RUNAWAY SCIENCE (lab.hpp): the clinic and what has been taken out of it.
+    saveLabFile();
+    // Wasteland ghosts (ghosts.hpp): who walks, who they ride, what they hold.
+    saveGhostFile();
+    // The Dshingus (dshingus.hpp): who has it, and the spots.
+    saveDshFile();
+    // ONE-HAND BONNEY (bonney.hpp): her fire, its section, her hoard.
+    saveBonneyFile();
+    // Which daily-cost gear is paid for today (inventory_items.hpp).
+    saveFuelFile();
     // The Understory's scars (/save/scar.bin, ecology.hpp): only when the Eco
     // task has published a change, and on this same serialised save path.
     ecoSaveScarsIfDirty();
@@ -391,15 +421,17 @@ static void serviceSaveRequest() {
 // is dated today, so it gets a full GROUND_AGE_DAYS, and there are no remains.
 // A day that is not younger than GROUND_AGE_DAYS cannot be real (the dawn
 // sweep runs before the dawn save), so it is treated the same way.
+// Version 1 has no depths: every pile is on the surface, which is where a v1
+// world put all of them.
 static void loadGroundFile() {
   memset(remainsTable, 0, sizeof(remainsTable));
-  for (int g = 0; g < MAX_GROUND; g++) groundItems[g].day = G.dayCount;
+  for (int g = 0; g < MAX_GROUND; g++) { groundItems[g].day = G.dayCount; groundItems[g].depth = 0; }
   if (!SD.exists(SAVE_GND_F)) { Log.notice("No %s: piles dated today, no remains", SAVE_GND_F); return; }
   File f = SD.open(SAVE_GND_F, FILE_READ);
   if (!f) { Log.error("SD OPEN FAIL (read): %s", SAVE_GND_F); return; }
   SaveGroundHdr gh;
   if (f.read((uint8_t*)&gh, sizeof(gh)) != sizeof(gh) ||
-      gh.magic != GROUND_SAVE_MAGIC || gh.version != 1) {
+      gh.magic != GROUND_SAVE_MAGIC || (gh.version != 1 && gh.version != 2)) {
     Log.warning("%s header unreadable - ignoring", SAVE_GND_F);
     f.close();
     return;
@@ -409,6 +441,17 @@ static void loadGroundFile() {
     if (f.read((uint8_t*)&d, sizeof(d)) != sizeof(d)) break;
     if (g < MAX_GROUND && groundItems[g].itemType && groundAge(d) < GROUND_AGE_DAYS)
       groundItems[g].day = d;
+  }
+  if (gh.version >= 2) {
+    for (int g = 0; g < (int)gh.nGround; g++) {
+      uint8_t dp;
+      if (f.read(&dp, 1) != 1) break;
+      if (g >= MAX_GROUND || !groundItems[g].itemType || !dp) continue;
+      // A tunnel pile must sit on the tunnel board; one that does not (a
+      // corrupt byte) is dropped rather than left somewhere nobody can stand.
+      if (tunIn(groundItems[g].q, groundItems[g].r)) groundItems[g].depth = 1;
+      else memset(&groundItems[g], 0, sizeof(GroundItem));
+    }
   }
   int n = 0;
   for (int i = 0; i < (int)gh.nRemains && n < MAX_REMAINS; i++) {
@@ -464,6 +507,12 @@ bool tryLoadSave() {
   for (int r = 0; r < MAP_ROWS; r++)
     for (int q = 0; q < MAP_COLS; q++)
       if (G.map[r][q].terrain == 9) G.map[r][q].shelter = 0;
+  // Forest oases (docs/forest-oasis.md): a world saved before them has none,
+  // and 8/9 dealt at random on its forest. This re-deals those and plants the
+  // five groves -- no SAVE_VERSION bump, the layout is unchanged. A world that
+  // already has its five comes through untouched. Planting asks for a save,
+  // which goes out with the next one (the Saver may not be up yet).
+  if (placeForestOases() > 0) requestSave();
   // v17 tunnel board. A short read means a truncated save: bail rather than
   // leave G.tunnel half-populated, since generateMap() (which regenerates the
   // tunnels too) is the safe fallback.
@@ -486,7 +535,10 @@ bool tryLoadSave() {
     if (sgi.itemType) giLoaded++;
   }
   f.close();
-  G.dayCount        = hdr.dayCount;
+  // A world saved before the day counter wrapped can be past day 365: fold it
+  // into the year (same residue mod 365, so groundAge() of its piles holds).
+  G.dayCount        = (hdr.dayCount > DAYS_PER_YEAR)
+                      ? (uint16_t)((hdr.dayCount - 1) % DAYS_PER_YEAR + 1) : hdr.dayCount;
   G.threatClock     = hdr.threatClock;
   G.weatherPhase    = (hdr.weatherPhase < 6) ? hdr.weatherPhase : WEATHER_CLEAR;
   G.weatherCounter  = hdr.weatherCounter;
@@ -561,6 +613,10 @@ bool tryLoadSave() {
   loadLightFile();    // the tunnel's sections and lights, or a fresh layout (tunnels.hpp)
   loadKaneFile();     // the jeep and the arc (kane.hpp); wInit() above rolled the fallback
   loadVacFile();      // the sign and its count (vacancy.hpp); likewise
+  loadLabFile();      // Doctor Gaunt's clinic (lab.hpp); likewise
+  loadGhostFile();    // the ghosts still walking (ghosts.hpp); wInit() above cleared the table
+  loadDshFile();      // who has the Dshingus, and the spots (dshingus.hpp); likewise
+  loadBonneyFile();   // Bonney's fire and her hoard (bonney.hpp); wInit() above placed the fallback
   File p = SD.open(SAVE_PLY_F, FILE_READ);
   if (p) {
     Log.notice("SD READ: %s size=%u", SAVE_PLY_F, (unsigned)p.size());
@@ -590,9 +646,10 @@ bool tryLoadSave() {
       memcpy(pl.surveyedMap, sp.surveyedMap, sizeof(pl.surveyedMap));
       pl.radClean     = sp.radClean != 0;
       pl.llCapPenalty = sp.llCapPenalty;
-      // OR, not assign: a recipe promoted to `starter = yes` after this save
-      // was written has to reach survivors who are already in the world.
-      pl.knownRecipes = sp.knownRecipes | starterRecipeMask();
+      // OR, not assign: a recipe promoted to `starter = yes` (or given a
+      // `known_by` for this archetype) after this save was written has to
+      // reach survivors who are already in the world.
+      pl.knownRecipes = sp.knownRecipes | starterRecipeMask() | archRecipeMask(pl.archetype);
       // v17: resume underground. Everything is bounds-checked, and anything
       // that fails drops the survivor back to the surface at their stored q/r
       // rather than leaving depth=1 with a bogus tunnel index — every
@@ -614,6 +671,7 @@ bool tryLoadSave() {
     }
     p.close();
     Log.notice("Save players loaded: %d", plyLoaded);
+    loadFuelFile();   // what they had paid for today (inventory_items.hpp)
   } else {
     Log.warning("SD MISSING: %s (map loaded without players)", SAVE_PLY_F);
   }

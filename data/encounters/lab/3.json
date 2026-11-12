@@ -1,0 +1,124 @@
+{
+  "id": "lab_3_patient",
+  "title": "The Patient",
+  "lab": {
+    "part": 3
+  },
+  "start_node": "the_theatre",
+  "nodes": {
+    "the_theatre": {
+      "text": "The operating theatre is the only room down here with its glass still in: a long observation window, and behind it, under a lamp that has burned for sixty years, a man lies on a steel table under a sheet folded down to the waist. He is perfect. The skin is waxed and pale as a candle, the nails are clean, the hair is combed. Every inch of him has been preserved, pickled, sealed and stopped, all the way up to the collar of his gown. Above that, his head turns on the pillow and looks at you. 'Ah,' says Doctor Orrin Gaunt, with his own mouth this time. 'The help.' A loom of wires as thick as your wrist, braided copper in cloth, comes out of the back of his neck and runs across the floor into a cabinet that hums. The clock on the wall says 11:47.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Go straight to the humming cabinet.",
+          "cost": {},
+          "base_risk": 60,
+          "skill": 2,
+          "success_node": "the_loom",
+          "hazard_id": "live_current"
+        },
+        {
+          "label": "Ask him what happened to him. He charges by the question.",
+          "cost": {
+            "score": 10
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "his_story",
+          "sure": true
+        }
+      ]
+    },
+    "his_story": {
+      "text": "'I was dying, in 1966,' he says. 'Slowly, which is the worst way, because you have time to think about it. So I thought. Continuance: a body that does not stop. I went in from the feet up. Embalm a little, wire a little, seed the culture, and keep the lights on upstairs. The orderly was to do my head after lunch.' His eyes go to the clock. 'He went to lunch at a quarter to twelve. I have been waiting for him for sixty years. Nobody stopped me, you see, and then nobody could. That is what they call runaway science.' He smiles. 'Now. The wires.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Find the live wire yourself.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "the_loom",
+          "hazard_id": "live_current"
+        },
+        {
+          "label": "Pay him to say which wire is live. He keeps it.",
+          "cost": {
+            "score": 20
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_loom",
+          "sure": true
+        }
+      ]
+    },
+    "the_loom": {
+      "text": "The cabinet is full of valves glowing orange, and every one of them ticks. The loom goes into its back through a brass collar. To get it out you will have to pull it out of him too: the other end goes into the base of his skull. 'Pull,' he says. 'Pull hard and do not stop. It will not kill me. Nothing does.'",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Brace a foot on his table and pull.",
+          "cost": {},
+          "base_risk": 65,
+          "skill": 4,
+          "success_node": "the_wires",
+          "hazard_id": "whiplash"
+        },
+        {
+          "label": "Cut it at the collar with the shears off his tray.",
+          "cost": {},
+          "base_risk": 55,
+          "skill": 2,
+          "success_node": "the_wires",
+          "hazard_id": "live_current"
+        },
+        {
+          "label": "Give him the best night's sleep you ever had. He keeps it.",
+          "cost": {
+            "score": 20
+          },
+          "base_risk": 0,
+          "skill": 0,
+          "success_node": "the_wires",
+          "sure": true
+        }
+      ]
+    },
+    "the_wires": {
+      "text": "The loom comes out of him like a root out of wet ground: a yard of braided copper with a grey bulb at the end where it was in his neck. It is still warm, and it still carries something. When you hold it the hairs on your arm stand up and your fingers twitch in a pattern that is not yours. The valves in the cabinet go out one by one. Gaunt's head goes on talking, cheerfully, with nothing connected to it at all. 'Lovely. Now my mushrooms, and my heart. Bring them here and I will show you what they are for.'",
+      "can_bank": true,
+      "loot": [
+        {
+          "item": 74,
+          "qty": [
+            1,
+            1
+          ]
+        }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "live_current": {
+      "text": "The cabinet finds you before you find the right wire. It goes in at the fingers and out at the heels, and for a long white moment you can hear every valve in the cabinet ticking in your teeth. 'That one,' says Gaunt. 'I could have told you.'",
+      "penalty": {
+        "ll": -2
+      },
+      "ends_encounter": false
+    },
+    "whiplash": {
+      "text": "The loom comes a foot and stops, and Gaunt's head comes up off the pillow with it, mouth wide, laughing or screaming. The wire whips back out of your hands and opens your palm to the bone.",
+      "penalty": {
+        "ll": -1
+      },
+      "wound": [
+        1,
+        0
+      ],
+      "ends_encounter": false
+    }
+  }
+}

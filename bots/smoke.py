@@ -117,10 +117,31 @@ check("scar-only eco message keeps the daisies",
 check("eco without dz keeps the daisies",
       o.apply({"t": "eco", "tk": 42, "w": 2}) == "eco" and o.map.extra_cost)
 check("empty dz clears them", o.apply({"t": "eco", "tk": 43, "dz": []}) == "eco"
-      and not o.daisies and not o.map.extra_cost)
+      and not o.daisies and set(o.map.extra_cost) == {(3, 4)})
 o.apply(eco)
 o.apply({"t": "ev", "k": "regen"})
 check("regen clears the daisies", not o.daisies and not o.map.extra_cost)
+check("regen clears the slime", not o.slime)
+
+# The slime mould (protocol 11): density 1+ in `v`, or a mature body in `f`.
+from navigate import SLIME_COST
+from state import decode_slime
+_v = ["0A"] * (config.MAP_COLS * config.MAP_ROWS)
+_v[7 * config.MAP_COLS + 20] = "5A"       # (20, 7): thick mould
+_v[7 * config.MAP_COLS + 21] = "1A"       # (21, 7): the faint lace counts too
+_v[5 * config.MAP_COLS + 10] = "3A"       # (10, 5): mould under a bloomed daisy
+o.apply(dict(eco, v="".join(_v)))
+check("slime is read off the vein grid", {(20, 7), (21, 7), (10, 5)} <= o.slime
+      and (22, 7) not in o.slime)
+check("a mature body is slime whatever the density", (3, 4) in o.slime)
+check("a growing body is not", decode_slime("0A" * 10, [[1, 0, 1, 5]]) == set())
+check("slime is priced", o.map.extra_cost.get((20, 7)) == SLIME_COST)
+check("slime under a daisy bites twice, so it costs both",
+      o.map.extra_cost.get((10, 5)) == SLIME_COST + DAISY_BLOOM_COST)
+check("a daisy-only update keeps the slime",
+      o.apply({"t": "eco", "tk": 44, "dz": []}) == "eco" and (20, 7) in o.map.extra_cost)
+check("slime is a known cause", "slime mould" in __import__("causes").CAUSE_ORDER)
+o.apply({"t": "ev", "k": "regen"})
 check("daisy bite is a known cause",
       "wasteland daisy" in __import__("causes").CAUSE_ORDER)
 
@@ -453,6 +474,22 @@ check("own enc_end closes it", o5.encounter is None)
 o5.players[2].resting = True
 o5.apply({"t": "ev", "k": "dawn", "pid": 2, "day": 9})
 check("dawn clears resting", o5.players[2].resting is False and o5.day == 9)
+
+# The board's day goes 365 -> 1 (DAYS_PER_YEAR); obs.day counts on through it.
+oy = Observation()
+oy.pid = 2
+oy.apply({"t": "ev", "k": "dawn", "pid": 4, "day": 364})
+oy.apply({"t": "ev", "k": "dawn", "pid": 4, "day": 365})
+oy.apply({"t": "ev", "k": "dawn", "pid": 4, "day": 1})
+check("365 -> day 1 is one more day elapsed", oy.day == 366)
+oy.apply({"t": "ev", "k": "dawn", "pid": 4, "day": 2})
+check("...and keeps counting into the second year", oy.day == 367)
+check("a pile stamped day 360 has 23 days left on day 2",
+      config.ground_days_left(oy.day, 360) == 23 and config.ground_days_left(2, 360) == 23)
+oy.apply({"t": "ev", "k": "regen"})
+oy.apply({"t": "ev", "k": "dawn", "pid": 4, "day": 1})
+check("a regen restarts the count instead of reading as 364 days",
+      oy.day == 1)
 
 # A consumed POI leaves a stale bit in our map and enc_start is silent.
 g3 = pmod.make("contentmax", random.Random(3))
@@ -2956,8 +2993,8 @@ check("a grave lasts GROUND_AGE_DAYS",
       config.ground_days_left(11, 11) == config.GROUND_AGE_DAYS)
 check("and goes at the dawn that makes it that old",
       config.ground_days_left(11 + config.GROUND_AGE_DAYS, 11) == 0)
-check("the day wraps like the board's uint16",
-      config.ground_days_left(3, 65534) == config.GROUND_AGE_DAYS - 5)
+check("the day wraps 365 -> 1 like the board's",
+      config.ground_days_left(3, 363) == config.GROUND_AGE_DAYS - 5)
 
 check("a bare loot takes everything that fits", Action("loot").to_msg() == {"t": "loot"})
 check("a loot can name one resource",
@@ -3942,5 +3979,39 @@ check("the lock drops with the pile", f"({_tq},10)" not in a.why and "EMERGENCY 
 _lo.players[2].inv[0] = 5
 check("and clears when the emergency does",
       _lp.staple_hunt(_lo) is None and _lp._hunt_lock is None)
+
+print("worldlog")
+import copy as _copy
+import worldlog as _wl
+_a = {"day": 3, "wt": 1, "view": {"pid": 0, "cells": []},
+      "players": [{"pid": 0, "conn": True, "ll": 5, "inv": [1, 2], "near": [1], "encQ": 4},
+                  {"pid": 1, "conn": False, "flag": 1}],
+      "mem": {"heap": 10}}
+_b = {"day": 4, "wt": 2,
+      "players": [{"pid": 0, "conn": True, "ll": 4, "inv": [1, 3], "near": [2]},
+                  {"pid": 1, "conn": False, "flag": True}],
+      "mem": {"heap": 9, "minHeap": 8}}
+_sa, _va = _wl.strip_state(_a)
+_sb, _ = _wl.strip_state(_b)
+check("strip drops view, wt and near", "wt" not in _sa and _va is not None
+      and "near" not in _sa["players"][0] and "near" in _a["players"][0])
+_sets, _dels = _wl.diff_state(_sa, _sb)
+check("a scalar list changes as one entry", _sets.get("players.0.inv") == [1, 3])
+check("a vanished key is a del", _dels == ["players.0.encQ"])
+check("1 -> True is a change", _sets.get("players.1.flag") is True)
+check("delta round-trips", _wl.apply_delta(_copy.deepcopy(_sa), _sets, _dels) == _sb)
+_rows = [{"ts": 0, "ch": "run", "arch": -1, "d": {"kind": "worldlog"}},
+         {"ts": 1, "ch": "state_key", "arch": -1, "d": _sa},
+         {"ts": 2, "ch": "state_delta", "arch": -1, "d": {"set": _sets, "del": _dels}},
+         {"ts": 2.5, "ch": "rx", "arch": -1,
+          "d": {"sq": 9, "t": "ev", "k": "left", "pid": 0, "cause": "thirst"}}]
+_seen = [(r["ts"], _copy.deepcopy(st)) for r, st in _wl.replay(_rows)]
+check("replay rebuilds each poll", _seen[1][1] == _sa and _seen[2][1] == _sb)
+check("replay leaves the rows alone", _rows[1]["d"]["players"][0]["ll"] == 5)
+check("seated pids from conn", _wl.seated_pids(_sb) == [0])
+check("view cells skip footprints and trap",
+      _wl.view_cells({"cells": [{"q": 1, "r": 2, "terrain": 3, "footprints": 7, "trap": True}]})
+      == {(1, 2): (3, 0, 0, 0, 0, 0)})
+check("who names the survivor", _wl.who(_sb, 0) == "p0 Guide" and _wl.who(None, None) == "-")
 
 print(f"\n{ok} checks passed")

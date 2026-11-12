@@ -11,7 +11,7 @@
         {
           "label": "Step away from the van before the chimes finish their thought",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_jingle"
@@ -19,7 +19,7 @@
         {
           "label": "Get in the cab and jam the hatch runners from inside",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_ninety_nine"
@@ -44,7 +44,7 @@
         {
           "label": "Take the freezer lid on your back and reach in",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 4,
           "success_node": "cache_2",
           "hazard_id": "the_freezer"
@@ -65,7 +65,7 @@
   "hazards": {
     "the_jingle": {
       "text": "You step back, the van rocks on its springs, and the hatch hops a hand's width up its runners. The chimes take that as a yes. Your fingers, which you had not noticed were curled over the counter's edge, are the last part of you to leave, and on the fourth note not all of them make it. The hatch keeps two fingertips and a thumbnail, and plays the rest of the tune to nobody, because that is its job.",
-      "penalty": { "ll": [-1, -2] },
+      "penalty": { "ll": [-1, -3] },
       "wound": [1, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

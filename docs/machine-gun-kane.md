@@ -459,7 +459,11 @@ This is the full stack, like weather and the Doom.
   - Call toasts.
   - Finale chronicle.
 - **K10.** A minimap marker, chronicle lines, and possibly a cut scene for the
-  ending (the `ui-fx.hpp` cut-scene idiom).
+  ending (the `ui-fx.hpp` cut-scene idiom). A burst's chronicle line gets its
+  own comic panel, `GLY_GUNFIRE` (`ui-scenes.hpp`): the idling jeep, the gun on
+  the windshield frame, tracers and spurts, a brass fountain. The line's tone
+  picks it: ILL is a hit (to a knee, then up), OMEN a miss (at night, in his
+  headlights, the burst going over).
 - **TV observer.** The marker plus the tracers, ported to `observer-fx.js`.
   Remember to add any new file to `observer.html`'s `FILES`.
 - **Bots.** Done 2026-10-12: every `SurvivorPolicy` prices his reach into

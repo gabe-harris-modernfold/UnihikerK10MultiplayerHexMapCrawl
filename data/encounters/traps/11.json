@@ -11,7 +11,7 @@
         {
           "label": "Back out through the door without ringing anything",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_shush"
@@ -19,7 +19,7 @@
         {
           "label": "Clear a silent path and chock the first stack",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "large_print"
@@ -45,7 +45,7 @@
         {
           "label": "Pick down the last aisle, under Reference, to the desk",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 2,
           "success_node": "cache_2",
           "hazard_id": "reference_section"

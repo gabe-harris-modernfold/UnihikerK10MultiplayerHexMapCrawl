@@ -11,7 +11,7 @@
         {
           "label": "Step back over the wedge without so much as breathing on it",
           "cost": {},
-          "base_risk": 25,
+          "base_risk": 40,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_door"
@@ -19,7 +19,7 @@
         {
           "label": "Climb the shelving and lash the hooks to the pin before you cut anything",
           "cost": {},
-          "base_risk": 35,
+          "base_risk": 50,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_rail"
@@ -44,7 +44,7 @@
         {
           "label": "Push through the hanging carcasses to the steel locker at the back",
           "cost": {},
-          "base_risk": 50,
+          "base_risk": 65,
           "skill": 4,
           "success_node": "cache_2",
           "hazard_id": "shut_in"
@@ -65,7 +65,7 @@
   "hazards": {
     "the_door": {
       "text": "Your heel ticks the wedge on the way over. The door comes round on its closer far faster than anything that heavy should, catches your pack in the frame and pins you there, half in and half out, while the whole rail of hooks comes rattling down the slope behind you. The first side of pork arrives on the back of your neck and stays there, cold and soft as a wet sleeping bag. You tear free. Some of your food does not.",
-      "penalty": { "ll": [-1, -2], "food": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "food": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

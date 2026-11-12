@@ -8,7 +8,8 @@
 //   STYLE    what kind of music this is -- the day's lonely theremin over a
 //            drone, the night's music-box lullaby, the dark-carnival waltz,
 //            the storm, the Doom's hunt, the tunnels, the held breath of an
-//            encounter, a funeral. Each style is instrumentation, meter,
+//            encounter, a funeral, and with nobody on the road, a western
+//            with no one left in it. Each style is instrumentation, meter,
 //            tempo range, harmonic language, and a pattern for every part.
 //   TENSION  one number, 0..1, folded from the threat clock, the Doom, the
 //            party's bodies, fire and weather. It moves the tempo, swaps the
@@ -116,6 +117,13 @@ static const SndChord PT_2[]  = { CH(0,CQ_SUS2), CH(10,CQ_MAJ), CH(0,CQ_MIN), CH
 static const SndChord PE_1[]  = { CH(0,CQ_MIN), CH(5,CQ_MIN), CH(0,CQ_MIN), CH(7,CQ_MAJ), CH(8,CQ_MAJ), CH(5,CQ_MIN), CH(7,CQ_MAJ), CH(0,CQ_MIN) };
 static const SndChord PD_1[]  = { CH(0,CQ_POW), CH(10,CQ_MAJ), CH(0,CQ_SUS2), CH(0,CQ_MIN) };
 static const SndChord PQ_1[]  = { CH(0,CQ_MIN), CH(0,CQ_MIN), CH(0,CQ_MIN), CH(0,CQ_MIN) };
+// The frontier (idle): the Andalusian ride down, left hanging on a sus4 while
+// the dread is low; the full cadence in harmonic minor; the Phrygian bII above.
+static const SndChord PW_L1[] = { CH(0,CQ_MIN), CH(10,CQ_MAJ), CH(8,CQ_MAJ), CH(7,CQ_SUS4) };
+static const SndChord PW_L2[] = { CH(0,CQ_MIN), CH(10,CQ_MAJ), CH(0,CQ_MIN), CH(10,CQ_MAJ) };
+static const SndChord PW_L3[] = { CH(0,CQ_MIN), CH(5,CQ_MIN), CH(8,CQ_MAJ), CH(7,CQ_SUS4) };
+static const SndChord PW_M1[] = { CH(0,CQ_MIN), CH(10,CQ_MAJ), CH(8,CQ_MAJ), CH(7,CQ_MAJ) };
+static const SndChord PW_M2[] = { CH(0,CQ_MIN), CH(5,CQ_MIN6), CH(7,CQ_DOM7), CH(0,CQ_MIN) };
 
 // ── 2. Leitmotifs ────────────────────────────────────────────────────────────
 // A note is {semitones from the motif's reference pitch, duration in ticks};
@@ -144,18 +152,21 @@ static const SndMotifRef SIGNATURE[6] = {
 static const SndMNote CARAVAN_HOOK[] = {
   {7,24},{8,24},{7,24}, {6,24},{7,48}, {3,24},{2,24},{0,24}, {-1,24},{0,48},
   {0,24},{3,24},{7,24}, {12,24},{11,24},{8,24}, {7,24},{5,12},{3,12},{2,24}, {0,72} };
-// Dawn: hollow fifths, then the roll call. Dusk: the music box going down.
-static const SndMNote DAWN_CALL[]  = { {0,24}, {7,24}, {12,48}, {MOTIF_REST,96} };
+// Dusk: the music box going down. (Dawn is the roll call, musDawn().)
 static const SndMNote DUSK_FALL[]  = { {12,12}, {10,12}, {7,12}, {3,12}, {0,48} };
+// The harmonica's call to an empty plain: up from the low fifth to the tonic
+// and held; again, landing a semitone sour; then down to the fifth it came from.
+static const SndMNote HARP_CALL[]  = { {-5,18}, {0,90}, {MOTIF_REST,12}, {-5,12}, {1,96},
+                                       {0,24}, {-2,24}, {-5,96} };
 
 // ── 3. Styles ────────────────────────────────────────────────────────────────
 enum MusStyle : uint8_t {
   MS_SILENT = 0, MS_ASHFALL, MS_NOCTURNE, MS_CARNIVAL, MS_STORM, MS_CHEM,
-  MS_HUNTED, MS_TUNNELS, MS_THRESHOLD, MS_ELEGY, MS_DAWN, MS_IDLE, MS_COUNT
+  MS_HUNTED, MS_TUNNELS, MS_THRESHOLD, MS_ELEGY, MS_DAWN, MS_IDLE, MS_OVERHILL, MS_COUNT
 };
 static const char* const MUS_STYLE_NAME[MS_COUNT] = {
   "silent", "ashfall", "nocturne", "carnival", "storm", "chem",
-  "hunted", "tunnels", "threshold", "elegy", "dawn", "idle" };
+  "hunted", "tunnels", "threshold", "elegy", "dawn", "idle", "overhill" };
 
 enum MusPart : uint8_t { MP_DRONE = 0, MP_PAD, MP_BASS, MP_LEAD, MP_COUNTER, MP_PERC, MP_TEX, MP_MOTIF, MP_COUNT };
 enum : uint8_t { DP_NONE = 0, DP_ROOT5, DP_PAIR, DP_TRITONE, DP_CHORDROOT };
@@ -236,7 +247,15 @@ static const SndStyleDef STYLE[MS_COUNT] = {
     P_DRONE,P_PAD,P_TUBA,P_CALLIOPE,P_WHISTLE,P_MUSICBOX, 69,88, 0,0,0,
     0.9f,0.85f,0.0f,0.9f,0.0f,0.0f, 3.2f,0.3f,0.55f,0.75f,0.36f,0.25f, 0.03f,7000, 4,
     { PROG(PD_1) }, { PROG(PD_1) }, { PROG(PD_1) } },
-  // MS_IDLE -- nobody on the road: a carnival somewhere over the hill
+  // MS_IDLE -- nobody on the road: the frontier, a western with no one left
+  // to star in it. E minor, the guitar's key. Only the drone, the key, the
+  // meter, the banks and the room come from here: musGenFrontier() writes the
+  // bars (pPad = the choir, pBass = the guitar, pCounter = the bell).
+  { 4,24, 56,66, 4, &SCALE_AEOLIAN,&SCALE_HARMMIN,&SCALE_PHRYGIAN, DP_ROOT5,BP_NONE,CP_NONE,LP_MELODY,CT_NONE,PP_NONE,
+    P_DRONE,P_CHOIR,P_TWANG,P_WHISTLE,P_HARMONICA,P_BELL, 71,88, 0.42f,0.2f,0.06f,
+    0.6f,0.6f,0.95f,1.0f,0.6f,0.65f, 4.2f,0.35f,0.6f,0.75f,0.4f,0.32f, 0.06f,5600, 4,
+    { PROG(PW_L1), PROG(PW_L2), PROG(PW_L3) }, { PROG(PW_M1), PROG(PW_M2) }, { PROG(PS_L1), PROG(PH_2) } },
+  // MS_OVERHILL -- now and then, out on the empty frontier, a carnival somewhere over the hill
   { 3,24, 104,110, 2, &SCALE_HARMMIN,&SCALE_HARMMIN,&SCALE_HARMMIN, DP_NONE,BP_OOM,CP_PAHPAH,LP_MELODY,CT_NONE,PP_WALTZ,
     P_NONE,P_PAH,P_TUBA,P_CALLIOPE,P_CALLIOPE,P_MUSICBOX, 69,88, 0.7f,0.2f,0.2f,
     0.0f,0.8f,0.9f,1.0f,0.5f,0.4f, 3.0f,0.45f,0.6f,1.0f,0.5f,0.5f, 0.16f,1100, 8,
@@ -262,7 +281,7 @@ struct SndWorld {
 
 // ── 5. Composer state ────────────────────────────────────────────────────────
 struct SndEvt { uint16_t t; uint8_t part, patch; int8_t note; uint8_t vel; uint16_t dur; uint8_t flags; };
-enum : uint8_t { EVF_LEGATO = 1, EVF_HOLD = 2 };
+enum : uint8_t { EVF_LEGATO = 1, EVF_HOLD = 2, EVF_DIVE = 4 };   // DIVE: the guitar's whammy bar, a tone down
 static constexpr int MUS_EVT_MAX = 96;
 
 struct SndMotifPlay {                  // a leitmotif being woven in
@@ -271,6 +290,22 @@ struct SndMotifPlay {                  // a leitmotif being woven in
   uint8_t skipMask;                    // roll call: slots that are gone (rests)
   float   speed;                       // 0.5 = half speed (elegy)
   bool    active;
+};
+
+// The frontier (MS_IDLE) wanders between sections a phrase at a time, and
+// the plain has its own noises, some of them in two parts (a howl and its
+// answer, a windmill's up and down): those wait here, in seconds.
+enum : uint8_t { FR_WIND = 0, FR_GUITAR, FR_WHISTLE, FR_HARP, FR_COUNT };
+struct SndFrontierNote { float t; uint8_t patch; float note, vel, gate, bendTo, bendK, cut; };
+struct SndFrontier {
+  uint8_t  sec, pick;                  // FR_*; the guitar's picking pattern this phrase
+  uint32_t bar, left;                  // bars into / left in this section
+  SndFrontierNote q[16]; uint8_t qN;
+  float    riderT, riderLen, riderStep; uint8_t riderHoof;   // a horse walking past, far off
+  float    gust, gustTgt, gustIn;                            // the wind's strength 0..1, where it is heading, for how long
+  SndVoice* gustV; uint32_t gustSer;                         // the whistle in the wire, swelled by the gusts
+  SndVoice* alarm; uint32_t alarmSer;                        // a car alarm streets away, its battery going
+  float    alarmT, alarmLen, alarmPh; uint8_t alarmMode; bool alarmDies;
 };
 
 struct SndMusic {
@@ -305,7 +340,6 @@ struct SndMusic {
   SndVoice* wind;     uint32_t windSer;
   // leitmotif
   SndMotifPlay mot;
-  bool     rollPending; uint8_t rollMask;   // dawn: the roll call waits for the call to finish
   SndChord padChord; bool padValid;         // the chord the held pad is voicing
   // tape
   float    wowPh1, wowPh2, wowDepth;
@@ -319,7 +353,9 @@ struct SndMusic {
   float    fireAcc, radAcc, rainAcc, dripAcc;
   uint8_t  lastWeather;
   bool     carnivalNight; uint16_t carnivalNightDay;
-  uint32_t idleBars;
+  SndFrontier fr;                      // MS_IDLE: which section, and what is out on the plain
+  float    overhillIn;                 // seconds of frontier before the carnival over the hill comes round again
+  uint8_t  overhillBars;               // > 0: the carnival is playing, this many bars left
   float    lastTonicHz;
   float    windMul;                    // wind texture level multiplier (GET /snddbg?wind=)
   uint8_t  forceStyle;                 // < MS_COUNT: play this style whatever the world says (the sound desk)
@@ -387,9 +423,10 @@ static inline int musRootMidi(int base) {           // the chord root at or abov
 }
 
 // ── 7. Part generators ───────────────────────────────────────────────────────
+static void musDronesOff() { for (int i = 0; i < 3; i++) if (musVoiceIs(SMu.drone[i], SMu.droneSer[i])) sndNoteOff(SMu.drone[i]); }
 static void musGenDrone() {
   const SndStyleDef& S = musDef();
-  if (S.drone == DP_NONE || S.pDrone == P_NONE) { for (int i = 0; i < 3; i++) if (musVoiceIs(SMu.drone[i], SMu.droneSer[i])) sndNoteOff(SMu.drone[i]); return; }
+  if (S.drone == DP_NONE || S.pDrone == P_NONE) { musDronesOff(); return; }
   int root = SMu.tonicBass;                            // D3: the speaker can hear its harmonics
   int want[3] = { -1, -1, -1 };
   switch (S.drone) {
@@ -532,7 +569,7 @@ static const SndRhy RHY4[] = {
 static constexpr int RHY3_N = sizeof(RHY3) / sizeof(RHY3[0]);
 static constexpr int RHY4_N = sizeof(RHY4) / sizeof(RHY4[0]);
 
-static void musGenLead() {
+static void musGenLead(uint8_t patchOverride = P_NONE) {
   const SndStyleDef& S = musDef();
   if (S.lead == LP_NONE || SMu.mot.active) return;
   const bool three = (S.beats == 3);
@@ -554,7 +591,8 @@ static void musGenLead() {
   // whole phrases of silence sometimes: the day is mostly wind
   if (bip == 0 && sndChance(SMu.rng, sndClampF(0.55f - dens, 0.0f, 0.5f))) { SMu.motOk = false; return; }
 
-  uint8_t patch = ((SMu.phraseN & 1) && S.pLead2 != P_NONE) ? S.pLead2 : S.pLead;
+  uint8_t patch = (patchOverride != P_NONE) ? patchOverride
+                : ((SMu.phraseN & 1) && S.pLead2 != P_NONE) ? S.pLead2 : S.pLead;
   int lo = S.leadLo, hi = S.leadHi;
   if (SMu.melLast < lo || SMu.melLast > hi) SMu.melLast = musNearestChordTone((lo + hi) / 2, lo, hi);
   if (bip == 0) SMu.melDir = sndChance(SMu.rng, 0.5f) ? 1 : -1;
@@ -712,7 +750,7 @@ static void musWindDown(float depth, float seconds, float holdSec);
 static void musGenClock() {
   const SndStyleDef& S = musDef();
   if (SMu.w.tcLevel < 3 || SMu.style == MS_HUNTED || SMu.style == MS_THRESHOLD ||
-      SMu.style == MS_SILENT || SMu.style == MS_IDLE || SMu.style == MS_ELEGY) return;
+      SMu.style == MS_SILENT || SMu.style == MS_IDLE || SMu.style == MS_OVERHILL || SMu.style == MS_ELEGY) return;
   const int bt = S.beatTicks;
   int step = (SMu.w.tcLevel >= 4) ? bt / 2 : bt;
   int k = 0;
@@ -725,7 +763,7 @@ static void musGenClock() {
 // and deeper as the dread climbs. The night's music box runs down the same
 // way now and then. The day never lurches: the day is only tired.
 static void musGenLurch() {
-  bool carnival = (SMu.style == MS_CARNIVAL || SMu.style == MS_IDLE);
+  bool carnival = (SMu.style == MS_CARNIVAL || SMu.style == MS_OVERHILL);
   bool box      = (SMu.style == MS_NOCTURNE || SMu.style == MS_ELEGY);
   if (!carnival && !box) return;
   const SndStyleDef& S = musDef();
@@ -739,7 +777,6 @@ static void musGenLurch() {
 }
 
 // ── 8. Leitmotifs in play ────────────────────────────────────────────────────
-static void musRollCall(uint8_t aliveMask);
 static void musStartMotif(const SndMNote* n, uint8_t len, uint8_t patch, int ref, float vel,
                           float speed = 1.0f, uint8_t rollCall = 0, uint8_t skipMask = 0, float delayTicks = 0) {
   SndMotifPlay& m = SMu.mot;
@@ -774,6 +811,280 @@ static void musMotifTick(float dt) {
   }
 }
 
+// ── 8b. The frontier (MS_IDLE) ───────────────────────────────────────────────
+// Nobody on the road, so the board plays the western nobody is left to star
+// in. It wanders a phrase at a time between four sections:
+//   wind     the wind and what lives in it (musFrontierTex), nothing else
+//   guitar   a tremolo guitar picking slow arpeggios over the drone; the last
+//            bar of a phrase lets a chord ring and sometimes dives the bar
+//   whistle  someone whistling to the plain -- often the party's own theme,
+//            all six notes, for a party that is not there -- over a choir
+//   harp     a harmonica's call, a far drum, the guitar letting chords ring
+// A mission bell in a town nobody lives in tolls now and then over all of it.
+// Every few minutes, after a bar of wind, the frontier hands over to the old
+// idle music for sixteen bars -- a carnival somewhere over the hill, muffled
+// (MS_OVERHILL) -- and comes back on the wind.
+static const float   OVERHILL_GAP_S[2] = { 180.0f, 360.0f };   // seconds of frontier between carnivals
+static const uint8_t OVERHILL_BARS     = 16;
+static inline float  musOverhillGap() {
+  return OVERHILL_GAP_S[0] + (OVERHILL_GAP_S[1] - OVERHILL_GAP_S[0]) * sndRandF(SMu.rng);
+}
+static const uint8_t FR_NEXT[FR_COUNT][FR_COUNT] = {     // percent, from row to column
+  {  0, 70, 15, 15 },                                     // out of the wind the guitar comes back first, mostly
+  { 20,  0, 45, 35 },
+  { 30, 30,  0, 40 },
+  { 45, 25, 30,  0 },
+};
+static const uint8_t FR_PHRASES[FR_COUNT][2] = { {1, 2}, {2, 3}, {2, 3}, {2, 2} };   // phrases per section, min..max
+// Picking patterns in eighths: 0 root, 1 fifth, 2 octave, 3 the third an octave up, -1 rest.
+static const int8_t FR_PICK[3][8] = { { -1, 0, 1, 2, -1, 3, 2, 1 }, { -1, -1, 1, 2, 3, -1, 2, -1 },
+                                      { -1, 1, -1, 2, -1, 1, -1, 3 } };
+
+static void musFrontierNext(uint8_t sec) {
+  SndFrontier& F = SMu.fr;
+  F.sec = sec; F.bar = 0;
+  int n = FR_PHRASES[sec][0] + sndRandI(SMu.rng, FR_PHRASES[sec][1] - FR_PHRASES[sec][0] + 1);
+  F.left = (uint32_t)(n * musDef().phrase);
+}
+
+static void musGenFrontier() {
+  const SndStyleDef& S = musDef();
+  SndFrontier& F = SMu.fr;
+  if (SMu.barInPhrase == 0 && F.left == 0) {
+    if (SMu.overhillIn <= 0.0f) {
+      // the carnival's turn: this bar is wind, the next one is over the hill
+      SMu.overhillBars = OVERHILL_BARS; SMu.overhillIn = musOverhillGap();
+      musFrontierNext(FR_WIND);
+    } else {
+      int r = sndRandI(SMu.rng, 100), to = 0;
+      for (; to < FR_COUNT - 1; to++) { r -= FR_NEXT[F.sec][to]; if (r < 0) break; }
+      musFrontierNext((uint8_t)to);
+    }
+  }
+  const uint8_t sec = F.sec;
+  const int bt = S.beatTicks, bars = SMu.barTicks;
+  const bool top = (SMu.barInPhrase == 0), end = (SMu.barInPhrase + 1 == (uint32_t)S.phrase);
+  if (top) F.pick = (uint8_t)sndRandI(SMu.rng, 3);         // one picking pattern a phrase: it sounds played
+  // the chord on the guitar: a low string, and the shape up from a root around B3
+  int pcs[4]; int cn = musChordPcs(SMu.chord, pcs);
+  int root  = musRootMidi(SMu.tonicMid - 5);
+  int tone[4] = { root, root + (cn > 2 ? musPc(pcs[2] - pcs[0]) : 7), root + 12,
+                  root + 12 + (cn > 1 ? musPc(pcs[1] - pcs[0]) : 7) };
+  int low   = musRootMidi(SMu.tonicBass - 5);              // B2..A#3: the Andalusian line walks down
+  const float g = S.gBass;
+  auto strum = [&](uint16_t t, float vel) {                // a rolled chord, left to ring
+    musAddEvt(t, MP_BASS, S.pBass, low, g * vel, bars);
+    for (int i = 0; i < 4; i++) musAddEvt((uint16_t)(t + 3 + 3 * i), MP_PAD, S.pBass, tone[i], g * vel * 0.7f, bars);
+  };
+
+  // the drone sits under everything but the open wind
+  if (sec == FR_WIND) musDronesOff(); else musGenDrone();
+
+  switch (sec) {
+    case FR_WIND:
+      break;
+    case FR_GUITAR:
+      if (end) {
+        strum(0, 0.9f);
+        if (sndChance(SMu.rng, 0.45f)) musAddEvt((uint16_t)(2 * bt), MP_BASS, S.pBass, low, g, bars, EVF_DIVE);
+      } else {
+        musAddEvt(0, MP_BASS, S.pBass, low, g, bt * 3);
+        for (int k = 0; k < S.beats * 2; k++) {
+          int8_t w = FR_PICK[F.pick][k];
+          if (w < 0 || sndChance(SMu.rng, 0.15f)) continue;
+          float acc = (k & 1) ? 0.7f : 0.85f;
+          musAddEvt((uint16_t)(k * bt / 2), MP_PAD, S.pBass, tone[w], g * acc * (0.9f + 0.2f * sndRandF(SMu.rng)), bt * 3 / 2);
+        }
+      }
+      break;
+    case FR_WHISTLE:
+      if (end) strum(0, 0.75f);
+      else {
+        musAddEvt(0, MP_BASS, S.pBass, low, g * 0.85f, bt * 3);
+        musAddEvt((uint16_t)(2 * bt), MP_PAD, S.pBass, tone[1], g * 0.5f, bt * 2);
+        musAddEvt((uint16_t)(2 * bt + 2), MP_PAD, S.pBass, tone[2], g * 0.5f, bt * 2);
+        if (sndChance(SMu.rng, 0.5f)) musAddEvt((uint16_t)(3 * bt + bt / 2), MP_PAD, S.pBass, tone[3], g * 0.42f, bt);
+      }
+      // the choir, a chord every two bars
+      if ((SMu.barInPhrase & 1) == 0) {
+        int vo[4]; int n = musVoicing(SMu.tonicMid + 2, vo, 3);
+        for (int i = 0; i < n; i++) musAddEvt(0, MP_PAD, S.pPad, vo[i], S.gPad * 0.75f, bars * 2 - 6);
+      }
+      // the whistler: the party's theme to begin with, more often than not
+      if (F.bar == 0 && sndChance(SMu.rng, 0.55f)) musStartMotif(PARTY_THEME, 6, S.pLead, SMu.tonicLead, 0.75f);
+      musGenLead(S.pLead);
+      break;
+    case FR_HARP:
+      if (top) strum(0, 0.8f);
+      else if (sndChance(SMu.rng, 0.6f)) musAddEvt(0, MP_BASS, S.pBass, low, g * 0.8f, bars);
+      if (F.bar == 0)
+        musStartMotif(HARP_CALL, (uint8_t)(sizeof(HARP_CALL) / sizeof(HARP_CALL[0])), S.pLead2, SMu.tonicLead, 0.85f);
+      musGenLead(S.pLead2);
+      // a drum somewhere out there, slow, faster with the dread
+      for (int b = 0; b < S.beats; b++) {
+        bool hit = (b == 0) || (SMu.tension > 0.5f) || (b == 2 && sndChance(SMu.rng, 0.5f));
+        if (hit) musAddEvt((uint16_t)(b * bt), MP_PERC, P_TOM, SMu.tonicBass + 12, S.gPerc * (b == 0 ? 0.8f : 0.6f), 20);
+      }
+      break;
+  }
+  // the bell: rare in the wind, a little less so when there is music
+  if (top && sndChance(SMu.rng, sec == FR_WIND ? 0.25f : 0.3f))
+    musAddEvt((uint16_t)(bt * sndRandI(SMu.rng, S.beats)), MP_COUNTER, S.pCounter, SMu.tonicMid, S.gCounter, bars * 2);
+  F.bar++; if (F.left) F.left--;
+}
+
+// The plain's own noises, every block while nobody is on the road. All of
+// them faint, all of them far off, none of them on a clock. Anything in
+// several parts (a howl and its answer, a windmill's up and down, a burst of
+// gunfire, a shutter knocking) queues the rest; `cut` dulls it with distance.
+static void musFrontierQueue(float t, uint8_t patch, float note, float vel, float gate,
+                             float bendTo = 0.0f, float bendK = 0.0f, float cut = 1.0f) {
+  SndFrontier& F = SMu.fr;
+  if (F.qN >= sizeof(F.q) / sizeof(F.q[0])) return;
+  SndFrontierNote& n = F.q[F.qN++];
+  n.t = t; n.patch = patch; n.note = note; n.vel = vel; n.gate = gate; n.bendTo = bendTo; n.bendK = bendK; n.cut = cut;
+}
+// Leaving the frontier: the held noises stop with it.
+static void musFrontierStop() {
+  SndFrontier& F = SMu.fr;
+  if (musVoiceIs(F.gustV, F.gustSer)) sndNoteOff(F.gustV);
+  if (musVoiceIs(F.alarm, F.alarmSer)) sndNoteOff(F.alarm);
+  F.gustV = nullptr; F.alarm = nullptr;
+}
+// something loose -- a shutter, a sign on one nail -- knocking in the gusts
+static void musFrontierTaps() {
+  SndFrontier& F = SMu.fr;
+  int n = 2 + sndRandI(SMu.rng, 4);
+  float t = 0.0f, note = (float)(SMu.tonicLead - 2 + sndRandI(SMu.rng, 4));
+  for (int i = 0; i < n; i++) {
+    musFrontierQueue(t, P_TAP, note - ((i & 1) ? 2.0f : 0.0f),
+                     (0.2f + 0.25f * F.gust) * (0.7f + 0.3f * sndRandF(SMu.rng)), 0.1f);
+    t += 0.14f + 0.35f * sndRandF(SMu.rng);
+  }
+}
+// gunfire a long way off: one shot, two, a few; now and then another gun answers
+static void musFrontierShots() {
+  float cut = 0.6f + 0.4f * sndRandF(SMu.rng), vel = 0.45f + 0.35f * sndRandF(SMu.rng), t = 0.0f;
+  int n = sndChance(SMu.rng, 0.4f) ? 1 : sndChance(SMu.rng, 0.45f) ? 2 : 3 + sndRandI(SMu.rng, 3);
+  for (int i = 0; i < n; i++) {
+    musFrontierQueue(t, P_SHOT, 60.0f, vel * (0.85f + 0.3f * sndRandF(SMu.rng)), 0.6f, 0.0f, 0.0f, cut);
+    t += 0.15f + 0.55f * sndRandF(SMu.rng);
+  }
+  if (n > 1 && sndChance(SMu.rng, 0.3f)) {
+    t += 0.6f + sndRandF(SMu.rng);
+    for (int i = 1 + sndRandI(SMu.rng, 3); i > 0; i--) {
+      musFrontierQueue(t, P_SHOT, 60.0f, vel * 0.7f, 0.6f, 0.0f, 0.0f, cut * 0.7f);
+      t += 0.2f + 0.5f * sndRandF(SMu.rng);
+    }
+  }
+}
+// somebody yelling into the wind: "heyyy", or "hel-looo", and nobody answers
+static void musFrontierYell() {
+  float note = (float)(SMu.tonicMid + 2 + sndRandI(SMu.rng, 6)), cut = 0.6f + 0.2f * sndRandF(SMu.rng);
+  float vel = 0.35f + 0.25f * sndRandF(SMu.rng), len = 1.2f + 0.6f * sndRandF(SMu.rng), t = 0.0f;
+  if (sndChance(SMu.rng, 0.5f)) { musFrontierQueue(0.0f, P_YELL, note - 3.0f, vel * 0.8f, 0.22f, 0.0f, 0.0f, cut); t = 0.3f; }
+  musFrontierQueue(t, P_YELL, note, vel, len, -5.0f, 0.002f, cut);
+}
+// a car alarm streets away: whooping, two-tone or yelping, for a while; half
+// the time its battery goes first -- slower, flatter, fainter, gone.
+// musFrontierTex() plays the pattern.
+static void musFrontierAlarm() {
+  SndFrontier& F = SMu.fr;
+  if (musVoiceIs(F.alarm, F.alarmSer)) return;
+  SndVoice* v = sndNoteOn(SB_MUSIC, MP_TEX, P_ALARM, (float)(SMu.tonicLead + 7 + sndRandI(SMu.rng, 3)),
+                          0.5f + 0.3f * sndRandF(SMu.rng), -1);
+  if (!v) return;
+  F.alarm = v; F.alarmSer = v->serial; v->bendK = 0.35f; v->cutMul = 0.6f + 0.3f * sndRandF(SMu.rng);
+  F.alarmLen = F.alarmT = 6.0f + 8.0f * sndRandF(SMu.rng); F.alarmPh = 0.0f;
+  F.alarmMode = (uint8_t)sndRandI(SMu.rng, 3); F.alarmDies = sndChance(SMu.rng, 0.5f);
+}
+static void musFrontierTex(float dt) {
+  SndFrontier& F = SMu.fr;
+  const bool open = (F.sec == FR_WIND);
+  SMu.overhillIn -= dt;
+  for (int i = 0; i < F.qN; ) {
+    SndFrontierNote& n = F.q[i];
+    n.t -= dt;
+    if (n.t > 0.0f) { i++; continue; }
+    SndVoice* v = sndNoteOn(SB_MUSIC, MP_TEX, n.patch, n.note, n.vel, (int32_t)(n.gate * SND_SR));
+    if (v) { if (n.bendK > 0.0f) { v->bendTo = n.bendTo; v->bendK = n.bendK; } v->cutMul = n.cut; }
+    F.q[i] = F.q[--F.qN];
+  }
+  // The wind gusts: a new strength every few seconds, mostly lulls, now and
+  // then a real blow, reached over a second or two. musTexture() swells the
+  // main wind with it; here it swells a whistle in the wires on top.
+  F.gustIn -= dt;
+  if (F.gustIn <= 0.0f) {
+    float r = sndRandF(SMu.rng);
+    F.gustTgt = 0.15f + 0.85f * r * r; F.gustIn = 2.0f + 6.0f * sndRandF(SMu.rng);
+  }
+  F.gust += (F.gustTgt - F.gust) * sndMinF(1.0f, dt / 1.5f);
+  if (!musVoiceIs(F.gustV, F.gustSer)) {
+    SndVoice* v = sndNoteOn(SB_MUSIC, MP_TEX, P_GUST, 60.0f, 1.0f, -1);
+    if (v) { F.gustV = v; F.gustSer = v->serial; v->level = 0.0f; } else F.gustV = nullptr;
+  }
+  if (F.gustV) {
+    float lvl = (open ? 0.5f : 0.35f) + (open ? 0.9f : 0.6f) * F.gust * F.gust;
+    F.gustV->level  += (lvl - F.gustV->level) * 0.004f;
+    F.gustV->cutMul += ((0.8f + 0.6f * F.gust) - F.gustV->cutMul) * 0.004f;    // it whistles higher as it blows harder
+  }
+  // the rarer noises, each on its own dice
+  if (sndChance(SMu.rng, dt * (0.03f + 0.17f * F.gust)))  musFrontierTaps();
+  if (sndChance(SMu.rng, dt / (open ? 60.0f : 100.0f)))   musFrontierShots();
+  if (sndChance(SMu.rng, dt / (open ? 120.0f : 240.0f)))  musFrontierYell();
+  if (!F.alarm && sndChance(SMu.rng, dt / 240.0f))         musFrontierAlarm();
+  if (F.alarm && !musVoiceIs(F.alarm, F.alarmSer)) F.alarm = nullptr;          // stolen
+  if (F.alarm) {
+    F.alarmT -= dt;
+    float k = F.alarmDies ? sndClampF((0.45f - F.alarmT / F.alarmLen) / 0.45f, 0.0f, 1.0f) : 0.0f;
+    F.alarmPh += dt * (1.0f - 0.55f * k);
+    float b;
+    switch (F.alarmMode) {
+      case 0:  b = (sndWrap01(F.alarmPh * (1.0f / 0.56f)) < 0.5f) ? 0.0f : -4.0f; break;   // hi-lo
+      case 1:  b = -9.0f + 9.0f * sndWrap01(F.alarmPh * 1.6f); break;                     // whoop
+      default: b = 3.0f * sndSinP(sndWrap01(F.alarmPh * 3.5f)); break;                     // yelp
+    }
+    F.alarm->bendTo = b - 4.0f * k;
+    F.alarm->level  = 1.0f - 0.6f * k;
+    if (F.alarmT <= 0.0f) { sndNoteOff(F.alarm); F.alarm = nullptr; }
+  }
+  // coyotes: one over the rise, climbing into it and sagging as its breath
+  // goes; sometimes another answers from further off
+  if (sndChance(SMu.rng, dt / (open ? 25.0f : 70.0f))) {
+    float note = (float)(SMu.tonicLead + sndRandI(SMu.rng, 5));
+    float len = 2.0f + sndRandF(SMu.rng);
+    musFrontierQueue(0.0f, P_HOWL, note, 0.55f + 0.3f * sndRandF(SMu.rng), len, -6.0f, 0.0015f);
+    if (sndChance(SMu.rng, 0.55f))
+      musFrontierQueue(len * 0.6f + 0.8f * sndRandF(SMu.rng), P_HOWL, note + (float)(sndRandI(SMu.rng, 7) - 3),
+                       0.3f, len * 0.8f, -5.0f, 0.002f);
+  }
+  // a snake under a rock, only when the music has gone
+  if (open && sndChance(SMu.rng, dt / 70.0f))
+    musFrontierQueue(0.0f, P_RATTLE, 60.0f, 0.5f + 0.4f * sndRandF(SMu.rng), 1.2f + sndRandF(SMu.rng));
+  // the windmill turns over in a gust: up, then down
+  if (sndChance(SMu.rng, dt / (open ? 30.0f : 60.0f))) {
+    float note = (float)(SMu.tonicLead + 3);
+    musFrontierQueue(0.0f, P_CREAK, note, 0.6f, 0.7f, 2.0f, 0.004f);
+    musFrontierQueue(0.9f + 0.3f * sndRandF(SMu.rng), P_CREAK, note - 2.0f, 0.5f, 0.8f, -3.0f, 0.004f);
+  }
+  // a horse walking past, a long way off: the hooves come up out of the wind and go
+  if (F.riderT <= 0.0f && sndChance(SMu.rng, dt / (open ? 90.0f : 200.0f))) {
+    F.riderLen = F.riderT = 12.0f + 6.0f * sndRandF(SMu.rng); F.riderStep = 0.0f;
+  }
+  if (F.riderT > 0.0f) {
+    F.riderT -= dt; F.riderStep -= dt;
+    if (F.riderStep <= 0.0f) {
+      float p = sndClampF(1.0f - F.riderT / F.riderLen, 0.0f, 0.999f);
+      float near = sndSinP(p * 0.5f);                       // sin(pi p): nearest halfway
+      F.riderStep = ((F.riderHoof & 1) ? 0.36f : 0.2f) + 0.03f * sndRandBi(SMu.rng);   // a walk: hooves in pairs
+      float note = (float)(SMu.tonicMid + ((F.riderHoof & 2) ? 7 : 5));
+      SndVoice* v = sndNoteOn(SB_MUSIC, MP_TEX, P_CLOP, note, 0.15f + 0.6f * near * near, 2000);
+      if (v) v->cutMul = 0.55f + 0.6f * near;               // closer is brighter
+      F.riderHoof++;
+    }
+  }
+}
+
 // ── 9. Style, tension, key ───────────────────────────────────────────────────
 static float musTension(const SndWorld& w) {
   float doom = w.doomClose / 255.0f;
@@ -793,7 +1104,7 @@ static uint8_t musPickStyle() {
   if (SMu.forceStyle < MS_COUNT) return SMu.forceStyle;   // the sound desk auditioning a style
   if (SMu.holdBars > 0) return SMu.holdStyle;
   if (!SMu.haveWorld || w.musicLevel == 0) return MS_SILENT;
-  if (w.connected == 0) return MS_IDLE;
+  if (w.connected == 0) return SMu.overhillBars ? MS_OVERHILL : MS_IDLE;
   // the Doom outranks the rest, with hysteresis so it does not flap
   bool hunted = (SMu.style == MS_HUNTED) ? (w.doomClose >= 110) : (w.doomClose >= 150);
   if (hunted) return MS_HUNTED;
@@ -824,7 +1135,7 @@ static uint8_t musPickStyle() {
 static uint8_t musUrgency(uint8_t s) {
   switch (s) {
     case MS_HUNTED: case MS_THRESHOLD: case MS_ELEGY: case MS_DAWN: case MS_SILENT: return 2;
-    case MS_STORM: case MS_CHEM: case MS_CARNIVAL: case MS_TUNNELS: case MS_IDLE: return 1;
+    case MS_STORM: case MS_CHEM: case MS_CARNIVAL: case MS_TUNNELS: case MS_IDLE: case MS_OVERHILL: return 1;
     default: return 0;
   }
 }
@@ -848,6 +1159,17 @@ static void musApplyStyle(uint8_t s) {
   sndEchoSet(beatSec * S.echoBeats, S.echoFb, S.echoWet);
   SM.worldCutTgt = S.worldCut;
   if (s == MS_SILENT) sndReleaseBus(SB_MUSIC, 1.5f);
+  // the frontier opens on the wind alone, and the carnival over the hill is
+  // minutes away (unless it is the carnival the frontier is coming back from);
+  // leaving it stops its tunes where they are, and its gusts and alarms
+  if (SMu.prevStyle == MS_IDLE || s == MS_IDLE) musFrontierStop();
+  if (s == MS_IDLE) {
+    memset(&SMu.fr, 0, sizeof(SMu.fr)); musFrontierNext(FR_WIND); SMu.fr.left = S.phrase;
+    if (SMu.prevStyle != MS_OVERHILL) SMu.overhillIn = musOverhillGap();
+  } else if (SMu.prevStyle == MS_IDLE && SMu.mot.active &&
+             (SMu.mot.n == HARP_CALL || (SMu.mot.n == PARTY_THEME && SMu.mot.patch == P_WHISTLE)))
+    SMu.mot.active = false;
+  if (s != MS_OVERHILL) SMu.overhillBars = 0;
 }
 
 // ── 10. The bar ──────────────────────────────────────────────────────────────
@@ -860,8 +1182,10 @@ static void musNewBar() {
     const SndStyleDef& S = musDef();
     bool atPhrase = (SMu.barInPhrase == 0) || (SMu.barInPhrase == 4 && S.phrase == 8);
     uint8_t u = musUrgency(want), uOld = musUrgency(SMu.style);
-    // leaving an urgent style is itself urgent: the danger is over, say so now
-    if (u == 2 || uOld == 2 || atPhrase || (u == 1 && (SMu.barInPhrase & 1) == 0) || SMu.forceStyle < MS_COUNT) {
+    // leaving an urgent style is itself urgent: the danger is over, say so now;
+    // so is leaving the empty road: somebody has come (or the carnival's turn)
+    if (u == 2 || uOld == 2 || SMu.style == MS_IDLE || SMu.style == MS_OVERHILL || atPhrase ||
+        (u == 1 && (SMu.barInPhrase & 1) == 0) || SMu.forceStyle < MS_COUNT) {
       musApplyStyle(want);
     }
   }
@@ -895,10 +1219,7 @@ static void musNewBar() {
   SMu.evN = 0; SMu.evI = 0;
   if (SMu.style != MS_SILENT) {
     // Leitmotifs are decided first: while one plays, the generated lead rests.
-    if (SMu.rollPending && !SMu.mot.active) {
-      musRollCall(SMu.rollMask);
-      SMu.rollPending = false;
-    } else if (!SMu.mot.active && SMu.barInPhrase == 0) {
+    if (!SMu.mot.active && SMu.barInPhrase == 0) {
       // the day hums the party theme to itself now and then -- minus whoever is gone
       if (SMu.style == MS_ASHFALL && sndChance(SMu.rng, 0.14f))
         musStartMotif(PARTY_THEME, 6, P_THEREMIN, SMu.tonicLead, 0.6f, 1.0f, 0, (uint8_t)~SMu.w.aliveMask);
@@ -907,13 +1228,12 @@ static void musNewBar() {
         musStartMotif(CARAVAN_HOOK, (uint8_t)(sizeof(CARAVAN_HOOK) / sizeof(CARAVAN_HOOK[0])), P_CALLIOPE,
                       SMu.tonicLead, 0.9f);
     }
-    // the idle carnival plays in episodes: sixteen bars, then the wind alone
-    bool quiet = (SMu.style == MS_IDLE) && ((SMu.styleBars / 16) % 3 != 0);
-    musGenDrone();
-    if (!quiet) { musGenPad(); musGenBass(); musGenLead(); musGenCounter(); musGenPerc(); }
+    if (SMu.style == MS_IDLE) musGenFrontier();
+    else { musGenDrone(); musGenPad(); musGenBass(); musGenLead(); musGenCounter(); musGenPerc(); }
     musGenClock();
     musGenLurch();
   }
+  if (SMu.style == MS_OVERHILL && SMu.overhillBars) SMu.overhillBars--;
   SMu.bar++; SMu.barInPhrase++; SMu.styleBars++;
 }
 
@@ -925,7 +1245,10 @@ static void musTexture() {
   static const float WIND[6] = { 0.24f, 0.36f, 1.0f, 0.42f, 0.48f, 0.3f };
   float windTgt = on ? WIND[w.weather < 6 ? w.weather : 0] * (w.allUnder ? 0.15f : 1.0f) * SMu.windMul : 0.0f;
   if (SMu.style == MS_THRESHOLD) windTgt *= 0.4f;
-  if (SMu.style == MS_CARNIVAL || SMu.style == MS_IDLE) windTgt *= 0.35f;   // the band drowns it out
+  if (SMu.style == MS_CARNIVAL) windTgt *= 0.35f;                           // the band drowns it out
+  // the open plain is the wind, and out there it gusts (SMu.fr.gust, musFrontierTex)
+  const bool gusting = (SMu.style == MS_IDLE);
+  if (gusting) windTgt *= ((SMu.fr.sec == FR_WIND) ? 3.8f : 2.2f) * (0.6f + 0.8f * SMu.fr.gust);
   if (!musVoiceIs(SMu.wind, SMu.windSer)) {
     SMu.wind = nullptr;
     if (windTgt > 0.01f) {
@@ -936,11 +1259,13 @@ static void musTexture() {
   if (SMu.wind) {
     SMu.wind->level += (windTgt - SMu.wind->level) * 0.002f;
     float gust = 0.7f + 0.6f * sndRandF(SMu.rng);
+    if (gusting) gust *= 0.75f + 0.7f * SMu.fr.gust;                         // a real blow opens it up
     SMu.wind->cutMul += ((w.weather == 2 ? 1.6f : 1.0f) * gust - SMu.wind->cutMul) * 0.003f;
     if (windTgt <= 0.01f && SMu.wind->level < 0.01f) { sndNoteOff(SMu.wind); SMu.wind = nullptr; }
   }
   if (!on) return;
   const float dt = SND_BLK * SND_INV_SR;
+  if (SMu.style == MS_IDLE) musFrontierTex(dt);
   // rain on tin: pentatonic drips, so the rain is in the key
   float rainRate = (w.weather == 1) ? 3.5f : (w.weather == 2) ? 7.0f : (w.weather == 3) ? 2.0f : 0.0f;
   if (w.allUnder) rainRate = 0.0f;
@@ -1038,7 +1363,8 @@ static void sndMusicBlock() {
                               (e.flags & EVF_LEGATO) ? prev : nullptr);
       if (v) { SMu.lead = v; SMu.leadSer = v->serial; }
     } else {
-      sndNoteOn(SB_MUSIC, e.part, e.patch, (float)e.note, vel, gate);
+      SndVoice* v = sndNoteOn(SB_MUSIC, e.part, e.patch, (float)e.note, vel, gate);
+      if (v && (e.flags & EVF_DIVE)) { v->bendTo = -2.0f; v->bendK = 0.003f; }
     }
   }
 }
@@ -1049,15 +1375,13 @@ static void musHold(uint8_t style, uint32_t bars) {
   musApplyStyle(style);
   SMu.tick = (float)SMu.barTicks;                       // start it on the next block
 }
-static void musRollCall(uint8_t aliveMask) {
-  musStartMotif(PARTY_THEME, 6, P_CALLIOPE, SMu.tonicLead, 0.8f, 1.0f, 1, (uint8_t)~aliveMask);
-}
 static void musDawn(uint8_t aliveMask) {
   musHold(MS_DAWN, 7);
-  // the call first; then the roll call, where every living survivor answers
-  // on their own instrument and the dead leave their note unplayed
-  musStartMotif(DAWN_CALL, 4, P_CALLIOPE, SMu.tonicLead, 0.85f);
-  SMu.rollPending = true; SMu.rollMask = aliveMask;
+  // the roll call, where every living survivor answers on their own
+  // instrument and the dead leave their note unplayed. It waits two bars, so
+  // the chronicler's "day N" goes first (there used to be a bugle call there).
+  musStartMotif(PARTY_THEME, 6, P_CALLIOPE, SMu.tonicLead, 0.8f, 1.0f, 1, (uint8_t)~aliveMask,
+                2.0f * (float)SMu.barTicks);
 }
 static void musJoin(uint8_t slot) {
   if (slot >= 6) return;

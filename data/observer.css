@@ -134,19 +134,15 @@ html, body {
    nothing is allowed to give in the first place. */
 #stage > * { flex: 0 0 auto; }
 
-/* The hex disk is SCENERY: the board’s own hand-painted tiles, full bleed,
-   at full strength. It used to sit at opacity 0.5 under a hard radial mask
-   AND the page vignette, which between them turned 1.4 MB of painted terrain
-   into a faint smudge -- all the cost of loading the art and none of the
-   benefit. Legibility is bought with the scrim below instead, which darkens
-   the side the type is on and leaves the rest of the picture alone. */
+/* The survivors' panels (observer.js renderDisk / renderCams). They are the
+   show now, so they sit OVER the plinth rather than fading out under it:
+   the subject's on #s-disk with the air over it, everybody else's on
+   #s-cams. Up in a scene as well -- the room is the subject's, the board is
+   still running. */
 #disk-bg {
-  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 0;
-  opacity: 0; transition: opacity 1.2s ease;
-  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 62%, transparent 99%);
-          mask-image: radial-gradient(ellipse at 50% 50%, #000 62%, transparent 99%);
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 2;
+  pointer-events: none;
 }
-#stage.open #disk-bg { opacity: 1; }
 /* THE PLINTH. Between the art and the type, never over the type.
    This was a slow left-to-right gradient, which meant the contrast under any
    given word depended on where that word happened to fall and what terrain
@@ -162,6 +158,9 @@ html, body {
     linear-gradient(180deg, rgba(6,4,3,0.55) 0%, transparent 18%,
                            transparent 80%, rgba(6,4,3,0.7) 100%);
 }
+/* Out in the open the type hangs from the top, leaving the foot of the
+   column to THE ADMIRED. */
+#stage.open { justify-content: flex-start; }
 /* A scene is a room, not a map. The ground goes away entirely and the stakes
    get a flat black field to sit on. */
 #stage.scene::after { background: rgba(6,4,3,0.94); }
@@ -169,7 +168,7 @@ html, body {
 /* The type column. Wide enough that a door label -- the longest line on the
    stage -- lands on ONE line at 16:9, and narrow enough that the art still
    has a frame of its own to the right of it. */
-#stage > :not(#disk-bg):not(#admired) { max-width: 60%; max-width: min(60%, 66ch); }
+#stage > :not(#disk-bg):not(#admired):not(#s-cams) { max-width: 60%; max-width: min(60%, 66ch); }
 /* A canvas now: 61 hand-painted tiles per frame, redrawn only when the
    ground under the camera actually changes. Markers are drawn into it. */
 #s-disk { display: block; width: 100%; height: 100%; }
@@ -177,49 +176,249 @@ html, body {
    shadows and dust devils on a transparent canvas of the same size, so the
    still disk under it never has to be redrawn. top/left, not inset. */
 #s-air { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+/* Everybody else's panels, laid out right of the type (camLayout). */
+#s-cams { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; display: block; pointer-events: none; }
 
 #who, #place, #greed, #doors { position: relative; z-index: 2; }
 
 /*──────────────────── THE ADMIRED ────────────────────────────────
-  The standings, in the corner, quiet. Same ladder as the board of the dead
-  in game-data.js -- these ones are just still on it.                     */
+  The standings. Same ladder as the board of the dead in game-data.js --
+  these ones are just still on it. Spray-painted on a sheet of salvage
+  someone nailed up: rusting plate, rivets weeping, two bullet holes and
+  duct tape where it is splitting (paintAdmired, Grime), ash coming down
+  past a bulb that is not long for this world, and a bottle cap on a wire
+  for a medal. The ladder MOVES -- a climb slides up CLAWING, a drop slides
+  down SLIPPING and shakes, points rise off the score, and a new leader
+  gets the hazard-tape stamp (observer.js renderAdmired).
+
+  The panels own the right of the stage, so out in the open the ladder
+  sits at the foot of the type column; in a scene the doors need that
+  column and the ladder steps off until the room is done.            */
 #admired {
-  position: absolute; top: 0; right: calc(var(--u) * 2.2); z-index: 2;
-  min-width: calc(var(--u) * 20);
-  padding: calc(var(--u) * 0.6) calc(var(--u) * 0.9) calc(var(--u) * 0.7);
-  background: rgba(6, 4, 3, 0.74);
-  border: 1px solid var(--bdr);
-  border-top: none;
+  position: absolute; bottom: calc(var(--u) * 0.8); left: calc(var(--u) * 4); z-index: 3;
+  min-width: calc(var(--u) * 22);
+  padding: calc(var(--u) * 0.8) calc(var(--u) * 1.5) calc(var(--u) * 0.9);
+  overflow: hidden;
+  background: #1E0A00;
+  box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 1.6) rgba(0, 0, 0, 0.9), 0 0 0 1px #0C0400;
 }
+#stage.scene #admired { display: none; }
+#adm-plate { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; display: block; }
+/* Ash, coming down in two drifts at two speeds. */
+#admired::before {
+  content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 2;
+  background-image:
+    radial-gradient(circle, rgba(220, 196, 160, 0.55) 0, rgba(220, 196, 160, 0.55) 1px, transparent 1.6px),
+    radial-gradient(circle, rgba(200, 170, 130, 0.35) 0, rgba(200, 170, 130, 0.35) 1.2px, transparent 2px);
+  background-size: 53px 71px, 89px 113px;
+  animation: admAsh 16s linear infinite;
+}
+@keyframes admAsh {
+  from { background-position: 0 0, 17px 0; }
+  to   { background-position: 53px 213px, -72px 339px; }
+}
+/* The bulb overhead, on its last legs: a pool of light that sags and
+   stutters. */
+#admired::after {
+  content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 1;
+  background: radial-gradient(ellipse at 42% -18%, rgba(255, 196, 110, 0.30) 0%, rgba(255, 170, 80, 0.10) 45%, transparent 72%);
+  animation: admBulb 9.7s steps(1) infinite;
+}
+@keyframes admBulb {
+  0%, 100% { opacity: 1; }
+  37% { opacity: 0.55; } 38% { opacity: 1; } 39.5% { opacity: 0.3; } 40.5% { opacity: 0.9; }
+  71% { opacity: 0.75; } 72% { opacity: 1; }
+  88% { opacity: 0.15; } 88.6% { opacity: 1; }
+}
+
+/* Spray-painted through a stencil: overspray haze round the letters,
+   paint pooled at the bottom of each (the drips are on the plate). */
 #admired h4 {
+  position: relative; z-index: 3;
+  display: flex; align-items: flex-start;
   font-family: var(--stencil); font-weight: normal;
-  font-size: calc(var(--u) * 1.4); letter-spacing: calc(var(--u) * 0.32);
-  color: var(--txt-dim); margin-bottom: calc(var(--u) * 0.45);
+  font-size: calc(var(--u) * 1.75); letter-spacing: calc(var(--u) * 0.3);
+  color: #E07C1C; margin-bottom: calc(var(--u) * 0.15);
+  text-shadow: 0 0 calc(var(--u) * 0.35) rgba(224, 124, 28, 0.7), 0 0 calc(var(--u) * 1.2) rgba(224, 124, 28, 0.25), 1px 2px 0 rgba(0, 0, 0, 0.6);
 }
-#adm-rows { list-style: none; display: flex; flex-direction: column; gap: calc(var(--u) * 0.24); }
+#admired h4 span { padding-top: calc(var(--u) * 0.45); }
+/* The bottle cap on its wire, swinging off the nail. */
+#adm-medal {
+  width: calc(var(--u) * 2.4); height: calc(var(--u) * 3.2);
+  margin: calc(var(--u) * -0.8) calc(var(--u) * 0.7) 0 0; flex: 0 0 auto;
+  -webkit-transform-origin: 50% 0; transform-origin: 50% 0;
+  animation: admSwing 3.8s ease-in-out infinite alternate;
+  filter: drop-shadow(1px 3px 2px rgba(0, 0, 0, 0.8));
+}
+@keyframes admSwing { from { transform: rotate(-7deg); } to { transform: rotate(6deg); } }
+/* The small print on the honour, stencilled small. */
+#adm-sub {
+  position: relative; z-index: 3;
+  margin: 0 0 calc(var(--u) * 0.5) calc(var(--u) * 3.1);
+  font-family: var(--stencil); font-size: calc(var(--u) * 0.9); letter-spacing: calc(var(--u) * 0.16);
+  color: #A87838; opacity: 0.85;
+  text-shadow: 1px 1px 0 #000;
+}
+
+#adm-rows { position: relative; z-index: 3; list-style: none; display: flex; flex-direction: column; }
 #adm-rows li {
-  display: flex; align-items: baseline; gap: calc(var(--u) * 0.6);
-  font-size: calc(var(--u) * 1.7); color: var(--ash);
+  position: relative;
+  display: flex; align-items: baseline;
+  padding: calc(var(--u) * 0.12) calc(var(--u) * 0.3);
+  margin-bottom: calc(var(--u) * 0.12);
+  font-size: calc(var(--u) * 1.7); color: #E0B070;
+  text-shadow: 1px 1px 0 #000, 0 0 calc(var(--u) * 0.3) #000;
 }
-#adm-rows .a-n    { color: var(--txt-dim); min-width: calc(var(--u) * 1.1); }
+#adm-rows li > * { margin-right: calc(var(--u) * 0.6); }
+#adm-rows li > :last-child { margin-right: 0; }
+#adm-rows .a-n    { color: var(--txt-dim); min-width: calc(var(--u) * 1.1); position: relative; }
 #adm-rows .a-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#adm-rows .a-sc   { color: var(--gold); font-variant-numeric: tabular-nums; }
+#adm-rows .a-sc   { color: var(--gold); font-variant-numeric: tabular-nums; display: inline-block; }
 /* The arrow is little on purpose. It is a hint, not a verdict. */
 #adm-rows .a-t    { min-width: calc(var(--u) * 1); text-align: center; }
 #adm-rows .t-up   { color: #8FC050; }
 #adm-rows .t-dn   { color: var(--alarm); }
 #adm-rows .t-flat { color: var(--txt-dim); }
+
+/* Number one: the name catches the light, and a glint sparks on the rank. */
+#adm-rows li.top .a-n { color: var(--gold-hi); }
+#adm-rows li.top .a-name {
+  color: var(--gold-hi);
+  background: linear-gradient(100deg, var(--gold-hi) 0%, var(--gold-hi) 40%, #FFF0C0 50%, var(--gold-hi) 60%, var(--gold-hi) 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  /* text-shadow paints OVER a background-clipped fill; a filter does not */
+  text-shadow: none;
+  filter: drop-shadow(1px 1px 0 #000);
+  animation: admShine 3.6s linear infinite;
+}
+@keyframes admShine { from { background-position: 100% 0; } to { background-position: -160% 0; } }
+#adm-rows li.top .a-n::after {
+  content: '\2726'; position: absolute; top: calc(var(--u) * -0.55); right: calc(var(--u) * -0.5);
+  font-size: calc(var(--u) * 0.9); color: #FFF0C0;
+  text-shadow: 0 0 calc(var(--u) * 0.5) rgba(255, 220, 140, 0.9);
+  animation: admKira 2.9s ease-in-out infinite;
+}
+@keyframes admKira {
+  0%, 55%, 100% { opacity: 0; transform: scale(0.2) rotate(0deg); }
+  68% { opacity: 1; transform: scale(1.25) rotate(45deg); }
+  80% { opacity: 0.2; transform: scale(0.5) rotate(90deg); }
+}
+
+/* Whoever is on camera: a lit bar and a pointer nudging at it. */
+/* A smear of paint under their name, not a highlight. */
+#adm-rows li.on { background: linear-gradient(88deg, rgba(224, 124, 28, 0.34), rgba(224, 124, 28, 0.12) 55%, transparent 85%); }
 #adm-rows li.on .a-name { color: var(--gold-hi); }
 #adm-rows li.on .a-n    { color: var(--gold); }
+#adm-rows li.on::before {
+  content: '\25B6'; position: absolute; left: calc(var(--u) * -1.05); top: 50%;
+  margin-top: calc(var(--u) * -0.42);
+  font-size: calc(var(--u) * 0.8); line-height: 1; color: var(--gold-hi);
+  animation: admPoint 0.9s ease-in-out infinite alternate;
+}
+@keyframes admPoint { from { transform: translateX(0); } to { transform: translateX(calc(var(--u) * 0.3)); } }
+
+/* A climb: slides up from where it was, a flash and speed lines behind. */
+#adm-rows li.climb { animation: admMove 0.85s cubic-bezier(0.2, 0.9, 0.25, 1.15) both, admFlash 1.4s ease-out both; z-index: 2; }
+#adm-rows li.climb::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 0; right: 0; pointer-events: none;
+  background: repeating-linear-gradient(180deg, transparent 0, transparent 3px, rgba(255, 214, 120, 0.55) 3px, rgba(255, 214, 120, 0.55) 4px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+  animation: admLines 0.9s ease-out both;
+}
+/* A drop: slides down, goes red, and shakes on landing. */
+#adm-rows li.drop { animation: admMove 0.7s ease-in both, admShake 0.45s 0.6s linear both, admRed 1.6s ease-out both; }
+@keyframes admMove { from { transform: translateY(calc(var(--from, 0) * 112%)); } to { transform: translateY(0); } }
+@keyframes admFlash { 0% { background-color: rgba(255, 214, 120, 0.55); } 100% { background-color: transparent; } }
+@keyframes admRed   { 0% { background-color: rgba(216, 80, 42, 0.5); } 100% { background-color: transparent; } }
+@keyframes admLines { 0% { opacity: 1; transform: translateY(40%) scaleY(1.6); } 100% { opacity: 0; transform: translateY(-30%) scaleY(1); } }
+@keyframes admShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(calc(var(--u) * -0.35)); }
+  40% { transform: translateX(calc(var(--u) * 0.3)); }
+  60% { transform: translateX(calc(var(--u) * -0.2)); }
+  80% { transform: translateX(calc(var(--u) * 0.1)); }
+}
+
+/* Points: the score pops and the gain floats up off it. */
+#adm-rows .a-sc.bump { animation: admBump 0.5s ease-out; }
+@keyframes admBump { 0% { transform: scale(1); } 30% { transform: scale(1.35); color: #FFF0C0; } 100% { transform: scale(1); } }
+#adm-rows .a-plus {
+  position: absolute; right: calc(var(--u) * 1.6); top: 0;
+  font-style: normal; font-family: var(--stencil);
+  font-size: calc(var(--u) * 1.2); color: #FFF0C0;
+  text-shadow: 0 0 calc(var(--u) * 0.5) rgba(255, 200, 90, 0.9), 1px 1px 0 #000;
+  pointer-events: none;
+  animation: admPlus 1.6s ease-out both;
+}
+/* CLAWING UP / SLIPPING, scrawled over the row as it moves. */
+#adm-rows .a-tag {
+  position: absolute; left: calc(var(--u) * 3.2); top: -45%;
+  font-style: normal; font-family: var(--stencil);
+  font-size: calc(var(--u) * 0.95); letter-spacing: calc(var(--u) * 0.18);
+  color: #FFD890; pointer-events: none;
+  text-shadow: 1px 1px 0 #000, 0 0 calc(var(--u) * 0.4) rgba(224, 124, 28, 0.9);
+  transform: rotate(-4deg);
+  animation: admTag 2s ease-out both;
+}
+#adm-rows li.drop .a-tag { color: #F07050; }
+@keyframes admTag { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes admPlus {
+  0% { opacity: 0; transform: translateY(0) scale(0.6); }
+  15% { opacity: 1; transform: translateY(-30%) scale(1.15); }
+  100% { opacity: 0; transform: translateY(-160%) scale(1); }
+}
+
+/* A new leader: a slanted stamp slams across the ladder and lifts off. */
+#adm-stamp {
+  position: absolute; left: -10%; right: -10%; top: 38%; z-index: 3;
+  text-align: center; pointer-events: none;
+  font-family: var(--stencil); font-size: calc(var(--u) * 1.3); letter-spacing: calc(var(--u) * 0.26);
+  line-height: 1.1;
+  color: #0B0804;
+  padding: calc(var(--u) * 0.7) 0;
+  /* hazard tape: black-and-amber chevrons along both edges, grubby in between */
+  background:
+    repeating-linear-gradient(-45deg, #E89018 0, #E89018 calc(var(--u) * 0.5), #0C0400 calc(var(--u) * 0.5), #0C0400 calc(var(--u) * 1)) 0 0 / 100% calc(var(--u) * 0.42) no-repeat,
+    repeating-linear-gradient(-45deg, #E89018 0, #E89018 calc(var(--u) * 0.5), #0C0400 calc(var(--u) * 0.5), #0C0400 calc(var(--u) * 1)) 0 100% / 100% calc(var(--u) * 0.42) no-repeat,
+    radial-gradient(circle, rgba(60, 30, 8, 0.3) 20%, transparent 26%) 0 0 / calc(var(--u) * 0.5) calc(var(--u) * 0.5),
+    #D89028;
+  box-shadow: 0 calc(var(--u) * 0.3) calc(var(--u) * 1.4) rgba(0, 0, 0, 0.85);
+  transform: rotate(-8deg);
+  opacity: 0;
+}
+/* The honour small, the name big under it. */
+#adm-stamp b { display: block; font-weight: normal; font-size: calc(var(--u) * 2.3); letter-spacing: calc(var(--u) * 0.34); }
+#adm-stamp.go { animation: admStamp 2.6s ease-out both; }
+@keyframes admStamp {
+  0%   { opacity: 0; transform: rotate(-8deg) scale(2.2); }
+  10%  { opacity: 1; transform: rotate(-8deg) scale(0.94); }
+  16%  { transform: rotate(-8deg) scale(1.03); }
+  22%  { transform: rotate(-8deg) scale(1); }
+  78%  { opacity: 1; transform: rotate(-8deg) scale(1); }
+  100% { opacity: 0; transform: rotate(-8deg) scale(1.08) translateY(-40%); }
+}
+
 /* What the subject is climbing toward. The one line of comedy in the panel,
-   so it gets the panel’s widest type rather than its smallest. */
+   so it gets the panel’s widest type rather than its smallest -- typed out
+   on the terminal, with the cursor left blinking at the end. */
 #adm-next {
+  position: relative; z-index: 3;
   margin-top: calc(var(--u) * 0.5);
   padding-top: calc(var(--u) * 0.45);
-  border-top: 1px solid var(--bdr);
+  border-top: 1px solid var(--bdr-hi);
   font-size: calc(var(--u) * 1.5);
-  color: var(--rust);
+  color: #C86A28;
+  text-shadow: 1px 1px 0 #000;
 }
+#adm-next .cur {
+  display: inline-block; width: 0.6em; height: 1em; margin-left: 0.1em;
+  vertical-align: text-bottom; background: var(--rust);
+  animation: admCur 1s steps(1) infinite;
+}
+@keyframes admCur { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 
 /* The name. Biggest thing on the page, and it is a person, not a metric. */
 #w-name {

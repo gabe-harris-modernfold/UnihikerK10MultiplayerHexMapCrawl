@@ -156,6 +156,25 @@
     return h % 12;
   }
 
+  // One hex of the fixture's board, in the shape /state's view cells take.
+  function cellAt(S, q, r, dq, dr) {
+    const h = ((q * 2654435761) ^ (r * 40503)) >>> 0;
+    return {
+      q, r, dq, dr,
+      terrain: terrainAt(S, q, r), terrainName: '',
+      shelter: h % 23 === 3 ? 1 : 0,
+      resource: h % 17 === 0 ? (h % 5) + 1 : 0,
+      resourceName: '', amount: h % 17 === 0 ? 2 : 0,
+      footprints: 0, tireTrack: false,
+      // Which /img/hex<Name><N>.png the hex wears. No vc on this feed, so
+      // the observer wraps it against nothing and falls back to variant 0
+      // -- the field is here so the SHAPE matches the board, not to make
+      // the fixture pretty.
+      variant: h % 10,
+      poi: h % 31 === 7,
+    };
+  }
+
   function viewFor(S, pid) {
     const p = S.p[pid];
     if (!p || !p.conn) return null;
@@ -165,26 +184,24 @@
       for (let dq = -visR; dq <= visR; dq++) {
         const s = -(dq + dr);
         if (Math.abs(dq) + Math.abs(dr) + Math.abs(s) > 2 * visR) continue;
-        const q = p.q + dq, r = p.r + dr;
-        const h = ((q * 2654435761) ^ (r * 40503)) >>> 0;
-        const t = terrainAt(S, q, r);
-        cells.push({
-          q, r, dq, dr,
-          terrain: t, terrainName: '',
-          shelter: h % 23 === 3 ? 1 : 0,
-          resource: h % 17 === 0 ? (h % 5) + 1 : 0,
-          resourceName: '', amount: h % 17 === 0 ? 2 : 0,
-          footprints: 0, tireTrack: false,
-          // Which /img/hex<Name><N>.png the hex wears. No vc on this feed, so
-          // the observer wraps it against nothing and falls back to variant 0
-          // -- the field is here so the SHAPE matches the board, not to make
-          // the fixture pretty.
-          variant: h % 10,
-          poi: h % 31 === 7,
-        });
+        cells.push(cellAt(S, p.q + dq, p.r + dr, dq, dr));
       }
     }
     return { pid, name: p.name, q: p.q, r: p.r, visR, cells };
+  }
+
+  // Every survivor's "near" (game-server.hpp): the 19 hexes within 2, flat
+  // triples terrain, variant, shelter | 4 if a POI.
+  function nearFor(S, p) {
+    const out = [];
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dq = -2; dq <= 2; dq++) {
+        if (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr) > 4) continue;
+        const c = cellAt(S, p.q + dq, p.r + dr, dq, dr);
+        out.push(c.terrain, c.variant, c.shelter | (c.poi ? 4 : 0));
+      }
+    }
+    return out;
   }
 
   function build(S, pid) {
@@ -198,6 +215,7 @@
         name: p.name, arch: p.arch, archName: p.archName,
         invSlots: 8, invSlotsEff: 8, equip: p.equip.slice(),
         q: p.q, r: p.r,
+        near: p.conn ? nearFor(S, p) : undefined,
         ll: Math.max(0, p.ll), llCap: p.llCap,
         food: p.food, water: p.water, rad: p.rad, ap: p.ap,
         wounds: p.wounds.slice(), resting: p.resting, radClean: false,

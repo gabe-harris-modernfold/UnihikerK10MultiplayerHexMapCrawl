@@ -123,7 +123,9 @@ badges `I[66]`–`I[69]` in `data/item-icons.js`), as drafted above except:
 - `narrative` param 0 has no handler on the server or the client, so using
   the Scope only shows its text.
 - The Pendulum's `reveal_fog` 4 is a key-item effect, so it is free and never
-  spent: a 4-hex survey every time it is read.
+  spent: every read shows the 4 rings past the reader's sight (PROTO 15 --
+  before that a reveal set survey bits and put nothing on screen). Surface
+  only; it is refused below.
 
 **The item gate.** A choice can carry `"requires_item": <id>`. It opens only
 for a survivor who has that item. **Equipment counts only while worn**, so the
@@ -138,6 +140,21 @@ Nothing is spent. Four copies, kept in step:
 | `data/ui-encounter.js` | `hasForChoice()` **hides** the choice. It isn't shown greyed out. Buttons are numbered by what's on screen, and `ci` is still the choice's index in the file. |
 | `mock-server/server.js` | `hasForChoice()` plus the same refusal in `encChoice()` |
 | `bots/encounters.py` | `has_for_choice()` and `EncounterRun.first_open_choice()`. `SurvivorPolicy` takes the first *open* choice, not choice 0. |
+
+**A trade: `"spends_item": true`** (added 2026-10-26 for Dshinguest Ron,
+[dshinguest-ron.md](dshinguest-ron.md)). Next to `requires_item`, it turns
+the gate into a trade. When the roll succeeds, one of the item leaves the
+pack, and what it buys is the destination node's loot, pending until the
+bank like any other loot. A failed roll keeps the item. Equipment is never
+spent, because the gate wants it worn. Where it lives:
+
+- `EncChoice.spendItem` holds the flag.
+- `spendItemForChoice()` sits beside `playerHasForChoice()`.
+- `encRunChoice()` spends the item on success.
+- `handleMsg_enc_choice` sends the targeted `item_result` with act
+  `enc_spend` (the item-result invariant).
+- The mock mirrors it with `spendForChoice()`.
+- The client adds a red `−1 <item>` cost chip to the choice.
 
 Authoring rule (checked by the generator and `bots/smoke.py`): the **first**
 choice at every node with choices is ungated. So nobody is ever stuck, and

@@ -11,7 +11,7 @@
         {
           "label": "Leave it the coat and back out the way you came",
           "cost": {},
-          "base_risk": 20,
+          "base_risk": 35,
           "skill": 0,
           "success_node": "escaped",
           "hazard_id": "the_wave"
@@ -19,7 +19,7 @@
         {
           "label": "Wedge the slipknot and unbutton it from behind",
           "cost": {},
-          "base_risk": 30,
+          "base_risk": 45,
           "skill": 2,
           "success_node": "cache_1",
           "hazard_id": "the_hug"
@@ -43,7 +43,7 @@
         {
           "label": "Slit the sack and find out what keeps it so plump",
           "cost": {},
-          "base_risk": 45,
+          "base_risk": 60,
           "skill": 1,
           "success_node": "cache_2",
           "hazard_id": "the_stuffing"
@@ -63,21 +63,21 @@
   "hazards": {
     "the_wave": {
       "text": "You back into one of its outstretched hands and the arm comes round on its hinge like a door in a gale. The glove on the end is stuffed with wet sawdust and about four hundred earwigs, and it bursts across the side of your head, and the earwigs go everywhere earwigs go, which is mostly your collar and at least one ear. You find the last of them hours later, in your rations.",
-      "penalty": { "ll": -1, "food": -1 },
+      "penalty": { "ll": [-1, -2], "food": -1 },
       "wound": [0, 0],
       "wound_max": [0, 0],
       "ends_encounter": true
     },
     "the_hug": {
       "text": "The knot slips while you are on the second button. The sapling straightens, the arms come round, and the scarecrow takes you in a hug of enormous sincerity, face to face with the feed sack, something in your ribs going click. It smells of damp straw and whatever crawled into the lining to die. The only way out is to wriggle out of your own jacket, canteen and all. The scarecrow is now wearing two coats.",
-      "penalty": { "ll": [-1, -2], "water": -1, "scrap": [-1, -2] },
+      "penalty": { "ll": [-1, -3], "water": -1, "scrap": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true
     },
     "the_stuffing": {
       "text": "The stuffing is occupied. A family of mice who have been living in the warmest, best-fed body in the building pours out of the slit and up your sleeve, and in the scramble you shoulder the post, and the head — the round, heavy thing in the feed sack is a paint tin — comes down across the bridge of your nose. You sit down hard. The mice take the opportunity to go through your pack.",
-      "penalty": { "ll": [-1, -3], "food": [-1, -2] },
+      "penalty": { "ll": [-2, -3], "food": [-1, -2] },
       "wound": [0, 0],
       "wound_max": [1, 0],
       "ends_encounter": true

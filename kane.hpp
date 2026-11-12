@@ -66,9 +66,18 @@ struct MachineGunKane {
   // Runtime only -- never saved
   uint8_t called[MAX_PLAYERS];    // asked this survivor last tick; still exposed now = the burst
   uint8_t visited[MAX_PLAYERS];   // already heard his question at the fire tonight
+  uint8_t midBanked;              // bit ch-1: someone banked out of that chapter's middle (kaneMidPaid)
   bool    saveWanted;             // arc or camp changed: the next save should catch it
 };
 static MachineGunKane K;
+
+// A chapter stays unread, and reopens on every arrival, until someone reads
+// to its end -- so a middle node's tokens, banked and walked off with, paid
+// out again for nothing but two steps (chapter 1's "the_board", over and
+// over). They pay once a chapter now; whoever comes after finds the board
+// already stripped. Runtime only: a reboot forgets it, once.
+static inline bool kaneMidPaid(uint8_t ch) { return ch && ch <= 8 && (K.midBanked & (1u << (ch - 1))); }
+static inline void kaneMidBank(uint8_t ch) { if (ch && ch <= 8) K.midBanked |= (uint8_t)(1u << (ch - 1)); }
 
 static inline bool kaneIsNight() { return G.dayTick >= KANE_DUSK_TICK; }
 
@@ -85,7 +94,8 @@ static inline bool kaneOpenGround(uint8_t t) {
 
 static bool kaneExposed(const Player& p) {
   if (p.q < 0 || p.q >= MAP_COLS || p.r < 0 || p.r >= MAP_ROWS) return false;
-  return hexDistWrap(K.q, K.r, p.q, p.r) <= KANE_RANGE && kaneOpenGround(G.map[p.r][p.q].terrain);
+  return hexDistWrap(K.q, K.r, p.q, p.r) <= KANE_RANGE && kaneOpenGround(G.map[p.r][p.q].terrain)
+      && !inOasis(p);   // he cannot see in under the canopy (docs/forest-oasis.md)
 }
 
 // ── Placement + routing ─────────────────────────────────────────────────────
@@ -194,6 +204,19 @@ static void kaneStampRing(int16_t sq, int16_t sr) {
   }
 }
 
+// A chapter's hex must not hold a booby trap: trapOnArrival() runs before
+// kaneOnArrival(), so the trap opened instead on every visit and the chapter
+// never did. VACANCY, Bonney and the clinic pick around armed hexes; Kane's
+// are where his jeep stopped, so the jeep sets it off instead -- whatever was
+// buried there went off under his tyres. A scene running on it settles
+// against a wiped hex, as under a new Settlement (trapSettle).
+static void kaneClearTrap(int q, int r) {
+  HexCell& c = G.map[r][q];
+  if (!c.trap && !c.trapEnc) return;
+  c.trap = 0; c.trapEnc = 0;
+  Log.notice("KANE (%d,%d): a trap went off under the jeep", q, r);
+}
+
 static void kanePlaceSite() {
   uint32_t n = 0;
   for (int pass = 0; pass < 2 && !n; pass++) {
@@ -220,6 +243,7 @@ static void kanePlaceSite() {
     pickPassableHex(K.siteQ, K.siteR);
     Log.warning("KANE site: no glass and no crater rim -- (%d,%d)", (int)K.siteQ, (int)K.siteR);
   }
+  kaneClearTrap(K.siteQ, K.siteR);
   kaneStampRing(K.siteQ, K.siteR);
 }
 
@@ -304,6 +328,7 @@ static void kaneBreakCamp() {
   memset(K.visited, 0, sizeof(K.visited));
   if (K.stage < 3 && K.campQ < 0) {
     K.campQ = K.q; K.campR = K.r;
+    kaneClearTrap(K.campQ, K.campR);
     Log.notice("KANE camp left at (%d,%d): chapter %d", (int)K.q, (int)K.r, (int)K.stage + 1);
   }
   kanePickWaypoint();
@@ -323,6 +348,7 @@ static void tickKane() {
     K.mode = KANE_CAMP;
     K.breakTicks = 0;
     memset(K.called, 0, sizeof(K.called));
+    kaneClearTrap(K.q, K.r);   // chapter 5 opens at his fire
     K.saveWanted = true;
     Log.notice("KANE camps at (%d,%d)", (int)K.q, (int)K.r);
     return;

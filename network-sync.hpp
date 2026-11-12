@@ -207,6 +207,7 @@ static void sendTunnelSync(AsyncWebSocketClient* client) {
     return;
   }
   playerVisParams(pid, &visR, &maskRes);
+  noteVisSent(pid, visR);
   pq = G.players[pid].tq; pr = G.players[pid].tr;
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"tsync\",\"cols\":%d,\"rows\":%d,\"vr\":%d,\"q\":%d,\"r\":%d,\"map\":\"",
@@ -263,6 +264,7 @@ static void queueSync(uint32_t wsId, int pid) {
     queued = true;
   }
   portEXIT_CRITICAL(&g_syncMux);
+  forgetVisSent(pid);   // serviceVisRefresh() waits for this sync's "vr"
   if (!queued) Log.error("queueSync: queue full, pid=%d wsId=%u gets no sync", pid, (unsigned)wsId);
 }
 
@@ -332,6 +334,7 @@ static void sendSync(uint32_t wsId, int pid) {
   Player& me = G.players[pid];
   int visR; bool maskRes;
   playerVisParams(pid, &visR, &maskRes);
+  noteVisSent(pid, visR);
 
   int pos = snprintf(buf, sizeof(buf),
     "{\"t\":\"sync\",\"id\":%d,\"pv\":%d,\"tk\":%lu,\"vr\":%d,\"map\":\"",
@@ -394,6 +397,10 @@ static void sendSync(uint32_t wsId, int pid) {
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
   pos += appendVacJson(buf + pos, sizeof(buf) - pos);    // VACANCY (vacancy.hpp), its own comma
+  pos += appendGhostJson(buf + pos, sizeof(buf) - pos);  // wasteland ghosts (ghosts.hpp), its own comma
+  pos += appendLabJson(buf + pos, sizeof(buf) - pos);    // RUNAWAY SCIENCE (lab.hpp), its own comma
+  pos += appendDshJson(buf + pos, sizeof(buf) - pos, true);   // the Dshingus (dshingus.hpp): counts and spots, its own comma
+  pos += appendBonneyJson(buf + pos, sizeof(buf) - pos);  // ONE-HAND BONNEY (bonney.hpp), its own comma
   pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");
@@ -532,6 +539,10 @@ static void broadcastState() {
     (int)W.creepingDoom.q, (int)W.creepingDoom.r, (int)W.creepingDoom.awareness);
   pos += appendKaneJson(buf + pos, sizeof(buf) - pos);   // Machine Gun Kane (kane.hpp)
   pos += appendVacJson(buf + pos, sizeof(buf) - pos);    // VACANCY (vacancy.hpp), its own comma
+  pos += appendGhostJson(buf + pos, sizeof(buf) - pos);  // wasteland ghosts (ghosts.hpp), its own comma
+  pos += appendLabJson(buf + pos, sizeof(buf) - pos);    // RUNAWAY SCIENCE (lab.hpp), its own comma
+  pos += appendDshJson(buf + pos, sizeof(buf) - pos, false);  // the Dshingus counts; spots come in sync and ev dsh
+  pos += appendBonneyJson(buf + pos, sizeof(buf) - pos);  // ONE-HAND BONNEY (bonney.hpp), its own comma
   pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"fire\":[");
   pos += appendFireArray(buf + pos, sizeof(buf) - pos);
   pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"flood\":[");

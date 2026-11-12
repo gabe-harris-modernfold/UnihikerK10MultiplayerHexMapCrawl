@@ -1,0 +1,130 @@
+{
+  "id": "settlement_dshinguest_ron_01",
+  "title": "Dshinguest Ron — The Movement Tour",
+  "start_node": "bus",
+  "nodes": {
+    "bus": {
+      "text": "You hear the town before you see it: a bass line, a crowd booing it, and something like a piano made of plumbing falling down a flight of stairs. A school bus with no glass and a drum kit welded to its roof is parked across the town well. Down its side, in house paint and total conviction: DSHINGUEST RON — THE MOVEMENT TOUR. Nobody has ever been sure how to say it. Everybody who has seen them play ends up saying it the same way. A woman with two buckets and a mop over her shoulder tells you they play tonight whether the town wants them or not. The town does not. The town, you notice, is already putting out chairs.",
+      "can_bank": false,
+      "choices": [
+        {
+          "label": "Find a spot near the front.",
+          "cost": {},
+          "base_risk": 20,
+          "skill": 4,
+          "success_node": "the_set",
+          "hazard_id": "splash_zone"
+        },
+        {
+          "label": "Sling the Bender Strat and climb up on the bus.",
+          "requires_item": 79,
+          "cost": {},
+          "base_risk": 15,
+          "skill": 4,
+          "success_node": "sit_in",
+          "hazard_id": "feedback"
+        }
+      ]
+    },
+    "the_set": {
+      "text": "The set opens with 'Wipe Me Down (I've Been Through Hell)' and does not get any cleaner. Ron is a long streak of a man in a sequinned jumpsuit with a flap at the back, held shut by one heroic button. He plays a pre-war guitar he calls the Bender Stratocaster — somebody filed the F on the headstock into a B, so long ago that nobody remembers who — and it is the only one in the world, he says, and he has said that about several. {{drummer}} keeps time on a kit of toilet cisterns. The bassist plays a sump pump. Then the lights go down and the whole town goes quiet, because everybody knows what is coming: the Movement in B-flat. It is called a movement because it comes in three parts. The third part reaches the second row.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 1] }
+      ],
+      "choices": [
+        {
+          "label": "Go round the back of the bus after the encore.",
+          "cost": {},
+          "base_risk": 15,
+          "skill": 0,
+          "success_node": "backstage",
+          "hazard_id": "gutter"
+        }
+      ]
+    },
+    "backstage": {
+      "text": "The meeting hall will never be used again. Out front the old-timers are still dancing, a child is crying with laughter, and somebody's grandmother threw her teeth at the stage and wants them back. Behind the bus, Ron sits on an upturned bucket in a towel with the Bender across his knees. He played this town his last pair, he tells you, and the town before it his second-last. He has been without since two towns back. 'I'd give her up for one clean pair,' he says, and strokes the Bender's neck. {{drummer}} says he has said that in every town since the coast. Nobody in this town owns clean underwear. Nobody in any town does.",
+      "can_bank": true,
+      "choices": [
+        {
+          "label": "Grab a mop and help the town clean up.",
+          "cost": {},
+          "base_risk": 25,
+          "skill": 2,
+          "success_node": "cleanup",
+          "hazard_id": "one_more"
+        },
+        {
+          "label": "Hand Ron your Clean Underwear.",
+          "requires_item": 36,
+          "spends_item": true,
+          "cost": {},
+          "base_risk": 5,
+          "skill": 0,
+          "success_node": "the_trade",
+          "hazard_id": "wrong_hand"
+        }
+      ]
+    },
+    "cleanup": {
+      "text": "It takes you and the bucket brigade until dawn. In the muck under the stage you find everything the crowd threw at the band: bolts, bottle caps, a spanner, a whole hubcap, and the grandmother's teeth, which you return. The woman with the mop says the rest is yours, and the town pays you besides, in what it has. The bus pulls out at first light, over the stew pot and the well cover, honking a tune you will have in your head for a week. Two settlements over, somebody is putting out chairs.",
+      "can_bank": true,
+      "loot": [
+        { "res": 4, "qty": [2, 4] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "choices": []
+    },
+    "the_trade": {
+      "text": "Ron holds them up to the firelight. Pre-war elastic. Not a mark on them. The band takes off their hats. The bassist switches off the pump. Ron puts them on right there, behind nothing, and lets out a sigh they hear in the next settlement. Then he lifts the Bender off his knees and lays her across your arms, the way you would hand over a sleeping child. He does not look back at her. He has priorities now. 'She's been places,' he says. 'Most of those places were the front row. Wipe her before you play her.' The bus pulls out at first light, and for the first time in two towns, Ron is sitting down.",
+      "can_bank": true,
+      "loot": [
+        { "item": 79, "qty": [1, 1] }
+      ],
+      "choices": []
+    },
+    "sit_in": {
+      "text": "Ron sees the Bender before he sees you, and takes off his hat. 'She found a good home,' he says, and then, to the town: 'Ladies and gentlemen — the Bender!' He has another one now. He says it is the only one in the world. You play the Movement in B-flat from the bus roof, which is the only safe seat in the house, while {{drummer}} rolls on the cisterns and Ron does the part only Ron can do. The town has never heard it with two guitars. The town will never need to again. They pay you in stew and well water, mostly so you'll stop.",
+      "can_bank": true,
+      "loot": [
+        { "res": 1, "qty": [1, 3] },
+        { "res": 0, "qty": [1, 2] }
+      ],
+      "choices": []
+    }
+  },
+  "hazards": {
+    "splash_zone": {
+      "text": "You find a spot near the front. 'The front', it turns out, is a technical term, and so is 'splash'. You lose your appetite, and then your lunch. By morning you have something else of theirs as well: the Dshingus. The band calls it a souvenir. For a month you will leave a little of the tour wherever you sleep, and you will give it to anybody who stands where you stand.",
+      "penalty": { "food": -1 },
+      "dshingus": true,
+      "ends_encounter": false
+    },
+    "feedback": {
+      "text": "The Bender howls the moment you touch her: a squeal of feedback that blows out the meeting hall's last window and blows you off the roof. The crowd thinks it is part of the act. It is the best-received thing you have ever done.",
+      "penalty": { "ll": -1 },
+      "ends_encounter": false
+    },
+    "gutter": {
+      "text": "The roadie, a man the size of a water tank who answers to Gutter, stops you at the bus door and charges you the backstage toll. It is always scrap. It is always 'one more'.",
+      "penalty": { "scrap": -1 },
+      "ends_encounter": false
+    },
+    "one_more": {
+      "text": "The band comes back on for one more encore while you are still under the stage. You were warned there might be one more. You were not warned where. You crawl out with the Dshingus, which is what everybody under the stage gets.",
+      "penalty": { "ll": -1 },
+      "dshingus": true,
+      "ends_encounter": false
+    },
+    "wrong_hand": {
+      "text": "Ron reaches for them with the hand he was using a moment ago. You pull them back, but not fast enough: he has already shaken yours. That is how most people get the Dshingus. He goes off to wash, which takes a while, because the well is under the bus.",
+      "penalty": {},
+      "dshingus": true,
+      "ends_encounter": false
+    }
+  },
+  "placeholders": {
+    "drummer": ["Lids McGee", "Ballcock Barry", "Little Plunger", "Sister Cistern"]
+  }
+}
