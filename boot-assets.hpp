@@ -592,7 +592,7 @@ static void loadEncounterIndex() {
     const char* entry = strstr(buf, tKey);
     if (!entry) continue;
     entry += strlen(tKey);
-    int copyLen = min(80, (int)(sz - (size_t)(entry - buf)));
+    int copyLen = min(79, (int)(sz - (size_t)(entry - buf)));   // 79, not 80: tmp[copyLen] below must stay inside tmp[80]
     char tmp[80]; strncpy(tmp, entry, copyLen); tmp[copyLen] = 0;
     const char* cv = jsonFindKey(tmp, "count");
     const char* pv = jsonFindKey(tmp, "path");
