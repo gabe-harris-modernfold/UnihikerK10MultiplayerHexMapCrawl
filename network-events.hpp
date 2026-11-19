@@ -1133,7 +1133,9 @@ static void drainEvents() {
           fxCue(FXK_GHOUL, (int8_t)ev.pid, line);
           sndStory(SS_GHOST, ev.pid, (uint8_t)(esp_random() & 0xFF));
           ledFlash(150, 170, 200);
-        } else if (what == GH_LETGO)
+        } else if (what == GH_LETGO && ev.res == GHOST_WARD_ITEM)
+          k10LogAdd("puts the mask on. The ghost lets go and backs off.", (int8_t)ev.pid, TONE_GOOD, GLY_SETTLE);
+        else if (what == GH_LETGO)
           k10LogAdd("walks into town. The ghost stays at the gate.", (int8_t)ev.pid, TONE_GOOD, GLY_SETTLE);
         else if (what == GH_FADE && ev.amt)
           k10LogAdd("A ghost thins to nothing, and drops what it stole.", -1, TONE_OMEN, GLY_DEATH);

@@ -4782,9 +4782,12 @@ function ghostEv(gi, w, pid, res = 0, n = 0) {
   broadcast({ t: 'ev', k: 'ghost', w, g: gi, src: g.src, pid: pid ?? -1, q: g.q, r: g.r, res, n });
 }
 const ghostHaunting = (id) => ghosts.findIndex((g) => g && g.haunt === id);
-// Up, on the surface, not in a scene, not in a Settlement, not already ridden.
+// The Intimidate Mask (items.cfg 33), worn: no ghost rides it (ghostWarded, ghosts.hpp).
+const GHOST_WARD_ITEM = 33;
+const ghostWarded = (p) => !!p && Array.isArray(p.eq) && p.eq.includes(GHOST_WARD_ITEM);
+// Up, on the surface, not in a scene, not in a Settlement, not masked, not already ridden.
 function ghostCanHaunt(p) {
-  return !!p && p.on !== false && !p.downed && p.ll > 0 && !p.dp && !encounters[p.id] &&
+  return !!p && p.on !== false && !p.downed && p.ll > 0 && !p.dp && !encounters[p.id] && !ghostWarded(p) &&
          terrainAt(p.q, p.r) !== TERRAIN_SETTLEMENT && !inOasis(p) && ghostHaunting(p.id) < 0;
 }
 const ghostCanDrift = (q, r) => terrainAt(q, r) !== TERRAIN_SETTLEMENT;
@@ -4819,11 +4822,11 @@ function ghostLatch(gi, id) {
   console.log(`[ghost] ${gi} (${g.name}) latches onto pid=${id} at (${g.q},${g.r})`);
   ghostEv(gi, 'latch', id);
 }
-function ghostLetGo(gi, q, r, told) {
+function ghostLetGo(gi, q, r, told, why = 0) {
   const g = ghosts[gi], id = g.haunt;
   g.haunt = -1; g.q = q; g.r = r; g.shun = GHOST_SHUN_TICKS; g.moveSkip = 0;
-  console.log(`[ghost] ${gi} (${g.name}) lets go of pid=${id} at (${q},${r})${told ? '' : ' (silent)'}`);
-  if (told) ghostEv(gi, 'letgo', id);
+  console.log(`[ghost] ${gi} (${g.name}) lets go of pid=${id} at (${q},${r})${told ? '' : ' (silent)'}${why ? ' (mask)' : ''}`);
+  if (told) ghostEv(gi, 'letgo', id, why);
 }
 // Fades, leaving its hoard as Remains. True when that changed the ground.
 function ghostFade(gi) {
@@ -4872,7 +4875,7 @@ function ghostDrain(gi) {
 function ghostTithe(id, idx, gain) {
   if (!gain || idx < 0 || idx > 4) return gain;
   const gi = ghostHaunting(id);
-  if (gi < 0) return gain;
+  if (gi < 0 || ghostWarded(players[id])) return gain;   // masked: it is already letting go
   const g = ghosts[gi];
   const owed = g.tithe + gain;
   const cut = Math.floor(owed / GHOST_TITHE_DIV);
@@ -4904,6 +4907,7 @@ function tickGhosts() {
       const p = players[g.haunt];
       if (!p || p.downed || p.ll <= 0) { ghostLetGo(i, g.q, g.r, false); continue; }
       g.q = p.q; g.r = p.r;
+      if (ghostWarded(p)) { ghostLetGo(i, g.q, g.r, true, GHOST_WARD_ITEM); continue; }   // the mask: it recoils
       if (!p.dp && terrainAt(p.q, p.r) === TERRAIN_SETTLEMENT) {
         const [oq, or] = ghostOutsideTown(p.q, p.r);
         ghostLetGo(i, oq, or, true);

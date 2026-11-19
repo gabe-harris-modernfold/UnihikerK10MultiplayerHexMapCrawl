@@ -1043,7 +1043,7 @@ const ITEM_MODS = {
   28: { note: 'Cross River Channel; doubles river forage' },       // Fishing Pole
   29: { note: 'Doubles land food forage yield' },                  // Compound Bow
   32: { note: 'REST upgrades a basic shelter to improved' },       // Fire Starter
-  33: { note: 'Threat Clock −3 each dawn' },                       // Intimidate Mask
+  33: { note: 'Threat Clock −3 each dawn; ghosts cannot ride you' }, // Intimidate Mask
   34: { ll: +2, note: 'No exposure loss at dawn' },                // Bear Skin Cape
   40: { ll: +1 },                                                  // Shock Knuckles
   41: { note: 'Threat Clock −4 each dawn' },                       // Squatch Sliprs

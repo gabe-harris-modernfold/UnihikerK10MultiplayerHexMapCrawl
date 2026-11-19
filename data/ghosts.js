@@ -28,6 +28,10 @@ const GHOST_GRAB_MS = 650;    // swooping from its hex onto the survivor it caug
 // on a face) are drawn at this share; the eyes are light and keep their own.
 // Halved at the user's call, 2026-10-23, then taken down to 0.3 the same day.
 const GHOST_BODY_ALPHA = 0.3;
+// The Intimidate Mask (items.cfg 33): worn, no ghost rides you; one riding
+// lets go with res = this on its 'letgo' (ghostWarded, ghosts.hpp). The map
+// draws it on the wearer's portrait (drawCharIcon, renderer.js).
+const GHOST_WARD_ITEM = 33;
 
 // Slot-indexed: the live ghosts, and what the client remembers of each (the
 // name outlives the slot, since a fade's event drains after the slot clears).
@@ -558,12 +562,17 @@ function _evGhost(ev) {
       m.grabAt = performance.now();
       addLog(`<span class="log-check-fail">☠ ${escHtml(who)} has hold of ${escHtml(whoP)}.</span>`);
       if (mine) {
-        showBanner('HAUNTED', `${who} rides you — walk into a Settlement to shake it off`);
+        showBanner('HAUNTED', `${who} rides you — walk into a Settlement, or put on the Intimidate Mask, to shake it off`);
         showToast(`${who} has hold of you. It will feed on your pack and take a third of all you gain.`, 'ghost');
       }
       break;
     case 'letgo':
       m.grabAt = 0;
+      if ((ev.res | 0) === GHOST_WARD_ITEM) {   // the Intimidate Mask went on (ghostWarded, ghosts.hpp)
+        addLog(`<span class="log-col">☠ ${escHtml(who)} sees ${escHtml(whoP)}'s mask, lets go and backs off.</span>`);
+        if (mine) showToast(`${who} looks at your mask, lets go and backs away. Nothing rides that face.`, 'ghost');
+        break;
+      }
       addLog(`<span class="log-col">☠ ${escHtml(who)} lets go of ${escHtml(whoP)} at the edge of town.</span>`);
       if (mine) showToast(`${who} stops at the edge of town. It cannot follow you in.`, 'ghost');
       break;

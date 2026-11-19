@@ -411,6 +411,47 @@ function kickJitter(t, seed) {
   return h(i) + (h(i + 1) - h(i)) * (f - i);
 }
 
+// The Intimidate Mask (items.cfg 33, ghosts.js GHOST_WARD_ITEM), worn: the map
+// shows it on the wearer's face. It is the item's own badge (item-icons.js),
+// rasterised at exactly the size it is drawn, so it stays the same pixel art
+// as the pack's, its eye holes over the portrait's eyes (every *Pawn.jpg has
+// the eyes on the circle's centre line), clipped to the circle. One canvas per
+// pixel size; the map only ever wants a few.
+const MASK_K      = 1.6;              // the badge's 32-unit grid, in portrait radii
+const MASK_EYES_Y = 14 / 32;          // the badge's eye holes, down its grid
+const _maskSprites = new Map();       // px -> canvas
+function maskSprite(px) {
+  let c = _maskSprites.get(px);
+  if (c) return c;
+  if (typeof ItemIcons === 'undefined' || px < 8) return null;
+  if (_maskSprites.size > 24) _maskSprites.clear();
+  c = document.createElement('canvas');
+  c.width = c.height = px;
+  const g = c.getContext('2d');
+  const im = g.createImageData(px, px);
+  im.data.set(ItemIcons.rgba(GHOST_WARD_ITEM, px));
+  g.putImageData(im, 0, 0);
+  _maskSprites.set(px, c);
+  return c;
+}
+function drawMaskOn(ctx, px0, py0, r) {
+  const px = Math.round(r * MASK_K), spr = maskSprite(px);
+  if (!spr) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px0, py0, r, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = false;
+  // A dark wash round it first, so the face behind does not read through the
+  // mask's edge and the wearer looks covered, not decorated.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(px0, py0 + r * 0.12, r * 0.56, r * 0.72, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.drawImage(spr, Math.round(px0 - px / 2), Math.round(py0 - px * MASK_EYES_Y));
+  ctx.restore();
+}
+
 /**
  * Draw character/player icon on the hex grid: the portrait, riding the
  * Motorbike when one is equipped and running (the bare portrait over a
@@ -424,12 +465,13 @@ function kickJitter(t, seed) {
  *   ride: how much of the bike is there, 0 (on foot) .. 1 (riding); in
  *   between, the bike is fading and the rider stepping off or back on;
  *   face: +1 rides right (as painted), -1 left; kick: seconds into a
- *   kick-start (kickPose()), or null
+ *   kick-start (kickPose()), or null; mask: wearing the Intimidate Mask
+ *   (drawn over the face)
  * @returns {{x: number, y: number}|null} where the bike's rear tyre meets the
  *   ground, screen px, or null when there is no bike under the rider. The
  *   tailpipe's mouth is left in drawCharIcon.exhaust, null likewise.
  */
-function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ride = 0, face = 1, kick = null } = {}) {
+function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ride = 0, face = 1, kick = null, mask = false } = {}) {
   const scale      = hexSz * ICON_SIZE_SCALE;
   const r          = Math.max(10, hexSz * 0.28);   // portrait circle radius
   let   portraitCX = cx;
@@ -508,6 +550,7 @@ function drawCharIcon(ctx, cx, cy, hexSz, { color, label, isMe, nm, arch, sc, ri
     ctx.fillText(label, portraitCX, portraitCY + 0.5);
     ctx.restore();
   }
+  if (mask) drawMaskOn(ctx, portraitCX, portraitCY, r);
 
   // Coloured outline — archetype ring (all players)
   const outlineW = Math.max(1.5, r * 0.09);
@@ -1564,6 +1607,7 @@ function renderCharacters(cam) {
       ride:  renderPos[i].bike ?? 0,
       face:  renderPos[i].face,
       kick:  renderPos[i].kick,
+      mask:  !!p.eq?.includes(GHOST_WARD_ITEM),   // every seat's eq[] is in the broadcast
     });
     const pt = drawCharIcon.portrait;
     pawnPortraitOff[i] = { dx: pt.x - x, dy: pt.y - y, r: pt.r };

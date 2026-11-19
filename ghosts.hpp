@@ -83,11 +83,23 @@ static int ghostHaunting(int pid) {
   return -1;
 }
 
+// The Intimidate Mask (data/items.cfg 33), worn: no ghost will ride a face
+// like that. It cannot take hold of the wearer, does not come after them, and
+// one already riding lets go at the next world tick (told, with res = the
+// mask, so the client says why); until then it takes no share of a gain.
+static constexpr uint8_t GHOST_WARD_ITEM = 33;
+static bool ghostWarded(int pid) {
+  const Player& p = G.players[pid];
+  for (int s = 0; s < EQUIP_SLOTS; s++) if (p.equip[s] == GHOST_WARD_ITEM) return true;
+  return false;
+}
+
 // Somebody a drifting ghost can take hold of: up, on the surface, not inside
-// a scene, not in a Settlement, and not already ridden.
+// a scene, not in a Settlement, not masked, and not already ridden.
 static bool ghostCanHaunt(int pid) {
   const Player& p = G.players[pid];
   if (!p.connected || p.ll == 0 || p.depth || encounters[pid].active) return false;
+  if (ghostWarded(pid)) return false;
   if (G.map[p.r][p.q].terrain == TERRAIN_SETTLEMENT) return false;
   if (inOasis(p)) return false;   // nothing takes hold under the canopy (docs/forest-oasis.md)
   return ghostHaunting(pid) < 0;
@@ -166,9 +178,10 @@ static void ghostLatch(int gi, int pid) {
   ghostEmit(gi, GH_LATCH, pid);
 }
 
-// Lets go at (q, r). told: say so (a Settlement shook it off) -- not when the
-// one it rode went down, or their seat went to somebody new.
-static void ghostLetGo(int gi, int16_t q, int16_t r, bool told) {
+// Lets go at (q, r). told: say so (a Settlement shook it off, or the mask
+// did: why = GHOST_WARD_ITEM, sent as res) -- not when the one it rode went
+// down, or their seat went to somebody new.
+static void ghostLetGo(int gi, int16_t q, int16_t r, bool told, uint8_t why = 0) {
   Ghost& g = ghosts[gi];
   const int pid = g.haunt;
   g.haunt = GHOST_NONE;
@@ -177,7 +190,7 @@ static void ghostLetGo(int gi, int16_t q, int16_t r, bool told) {
   g.moveSkip = 0;
   ghostSaveWanted = true;
   Log.notice("GHOST %d (%s) lets go of pid=%d at (%d,%d)%s", gi, g.name, pid, (int)q, (int)r, told ? "" : " (silent)");
-  if (told) ghostEmit(gi, GH_LETGO, pid);
+  if (told) ghostEmit(gi, GH_LETGO, pid, why);
 }
 
 // The seat is somebody new now (handleMsg_pick): whatever rode the old
@@ -272,7 +285,7 @@ static void ghostDrain(int gi) {
 static uint8_t ghostTithe(int pid, uint8_t idx, uint8_t gain) {
   if (!gain || idx > 4) return gain;
   int gi = ghostHaunting(pid);
-  if (gi < 0) return gain;
+  if (gi < 0 || ghostWarded(pid)) return gain;   // masked: it is already letting go
   Ghost& g = ghosts[gi];
   int owed = (int)g.tithe + gain;
   uint8_t cut = (uint8_t)(owed / GHOST_TITHE_DIV);
@@ -316,6 +329,10 @@ static void tickGhosts() {
       if (p.ll == 0) { ghostLetGo(i, g.q, g.r, /*told=*/false); continue; }
       g.q = p.q; g.r = p.r;   // pinned to the hatch while they are below
       if (!p.connected) continue;   // gone from the board: it waits with them
+      if (ghostWarded(g.haunt)) {   // they put the mask on: it recoils, and keeps away a while
+        ghostLetGo(i, g.q, g.r, /*told=*/true, GHOST_WARD_ITEM);
+        continue;
+      }
       if (!p.depth && G.map[p.r][p.q].terrain == TERRAIN_SETTLEMENT) {
         // A town under them that no step brought them into (they founded it).
         int16_t oq = p.q, orr = p.r;
