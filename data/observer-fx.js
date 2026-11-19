@@ -1161,7 +1161,7 @@
     level: 2, madPin: -1, trauma: 0, flashQ: [], lastMs: 0, frame: 0,
     madness: 0, madTarget: 0, cause: 0, doomNear: false, lowLife: false,
     nextGlitch: 0, glitchUntil: 0, glitchKind: 0, glitchSeed: 0,
-    nextSub: 0, subAt: 0, subFrames: 0, subWord: null,
+    nextSub: 0, subAt: 0, subFrames: 0, subWord: null, subReady: false,
     eyesOn: false, eyesT0: 0, eyesX: 0, eyesY: 0, nextEyes: 0,
     nextBeat: 0, beat: 0,
     vroll: { t0: 0, dur: 0, kind: 0 }, tearUntil: 0, tears: [],
@@ -1185,7 +1185,7 @@
   // ── 11. Cut-ins, laid out for a landscape screen ────────────────
   function cutBegin(q, now) {
     const st = STYLE[q.kind];
-    FX.subFrames = 0; FX.subWord = null;
+    FX.subFrames = 0; FX.subWord = null; FX.subReady = false;
     const seed = hash((Math.imul(now >>> 0, 2654435761) ^ (q.kind.length << 24) ^ (q.name || '').length) >>> 0);
     const R = new Rng(seed);
     const hasWord = !!(st.sfx || q.sfx);
@@ -4035,16 +4035,24 @@
       FX.nextGlitch = now + jitter(Math.max(1700, 16000 - m * 56), h);
     }
     if (full && m >= 170) {
-      if (!FX.subWord && now >= FX.nextSub - 700 && !Cut) {
+      if (!FX.subReady && !FX.subFrames && now >= FX.nextSub - 700 && !Cut) {
         const h = hash((now ^ 0x51AB1E5) >>> 0), w = WHISPER[FX.cause][h % 3];
         FX.subWord = buildWord(w, W * 0.62, H * 0.24, 1, INK_BLOOD, false, true, h);
+        FX.subReady = !!FX.subWord;
         FX.subAt = FX.nextSub;
       }
-      if (FX.subWord && now >= FX.subAt && !Cut) {
+      // Fire once and disarm (FX.subReady, as fxAmbient does). The word stays
+      // in FX.subWord for its two frames; keying the trigger on the word
+      // instead re-armed it every frame, and the flash never ended.
+      if (FX.subReady && now >= FX.subAt && !Cut) {
         FX.subFrames = 2;
+        FX.subReady = false;
         FX.nextSub = now + jitter(Math.max(5000, 14000 - (m - 170) * 100), now);
       }
-    } else if (now > FX.nextSub) FX.nextSub = now + 4000;
+    } else {
+      if (now > FX.nextSub) FX.nextSub = now + 4000;
+      FX.subReady = false;
+    }
     if (full && FX.doomNear && !FX.eyesOn && !Cut && now >= FX.nextEyes) {
       FX.eyesOn = true; FX.eyesT0 = now; FX.nextEyes = now + jitter(22000, now + 5);
       const h = hash(now >>> 0);
@@ -4330,7 +4338,7 @@
     // Still drifting toward what the board's dread says: keep stepping.
     const cap = FX.level >= 2 ? 255 : 60;
     if (Math.abs(FX.madness - Math.min(FX.madTarget, cap)) > 2) return true;
-    return now >= FX.nextGlitch || (FX.subWord && now >= FX.subAt);
+    return now >= FX.nextGlitch || (FX.subReady && now >= FX.subAt);
   }
   function period(now) {
     if (Cut || FX.trauma > 0.05 || FX.flashQ.length || Bolt.on) return 33;
