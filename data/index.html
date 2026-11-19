@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WASTELAND</title>
+<!-- The W out of the title art (scripts/make_app_icon.py): the tab, a phone's
+     home-screen shortcut, and anything else that wants an icon. Without these
+     Chrome made up its own plain letter W. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/img/icon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/img/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/icon-180.png">
+<link rel="manifest" href="/app.webmanifest">
+<meta name="theme-color" content="#0a0701">
 <!-- style.css is NOT linked here: the AssetLoader at the bottom of this file
      fetches it (with retries) and injects it, so a stalled K10 shows the boot
      screen below instead of an unstyled page. Keep this block self-styled. -->

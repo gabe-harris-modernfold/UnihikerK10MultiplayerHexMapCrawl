@@ -5447,6 +5447,7 @@ const MIME = {
   '.svg' : 'image/svg+xml',
   '.ico' : 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',   // as the board serves it (webMimeFor, boot-assets.hpp)
 };
 
 const UPLOAD_DIR = path.resolve(__dirname, 'uploads');
