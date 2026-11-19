@@ -179,8 +179,11 @@ static void sndHandleCue(const SndCue& c) {
       uint16_t day = (uint16_t)(c.a | (c.b << 8));
       if (sndMusicOn()) musDawn(SMu.w.aliveMask);
       SP.tonicHz = sndMidiHz((float)SMu.tonicBass);
-      uint8_t k = 0; words[k++] = VOC_DAY; k += sndNumberWords(day, words + k);
-      sndSay(words, k, SAY_CHANT, SAYP_HIGH, 6, 130);         // once the dawn chord is in, before the roll call
+      // The count is said on about 3 dawns in 10, so it stays an event.
+      if (sndChance(SC.rng, 0.30f)) {
+        uint8_t k = 0; words[k++] = VOC_DAY; k += sndNumberWords(day, words + k);
+        sndSay(words, k, SAY_CHANT, SAYP_HIGH, 6, 130);       // once the dawn chord is in, before the roll call
+      }
       static const uint8_t DAWN_LINE[3] = { VOC_DAWN_GREY, VOC_DAWN_THIN, VOC_DAWN_SUN };
       sndSay1(DAWN_LINE[day % 3], SAY_NARRATOR, SAYP_NORMAL);
       break;
